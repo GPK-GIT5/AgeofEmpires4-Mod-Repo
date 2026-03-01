@@ -1,0 +1,305 @@
+
+function _Game_Init()
+	-- Variable to control coop in Kill Team
+	__coop = false
+	
+	__tmr_killTeamSpawnDelay = "__tmr_killTeamSpawnDelay"
+	__superHeavyDeployed = false
+	
+	ADDON_REQUISITION = 0
+	ADDON_POWER = 1
+	ADDON_ELITE = 2				
+	
+	ESC_PHASE0 = 0
+	ESC_PHASE1 = 1
+	ESC_PHASE2 = 2
+	ESC_PHASE3 = 3
+	
+	-- Audio 
+	
+	MUS_MOVEMENT_LOW = "t01mus_campaign_start_a_low"
+	MUS_MOVEMENT_MED = "t01mus_campaign_start_b_med"
+	MUS_MOVEMENT_HIGH = "t01mus_campaign_start_c_high"
+	MUS_MOVEMENT_BATTLE = "t01mus_campaign_start_d_battle"
+	MUS_STOP = "t01mus_campaign_stop"
+	
+	MUS_ATMOS = 2
+	MUS_ATMOS_SUSP = 101
+	MUS_ATMOS_SUSP_TENS = 999
+	MUS_ATMOS_TENS = 5000
+	MUS_SUSP = 6000
+	MUS_SUSP_TENS = 7000
+	MUS_TENS = 8000
+	
+	MUS_STING_PRIMARY_OBJ_START = "t01mus_stinger_campaign_primary_objective_start_play"
+	MUS_STING_PRIMARY_OBJ_COMPLETE = "t01mus_stinger_campaign_primary_objective_complete_play"
+	MUS_STING_PRIMARY_OBJ_FAIL = "t01mus_stinger_campaign_primary_objective_failed_play"
+	MUS_STING_BONUS_OBJ_START = "t01mus_stinger_campaign_bonus_objective_start_play"
+	MUS_STING_BONUS_OBJ_COMPLETE ="t01mus_stinger_campaign_bonus_objective_complete_play"
+	MUS_STING_BONUS_OBJ_FAIL = "t01mus_stinger_campaign_bonus_objective_failed_play"
+	MUS_STING_WARN_OBJ_START = "t01mus_stinger_campaign_warning_objective_start_play"
+	MUS_STING_WARN_OBJ_COMPLETE = ""
+	MUS_STING_WARN_OBJ_FAIL = "t01mus_stinger_campaign_warning_objective_failed_play"
+	
+end 
+
+Scar_AddInit(_Game_Init)
+
+
+--? @shortdesc Kills an SGroup when under attack by a specific Sgroup.  Use this when you want a specific squad to kill a specifit squad.
+--? @extdesc 
+--? @args SGroup killer, SGroup target
+function Util_CinematicKill(killer, target, melee)
+	local melee = melee or false
+	Rule_Add(_cinematicKill, {killer = killer, target = target, melee = melee})
+end
+
+function _cinematicKill(id, data)
+	local __sg_cinematicKiller = SGroup_CreateIfNotFound("__sg_cinematicKiller")
+	if scartype(data.target) == ST_SGROUP then
+		if SGroup_IsEmpty(data.target) then
+			Rule_RemoveMe()
+			return
+		end
+		SGroup_GetLastAttacker(data.target, __sg_cinematicKiller, 3)
+	elseif scartype(data.target) == ST_EGROUP then
+		if EGroup_IsEmpty(data.target) then
+			Rule_RemoveMe()
+			return
+		end
+		EGroup_GetLastAttacker(data.target, __sg_cinematicKiller, 3)
+	else
+		print("Target not a valid SGroup or EGroup")
+		Rule_RemoveMe()
+		return
+	end
+	
+	if SGroup_ContainsSGroup(__sg_cinematicKiller, data.killer, ANY) and SGroup_IsDoingAttack(data.killer, ANY, 1) then
+		if data.melee == true then
+			-- TODO: Get Squad_IsMeleeing command to replace this
+			local distance = Util_GetDistance(data.killer, data.target)
+			if distance > 3 then
+				return
+			end
+		end
+		Rule_RemoveMe()
+		
+		if scartype(data.target) == ST_SGROUP then
+			SGroup_Kill(data.target)
+		elseif scartype(data.target) == ST_EGROUP then
+			EGroup_Kill(data.target)
+		end
+	end
+end
+
+
+
+--------------------------------
+-- IDLE BEHAVIOURS
+
+function _idleBehaviour_queue(squadTable)
+	
+	if (squadTable.idle_behaviour ~= nil and squadTable.idle_behaviour ~= "None") then
+		Rule_Add(_idleBehaviour_start, squadTable, RuleGroup.Unpausable)
+	end
+
+end
+
+function _idleBehaviour_start(id, dataTable)
+	local sid = Squad_FromID(dataTable.squad)
+	
+	if Squad_IsValid(dataTable.squad) == false or Squad_Count(sid) == 0 then
+		Rule_RemoveMe()
+		return
+	end
+	
+	if Squad_IsValid(dataTable.squad) and Entity_IsSpawned(Squad_GetFirstEntity(sid)) == false then
+		return
+	end
+	
+	if Squad_IsInHoldEntity(sid) == false and SGroup_IsIdle(sid, ALL) then
+		
+		-- Get if squad is in encounter
+		if Squad_IsInAIEncounter(sid)  == false then
+			return
+		end
+		
+		local encID = nil
+		local encounter = nil
+		local goalID = nil
+		-- Get squad's encounter
+		
+		encID = Squad_GetInternalAIEncounterPtr(sid)
+		if encID ~= nil then
+			-- Get the goal data
+			encounter = AI_ConvertAIEncounterPtrToLUAEncounter(encID)
+		end
+		
+		-- check if idle (goal has triggered)
+		if encounter:HasGoalTriggered() then
+			Rule_RemoveMe()
+			return
+		end
+		
+		if abilBP ~= nil then
+			if Squad_HasAbility(sid, abilBP) == false then
+				Squad_AddAbility(sid, abilBP)
+			end
+			
+			if Squad_IsDoingAbility(sid, abilBP) == false then
+				local tempSG = SGroup_Create("__idleTemp_SG")
+				SGroup_Add(tempSG, sid)
+				LocalCommand_SquadSquadAbility(Util_GetPlayerOwner(sid), tempSG, tempSG, abilBP, true, false)
+				SGroup_Destroy(tempSG)
+			end
+		end
+	end
+end
+
+function _idleBehaviour_stop(data)
+	for k,v in pairs(data) do
+		if v.data.idle_behaviour ~= nil then
+			Cmd_Stop(v.sgroup)
+		end
+	end
+end
+
+--------------------------------------------------
+-- Hew Hint Popups
+function RegisterHintPopup(HUDFeature, text, icon, duration)
+	-- Only one Hint Feature can be active
+	if __t_hintFeatures == nil then
+		__t_hintFeatures = {}
+		__t_hintFeatures.feature = HUDFeature
+		__t_hintFeatures.text = text
+		__t_hintFeatures.icon = icon
+		__t_hintFeatures.duration = duration		
+		
+		Rule_Add(_MonitorHintPopup)
+	else
+		print("Register Hint Point: Hint already registered, can only be one at a time.  Remove with UnRegisterHintPopup")
+	end
+end
+
+function UnRegisterHintPopup()
+	if __t_hintFeatures.id ~= nil then
+		UI_TitleDestroy(__t_hintFeatures.id)
+		if Rule_Exists(_MonitorHintPopup) then
+			Rule_Remove(_MonitorHintPopup)
+		end
+	end
+end
+
+function _MonitorHintPopup()
+	if Event_IsAnyRunning() == false then
+		if __t_hintFeatures.id == nil then
+			__t_hintFeatures.id = UI_NewHUDFeature(__t_hintFeatures.feature, __t_hintFeatures.text, __t_hintFeatures.icon, __t_hintFeatures.duration)
+		end
+	else
+		if __t_hintFeatures.id ~= nil then
+			UI_TitleDestroy(__t_hintFeatures.id)
+			__t_hintFeatures.id = nil
+		end
+	end
+end
+
+
+
+
+function SpeechBubble_AlliedHack(sgroup)
+
+	if sg_speechbubble_alliedhack == nil then
+		sg_speechbubble_alliedhack = SGroup_CreateIfNotFound("sg_speechbubble_alliedhack")
+	end
+
+	local speechbubble_squadid = nil 
+	local createdTempSGroup = false
+
+
+
+	if scartype(sgroup) == ST_PBG then
+		sgroup = {sbp = sgroup}
+	end
+	
+	if scartype(sgroup) == ST_SGROUP then
+		
+		if SGroup_CountSpawned(sgroup) >= 1 then
+			speechbubble_squadid = SGroup_GetSpawnedSquadAt(sgroup, 1)
+		end
+		
+	elseif scartype(sgroup) == ST_SQUAD then
+	
+		speechbubble_squadid = sgroup 
+		
+	elseif scartype(sgroup) == ST_TABLE then
+			
+		
+		if scartype(sgroup.sbp) == ST_PBG then													-- create a group filled with all units of the specified SBP, so the next section can find the closest one
+			
+			if scartype(sgroup.sgroup) == ST_NIL then
+				
+				sgroup.sgroup = SGroup_Create("speechbubble")		
+				createdTempSGroup = true
+				
+				if scartype(sgroup.player) ~= ST_PLAYER then
+					sgroup.player = Game_GetLocalPlayer()
+				end			
+			
+				Player_GetAll(sgroup.player, sgroup.sgroup)
+
+			end
+
+			SGroup_Filter(sgroup.sgroup, sgroup.sbp, FILTER_KEEP)
+			
+		end
+		
+		if scartype(sgroup.closest_to) ~= ST_NIL then
+			if (scartype(sgroup.closest_to) == ST_SGROUP and SGroup_CountSpawned(sgroup.closest_to) == 0) or
+			   (scartype(sgroup.closest_to) == ST_EGROUP and EGroup_CountSpawned(sgroup.closest_to) == 0) then
+				
+				-- "closest to" is an empty group, so just pick a random squad
+				if SGroup_CountSpawned(sgroup.sgroup) >= 1 then
+					speechbubble_squadid = SGroup_GetRandomSpawnedSquad(sgroup.sgroup)
+				end
+				
+			else
+				
+				if SGroup_CountSpawned(sgroup.sgroup) >= 1 then
+					speechbubble_squadid = SGroup_GetClosestSquad(sgroup.sgroup, Util_GetPosition(sgroup.closest_to))
+				end
+				
+			end
+		else
+			if SGroup_CountSpawned(sgroup.sgroup) >= 1 then
+				speechbubble_squadid = SGroup_GetSpawnedSquadAt(sgroup.sgroup, 1)
+			end
+		end
+		
+		if createdTempSGroup == true then
+			SGroup_Destroy(sgroup.sgroup)
+		end
+		
+	end
+
+
+	if speechbubble_squadid ~= nil then
+		
+		SGroup_Single(sg_speechbubble_alliedhack, speechbubble_squadid)
+		UI_SetSquadDecoratorAlwaysVisible(speechbubble_squadid, true)
+		Player_RemoveUpgrade(Game_GetLocalPlayer(), BP_GetUpgradeBlueprint("hide_allied_decorators"))
+		
+	end
+
+
+end
+
+function SpeechBubble_AlliedHack_End()
+
+	if SGroup_CountSpawned(sg_speechbubble_alliedhack) >= 1 then
+		
+		local speechbubble_squadid = SGroup_GetSpawnedSquadAt(sg_speechbubble_alliedhack, 1)
+		UI_SetSquadDecoratorAlwaysVisible(speechbubble_squadid, false)
+		Player_CompleteUpgrade(Game_GetLocalPlayer(), BP_GetUpgradeBlueprint("hide_allied_decorators"))		
+	end
+	
+end

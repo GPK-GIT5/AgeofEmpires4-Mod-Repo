@@ -1,0 +1,291 @@
+--
+-- Moscow - Prepare for the Mongols
+--
+
+
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+
+function Prepare_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_Prepare = {
+	
+		Title = 11176786, --Prepare for Mongol retribution
+		Type = OT_Primary,
+		--PreStart = Prepare_PreStart,
+		OnStart = Prepare_OnStart,
+		SetupUI = function()
+			UI_ReinforcePanel_UpdateData()
+			Rule_AddInterval(UI_ReinforcePanel_UpdateData, 1)		
+		end,
+		Intel_Start = EVENTS.PrepareDefenses,
+		--IsComplete = Prepare_IsComplete,
+		OnComplete = Prepare_OnComplete,
+		Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+		--IsFailed = Prepare_IsFailed,
+		--OnFail = Prepare_OnFail,
+	}
+	
+	SOBJ_Attack = {
+	
+		Title = 11182665, --Prepare for Mongol retribution
+		Type = OT_Secondary,
+		Parent = OBJ_Prepare,
+		OnStart = Attack_OnStart,
+		StartAlongsideParent = true,
+	}
+		
+	Objective_Register(OBJ_Prepare)
+	Objective_Register(SOBJ_Attack)
+	
+	t_reinforcementData = {
+		{
+			id = "settlement1",
+			displayName = 11180226, -- Clin
+			buttontext = 11180299, -- Cavalry
+			tooltip = 11182403, --%1AMOUNT% Horsemen
+			aidAmount = aid_Horseman,
+			income = 30,
+			purchased = false,
+			spawn = mkr_vassal_forces,
+			units = {{ type = "scar_horseman", numSquads = aid_Horseman},},
+		},
+		{
+			id = "settlement2",
+			displayName = 11180227, -- Troitskoy
+			buttontext = 11180303, --Archers
+			tooltip = 11182404, --%1AMOUNT% Archers
+			aidAmount = aid_Archers, 
+			income = 40,
+			purchased = false,
+			spawn = mkr_vassal_forces,
+			units = {{ type = "scar_archer", numSquads = aid_Archers},},
+		},
+		{
+			id = "settlement3",
+			displayName = 11180228, -- Pereslaw
+			buttontext = 11180305, --Infantry
+			tooltip = 11182405, --%1AMOUNT% Men-at-arms and -%2AMOUNT% Spearmen
+			aidAmount = aid_Menatarms, 
+			aidAmount_2 = aid_Spearman_1,
+			income = 50,
+			purchased = false,
+			spawn = mkr_vassal_forces,
+			units = {{ type = "scar_manatarms", numSquads = aid_Menatarms}, { type = "scar_spearman", numSquads = aid_Spearman_1}},
+		},
+		{
+			id = "settlement4",
+			displayName = 11180229, -- Susdal
+			buttontext = 11182398, --Monks
+			tooltip = 11182406, --%1AMOUNT% Monks
+			aidAmount = aid_Monks, 
+			income = 30,
+			purchased = false,
+			spawn = mkr_vassal_forces,
+			units = {{ type = "scar_monk", numSquads = aid_Monks},},
+		},
+		{
+			id = "settlement5",
+			displayName = 11180230, -- Wlodimer
+			buttontext = 11180305, --Infantry 
+			tooltip = 11182407, --%1AMOUNT% Spearmen
+			aidAmount = aid_Spearman_2, 
+			income = 35,
+			purchased = false,
+			spawn = mkr_vassal_forces,
+			units = {{ type = "scar_spearman", numSquads = aid_Spearman_2},},
+		},
+		{
+			id = "settlement6",
+			displayName = 11180231, -- Kerisler
+			buttontext = 11182399, --Knights
+			tooltip = 11182408,  --%1AMOUNT% Knights
+			aidAmount = aid_Knights, 
+			income = 55,
+			purchased = false,
+			spawn = mkr_vassal_forces,
+			units = {{ type = "scar_knight", numSquads = aid_Knights},},
+		},
+		{
+			id = "settlement7",
+			displayName = 11180232, -- Colunma
+			buttontext = 11182400, --Streltsy 
+			tooltip = 11182409, --%1AMOUNT% Streltsy
+			aidAmount = aid_Streltsy, 
+			income = 60,
+			purchased = false,
+			spawn = mkr_vassal_forces,
+			units = {{ sbp = SBP.RUS.UNIT_HANDCANNON_4_RUS, numSquads = aid_Streltsy},},
+		},
+	}
+	
+		OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Util_StartIntel(EVENTS.Moscow_Outro)
+		end,
+    	}
+
+	Objective_Register(OBJ_DebugComplete)
+
+	
+end
+
+function Prepare_OnStart()
+	Music_UnlockIntensity()
+end
+
+function Prepare_OnComplete()
+	Music_Stop()
+	Util_AutoSave()
+	--Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+end
+
+
+function Attack_OnStart()
+	Objective_StartTimer(SOBJ_Attack, COUNT_DOWN, t_difficulty.preperationTime)
+	Rule_AddOneShot(StartMongols, t_difficulty.preperationTime)
+	Rule_AddOneShot(StartRefugees, (t_difficulty.preperationTime-180))	
+end
+
+function StartRefugees()
+	RefugeesIntro()
+	Rule_AddInterval(Refugees_CTA, 1)
+end
+
+function StartMongols()
+	Objective_Complete(OBJ_Prepare)
+	Util_StartIntel(EVENTS.MongolDrums)
+	Objective_Start(OBJ_HoldAgainstTheHorde)
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--														Reinforcment UI
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function UI_ReinforcePanel_UpdateData()
+	
+	uiData_ReinforcePanel = {
+		Visible = true,
+		Settlements = {},
+		SumIncome = 0,
+	}
+		
+	for index, settlement in pairs(t_reinforcementData) do
+		if settlement.purchased ~= true then
+			local uiData = {
+				
+				Name = Loc_GetString(settlement.displayName),
+				
+				TradeCountVisible = false,				
+				
+				BuyButtonVisible = false,
+				BuyButtonEnabled = false,
+				BuyButtonOpacity = 0.44,
+				BuyButtonCommand = UI_CreateCommand("UI_RequestAid_ButtonCallback"),
+				BuyButtonParameter = settlement.id,
+				AidButtonTitle = Loc_GetString(settlement.buttontext),
+				--AidButtonTooltip = settlement.tooltip,
+				AidIncome = settlement.income,
+				--BuyButtonTooltip = "",
+				PopWarning = true,
+				
+				--Order = settlement.foundOrder,
+				ShowMoneyIcon = false,
+				
+			}			
+			
+			uiData.TradeCountVisible = false
+			uiData.BuyButtonVisible = true
+			
+			--if Player has pop cap available
+			local totalAidAmount = (settlement.aidAmount_2 or 0) + settlement.aidAmount
+			if (Player_GetCurrentPopulation(player1, CT_Personnel) + totalAidAmount) <= 200 then --Player_GetCurrentPopulationCap(player1, CT_Personnel) then
+				uiData.BuyButtonEnabled = true 
+				uiData.BuyButtonOpacity = 1.0
+				uiData.PopWarning = false
+			end
+			--end
+			
+			uiData_ReinforcePanel.SumIncome = uiData_ReinforcePanel.SumIncome + settlement.income
+			
+			--uiData.BuyButtonTooltip = Loc_GetString(Loc_FormatText(11180286, uiData.AidIncome))
+			uiData.IncomeAmount = Loc_GetString(Loc_FormatText(11180287, uiData.AidIncome)) -- +%1AMMOUNT% gold/min
+			-- Duplicate data so it can be used in generic template
+			uiData.CostAmount = Loc_GetString(Loc_FormatText(11180287, uiData.AidIncome))
+			uiData.CostColour = "#FFBFBFBF"
+			
+			if settlement.aidAmount_2 ~= nil then
+				uiData.AidButtonTooltip = Loc_GetString(Loc_FormatText(settlement.tooltip, settlement.aidAmount, settlement.aidAmount_2)) -- %1AMMOUNT% Reinforcement type 1 and %2AMMOUNT% Reinforcement type 2
+			else
+				uiData.AidButtonTooltip = Loc_GetString(Loc_FormatText(settlement.tooltip, settlement.aidAmount)) -- %1AMMOUNT% Reinforcement type
+			end
+			
+			table.insert(uiData_ReinforcePanel.Settlements, uiData)
+		end
+	end
+	
+	GOLD_TRICKLE_AMOUNT = uiData_ReinforcePanel.SumIncome
+	
+	--if #uiData_ReinforcePanel.Settlements == 0 then 
+		uiData_ReinforcePanel.Visible = true
+	--end
+	uiData_ReinforcePanel.SumIncome = Loc_GetString(Loc_FormatText(11180287, uiData_ReinforcePanel.SumIncome))--tostring(uiData_ReinforcePanel.SumIncome)
+	
+	--table.sort(uiData_ReinforcePanel.Settlements, function(a, b) return a.Order < b.Order end)		-- this sorts the settlements into the order they were found
+	
+	_diplomacy.data_context.buySettlements = uiData_ReinforcePanel
+	Diplomacy_UpdateUI()
+	
+end
+
+function UI_RequestAid_ButtonCallback(parameter)
+	
+	for index, settlement in pairs(t_reinforcementData) do 
+	
+		if settlement.id == parameter then
+			if settlement.purchased == false then
+				settlement.purchased = true
+				local units = settlement.units
+				local options = { spawnInFormation = true, destination = mkr_location_outercity}
+				
+				_G["sg_"..settlement.id] = SGroup_CreateIfNotFound(("sg_"..settlement.id))
+				UnitEntry_DeploySquads(player1, _G["sg_"..settlement.id], units, settlement.spawn, nil, nil, options)
+				Start_CTACooldown(_G["sg_"..settlement.id])
+				UI_ReinforcePanel_UpdateData()
+			end
+		end
+	end
+end
+
+function Start_CTACooldown(target)
+	if b_reinforceCooldown == false then
+		Diplomacy_ShowDiplomacyUI(false)
+		b_reinforceCooldown = true
+		if b_reinforceIntelPlayed == false then
+			b_reinforceIntelPlayed = true
+			EventCues_CallToAction(11176787, CTA_CELEBRATE, EVENTS.VassalSupport, nil, target, 20) --Reinforcments have arrived!
+			Rule_AddOneShot(Reinforcement_Intel_Cooldown, 300)
+		else
+			EventCues_CallToAction(11176787, CTA_CELEBRATE, nil, nil, target, 20) --Reinforcments have arrived!
+		end
+		Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+		Sound_Play2D("mus_stinger_campaign_triumph_short")
+		Rule_AddOneShot(ReinforceCTA_Cooldown, 20)
+	else
+		Reinforcement_Intel()
+	end
+end
+
+function ReinforceCTA_Cooldown()
+	b_reinforceCooldown = false
+end

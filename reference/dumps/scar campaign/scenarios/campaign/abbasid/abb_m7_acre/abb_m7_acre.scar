@@ -1,0 +1,431 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")	
+import("MissionOMatic/missionomatic_upgrades.scar")
+import("abb_m7_acre_data.scar")
+import("abb_m7_acre_attackcycle.scar")
+import("abb_m7_acre_objectives.scar")
+import("abb_m7_acre.events")
+import("abb_m7_acre_automated.scar")
+import("abb_m7_acre_training.scar")
+
+MissionOMatic_UpdateHolyOrderFlags()
+
+function Mission_SetupPlayers()
+	content_pack = CONTENT_PACK_ABBASID_CAMPAIGN
+		
+	player1 = World_GetPlayerAt(1)
+	Setup_SetPlayerName(player1, "$11253752") --Mamluk Sultanate
+	--Player_SetCurrentAge(player1, AGE_FEUDAL)
+	
+	player2 = World_GetPlayerAt(2)
+	Setup_SetPlayerName(player2, "$11250539") --Franks
+	--Player_SetCurrentAge(player2, AGE_IMPERIAL)
+	
+	player3 = World_GetPlayerAt(3)
+	Setup_SetPlayerName(player3, "$11253753") --Mamluk Allies
+	--Player_SetCurrentAge(player3, AGE_CASTLE)
+
+	Player_SetRelationship(player1, player2, R_ENEMY)
+	Player_SetRelationship(player1, player3, R_ALLY)
+	
+	Player_SetRelationship(player2, player1, R_ENEMY)
+	Player_SetRelationship(player2, player3, R_ENEMY)
+	
+	Player_SetRelationship(player3, player1, R_ALLY)
+	Player_SetRelationship(player3, player2, R_ENEMY)
+	
+	PlayerColour_Enable()
+	Game_SetPlayerSlotColour(player1, COLOR_BLUE)
+    Game_SetPlayerSlotColour(player2, COLOR_RED)
+	Game_SetPlayerSlotColour(player3, COLOR_GREEN)
+	Game_SetPlayerUISlotColour(player1, COLOR_BLUE)
+    Game_SetPlayerUISlotColour(player2, COLOR_RED)
+	Game_SetPlayerUISlotColour(player3, COLOR_GREEN)
+	
+	World_EnableSharedLineOfSight(player1, player3, true)
+    World_EnableSharedLineOfSight(player3, player1, true)
+	
+	Player_SetStateModelBool(player2, "disable_landmark_rebuild", true)
+end
+
+function Mission_SetupVariables()	-- create any extra sgroups, egroups, and mission variables in here
+	TechTree_GiveEconUpgrades(player1, 3, TT_INCLUDE_TIERED)
+	TechTree_GiveEconUpgrades(player1, 2, TT_INCLUDE_NONTIERED)
+	TechTree_GiveMilitaryUpgrades(player1, 3, TT_INCLUDE_TIERED)
+	TechTree_GiveMilitaryUpgrades(player1, 2, TT_INCLUDE_NONTIERED)
+	TechTree_GiveUnitUpgrades(player1, 3, TT_INCLUDE_BOTH)
+	Player_CompleteUpgrade(player1, UPG.AYYUBID_CMP.UPGRADE_MIL_PARTHIAN_TACTICS_AYY)
+	
+	--Enemy Exclusions--
+	local enemyExcludedUpgrades = {UPG.COMMON.UPGRADE_NAVAL_MOUNTED_GUNS, UPG.COMMON.UPGRADE_NAVAL_SWIVEL_CANNON, UPG.ENGLISH.UPGRADE_NETWORK_OF_CITADELS_ENG, UPG.COMMON.UPGRADE_NAVAL_FORECASTLE}
+	
+				
+	if Game_GetSPDifficulty() == GD_EXPERT then
+		TechTree_GiveEconUpgrades(player2, 4, TT_INCLUDE_BOTH)
+		TechTree_GiveMilitaryUpgrades(player2, 4, TT_INCLUDE_BOTH, enemyExcludedUpgrades)
+		TechTree_GiveUnitUpgrades(player2, 4, TT_INCLUDE_BOTH)
+		
+		TechTree_GiveAllUpgrades_ByAge(player3, 3,TT_INCLUDE_BOTH)
+	elseif Game_GetSPDifficulty() == GD_HARD then
+		TechTree_GiveEconUpgrades(player2, 2, TT_INCLUDE_BOTH)
+		TechTree_GiveMilitaryUpgrades(player2, 2, TT_INCLUDE_BOTH, enemyExcludedUpgrades)
+		TechTree_GiveUnitUpgrades(player2, 4, TT_INCLUDE_BOTH)
+		
+		TechTree_GiveAllUpgrades_ByAge(player3, 3,TT_INCLUDE_BOTH)
+	elseif Game_GetSPDifficulty() == GD_NORMAL then
+		TechTree_GiveEconUpgrades(player2, 2, TT_INCLUDE_BOTH)
+		TechTree_GiveMilitaryUpgrades(player2, 2, TT_INCLUDE_BOTH, enemyExcludedUpgrades)
+		TechTree_GiveUnitUpgrades(player2, 3, TT_INCLUDE_BOTH)
+		
+		TechTree_GiveAllUpgrades_ByAge(player3, 4,TT_INCLUDE_BOTH)
+	elseif Game_GetSPDifficulty() == GD_EASY then
+		TechTree_GiveEconUpgrades(player2, 1, TT_INCLUDE_BOTH)
+		TechTree_GiveMilitaryUpgrades(player2, 1, TT_INCLUDE_BOTH, enemyExcludedUpgrades)
+		TechTree_GiveUnitUpgrades(player2, 3, TT_INCLUDE_BOTH)
+		
+		TechTree_GiveAllUpgrades_ByAge(player3, 4,TT_INCLUDE_BOTH)
+	end
+	
+	ABILITY_BARRAGE = BP_GetAbilityBlueprint("acre_barrage_ayy")
+	ABILITY_SMALL_BARRAGE = BP_GetAbilityBlueprint("acre_barrage_small_ayy")
+	
+	Modify_SightRadius(eg_lighthouse_01, 2.5)
+	Modify_SightRadius(eg_lighthouse_02, 1.85)
+	EGroup_SetInvulnerable(eg_lighthouses, true, -1)
+	EGroup_SetTargetingType(eg_lighthouses, Targeting_None)
+	local _RemoveScuttle = function(gid, index, eid)
+		Entity_RemoveAbility(eid, BP_GetAbilityBlueprint("core_building_scuttle"))
+	end
+	EGroup_ForEach(eg_lighthouses, _RemoveScuttle)
+	EGroup_CompleteUpgrade(eg_lighthouses, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+	EGroup_CompleteUpgrade(eg_lighthouses, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	
+	
+	sg_all_enemy_ships = SGroup_CreateIfNotFound("sg_all_enemy_ships")
+	
+	bFirstFlank = true
+	bBarrageUsed = false
+	
+	--DEBUG--
+	debug_bGenoeseSkip = false
+end
+
+function Mission_SetDifficulty()
+	Init_Acre_Difficulty()
+end
+
+function Mission_SetRestrictions()	-- set up any restrictions (i.e. locking out units, etc) in here
+	
+	--House of Wisdom Mods--
+	EGroup_CompleteUpgrade(eg_houseofwisdom, UPG.ABBASID.UPGRADE_ADD_CULTURE_WING)
+	EGroup_CompleteUpgrade(eg_houseofwisdom, UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING_FEUDAL)
+	Player_SetStateModelBool(player1, "economy_wing_built_abb", true)
+	Player_SetStateModelBool(player1, "culture_wing_built_abb", true)
+	EGroup_SetAnimatorVariable(eg_houseofwisdom, "economic_wing_build_progress_abb", 1)
+	EGroup_SetAnimatorVariable(eg_houseofwisdom, "culture_wing_build_progress_abb", 1)
+	Modify_EntityMaxHealth(eg_houseofwisdom, 10000, MUT_Addition)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_ADD_TRADE_WING, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_ADD_TRADE_WING_FEUDAL, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_ADD_TRADE_WING_CASTLE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_ADD_TRADE_WING_IMPERIAL, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_AYY, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_FEUDAL_AYY, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_CASTLE_AYY, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_IMPERIAL_AYY, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_TRADE_COMMODITY_TRADE_ABB, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_TRADE_GOLD_INCOME_ABB, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_TRADE_TRADER_ARMOR_ABB, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_CUL_MEDICAL_CENTERS_ABB, ITEM_REMOVED)
+	
+	--Cmd_Upgrade(eg_houseofwisdom, UPG.ABBASID.UPGRADE_ADD_CULTURE_WING, 1, true)
+	--Cmd_Upgrade(eg_houseofwisdom, UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING_FEUDAL, 1, true)
+		
+	--Player 1 Mods--
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_HOUSE_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_DEFENSE_WALL_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_DEFENSE_WALL_GATE_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_DEFENSE_TOWER_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_DEFENSE_KEEP_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_BOMBARD_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_CULVERIN_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_NAVAL_XEBEC_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_HANDCANNON_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_TRADE_CART_AYY, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_SIEGE_CHEMISTRY, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_NAVAL_GALLEY_CANNON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_NAVAL_SWIVEL_CANNON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_OUTPOST_CANNON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.AYYUBID_CMP.UPGRADE_NAVAL_ALLIED_DOCK_HEAL_AYY, ITEM_REMOVED) -- REMOVING MISSION-SPECIFIC UPGRADE
+	Player_SetPopCapOverride(player1, 200)
+	
+	--Enemy Mods--
+	if Game_GetSPDifficulty() > GD_EASY then
+		EGroup_CompleteUpgrade(Player_GetAllEntitiesFromType(player2, "scar_keep"), UPG.COMMON.UPGRADE_KEEP_SPRINGALD)
+		EGroup_CompleteUpgrade(Player_GetAllEntitiesFromType(player2, "scar_outpost"), UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	end
+	
+	if Game_GetSPDifficulty() > GD_NORMAL then
+		EGroup_CompleteUpgrade(Player_GetAllEntitiesFromType(player2, "scar_outpost"), UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+		--Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_TOWER_SPRINGALD)
+	end
+	
+	local ABP_ENG_AURA = BP_GetAbilityBlueprintByPbgID(168608) --English Tower Aura
+	Player_SetAbilityAvailability(player2, ABP_ENG_AURA, ITEM_REMOVED)
+	
+	--local _RemoveAura = function(gid, index, eid)
+		--local ABP_ENG_AURA = BP_GetAbilityBlueprintByPbgID(168608) --English Tower Aura
+		--Player_SetAbilityAvailability(player1, ABP_ENG_AURA, ITEM_REMOVED)
+		--if Entity_HasAbility(eid, ABP_ENG_AURA) then
+			
+			--view(Entity_HasAbility(Misc_GetMouseOverEntity(), BP_GetAbilityBlueprintByPbgID(168608)))
+			--view(Player_HasAbility(player2, BP_GetAbilityBlueprintByPbgID(168608)))
+			--Entity_RemoveAbility(eid, ABP_ENG_AURA) 
+			--Entity_RemoveAbility(Misc_GetMouseOverEntity(), BP_GetAbilityBlueprintByPbgID(168608))
+		--end
+	--end
+	--EGroup_ForEach(Player_GetAllEntitiesFromType(player2, "scar_keep"), _RemoveAura)
+	
+end
+
+function Mission_Preset()	-- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)	
+	Acre_InitMarkerArmies()
+	Acre_InitObjectives()
+	Acre_InitAlliedUnits()
+	
+	EGroup_SetAnimatorState(eg_siegecamp, "deploy_splat", "on")
+	EGroup_SetAnimatorState(eg_siegecamp, "projectile_vis_state", "on")
+	
+	Game_TransitionToState("dawn", 0)
+	
+	--DEBUG: Auto Test--
+	AutoTest_OnInit()
+	
+	FoodReserves_Init()
+	
+	Player_ModifyAyyubidMilitaryBuildTimes(player1, Util_DifVar({ 0.5, 0.75, 1, 1 }))
+	PlayerUpgrades_ApplyHealthBonuses(player1)
+	
+	--Give the monastery some relics
+	local player_mosque = EGroup_GetSpawnedEntityAt(eg_player_mosque, 1)
+	Entity_SetStateModelFloat(player_mosque, "relic_count", 1)
+		
+end
+
+function Mission_Start()	-- this is triggered after the intro, just as control is passed to the player
+	Objective_Start(OBJ_DefendSiegeCamp, false)
+	
+	Objective_Start(OBJ_Genoese, false)
+	
+	Objective_Start(OBJ_DestroyCrusaders, true)	
+	
+	--Init Autosave Points
+	Rule_AddInterval(Acre_AutoSaveInterval, 600)
+	
+	Rule_AddInterval(Acre_LaunchAttack, t_difficulty.enemyMods.ACRE_ATTACK_WAVE_TIMER )
+	Rule_AddInterval(_Monitor_Enemy_Replacements, t_difficulty.enemyMods.ACRE_ENEMY_REINFORCEMENT_TIMER)
+	
+	Misc_SetEntityControlGroup(EGroup_GetEntityAt(eg_siegecamp, 1), 0)
+	--Misc_SetEntityControlGroup(EGroup_GetEntityAt(eg_alliedbanner, 1), 9)
+	
+	Player_SetResource(player1, RT_Food, 5000)
+	Player_SetResource(player1, RT_Wood, 5000)
+	Player_SetResource(player1, RT_Gold, 5000)
+	Player_SetResource(player1, RT_Stone, 1000)
+	
+	--Init Ship Spawned Resource Drops on Death
+	Rule_AddSGroupEvent(_Monitor_Ship_Resource_Drops, sg_all_enemy_ships, GE_SquadKilled)
+	
+	--Init Building Spawned Resource Drops on Death
+	Rule_AddEGroupEvent(_Monitor_Land_Resource_Drops, eg_stone_buildings, GE_EntityKilled)	
+	
+	--Rule_AddInterval(Mission_TrickleResources, 1)
+	
+	-- Delay VO a bit to give some space after camera
+	Rule_AddOneShot(VOCue_MissionStart_Acre, 15)
+		
+	Acre_LaunchAttack()
+	
+	if Game_GetSPDifficulty() >= GD_HARD then
+		_Monitor_WaterRuins()
+		Rule_AddInterval(_Monitor_WaterRuins, t_difficulty.enemyMods.NAVAL_TRANSPORT_REBUILD)
+		Rule_AddInterval(SpawnEnemy_FrankishMarines, t_difficulty.enemyMods.NAVAL_ATTACK_TIMER)
+		Rule_AddInterval(Flank_Warning, 1)
+		
+		Rule_AddInterval(_Monitor_Enemy_Naval_Replacements, t_difficulty.enemyMods.ACRE_ENEMY_NAVAL_REINFORCEMENT_TIMER)
+		
+		Monitor_KeepVisbility()
+	end
+	
+	if Game_GetSPDifficulty() == GD_EASY then
+		Init_StoryModeItems()
+	end
+			
+	-- Turn crowns on that were off for the intro cam
+	Player_GetAll(player2)
+	SGroup_EnableLeaderCrown(sg_allsquads, true)
+end
+
+function _Control_AlliedArmy(context, data)
+	local thisArmy = data.thisArmy
+	local bannerEntity = data.bannerEntity
+	
+	if SGroup_CountSpawned(thisArmy.sgroup) > 0 then
+		if Util_GetDistanceSquared(thisArmy.targets[1].position, Entity_GetPosition(bannerEntity)) > 8 then
+			Army_SetTarget(thisArmy, Entity_GetPosition(bannerEntity))
+		end
+	end
+end
+
+function _MonitorAllyArmy(context, data)
+	local thisArmy = data.thisArmy
+	if SGroup_CountSpawned(thisArmy.sgroup) < 70 then
+		SGroup_Clear(sg_temp)
+		UnitEntry_DeploySquads(player3, sg_temp, {{type="scar_spearman", numSquads=3},{type="scar_manatarms", numSquads=2},{type="scar_archer", numSquads=2},}, mkr_ally_spawn)
+		Army_AddSGroup(thisArmy, sg_temp)
+	end
+end
+
+function _Monitor_Enemy_Replacements()
+	--if World_GetGameTime() - lastCounterAttackTime >= t_difficulty.enemyMods.ACRE_ENEMY_REINFORCEMENT_DELAY then
+		if All_Army_Distance_Sorted ~= nil and #All_Army_Distance_Sorted > 0 then
+			local thisArmy = nil
+			for i = #All_Army_Distance_Sorted, 1, -1 do
+				if SGroup_IsEmpty(All_Army_Distance_Sorted[i].sgroup) then
+					thisArmy = All_Army_Distance_Sorted[i]
+					break
+				end
+			end
+			if thisArmy ~= nil and EGroup_IsEmpty(eg_crusaderkeeps) ~= true then
+				if thisArmy.spawn == nil then
+					local a=2
+				end
+				local nearestKeep = EGroup_GetClosestEntity(eg_crusaderkeeps, thisArmy.spawn.position)
+				if nearestKeep ~= nil then
+					SGroup_Clear(sg_temp)
+					CreateUnits(player2, thisArmy.ORIGINAL_UNITS, Util_GetPosition(nearestKeep), sg_temp)
+					Army_AddSGroup(thisArmy, sg_temp)
+					Army_SetTarget(thisArmy, thisArmy.spawn.position)
+				end
+			end
+		end
+	--end
+end
+
+function _Monitor_Enemy_Naval_Replacements()
+	--if World_GetGameTime() - lastCounterAttackTime >= t_difficulty.enemyMods.ACRE_ENEMY_REINFORCEMENT_DELAY then
+		if All_Navy_Distance_Sorted ~= nil and #All_Navy_Distance_Sorted > 0 then
+			local thisNavy = nil
+			for i = #All_Navy_Distance_Sorted, 1, -1 do
+				if SGroup_IsEmpty(All_Navy_Distance_Sorted[i].sgroup) then
+					thisNavy = All_Army_Distance_Sorted[i]
+					break
+				end
+			end
+			if thisNavy ~= nil and EGroup_IsEmpty(eg_enemy_docks) ~= true then
+				if thisNavy.spawn == nil then
+					local a=2
+				end
+				local nearestDock = EGroup_GetClosestEntity(eg_enemy_docks, thisNavy.spawn.position)
+				if nearestDock ~= nil then
+					SGroup_Clear(sg_temp)
+					CreateUnits(player2, thisNavy.ORIGINAL_UNITS, Util_GetPosition(nearestDock), sg_temp)
+					Army_AddSGroup(thisNavy, sg_temp)
+					Army_SetTarget(thisNavy, thisNavy.spawn.position)
+				end
+			end
+		end
+	--end
+end
+
+function Mission_TrickleResources()
+		
+	if t_difficulty.playerMods.RES_TRICKLE_AMOUNT > 0 then
+		local resPerSecond = t_difficulty.playerMods.RES_TRICKLE_AMOUNT/60
+		Player_AddResource(player1, RT_Gold, resPerSecond, RES_Resourcing)
+		Player_AddResource(player1, RT_Food, resPerSecond, RES_Resourcing)
+		Player_AddResource(player1, RT_Wood, resPerSecond, RES_Resourcing)
+	end
+end
+
+function _Monitor_Ship_Resource_Drops(context, data)
+	shipsDestroyed = shipsDestroyed or 0
+	shipsDestroyed = shipsDestroyed + 1
+	local woodPickup = BP_GetEntityBlueprint("resource_pickup_naval_wood_xp3")
+	local spawnChance = t_difficulty.playerMods.RES_PICKUP_SPAWN_CHANCE_NAVAL
+	local spawnPos = Util_GetPosition(context.victim)
+	if shipsDestroyed < 2 then
+		CreateEntity(player2, woodPickup, spawnPos)
+	elseif shipsDestroyed % spawnChance == 0 then
+		CreateEntity(player2, woodPickup, spawnPos)
+	end
+end
+
+function _Monitor_Land_Resource_Drops(context, data)
+	local stonePickup = BP_GetEntityBlueprint("resource_pickup_stone_xp3")
+	local spawnAmount = t_difficulty.playerMods.RES_PICKUP_SPAWN_AMOUNT_LAND
+	local spawnPos = Util_GetPosition(context.victim)
+	local offSets = {OFFSET_FRONT, OFFSET_BACK, OFFSET_LEFT, OFFSET_RIGHT}
+	if spawnAmount > 1 then
+		for i = 1, spawnAmount do
+			local spawnOffset = Util_GetOffsetPosition(spawnPos, offSets[i], 3)
+			CreateEntity(player2, stonePickup, spawnOffset)
+		end
+	else
+		CreateEntity(player2, stonePickup, spawnPos)
+	end
+end
+
+function Get_ValidEnemySpawn()
+	local spawn = mkr_crusader_spawning
+	if EGroup_IsEmpty(eg_crusaderkeeps) == false then
+		spawn = EGroup_GetClosestEntity(eg_crusaderkeeps, mkr_crusader_spawning)
+	end
+	return spawn
+end
+
+function Get_ValidEnemySpawn_Naval()
+	local spawn = mkr_naval_spawn
+	if EGroup_IsEmpty(eg_enemy_docks) == false then
+		spawn = EGroup_GetClosestEntity(eg_enemy_docks, mkr_naval_spawn)
+	end
+	return spawn
+end
+
+function Acre_AutoSaveInterval()
+	Util_AutoSave(true, true, 30)
+end
+
+function GetRecipe()
+	local recipe = {		
+		--victory_message = "$39257",
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,
+		
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_slaves_to_sultans",
+				title = "$11234497", -- Acre
+				date = "$11252172", --1291
+			},
+		},
+		
+		locations = {},  
+		modules = {},
+		onWin = {},
+		onLose = {},
+	}
+	return recipe
+end
+
+---------------
+-----DEBUG-----
+---------------
+
+function Debug_SkipToGenoese()
+	debug_bGenoeseSkip = true
+end
+
+function Debug_SkipMissionComplete()
+	EGroup_Kill(eg_crusaderkeeps)
+end

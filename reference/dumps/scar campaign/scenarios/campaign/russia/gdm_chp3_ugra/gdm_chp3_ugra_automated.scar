@@ -1,0 +1,364 @@
+-----------------------------------------------------------------------
+--
+-- Rus Chapter 3 - Ugra
+--
+-- Automated testing script
+--
+-----------------------------------------------------------------------
+
+import("GameScarUtil.scar")
+import("Prefabs.scar")
+import("standard.scar")
+import("scarutil.scar")
+import("team.scar")
+
+import("core.scar")
+
+-- We need to import this for anything to work. We don't need anything else
+import("MissionOMatic/MissionOMatic.scar")
+import("missionomatic/modules/module_rovingarmy.scar")
+
+--enumeration for objective status
+statusTable = {
+	NotRun = 0, 
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3
+}
+
+--Bool verifying if the Campaign Auto Test Agrument is present
+debug_IsCampaignAutoTest = false
+
+--Bool for checking if the intro event has started
+b_introStarted = false
+
+player1 = World_GetPlayerAt(1)
+
+-------------------------------------------------------------------------
+-- [[ ONINIT ]]
+-------------------------------------------------------------------------
+
+function AutoTest_OnInit()
+	
+	if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+		
+		
+		import("test/common.scar")
+		import("test/standard_test.scar")
+		import("test/test_framework.scar")
+		--import("test/test_framework_cardinal.scar")
+		
+		print("CampaignAutoTest parameter detected")
+		debug_IsCampaignAutoTest = true
+		
+		AutomatedUgra_RegisterCheckpoints()	
+		
+		Game_AIControlLocalPlayer()
+		AI_Enable(player1, true)
+		print("Assuming Direct Control. Player is now AI Driven: "..tostring(AI_IsEnabled(player1)))
+		
+		--Checks for the 'NoSwoopy' Arg, and disables the swoopy intro camera on true--
+		if Util_GetCommandLineArgument("NoSwoopy") then
+			Rule_AddInterval(AutoTest_SkipAndStart, 1)
+		else
+			Rule_AddInterval(AutoTest_PlayIntro, 1)
+		end
+				
+	end
+end
+
+--Compiles the list of checkpoints
+function AutomatedUgra_RegisterCheckpoints()
+	---- All Checkpoints Should be preceeded with Campaign Auto Test 'cat_' --
+
+	--"cat_PlayStart", when play is handed over to the player
+	CampaignAutotest_RegisterCheckpoint("cat_PlayStart", 120)
+	CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["InProgress"])
+	
+	--"cat_FordsStocked", the player has filled the fords with troops
+	CampaignAutotest_RegisterCheckpoint("cat_FordsStocked", 180)
+	CampaignAutotest_SetCheckpointStatus("cat_FordsStocked", statusTable["NotRun"])
+	
+	--"cat_VanguardRepelled", the player has repelled the first two attacks
+	CampaignAutotest_RegisterCheckpoint("cat_VanguardRepelled", 900)
+	CampaignAutotest_SetCheckpointStatus("cat_VanguardRepelled", statusTable["NotRun"])
+	
+	--"cat_FordsHeld", the player has help the fords for 15 minutes
+	CampaignAutotest_RegisterCheckpoint("cat_FordsHeld", 1020)
+	CampaignAutotest_SetCheckpointStatus("cat_FordsHeld", statusTable["NotRun"])
+	
+	--"cat_MissionVictory", the player has destroyed the enemy camp and mission victory is acheived
+	CampaignAutotest_RegisterCheckpoint("cat_MissionVictory", 300)
+	CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["NotRun"])
+		
+end
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+	if Event_IsAnyRunning() then
+		Rule_RemoveMe()
+		Game_SkipAllEvents(false)
+		AutomatedMission_Start() --Starts the autotest scar sequence
+	end
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+--If this is the first check since the intro event started, then starting checking for the end only after it starts
+	if b_introStarted == false then  
+		if Event_IsAnyRunning() then
+			b_introStarted = true
+		end
+	else
+		if Event_IsAnyRunning() == false then
+			Rule_RemoveMe()
+			AutomatedMission_Start() --Starts the autotest scar sequence
+		end
+	end
+end
+
+--Script for kicking off the uatomated testing flow
+function AutomatedMission_Start()
+	FOW_RevealAll()	
+	Rule_AddInterval(AutomatedUgra_Phase0_CheckPlayStart, 1)
+end
+
+function AutomatedUgra_Phase0_CheckPlayStart()
+	if Objective_IsStarted(OBJ_FindMongols) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_FordsStocked", statusTable["InProgress"])
+		AutomatedUgra_Phase1_SetUpPhase1()
+	end
+	
+end
+
+function AutomatedUgra_Phase1_SetUpPhase1()
+	Player_GetAll(player1)
+	sg_cat_playerarmy = SGroup_CreateIfNotFound("sg_cat_playerarmy")
+	SGroup_Filter(sg_allsquads, "military", FILTER_REMOVE, sg_cat_playerarmy)
+	
+	sg_cat_northarmy = SGroup_CreateIfNotFound("sg_cat_northarmy")
+	sg_cat_southarmy = SGroup_CreateIfNotFound("sg_cat_southarmy")
+	
+	local siege_units = {
+		{ type = "scar_mangonel", numSquads = 3 }, 
+		{ type = "scar_springald", numSquads = 2 }, 
+		{ type = "scar_cannon", numSquads = 2 },
+	}
+	
+	--Set up player army on the north ford
+	local army1_data = 
+	{
+		player = player1,
+		spawnLocation = mkr_camera_start,
+		sgroup = sg_cat_northarmy,
+		descriptor = "player_rov1",
+		useCustomDirection = true,
+		targets = {
+			{marker = mkr_rusford1, combatRange = 50, leashRange = 50,}
+		},
+		--units = {{ type = "scar_manatarms", numSquads = 20 }, { type = "scar_crossbowman", numSquads = 20 }},
+	}
+	cat_playerarmy_1 = RovingArmy_Init(army1_data)
+	
+	RovingArmy_AddSGroup(cat_playerarmy_1, sg_cat_playerarmy, true)
+
+	SpawnUnitsToModule(siege_units, cat_playerarmy_1, mkr_camera_start)
+	
+	--Set up player army on the south ford
+	local army2_data = 
+	{
+		player = player1,
+		spawnLocation = mkr_camera_start,
+		sgroup = sg_cat_southarmy,
+		descriptor = "player_rov1",
+		useCustomDirection = true,
+		targets = {{marker = mkr_rusford2, combatRange = 50, leashRange = 50,},},
+		units = {{ type = "scar_spearman", numSquads = 20 },{ type = "scar_manatarms", numSquads = 10 }, { type = "scar_archer", numSquads = 20 }},
+	}
+	cat_playerarmy_2 = RovingArmy_Init(army2_data)
+	SpawnUnitsToModule(siege_units, cat_playerarmy_2, mkr_camera_start)
+		
+	Rule_AddInterval(AutomatedUgra_Phase1_QueryFordsStocked, 1)
+	
+	rule_playerarmy1_replenish = Rule_AddInterval(_AutomatedUgra_UnitReplenish, 1, {module = cat_playerarmy_1})
+	rule_playerarmy2_replenish = Rule_AddInterval(_AutomatedUgra_UnitReplenish, 1, {module = cat_playerarmy_2})
+	
+	AutomatedUgra_VillagerWalls_Init()
+	
+end
+
+function _AutomatedUgra_Delay_TowerBuild(context, data)
+	local sgroup = data.sgroup
+	local gateMarker = data.marker
+	if SGroup_IsIdle(sgroup, true) then
+		Rule_RemoveMe()
+		LocalCommand_PlayerSquadConstructSlottedSplineDependent(player1, sgroup, EBP.RUS.BUILDING_DEFENSE_TOWER_RUS, Util_GetPosition(gateMarker), Util_GetFacingFromDirection(Util_GetPosition(gateMarker), Marker_GetDirection(gateMarker)), true)
+	end
+end
+
+function AutomatedUgra_Phase1_QueryFordsStocked()
+	if forceRatioNorth ~= nil and forceRatioSouth ~= nil and attackThreshold ~= nil then
+		if forceRatioNorth >= attackThreshold and forceRatioSouth >= attackThreshold then
+			Rule_RemoveMe()
+			CampaignAutotest_SetCheckpointStatus("cat_FordsStocked", statusTable["Pass"])
+			CampaignAutotest_SetCheckpointStatus("cat_VanguardRepelled", statusTable["InProgress"])
+			Rule_AddInterval(AutomatedUgra_Phase2_QueryRepelCompletion, 1)
+		end
+	else
+		print("Ford Ratios and threshold not set. Spinning Wheels.")
+	end
+end
+
+function AutomatedUgra_Phase2_QueryRepelCompletion()
+	if Objective_IsComplete(SOBJ_RepelWave1) and Objective_IsComplete(SOBJ_RepelWave2) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_VanguardRepelled", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_FordsHeld", statusTable["InProgress"])
+		Rule_AddInterval(AutomatedUgra_Phase3_QueryFordsHeld, 1)
+		AutomatedUgra_Optional_EliminateReinforcments()
+	end
+end
+
+function AutomatedUgra_Optional_EliminateReinforcments()
+	sg_cat_reinforcement_interception = SGroup_CreateIfNotFound("sg_cat_reinforcement_interception")
+
+	local army3_data = 
+	{
+		player = player1,
+		spawnLocation = mkr_camera_start,
+		sgroup = sg_cat_reinforcement_interception,
+		descriptor = "player_rov1",
+		targets = {mkr_reinforcementspawn_units,},
+		units = {
+			{ type = "scar_spearman", numSquads = 20},
+			{ type = "scar_manatarms", numSquads = 10}, 
+			{ type = "scar_archer", numSquads = 20},
+			{ type = "scar_mangonel", numSquads = 2}, 
+			{ type = "scar_springald", numSquads = 1}, 
+			{ type = "scar_cannon", numSquads = 1 },
+		},
+	}
+	cat_playerarmy_intercept = RovingArmy_Init(army3_data)
+	rule_playerarmy_intercept_replenish = Rule_AddInterval(_AutomatedUgra_UnitReplenish, 1, {module = cat_playerarmy_intercept})
+end
+
+function AutomatedUgra_Phase3_QueryFordsHeld()
+	if Objective_IsComplete(OBJ_MaintainSuperiority) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_FordsHeld", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["InProgress"])
+		Rule_AddInterval(AutomatedUgra_Phase4_QueryMissionVictory, 1)
+		RovingArmy_SetTarget(cat_playerarmy_1, mkr_mon_ranged_south)
+		RovingArmy_SetTarget(cat_playerarmy_2, mkr_mon_ranged_south)
+		RovingArmy_SetTarget(cat_playerarmy_intercept, mkr_mon_ranged_south)
+	end
+end
+
+function AutomatedUgra_Phase4_QueryMissionVictory()
+	if Objective_IsComplete(OBJ_MaintainSuperiority) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["Pass"])
+	end
+end
+
+
+--? @args Data table containing the module
+--? @shortdesc A rule script to watch select unit groups and replenish them when they get low. SAVE IN AN ID.
+-- EXAMPLE: rule_playerarmy1_replenish = Rule_AddInterval(_AutomatedUgra_UnitReplenish, 1, {module = cat_playerarmy_1})
+function _AutomatedUgra_UnitReplenish(context, data)
+	if data.module ~= nil then
+		local module = data.module
+		local sgroup = module.sgroup
+		local originalCount = UnitTable_CountUnits(module.idealComposition)
+		local spawn = module.spawnLocation
+		local groupLocation = nil
+		
+		if sgroup ~= nil then
+			if SGroup_CountSpawned(sgroup) <= originalCount/2 then
+				local lostUnits = originalCount - SGroup_CountSpawned(sgroup)
+				local units = 
+				{
+					{ type = "scar_spearman", numSquads = math.ceil(lostUnits/3)}, 
+					{ type = "scar_manatarms", numSquads = math.ceil(lostUnits/3)}, 
+					{ type = "scar_archer", numSquads = math.ceil(lostUnits/3)},
+				}
+				
+				if SGroup_CountSpawned(sgroup) > 0 then
+					groupLocation = Util_GetPosition(SGroup_GetSquadAt(sgroup, 1))
+				end
+				
+				if groupLocation ~= nil then
+					SpawnUnitsToModule(units, module, groupLocation)
+				else
+					SpawnUnitsToModule(units, module, spawn)
+				end
+			end
+		else
+			assert(false, "UnitReplenish was given a module with no sgroup(nil)")
+		end
+	else
+		assert(false, "UnitReplenish is being called on an nil module")
+	end
+end
+
+function AutomatedUgra_VillagerWalls_Init()
+	Player_AddResources(player1, {gold = 5000, wood = 10000, food = 5000, stone = 999999,})
+	
+	sg_cat_villagers_1 = SGroup_CreateIfNotFound("sg_cat_villagers_1")
+	UnitEntry_DeploySquads(player1, sg_cat_villagers_1, {{ type = "scar_villager", numSquads = 3 }}, mkr_camera_start)
+	--SGroup_SetInvulnerable(sg_cat_villagers_1, true, -1)
+	--SGroup_SetTargetingType(sg_cat_villagers_1, Targeting_None)
+	LocalCommand_PlayerSquadConstructFence(player1, sg_cat_villagers_1, EBP.RUS.BUILDING_DEFENSE_WALL_RUS, Util_GetPosition(mkr_cat_northford_wall_start), Util_GetPosition(mkr_cat_northford_wall_end), false)
+	Rule_AddInterval(_AutomatedUgra_Delay_TowerBuild, 1, {sgroup = sg_cat_villagers_1, marker = mkr_cat_northford_wall_gate })
+		
+	sg_cat_villagers_2 = SGroup_CreateIfNotFound("sg_cat_villagers_2")
+	UnitEntry_DeploySquads(player1, sg_cat_villagers_2, {{ type = "scar_villager", numSquads = 3 }}, mkr_camera_start)
+	--SGroup_SetInvulnerable(sg_cat_villagers_2, true, -1)
+	--SGroup_SetTargetingType(sg_cat_villagers_2, Targeting_None)
+	LocalCommand_PlayerSquadConstructFence(player1, sg_cat_villagers_2, EBP.RUS.BUILDING_DEFENSE_WALL_RUS, Util_GetPosition(mkr_cat_southford_wall_start), Util_GetPosition(mkr_cat_southford_wall_end), false)
+	Rule_AddInterval(_AutomatedUgra_Delay_TowerBuild, 1, {sgroup = sg_cat_villagers_2, marker = mkr_cat_southford_wall_gate })
+	
+	
+	Rule_AddInterval(_AutomatedUgra_VillagerWalls_Monitor_North, 60)
+	Rule_AddInterval(_AutomatedUgra_VillagerWalls_Monitor_South, 60)
+end
+
+function _AutomatedUgra_VillagerWalls_Monitor_North()
+	local currentVillagers = SGroup_CountSpawned(sg_cat_villagers_1)
+	if currentVillagers < 3 then
+		local villagersNeeded = 3-currentVillagers
+		UnitEntry_DeploySquads(player1, sg_cat_villagers_1, {{ type = "scar_villager", numSquads = villagersNeeded }}, mkr_camera_start)
+	end 
+	if Prox_ArePlayersNearMarker(player2, mkr_rusford1, ANY) == false then
+		LocalCommand_PlayerSquadConstructFence(player1, sg_cat_villagers_1, EBP.RUS.BUILDING_DEFENSE_WALL_RUS, Util_GetPosition(mkr_cat_northford_wall_start), Util_GetPosition(mkr_cat_northford_wall_end), false)
+		Rule_AddInterval(_AutomatedUgra_Delay_TowerBuild, 1, {sgroup = sg_cat_villagers_1, marker = mkr_cat_northford_wall_gate })
+	end	
+end
+
+function _AutomatedUgra_VillagerWalls_Monitor_South()
+	local currentVillagers = SGroup_CountSpawned(sg_cat_villagers_2)
+	if currentVillagers < 3 then
+		local villagersNeeded = 3-currentVillagers
+		UnitEntry_DeploySquads(player1, sg_cat_villagers_2, {{ type = "scar_villager", numSquads = villagersNeeded }}, mkr_camera_start)
+	end 
+	if Prox_ArePlayersNearMarker(player2, mkr_rusford2, ANY) == false then
+		LocalCommand_PlayerSquadConstructFence(player1, sg_cat_villagers_2, EBP.RUS.BUILDING_DEFENSE_WALL_RUS, Util_GetPosition(mkr_cat_southford_wall_start), Util_GetPosition(mkr_cat_southford_wall_end), false)
+		Rule_AddInterval(_AutomatedUgra_Delay_TowerBuild, 1, {sgroup = sg_cat_villagers_2, marker = mkr_cat_southford_wall_gate })
+	end	
+end
+
+
+--DEBUG For Future Use--
+function Player_RovingArmy()
+		
+	local data = {
+		player = player1,
+		spawnLocation = mkr_camera_start,
+		descriptor = "player_rov1",
+		targets = {mkr_rusford1,},
+		units = {{ type = "scar_manatarms", numSquads = 20 }, { type = "scar_crossbowman", numSquads = 20 }},
+	}
+	RovingArmy_Init(data)
+end

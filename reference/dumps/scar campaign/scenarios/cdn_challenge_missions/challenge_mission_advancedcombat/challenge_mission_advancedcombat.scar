@@ -1,0 +1,1690 @@
+-----------------------------------------------------------------------
+--
+-- Challenge Mission - Advanced Combat
+--
+-- The player must defeat 5 groups of enemy attackers to complete this Challenge Mission.
+-- Success is measured by the amount of units the player has lost when all waves have been defeated.
+--
+-- (c) Forgotten Empires 2021
+--
+-----------------------------------------------------------------------
+
+import("Cardinal.scar")
+import("training/coretraininggoals.scar")
+--import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+--import("MissionOMatic/MissionOMatic_utility.scar")
+--import("missionomatic/missionomatic_artofwar.scar")--only in XP1
+import("challenge_mission_advancedcombat.events")
+--import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+--import("MissionOMatic/MissionOMatic_utility.scar")
+--import("challenge_mission_basiccombat_training.scar")		-- this imports training tips specific to this mission
+import("challenge_mission_advancedcombat_preintro.scar")
+import("challenge_mission_advancedcombat_automated.scar")
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+
+_challenge = {
+	startingResources = {
+		food = 0.0,
+		wood = 0.0,
+		gold = 0.0,
+		stone = 0.0,				
+	},
+		benchmarks = {
+		unplaced = {
+			name = "$11202197",
+			goal = nil,
+			maxUnitsDied = nil,
+			objective = {},
+		},
+		bronze = {
+			maxUnitsDied = 40,
+			objective = {},
+		},
+		silver = {
+			maxUnitsDied = 30,
+			objective = {},
+		},
+		gold = {
+			maxUnitsDied = 15,
+			objective = {},
+		},
+		currentUnitsDied = 0,
+	},
+	icons = {
+		victoryObjective = "icons\\races\\common\\victory_conditions\\victory_condition_settlements",
+		noMedalObjective = "icons\\fe\\medal_no.png",
+		bronzeMedalObjective = "icons\\fe\\medal_bronze.png",
+		silverMedalObjective = "icons\\fe\\medal_silver.png",
+		goldMedalObjective = "icons\\fe\\medal_gold.png",
+	},
+	currentBenchmark = nil,
+	currentWaveSquadGroup = nil,
+	currentWaveAttackPath = {},
+	currentWaveAttackStartDialogue = nil,
+	currentWave = 1,
+	currentArmy = nil,
+	currentArmy2 = nil,
+	archerLeader = nil,
+	crossbowmanLeader = nil,
+	spearmanLeader = nil,
+	menatarmsLeader = nil,
+	horsemanLeader = nil,
+	knightLeader = nil,
+	archeryRange1 = nil,
+	archeryRange2 = nil,
+	barracks1 = nil,
+	barracks2 = nil,
+	stable1 = nil,
+	stable2 = nil,
+	waveActive = false,
+	lastSelectedBuilding = nil,
+	hasUnselectedBuilding = false,
+	villageBuildings = nil,
+	archerDefense = true,
+	crossbowmanDefense = true,
+	spearmanDefense = true,
+	manatarmsDefense = true,
+	horsemanDefense = true,
+	knightDefense = true,
+	meatShieldHint = false,
+	currentSecondObjective = nil,
+	currentTrainingObjective = nil,
+	reminderDelay = 30,
+	revealDelay = 10,
+	selectionDelay = 5,
+	attackDelay = {},
+	hintDelay = 10,
+	missionEndDelay = 15,
+	revealTime = 15,
+	buildingsLostThisWave = 0,
+	buildingsLostEndOfWave = 0,
+	maxHousesLost = 7,
+	waves = {},
+	celebrations = {},
+	victory = {},
+	objective = {},
+    balance ={
+        defenderArcherCount = 15,
+        defenderCrossbowmanCount = 10,
+        defenderSpearmanCount = 15,
+        defenderManatarmsCount = 10,
+        defenderHorsemanCount = 10,
+        defenderKnightCount = 5,
+        wave1Count = 10,
+        wave2Count = 10,
+        wave3Count = 5,
+        wave4SpearmenCount = 15,
+        wave4CrossbowmenCount = 10,
+        wave5MenatarmsCount = 10,
+        wave5HorsemenCount = 10,
+        wave6ArchersCount = 15,
+        wave6KnightsCount = 5,
+    }
+}
+
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+
+-- Called when Mission loads
+function Mission_OnInit()
+	
+	if UI_IsXboxUI() then
+		_challenge.benchmarks.bronze = {
+			maxUnitsDied = 45,
+			objective = {},
+		}
+		_challenge.benchmarks.silver = {
+			maxUnitsDied = 35,
+			objective = {},
+		}
+		_challenge.benchmarks.gold = {
+			maxUnitsDied = 18,
+			objective = {},
+		}
+	end
+	
+	--FOW_RevealAll()
+	--Game_FadeToBlack(FADE_OUT, 0)
+	
+	_challenge.waves[#_challenge.waves+1] = ChallengeMission_FirstWave 
+	_challenge.waves[#_challenge.waves+1] = ChallengeMission_SecondWave 
+	_challenge.waves[#_challenge.waves+1] = ChallengeMission_ThirdWave 
+	_challenge.waves[#_challenge.waves+1] = ChallengeMission_FourthWave 
+	_challenge.waves[#_challenge.waves+1] = ChallengeMission_FifthWave 
+	_challenge.waves[#_challenge.waves+1] = ChallengeMission_SixthWave 
+	_challenge.celebrations[#_challenge.celebrations+1] = EVENTS.Narr_Celebration1 
+	_challenge.celebrations[#_challenge.celebrations+1] = EVENTS.Narr_Celebration2
+	_challenge.celebrations[#_challenge.celebrations+1] = EVENTS.Narr_Celebration3 
+	_challenge.celebrations[#_challenge.celebrations+1] = EVENTS.Narr_Celebration4
+	_challenge.celebrations[#_challenge.celebrations+1] = EVENTS.Narr_Celebration5	
+	_challenge.celebrations[#_challenge.celebrations+1] = EVENTS.Narr_Celebration6		
+	_challenge.attackDelay[#_challenge.attackDelay+1] = 10
+	_challenge.attackDelay[#_challenge.attackDelay+1] = 10
+	_challenge.attackDelay[#_challenge.attackDelay+1] = 10
+	_challenge.attackDelay[#_challenge.attackDelay+1] = 10
+	_challenge.attackDelay[#_challenge.attackDelay+1] = 10
+	_challenge.attackDelay[#_challenge.attackDelay+1] = 10
+	
+end
+
+-- Mission Preset
+function Mission_Preset()
+	
+	-- Setup Game and Players
+	ChallengeMission_SetupChallengePlayers()
+	ChallengeMission_SetupDiplomacy()
+	
+end
+
+-- Called before Mission Start
+function Mission_PreStart()
+	
+	-- Spawn Starting Units
+	ChallengeMission_InitStartingUnits()
+	
+	-- Start pre-intro cinematic
+	AdvancedCombat_PreIntro_Setup_Scenes()
+	Util_StartIntel(EVENTS.AdvancedCombat_PreIntro)
+	
+	-- Check for end of Event
+	Rule_AddInterval(Mission_PreStart_IntroNISFinished, 0.125)
+	-- Hold off on starting the mission until cinematic finishes
+	StartMission_Hold()
+	
+	-- set music intensity
+	Music_LockIntensity(MUSIC_TENSE_RARE)
+	
+end
+
+-- Called at Mission Start
+function Mission_Start()
+	--reset diplomacy
+	ChallengeMission_SetupDiplomacy()
+	
+	-- Setup Challenge Mission
+	ChallengeMission_SetupChallenge()
+	
+	-- Initialize Objectives
+	ChallengeMission_InitializeObjectives()
+	
+	--Missionomatic_ChallengeInit({ kpiType = "unitsLost", goalBronze = 40, goalSilver = 30, goalGold = 15 }) -- only in XP1
+	
+	-- Register callbacks for global events
+	Rule_AddGlobalEvent(ChallengeMission_OnDestruction, GE_EntityKilled)
+	
+	Rule_AddInterval(ChallengeMission_Update, 0.25)
+	Rule_AddInterval(ChallengeMission_RespondToPlayerAttack, 1.5)
+	
+	Rule_AddOneShot(ChallengeMission_FirstWave, _challenge.revealDelay)
+	Rule_AddOneShot(ChallengeMission_InitializeWave, _challenge.revealDelay + _challenge.selectionDelay)
+
+	
+	--add point of interest labels
+	HintPoint_StealthForest1 = HintPoint_Add(mkr_stealth_forest_01, true, "$11202377")
+	HintPoint_StealthForest2 = HintPoint_Add(mkr_stealth_forest_02, true, "$11202377")
+	HintPoint_Cliffs = HintPoint_Add(mkr_cliffs, true, "$11217933")
+	
+	-- Disable dynamic training
+	TrainingGoal_DisableAgeUpGoals()
+	TrainingGoal_DisableCoreControlGoals()
+	TrainingGoal_DisableCoreEconGoals()
+	
+	if Util_GetCommandLineArgument("CampaignAutoTest") then
+		print("CampaignAutoTest parameter detected")
+		AutomatedMission_Start()
+	end
+end
+
+-----------------------------------------------------------------------
+-- Functions
+-----------------------------------------------------------------------
+function GetRecipe()
+
+	local recipe = {
+		
+		introNIS = EVENTS.PreIntro,
+	}
+end
+
+function ChallengeMission_SetupDiplomacy()
+	
+	Player_SetRelationship(localPlayer, villagePlayer, R_ALLY)
+	Player_SetRelationship(localPlayer, enemyPlayer, R_ENEMY)
+	Player_SetRelationship(enemyPlayer, villagePlayer, R_ENEMY)
+	Player_SetRelationship(localPlayer, trainingPlayer, R_ALLY)
+	Player_SetRelationship(enemyPlayer, trainingPlayer, R_ALLY)
+	Player_SetRelationship(localPlayer, trainingPlayer2, R_ALLY)
+	Player_SetRelationship(enemyPlayer, trainingPlayer2, R_ALLY)
+	Player_SetRelationship(trainingPlayer2, localPlayer, R_ALLY)
+	Player_SetRelationship(trainingPlayer2, enemyPlayer, R_ALLY)
+	
+	World_EnableSharedLineOfSight(localPlayer,villagePlayer,true)
+	World_EnableSharedLineOfSight(enemyPlayer, trainingPlayer, false)
+	World_EnableSharedLineOfSight(enemyPlayer, trainingPlayer2, false)
+	
+end
+
+-- Configure Players
+function ChallengeMission_SetupChallengePlayers()
+	--[[
+	--only in XP1
+	localPlayer = Missionomatic_InitPlayer(1, { name = "$11202380", currentAge = AGE_CASTLE, maxAge = AGE_CASTLE, playerColorSlot = 1 })
+	enemyPlayer = Missionomatic_InitPlayer(2, { name = "Abbasid", currentAge = AGE_CASTLE, maxAge = AGE_CASTLE, playerColorSlot = 2 }) --Enemy
+	villagePlayer = Missionomatic_InitPlayer(3, { name = "$11202382", currentAge = AGE_CASTLE, maxAge = AGE_CASTLE, playerColorSlot = 3 }) --Ally
+	trainingPlayer = Missionomatic_InitPlayer(4, { name = "$11202382", currentAge = AGE_FEUDAL, maxAge = AGE_FEUDAL, playerColorSlot = 3 }) --Allied Production
+	trainingPlayer2 = Missionomatic_InitPlayer(5, { name = "$11202382", currentAge = AGE_CASTLE, maxAge = AGE_CASTLE, playerColorSlot = 3 }) --Allied Production
+	--]]
+	--use old player setup methods
+	
+	-- player 1 - Player
+	localPlayer = World_GetPlayerAt(1) --Player
+	Setup_SetPlayerName(localPlayer, "$11202380")
+	Player_SetCurrentAge(localPlayer, AGE_CASTLE)
+	Player_SetMaximumAge(localPlayer, AGE_CASTLE)
+	
+	-- player 2 - Enemy
+	enemyPlayer = World_GetPlayerAt(2) --Enemy
+	Setup_SetPlayerName(enemyPlayer, "$11183528")
+	Player_SetCurrentAge(enemyPlayer, AGE_CASTLE)
+	Player_SetMaximumAge(enemyPlayer, AGE_CASTLE)
+	
+	villagePlayer = World_GetPlayerAt(3) --Ally
+	Setup_SetPlayerName(villagePlayer, "$11202382")
+	Player_SetCurrentAge(villagePlayer, AGE_CASTLE)
+	Player_SetMaximumAge(villagePlayer, AGE_CASTLE)
+	
+	trainingPlayer = World_GetPlayerAt(4) --Ally
+	Setup_SetPlayerName(trainingPlayer, "$11202382")
+	Player_SetCurrentAge(trainingPlayer, AGE_FEUDAL)
+	Player_SetMaximumAge(trainingPlayer, AGE_FEUDAL)
+	
+	trainingPlayer2 = World_GetPlayerAt(5) --Ally
+	Setup_SetPlayerName(trainingPlayer2, "$11202382")
+	Player_SetCurrentAge(trainingPlayer2, AGE_CASTLE)
+	Player_SetMaximumAge(trainingPlayer2, AGE_CASTLE)
+	
+	-- Set Player Colors
+	Game_SetPlayerSlotColour(villagePlayer, 3)
+	Game_SetPlayerUISlotColour(villagePlayer, 3)
+	
+	Game_SetPlayerSlotColour(trainingPlayer, 3)
+	Game_SetPlayerUISlotColour(trainingPlayer, 3)
+	
+	Game_SetPlayerSlotColour(trainingPlayer2, 3)
+	Game_SetPlayerUISlotColour(trainingPlayer2, 3)
+	
+end
+
+function ChallengeMission_SetupChallenge()
+
+	-- Set starting resources
+	Player_SetResource(localPlayer, RT_Food, _challenge.startingResources.food)
+	Player_SetResource(localPlayer, RT_Wood, _challenge.startingResources.wood)
+	Player_SetResource(localPlayer, RT_Gold, _challenge.startingResources.gold)
+	Player_SetResource(localPlayer, RT_Stone, _challenge.startingResources.stone)
+	
+	-- Hide Death (delete units)
+	Player_SetAbilityAvailability(localPlayer, BP_GetAbilityBlueprint("core_unit_death"), ITEM_REMOVED)
+	
+	-- Hide Building Scuttle (delete buildings)
+	Player_SetAbilityAvailability(localPlayer, BP_GetAbilityBlueprint("core_building_scuttle"), ITEM_REMOVED)
+	
+	-- Hide Garrison Ability
+	Player_SetCommandAvailability(localPlayer, SCMD_Load, ITEM_REMOVED)
+	
+	-- Set priority enemy attackers
+	villageBuildings = Player_GetAllEntities(villagePlayer)	
+	EGroup_Filter(villageBuildings, {"stable", "archery_range", "barracks"}, FILTER_REMOVE)
+	
+end
+
+function ChallengeMission_InitStartingUnits()
+	
+	-- Create groups for the Player
+	_challenge.currentArmy = SGroup_CreateIfNotFound("sg_current_army")
+	_challenge.currentArmy2 = SGroup_CreateIfNotFound("sg_current_army2")
+	
+	-- Create groups for the Village
+	_challenge.archerLeader = SGroup_CreateIfNotFound("sg_archer_leader")
+	_challenge.crossbowmanLeader = SGroup_CreateIfNotFound("sg_crossbowman_leader")
+	_challenge.spearmanLeader = SGroup_CreateIfNotFound("sg_spearman_leader")
+	_challenge.manatarmsLeader = SGroup_CreateIfNotFound("sg_manatarms_leader")
+	_challenge.horsemanLeader = SGroup_CreateIfNotFound("sg_horseman_leader")
+	_challenge.knightLeader = SGroup_CreateIfNotFound("sg_knight_leader")
+	
+	
+	_challenge.archeryRange1 = EGroup_CreateIfNotFound("eg_archery_range1")
+	Player_GetAllEntitiesNearMarker(trainingPlayer, _challenge.archeryRange1, mkr_archer_range, 3)
+	EGroup_Filter(_challenge.archeryRange1, "archery_range", FILTER_KEEP)
+	
+	
+	_challenge.archeryRange2 = EGroup_CreateIfNotFound("eg_archery_range2")
+	Player_GetAllEntitiesNearMarker(trainingPlayer2, _challenge.archeryRange2, mkr_crossbowman_range, 3)
+	EGroup_Filter(_challenge.archeryRange2, "archery_range", FILTER_KEEP)
+	
+	
+	_challenge.barracks1 = EGroup_CreateIfNotFound("eg_barracks1")
+	Player_GetAllEntitiesNearMarker(trainingPlayer, _challenge.barracks1, mkr_spearman_barracks, 3)
+	EGroup_Filter(_challenge.barracks1, "barracks", FILTER_KEEP)
+	
+	_challenge.barracks2 = EGroup_CreateIfNotFound("eg_barracks2")
+	Player_GetAllEntitiesNearMarker(trainingPlayer2, _challenge.barracks2, mkr_manatarms_barracks, 3)
+	EGroup_Filter(_challenge.barracks2, "barracks", FILTER_KEEP)
+	
+	_challenge.stable1 = EGroup_CreateIfNotFound("eg_stable1")
+	Player_GetAllEntitiesNearMarker(trainingPlayer, _challenge.stable1, mkr_horseman_stable, 3)
+	EGroup_Filter(_challenge.stable1, "stable", FILTER_KEEP)
+	
+	_challenge.stable2 = EGroup_CreateIfNotFound("eg_stable2")
+	Player_GetAllEntitiesNearMarker(trainingPlayer2, _challenge.stable2, mkr_knight_stable, 3)
+	EGroup_Filter(_challenge.stable2, "stable", FILTER_KEEP)
+	
+end
+
+function ChallengeMission_InitializeObjectives()
+	
+	-----------------------------------------------------------------------
+	-- Victory Objective
+	_challenge.victory.objectiveVictory = {
+		-- Set Objective Title
+		Title = "$11202324", -- Defend your camp against the enemy attacks
+		-- Set Objective Type
+		Type = OT_Primary
+	}
+	_challenge.objective.surviveWave1 =
+	{
+		Title = "$11217918", -- Defeat the approaching men at arms
+		Type = OT_Bonus,
+		Parent = _challenge.victory.objectiveVictory,
+	}
+	_challenge.objective.trainWave1 =
+	{
+		Title = "$11217924",
+		Type = ObjectiveType_Information,
+	}
+	_challenge.objective.surviveWave2 =
+	{
+		Title = "$11217919", -- Defeat the approaching crossbowmen
+		Type = OT_Bonus,
+		Parent = _challenge.victory.objectiveVictory,
+	}
+	_challenge.objective.trainWave2 =
+	{
+		Title = "$11217924",
+		Type = ObjectiveType_Information,
+	}
+	_challenge.objective.surviveWave3 =
+	{
+		Title = "$11217920", -- Defeat the approaching Knights
+		Type = OT_Bonus,
+		Parent = _challenge.victory.objectiveVictory,
+	}
+	_challenge.objective.trainWave3 =
+	{
+		Title = "$11217924",
+		Type = ObjectiveType_Information,
+	}
+	_challenge.objective.surviveWave4 =
+	{
+		Title = "$11217921", -- Defeat the approaching Spearmen and crossbowmen
+		Type = OT_Bonus,
+		Parent = _challenge.victory.objectiveVictory,
+	}
+	_challenge.objective.trainWave4 =
+	{
+		Title = "$11217925",
+		Type = ObjectiveType_Information,
+	}
+	_challenge.objective.surviveWave5 =
+	{
+		Title = "$11217922", -- Defeat the approaching men-at-arms and Horsemen
+		Type = OT_Bonus,
+		Parent = _challenge.victory.objectiveVictory,
+	}
+	_challenge.objective.trainWave5 =
+	{
+		Title = "$11217925",
+		Type = ObjectiveType_Information,
+	}
+	_challenge.objective.surviveWave6 =
+	{
+		Title = "$11217923", -- Defeat the approaching Archers and Knights
+		Type = OT_Bonus,
+		Parent = _challenge.victory.objectiveVictory,
+	}
+	_challenge.objective.trainWave6 =
+	{
+		Title = "$11217925",
+		Type = ObjectiveType_Information,
+	}
+	_challenge.victory.objectiveVictory2 = {
+		-- Set Objective Title
+		Title = "$11202325", -- Do not let the enemy burn down your village!
+		-- Set Objective Type
+		Type = OT_Primary
+	}
+	_challenge.objective.protectTown =
+	{
+		Title = "$11202332", -- You will lose if too many buildings are burned down
+		Type = OT_Bonus,
+		Parent = _challenge.victory.objectiveVictory2,
+	}	
+	_challenge.benchmarks.unplaced.objective = {
+				-- Set Objective Title
+				Title = "$11202197", 
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.noMedalObjective,
+				}
+	_challenge.benchmarks.bronze.objective = {
+				-- Set Objective Title
+				Title = Loc_FormatText("$11202194", _challenge.benchmarks.bronze.maxUnitsDied+1),
+				TelemetryTitle = "UnitsLost_BronzeMedal",
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.bronzeMedalObjective,
+				}
+	_challenge.benchmarks.silver.objective = {
+				-- Set Objective Title
+				Title = Loc_FormatText("$11202195", _challenge.benchmarks.silver.maxUnitsDied+1),
+				TelemetryTitle = "UnitsLost_SilverMedal",
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.silverMedalObjective,
+				}
+	_challenge.benchmarks.gold.objective = {
+				-- Set Objective Title
+				Title = Loc_FormatText("$11202196", _challenge.benchmarks.gold.maxUnitsDied+1),
+				TelemetryTitle = "UnitsLost_GoldMedal",
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.goldMedalObjective,
+				}
+	
+	-- Set player's current benchmark as Gold
+	_challenge.currentBenchmark = _challenge.benchmarks.gold
+	
+	-- Register Primary objectives
+	Objective_Register(_challenge.victory.objectiveVictory, localPlayer.id)
+	Objective_Register(_challenge.victory.objectiveVictory2, localPlayer.id)
+	
+	-- Register Medal objective
+	Objective_Register(_challenge.benchmarks.gold.objective, localPlayer.id)
+	
+	
+	-- Register Sub objective
+	Objective_Register(_challenge.objective.surviveWave1, localPlayer.id)
+	Objective_Register(_challenge.objective.surviveWave2, localPlayer.id)
+	Objective_Register(_challenge.objective.surviveWave3, localPlayer.id)
+	Objective_Register(_challenge.objective.surviveWave4, localPlayer.id)
+	Objective_Register(_challenge.objective.surviveWave5, localPlayer.id)	
+	Objective_Register(_challenge.objective.surviveWave6, localPlayer.id)	
+	Objective_Register(_challenge.objective.protectTown, localPlayer.id)		
+	
+	Objective_Register(_challenge.objective.trainWave1, localPlayer.id)
+	Objective_Register(_challenge.objective.trainWave2, localPlayer.id)
+	Objective_Register(_challenge.objective.trainWave3, localPlayer.id)
+	Objective_Register(_challenge.objective.trainWave4, localPlayer.id)
+	Objective_Register(_challenge.objective.trainWave5, localPlayer.id)
+	Objective_Register(_challenge.objective.trainWave6, localPlayer.id)
+	
+	-- Start objectives
+	Objective_Start(_challenge.victory.objectiveVictory, false, false)
+	Objective_Start(_challenge.victory.objectiveVictory2, false, false)
+	Objective_Start(_challenge.objective.protectTown, false, false)	
+	Objective_Start(_challenge.benchmarks.gold.objective, false, false)
+	
+	-- Add Counters to track progress
+	Objective_SetCounter(_challenge.victory.objectiveVictory, 0, #_challenge.waves)
+	Objective_SetCounter(_challenge.objective.protectTown, 0, _challenge.maxHousesLost)	
+	Objective_SetCounter(_challenge.benchmarks.gold.objective, 0, _challenge.benchmarks.gold.maxUnitsDied)
+end
+
+function AdvancedCombat_Intro_Units()
+	sg_intro_horsemen = SGroup_CreateIfNotFound("sg_intro_horsemen")
+	local sbp_horseman_hre = BP_GetSquadBlueprint("unit_horseman_3_hre")
+	UnitEntry_DeploySquads(localPlayer, sg_intro_horsemen, {sbp = sbp_horseman_hre, numSquads = 3 }, mkr_intro_01_player_horsemen_spawn)
+	
+	Cmd_Ability(sg_intro_horsemen, BP_GetAbilityBlueprint("core_formation_wedge"))
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_01_player_horsemen_rally_01, false)
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_01_player_horsemen_rally_02, true)
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_01_player_horsemen_rally_03, true)
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_01_player_horsemen_rally_04, true)
+	
+	ChallengeMissionDeployDummyUnits()
+end
+
+function AdvancedCombat_Intro_Cleanup()
+	
+	if(SGroup_Exists("sg_intro_horsemen")) then
+		SGroup_DestroyAllSquads(sg_intro_horsemen)
+	end
+	
+end
+
+-- Checks if intro Event is running
+function Mission_PreStart_IntroNISFinished()
+    if Event_IsAnyRunning() == false then
+		
+		AdvancedCombat_Intro_Cleanup()
+		
+        Rule_RemoveMe()
+        StartMission_ReleaseHold()
+    end
+end
+
+function ChallengeMissionDeployDummyUnits()
+	
+	-- Deploy example units
+	local bp_Archer = BP_GetSquadBlueprint("unit_archer_3_hre")
+	local bp_Crossbowman = BP_GetSquadBlueprint("unit_crossbowman_3_hre")
+	local bp_Spearman = BP_GetSquadBlueprint("unit_spearman_3_hre")
+	local bp_Manatarms = BP_GetSquadBlueprint("unit_manatarms_3_hre")
+	local bp_Horseman = BP_GetSquadBlueprint("unit_horseman_3_hre")
+	local bp_Knight = BP_GetSquadBlueprint("unit_knight_3_hre")
+	
+	UnitEntry_DeploySquads(trainingPlayer2, _challenge.archerLeader, {{sbp = bp_Archer, numSquads = 1 }}, mkr_village_archer_spawn)
+	Cmd_FormationMove(_challenge.archerLeader, mkr_village_archer_spawn, false, false, mkr_player_archer_rally)
+	Modify_WeaponEnabled(_challenge.archerLeader, "hardpoint_01", false)
+	
+	UnitEntry_DeploySquads(trainingPlayer2, _challenge.crossbowmanLeader, {{sbp = bp_Crossbowman, numSquads = 1 }}, mkr_village_crossbowman_spawn)
+	Cmd_FormationMove(_challenge.crossbowmanLeader, mkr_village_crossbowman_spawn, false, false, mkr_player_crossbowman_rally)
+	Modify_WeaponEnabled(_challenge.crossbowmanLeader, "hardpoint_01", false)
+	
+	UnitEntry_DeploySquads(trainingPlayer2, _challenge.spearmanLeader, {{sbp = bp_Spearman, numSquads = 1 }}, mkr_village_spearman_spawn)
+	Cmd_FormationMove(_challenge.spearmanLeader, mkr_village_spearman_spawn, false, false, mkr_player_spearman_rally)
+	Modify_WeaponEnabled(_challenge.spearmanLeader, "hardpoint_01", false)
+	
+	UnitEntry_DeploySquads(trainingPlayer2, _challenge.manatarmsLeader, {{sbp = bp_Manatarms, numSquads = 1 }}, mkr_village_manatarms_spawn)
+	Cmd_FormationMove(_challenge.manatarmsLeader, mkr_village_manatarms_spawn, false, false, mkr_player_manatarms_rally)
+	Modify_WeaponEnabled(_challenge.manatarmsLeader, "hardpoint_01", false)
+	
+	UnitEntry_DeploySquads(trainingPlayer2, _challenge.horsemanLeader, {{sbp = bp_Horseman, numSquads = 1 }}, mkr_village_horseman_spawn)
+	Cmd_FormationMove(_challenge.horsemanLeader, mkr_village_horseman_spawn, false, false, mkr_player_horseman_rally)
+	Modify_WeaponEnabled(_challenge.horsemanLeader, "hardpoint_01", false)
+	
+	UnitEntry_DeploySquads(trainingPlayer2, _challenge.knightLeader, {{sbp = bp_Knight, numSquads = 1 }}, mkr_village_knight_spawn)
+	Cmd_FormationMove(_challenge.knightLeader, mkr_village_knight_spawn, false, false, mkr_player_knight_rally)
+	Modify_WeaponEnabled(_challenge.knightLeader, "hardpoint_01", false)
+	
+end
+
+
+-- Prepares for the next attack wave.
+function ChallengeMission_InitializeWave()
+	
+	-- Make sure the player has no buildings selected
+	Misc_ClearSelection()
+	
+	-- LEFT CLICK / PRESS A to train 15 Archers.
+	hintPoint_recruit_archers = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.archeryRange1, false, UI_PickIDForInputMode(11217926, 11251404), true, 2 ) 
+	
+	-- LEFT CLICK / PRESS A to train 10 Crossbowmen.
+	hintPoint_recruit_crossbowmen = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.archeryRange2, false, UI_PickIDForInputMode(11217927, 11251405), true, 2 )
+	
+	-- LEFT CLICK / PRESS A to train 15 Spearmen.
+	hintPoint_recruit_spearmen = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.barracks1, false, UI_PickIDForInputMode(11217928, 11251406), true, 2 ) 
+	
+	-- LEFT CLICK / PRESS A to train 10 Men at Arms.
+	hintPoint_recruit_menatarms = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.barracks2, false, UI_PickIDForInputMode(11217929, 11251407), true, 2 ) 
+	
+	-- LEFT CLICK / PRESS A to train 10 Horsemen.
+	hintPoint_recruit_horsemen = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.stable1, false, UI_PickIDForInputMode(11217930, 11251408), true, 2 ) 
+	
+	-- LEFT CLICK / PRESS A to train 5 Knights.
+	hintPoint_recruit_knights = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.stable2, false, UI_PickIDForInputMode(11217931, 11251409), true, 2 ) 
+	
+	--remove any undo hints
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_archers)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_crossbowmen)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_spearmen)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_menatarms)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_horsemen)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_knights)
+	
+	Cmd_HoldPosition(_challenge.archerLeader,true,true)
+	Cmd_HoldPosition(_challenge.crossbowmanLeader,true,true)
+	Cmd_HoldPosition(_challenge.spearmanLeader,true,true)
+	Cmd_HoldPosition(_challenge.manatarmsLeader,true,true)
+	Cmd_HoldPosition(_challenge.horsemanLeader,true,true)
+	Cmd_HoldPosition(_challenge.knightLeader,true,true)
+	
+	_challenge.archerDefense = false
+	_challenge.crossbowmanDefense = false
+	_challenge.spearmanDefense = false
+	_challenge.manatarmsDefense = false
+	_challenge.horsemanDefense = false
+	_challenge.knightDefense = false
+	
+	Rule_AddOneShot(ChallengeMission_RemindPlayer, _challenge.reminderDelay)
+	
+	-- TODO create a marker for this
+	UI_CreateMinimapBlip(mkr_village_archer_spawn, 10, "question_here")
+	
+	_challenge.waveActive = true
+	
+	--display hint for training 1 or 2 groups
+	if(_challenge.currentWave == 1) then
+		_challenge.currentTrainingObjective = _challenge.objective.trainWave1
+	elseif(_challenge.currentWave == 2) then
+		_challenge.currentTrainingObjective = _challenge.objective.trainWave2
+	elseif(_challenge.currentWave == 3) then
+		_challenge.currentTrainingObjective = _challenge.objective.trainWave3
+	elseif(_challenge.currentWave == 4) then
+		_challenge.currentTrainingObjective = _challenge.objective.trainWave4
+	elseif(_challenge.currentWave == 5) then
+		_challenge.currentTrainingObjective = _challenge.objective.trainWave5
+	else
+		_challenge.currentTrainingObjective = _challenge.objective.trainWave6
+	end
+	Objective_Start(_challenge.currentTrainingObjective,true,false)
+	
+	firstUndoSpawn = "none"
+	secondUndoSpawn = "none"
+		
+	_challenge.buildingsLostThisWave = 0
+	_challenge.buildingsLostEndOfWave = 0
+end
+
+-- Remind the player to deploy an army
+function ChallengeMission_RemindPlayer()
+	if(SGroup_Count(_challenge.currentArmy) == 0) then
+		Util_StartIntel(EVENTS.Narr_NothingSelected)
+	end
+	Rule_RemoveMe()
+end
+
+function ChallengeMission_FirstWave()
+	
+	---- Create SGroups
+	local sg_wave = SGroup_CreateIfNotFound("sg_wave")
+	
+	_challenge.currentWaveSquadGroup = sg_wave
+	_challenge.currentWaveAttackPath = {mkr_path1_1, mkr_path1_2, mkr_path1_3, mkr_path1_4, mkr_path1_5}
+	_challenge.currentWaveAttackStartDialogue = EVENTS.Narr_WaveIncoming
+	
+	EventCues_CallToAction("$11217934","cta_focus_change",nil,nil,Marker_GetPosition(mkr_path1_1),30, "icons/cta/illustrations/04_lord_roberts_b") -- Enemy Spotted!
+	Util_StartIntel(EVENTS.Narr_Wave1Setup)
+	_challenge.currentSecondObjective = _challenge.objective.surviveWave1
+	Objective_Start(_challenge.currentSecondObjective,true,false)
+	
+	---- Get unit blueprints
+	local bp_unit = BP_GetSquadBlueprint("unit_manatarms_3_generic_abb")
+	
+	---- Deploy and show squad	
+	UnitEntry_DeploySquads(enemyPlayer, sg_wave, {{sbp = bp_unit, numSquads = _challenge.balance.wave1Count}}, mkr_path1_1)
+	Cmd_FormationMove(sg_wave, mkr_path1_1, true, false, mkr_path1_2)
+	FOW_PlayerRevealSGroup(localPlayer, sg_wave,30,-1)
+		
+	UI_CreateMinimapBlip(sg_wave, 10, "threat_group")
+	
+	-- Make sure the player has no buildings selected
+	Misc_ClearSelection()
+	
+end
+
+function ChallengeMission_SecondWave()
+	
+	---- Create SGroups
+	local sg_wave = SGroup_CreateIfNotFound("sg_wave")
+	
+	_challenge.currentWaveSquadGroup = sg_wave
+	_challenge.currentWaveAttackPath = {mkr_path2_1, mkr_path2_2, mkr_path2_3, mkr_path2_4, mkr_path2_5, mkr_path2_6, mkr_path2_7, mkr_path2_8}
+	_challenge.currentWaveAttackStartDialogue = EVENTS.Narr_WaveIncoming
+	
+	EventCues_CallToAction("$11217935","cta_focus_change",nil,nil,Marker_GetPosition(mkr_path2_1),30, "icons/cta/illustrations/04_lord_roberts_b") -- Enemy Spotted!
+	Util_StartIntel(EVENTS.Narr_Wave2Setup)
+	_challenge.currentSecondObjective = _challenge.objective.surviveWave2
+	Objective_Start(_challenge.currentSecondObjective,true,false)
+	
+	---- Get unit blueprints
+	local bp_unit = BP_GetSquadBlueprint("unit_crossbowman_3_abb")
+	
+	---- Deploy and show squad	
+	UnitEntry_DeploySquads(enemyPlayer, sg_wave, {{sbp = bp_unit, numSquads = _challenge.balance.wave2Count}}, mkr_path2_1)
+	Cmd_Ability(sg_wave, BP_GetAbilityBlueprint("core_formation_line"))
+	Cmd_FormationMove(sg_wave, mkr_path2_1, true, false, mkr_path2_2)
+	FOW_PlayerRevealSGroup(localPlayer, sg_wave,30,-1)
+		
+	UI_CreateMinimapBlip(sg_wave, 10, "threat_group")
+	
+	-- Make sure the player has no buildings selected
+	Misc_ClearSelection()
+	
+	Rule_AddInterval(ChallengeMission_IncreaseBuildingVulnerability, 0.5)
+end
+
+function ChallengeMission_StealthForestHint()
+	
+	EventCues_CallToAction("$11202384","cta_raised_stakes",nil,nil,Marker_GetPosition(PoI_Stealth_Forest),30) -- Ambush Possibility!
+	Util_StartIntel(EVENTS.Narr_StealthForestHint)
+	
+end
+
+function ChallengeMission_ThirdWave()	
+	
+	---- Create SGroups
+	local sg_wave = SGroup_CreateIfNotFound("sg_wave")
+	
+	_challenge.currentWaveSquadGroup = sg_wave
+	_challenge.currentWaveAttackPath = {mkr_path3_1, mkr_path3_2, mkr_path3_3, mkr_path3_4, mkr_path3_5, mkr_path3_6}
+	_challenge.currentWaveAttackStartDialogue = EVENTS.Narr_WaveIncoming
+	
+	EventCues_CallToAction("$11217936","cta_focus_change",nil,nil,Marker_GetPosition(mkr_path3_1),30, "icons/cta/illustrations/04_lord_roberts_b") -- Enemy Spotted!
+	Util_StartIntel(EVENTS.Narr_Wave3Setup)
+	_challenge.currentSecondObjective = _challenge.objective.surviveWave3
+	Objective_Start(_challenge.currentSecondObjective,true,false)
+	
+	---- Get unit blueprints
+	local bp_unit = BP_GetSquadBlueprint("unit_knight_3_abb")
+	
+	---- Deploy and show squad	
+	UnitEntry_DeploySquads(enemyPlayer, sg_wave, {{sbp = bp_unit, numSquads = _challenge.balance.wave3Count}}, mkr_path3_1)
+	Cmd_FormationMove(sg_wave, mkr_path3_1, true, false, mkr_path3_2)
+	FOW_PlayerRevealSGroup(localPlayer, sg_wave,30,-1)
+		
+	UI_CreateMinimapBlip(sg_wave, 10, "threat_group")
+	
+	-- Make sure the player has no buildings selected
+	Misc_ClearSelection()
+	
+end
+
+function ChallengeMission_FourthWave()
+	
+	---- Create SGroups
+	local sg_wave = SGroup_CreateIfNotFound("sg_wave")
+	local sg_wave2 = SGroup_CreateIfNotFound("sg_wave2")
+	
+	_challenge.currentWaveSquadGroup = sg_wave
+	_challenge.currentWaveAttackPath = {mkr_path2_1, mkr_path2_2, mkr_path2_3, mkr_path2_4, mkr_path2_5, mkr_path2_6, mkr_path2_7, mkr_path2_8}
+	_challenge.currentWaveAttackStartDialogue = EVENTS.Narr_WaveIncoming
+	
+	EventCues_CallToAction("$11217937","cta_focus_change",nil,nil,Marker_GetPosition(mkr_path2_1),30, "icons/cta/illustrations/04_lord_roberts_b") -- Enemy Spotted!
+	Util_StartIntel(EVENTS.Narr_Wave4Setup)
+	_challenge.currentSecondObjective = _challenge.objective.surviveWave4
+	Objective_Start(_challenge.currentSecondObjective,true,false)
+	
+	---- Get unit blueprints
+	local bp_unit = BP_GetSquadBlueprint("unit_crossbowman_3_abb")
+	local bp_unit2 = BP_GetSquadBlueprint("unit_spearman_3_abb")
+	
+	---- Deploy and show squad	
+	UnitEntry_DeploySquads(enemyPlayer, sg_wave, {{sbp = bp_unit, numSquads = _challenge.balance.wave4CrossbowmenCount}}, mkr_path2_1_delay)
+	UnitEntry_DeploySquads(enemyPlayer, sg_wave2, {{sbp = bp_unit2, numSquads = _challenge.balance.wave4SpearmenCount}}, mkr_path2_1)
+	Cmd_FormationMove(sg_wave, mkr_path2_1_delay, true, false, mkr_path2_2)
+	Cmd_FormationMove(sg_wave2, mkr_path2_1, true, false, mkr_path2_2)
+	FOW_PlayerRevealSGroup(localPlayer, sg_wave,30,-1)
+	
+	SGroup_AddGroup(sg_wave, sg_wave2)
+	UI_CreateMinimapBlip(sg_wave, 10, "threat_group")
+	
+	-- Make sure the player has no buildings selected
+	Misc_ClearSelection()
+	
+	Rule_AddInterval(ChallengeMission_IncreaseBuildingVulnerability, 0.5)
+	
+	Rule_AddOneShot(ChallengeMission_StealthForestHint, 10)
+end
+
+function ChallengeMission_FifthWave()	
+	
+	---- Create SGroups
+	local sg_wave = SGroup_CreateIfNotFound("sg_wave")
+	
+	_challenge.currentWaveSquadGroup = sg_wave
+	_challenge.currentWaveAttackPath = {mkr_path3_1, mkr_path3_2, mkr_path3_3, mkr_path3_4, mkr_path3_5, mkr_path3_6}
+	_challenge.currentWaveAttackStartDialogue = EVENTS.Narr_WaveIncoming
+	
+	EventCues_CallToAction("$11217938","cta_focus_change",nil,nil,Marker_GetPosition(mkr_path3_1),30, "icons/cta/illustrations/04_lord_roberts_b") -- Enemy Spotted!
+	Util_StartIntel(EVENTS.Narr_Wave5Setup)
+	_challenge.currentSecondObjective = _challenge.objective.surviveWave5
+	Objective_Start(_challenge.currentSecondObjective,true,false)
+	
+	---- Get unit blueprints
+	local bp_unit = BP_GetSquadBlueprint("unit_manatarms_3_generic_abb")
+	local bp_unit2 = BP_GetSquadBlueprint("unit_horseman_3_abb")
+	
+	---- Deploy and show squad	
+	UnitEntry_DeploySquads(enemyPlayer, sg_wave, {{sbp = bp_unit, numSquads = _challenge.balance.wave5MenatarmsCount}}, mkr_path3_1)
+	UnitEntry_DeploySquads(enemyPlayer, sg_wave, {{sbp = bp_unit2, numSquads = _challenge.balance.wave5HorsemenCount}}, mkr_path3_1)
+	
+	Cmd_Ability(sg_wave, BP_GetAbilityBlueprint("core_formation_wedge"))
+	Cmd_FormationMove(sg_wave, mkr_path3_1, true, false, mkr_path3_2)
+	FOW_PlayerRevealSGroup(localPlayer, sg_wave,30,-1)
+		
+	UI_CreateMinimapBlip(sg_wave, 10, "threat_group")
+	
+	-- Make sure the player has no buildings selected
+	Misc_ClearSelection()
+	
+	Rule_AddOneShot(ChallengeMission_CliffsHint, _challenge.hintDelay)
+end
+
+function ChallengeMission_CliffsHint()
+	
+	EventCues_CallToAction("$11202384","cta_raised_stakes",nil,nil,Marker_GetPosition(PoI_Cliffs),30) -- Ambush Possibility!
+	Util_StartIntel(EVENTS.Narr_CliffsHint)
+	
+end
+
+function ChallengeMission_SixthWave()	
+	
+	---- Create SGroups
+	local sg_wave = SGroup_CreateIfNotFound("sg_wave")
+	local sg_wave2 = SGroup_CreateIfNotFound("sg_wave2")
+	sg_wave6_knights = SGroup_CreateIfNotFound("sg_wave6_knights")
+	
+	_challenge.currentWaveSquadGroup = sg_wave
+	_challenge.currentWaveAttackPath = {mkr_path1_1, mkr_path1_2, mkr_path1_3, mkr_path1_4, mkr_path1_5}
+	_challenge.currentWaveAttackStartDialogue = EVENTS.Narr_WaveIncoming
+	
+	EventCues_CallToAction("$11217939","cta_focus_change",nil,nil,Marker_GetPosition(mkr_path1_1),30, "icons/cta/illustrations/04_lord_roberts_b") -- Enemy Spotted!
+	Util_StartIntel(EVENTS.Narr_Wave6Setup)
+	_challenge.currentSecondObjective = _challenge.objective.surviveWave6
+	Objective_Start(_challenge.currentSecondObjective,true,false)
+	
+	---- Get unit blueprints
+	local bp_unit = BP_GetSquadBlueprint("unit_archer_3_abb")
+	local bp_unit2 = BP_GetSquadBlueprint("unit_knight_3_abb")
+	
+	---- Deploy and show squad	
+	UnitEntry_DeploySquads(enemyPlayer, sg_wave, {{sbp = bp_unit, numSquads = _challenge.balance.wave6ArchersCount}}, mkr_path1_1)
+	UnitEntry_DeploySquads(enemyPlayer, sg_wave2, {{sbp = bp_unit2, numSquads = _challenge.balance.wave6KnightsCount}}, mkr_path1_1)
+	
+	SGroup_AddGroup(sg_wave, sg_wave2)
+	Cmd_FormationMove(sg_wave, mkr_path1_1, true, false, mkr_path1_2)
+	FOW_PlayerRevealSGroup(localPlayer, sg_wave,30,-1)
+		
+	UI_CreateMinimapBlip(sg_wave, 10, "threat_group")
+	
+	-- Make sure the player has no buildings selected
+	Misc_ClearSelection()
+	
+	
+	SGroup_AddGroup(sg_wave6_knights, sg_wave2)
+	Rule_AddInterval(ChallengeMission_SixthWave_Split, .25)
+end
+
+function ChallengeMission_SixthWave_Split()	
+	
+	if(sg_wave6_knights ~= nil) then
+		if Prox_AreSquadsNearMarker(sg_wave6_knights, mkr_path1_4, ANY, 37) then
+			
+			Cmd_AttackMove(sg_wave6_knights, mkr_path1_5, false)
+			Rule_RemoveMe()
+		end
+	end
+	
+end
+
+
+function ChallengeMission_SendWave()
+	if(_challenge.currentWaveAttackPath ~= nil and _challenge.currentWaveSquadGroup ~= nil) then
+		for i,point in ipairs(_challenge.currentWaveAttackPath) do
+			if(_challenge.currentWaveSquadGroup ~= nil) then
+				if(SGroup_Count(_challenge.currentWaveSquadGroup) > 0) then
+					Cmd_FormationAttackMove(_challenge.currentWaveSquadGroup, point, true, false)
+				end
+			end
+		end
+		if(_challenge.currentWaveAttackStartDialogue~= nil) then
+			Util_StartIntel(_challenge.currentWaveAttackStartDialogue)
+		end
+	end
+	
+	--prevent respawning units
+	_challenge.waveActive = false
+	
+	Objective_Expire(_challenge.currentTrainingObjective, false, false)
+	
+	
+	--remove undo ui
+	hasUnselectedBuilding = false
+	lastSelectedBuilding = nil
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_archers)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_crossbowmen)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_spearmen)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_menatarms)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_horsemen)
+	Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_knights)
+end
+
+function ChallengeMission_NextWave()
+	-- Clean up wave
+	SGroup_SetPlayerOwner(_challenge.currentArmy, villagePlayer)
+	Rule_AddOneShot(ChallengeMission_CleanUpWave, 5)	
+	Rule_Remove(ChallengeMission_IncreaseBuildingVulnerability)
+	
+	-- Make sure the player has no buildings selected
+	Misc_ClearSelection()
+	
+	firstUndoSpawn = "none"
+	secondUndoSpawn = "none"
+	
+	_challenge.waveActive = false
+	
+	_challenge.currentWave = _challenge.currentWave + 1
+	Objective_IncreaseCounter(_challenge.victory.objectiveVictory, 1)
+	if(_challenge.waves[_challenge.currentWave]~=nil) then
+		Rule_AddOneShot(_challenge.waves[_challenge.currentWave], _challenge.revealDelay)
+		Rule_AddOneShot(ChallengeMission_InitializeWave, _challenge.revealDelay + _challenge.selectionDelay)
+		--ChallengeMissionDeployDummyUnits()
+	else
+		ChallengeMission_CheckVictory()
+	end
+end
+
+function ChallengeMission_CleanUpWave()
+	-- Kill current army without causing the player death count to increase
+	SGroup_DestroyAllSquads(_challenge.currentArmy)
+	--FOW_PlayerUnRevealAll(localPlayer)
+	
+	--reset defense setup
+	Rule_Remove(ChallengeMission_SendWave)
+	_challenge.archerDefense = false
+	_challenge.crossbowmanDefense = false
+	_challenge.spearmanDefense = false
+	_challenge.manatarmsDefense = false
+	_challenge.horsemanDefense = false
+	_challenge.knightDefense = false
+
+end
+
+function ChallengeMission_IsDefenseSetup()
+	local defenseTypesCount = 0
+	if(_challenge.archerDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.crossbowmanDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.spearmanDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.manatarmsDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.horsemanDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.knightDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.currentWave <= 3) then		
+		return  defenseTypesCount >= 1
+	else
+		return defenseTypesCount >= 2
+	end
+end
+
+function ChallengeMission_DefenseGroupsRemaining()
+	
+	if(_challenge.waveActive == false) then
+		return 0
+	end
+	
+	
+	local defenseTypesCount = 0
+	if(_challenge.archerDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.crossbowmanDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.spearmanDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.manatarmsDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.horsemanDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.knightDefense == true) then
+		defenseTypesCount = defenseTypesCount + 1
+	end
+	if(_challenge.currentWave <= 3) then		
+		return (1 - defenseTypesCount)
+	else		
+		return (2 - defenseTypesCount)
+	end
+end
+
+function ChallengeMission_CleanUpDefense()
+	SGroup_DestroyAllSquads(_challenge.currentWaveSquadGroup)
+end
+
+function ChallengeMission_RemoveProductionUI(inBuildingType)
+	if(inBuildingType == "archers") then
+		--SGroup_DestroyAllSquads(_challenge.archerLeader)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_recruit_archers)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_archers)
+	end
+	if(inBuildingType == "crossbowmen") then
+		--SGroup_DestroyAllSquads(_challenge.crossbowmanLeader)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_recruit_crossbowmen)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_crossbowmen)
+	end
+	if(inBuildingType == "spearmen") then
+		--SGroup_DestroyAllSquads(_challenge.spearmanLeader)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_recruit_spearmen)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_spearmen)
+	end
+	if(inBuildingType == "menatarms") then
+		--SGroup_DestroyAllSquads(_challenge.manatarmsLeader)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_recruit_menatarms)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_menatarms)
+	end
+	if(inBuildingType == "horsemen") then
+		--SGroup_DestroyAllSquads(_challenge.horsemanLeader)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_recruit_horsemen)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_horsemen)
+	end
+	if(inBuildingType == "knights") then
+		--SGroup_DestroyAllSquads(_challenge.knightLeader)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_recruit_knights)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_undo_knights)
+	end
+	
+	if(inBuildingType == "all") then
+		--[[
+		SGroup_DestroyAllSquads(_challenge.archerLeader)
+		SGroup_DestroyAllSquads(_challenge.crossbowmanLeader)
+		SGroup_DestroyAllSquads(_challenge.spearmanLeader)
+		SGroup_DestroyAllSquads(_challenge.manatarmsLeader)
+		SGroup_DestroyAllSquads(_challenge.horsemanLeader)
+		SGroup_DestroyAllSquads(_challenge.knightLeader)
+		--]]
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory,hintPoint_recruit_archers)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory, hintPoint_recruit_spearmen)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory, hintPoint_recruit_horsemen)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory, hintPoint_recruit_menatarms)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory, hintPoint_recruit_crossbowmen)
+		Objective_RemoveUIElements(_challenge.victory.objectiveVictory, hintPoint_recruit_knights)
+		
+	end
+end
+
+function ArcherLeaderSelected()
+	if(_challenge.archerDefense == false)then
+		local sbp_archer_hre = BP_GetSquadBlueprint("unit_archer_3_hre")
+		SGroup_Clear(_challenge.currentArmy2)
+		UnitEntry_DeploySquads(localPlayer, _challenge.currentArmy2, {{sbp = sbp_archer_hre, numSquads = _challenge.balance.defenderArcherCount }}, mkr_village_archer_spawn)
+		Cmd_FormationMove(_challenge.currentArmy2, mkr_player_archer_rally, true, false)
+		SGroup_AddGroup(_challenge.currentArmy, _challenge.currentArmy2)
+		_challenge.archerDefense = true
+		ChallengeMission_RemoveProductionUI("archers")
+		
+		Misc_ClearSelection()
+		lastSelectedBuilding = "archers"
+		hasUnselectedBuilding = false
+		
+		-- LEFT CLICK / PRESS A to undo.
+		hintPoint_undo_archers = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.archeryRange1, false, UI_PickIDForInputMode(11219072, 11251412), true, 2 )
+	
+		if(ChallengeMission_DefenseGroupsRemaining() == 0) then
+			Rule_AddOneShot(ChallengeMission_SendWave, _challenge.attackDelay[_challenge.currentWave])
+			ChallengeMission_RemoveProductionUI("all")
+		end
+	end
+end
+
+function CrossbowmanLeaderSelected()
+	if(_challenge.crossbowmanDefense == false)then
+		local sbp_archer_hre = BP_GetSquadBlueprint("unit_crossbowman_3_hre")
+		SGroup_Clear(_challenge.currentArmy2)
+		UnitEntry_DeploySquads(localPlayer, _challenge.currentArmy2, {{sbp = sbp_archer_hre, numSquads = _challenge.balance.defenderCrossbowmanCount }}, mkr_village_crossbowman_spawn)
+		Cmd_FormationMove(_challenge.currentArmy2, mkr_player_crossbowman_rally, true, false)
+		SGroup_AddGroup(_challenge.currentArmy, _challenge.currentArmy2)
+		_challenge.crossbowmanDefense = true
+		ChallengeMission_RemoveProductionUI("crossbowmen")
+		
+		Misc_ClearSelection()
+		lastSelectedBuilding = "crossbowmen"
+		hasUnselectedBuilding = false
+		
+		-- LEFT CLICK / PRESS A to undo.
+		hintPoint_undo_crossbowmen = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.archeryRange2, false, UI_PickIDForInputMode(11219072, 11251412), true, 2 )
+	
+		if(ChallengeMission_DefenseGroupsRemaining() == 0) then
+			Rule_AddOneShot(ChallengeMission_SendWave, _challenge.attackDelay[_challenge.currentWave])
+			ChallengeMission_RemoveProductionUI("all")
+		end
+	end
+end
+
+
+function SpearmanLeaderSelected()
+	if(_challenge.spearmanDefense == false)then
+		local sbp_spearman_hre = BP_GetSquadBlueprint("unit_spearman_3_hre")
+		SGroup_Clear(_challenge.currentArmy2)
+		UnitEntry_DeploySquads(localPlayer, _challenge.currentArmy2, {{sbp = sbp_spearman_hre, numSquads = _challenge.balance.defenderSpearmanCount }}, mkr_village_spearman_spawn)
+		Cmd_FormationMove(_challenge.currentArmy2, mkr_player_spearman_rally, true, false)
+		SGroup_AddGroup(_challenge.currentArmy, _challenge.currentArmy2)
+		_challenge.spearmanDefense = true
+		ChallengeMission_RemoveProductionUI("spearmen")
+		
+		Misc_ClearSelection()
+		lastSelectedBuilding = "spearmen"
+		hasUnselectedBuilding = false
+		
+		-- LEFT CLICK / PRESS A to undo.
+		hintPoint_undo_spearmen = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.barracks1, false, UI_PickIDForInputMode(11219072, 11251412), true, 2 )
+	
+		if(ChallengeMission_DefenseGroupsRemaining() == 0) then
+			Rule_AddOneShot(ChallengeMission_SendWave, _challenge.attackDelay[_challenge.currentWave])
+			ChallengeMission_RemoveProductionUI("all")
+		end
+	end
+end
+
+function ManatarmsLeaderSelected()
+	if(_challenge.manatarmsDefense == false)then
+		local sbp_manatarms_hre = BP_GetSquadBlueprint("unit_manatarms_3_hre")
+		SGroup_Clear(_challenge.currentArmy2)
+		UnitEntry_DeploySquads(localPlayer, _challenge.currentArmy2, {{sbp = sbp_manatarms_hre, numSquads = _challenge.balance.defenderManatarmsCount }}, mkr_village_manatarms_spawn)
+		Cmd_FormationMove(_challenge.currentArmy2, mkr_player_manatarms_rally, true, false)
+		SGroup_AddGroup(_challenge.currentArmy, _challenge.currentArmy2)
+		_challenge.manatarmsDefense = true
+		ChallengeMission_RemoveProductionUI("menatarms")
+		
+		Misc_ClearSelection()
+		lastSelectedBuilding = "menatarms"
+		hasUnselectedBuilding = false
+		
+		-- LEFT CLICK / PRESS A to undo.
+		hintPoint_undo_menatarms = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.barracks2, false, UI_PickIDForInputMode(11219072, 11251412), true, 2 )
+	
+		if(ChallengeMission_DefenseGroupsRemaining() == 0) then
+			Rule_AddOneShot(ChallengeMission_SendWave, _challenge.attackDelay[_challenge.currentWave])
+			ChallengeMission_RemoveProductionUI("all")
+		end
+	end
+end
+
+
+function HorsemanLeaderSelected()
+	if(_challenge.horsemanDefense == false)then
+		local sbp_horseman_hre = BP_GetSquadBlueprint("unit_horseman_3_hre")
+		SGroup_Clear(_challenge.currentArmy2)
+		UnitEntry_DeploySquads(localPlayer, _challenge.currentArmy2, {{sbp = sbp_horseman_hre, numSquads = _challenge.balance.defenderHorsemanCount }}, mkr_village_horseman_spawn)
+		Cmd_FormationMove(_challenge.currentArmy2, mkr_player_horseman_rally, true, false)
+		SGroup_AddGroup(_challenge.currentArmy, _challenge.currentArmy2)
+		_challenge.horsemanDefense = true
+		ChallengeMission_RemoveProductionUI("horsemen")
+		
+		Misc_ClearSelection()
+		lastSelectedBuilding = "horsemen"
+		hasUnselectedBuilding = false
+		
+		-- LEFT CLICK / PRESS A to undo.
+		hintPoint_undo_horsemen = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.stable1, false, UI_PickIDForInputMode(11219072, 11251412), true, 2 )
+	
+		if(ChallengeMission_DefenseGroupsRemaining() == 0) then
+			Rule_AddOneShot(ChallengeMission_SendWave, _challenge.attackDelay[_challenge.currentWave])
+			ChallengeMission_RemoveProductionUI("all")
+		end
+	end
+end
+
+function KnightLeaderSelected()
+	if(_challenge.knightDefense == false)then
+		local sbp_knight_hre = BP_GetSquadBlueprint("unit_knight_3_hre")
+		SGroup_Clear(_challenge.currentArmy2)
+		UnitEntry_DeploySquads(localPlayer, _challenge.currentArmy2, {{sbp = sbp_knight_hre, numSquads = _challenge.balance.defenderKnightCount }}, mkr_village_knight_spawn)
+		Cmd_FormationMove(_challenge.currentArmy2, mkr_player_knight_rally, true, false)
+		SGroup_AddGroup(_challenge.currentArmy, _challenge.currentArmy2)
+		_challenge.knightDefense = true
+		ChallengeMission_RemoveProductionUI("knights")
+		
+		Misc_ClearSelection()
+		lastSelectedBuilding = "knights"
+		hasUnselectedBuilding = false
+		
+		-- LEFT CLICK / PRESS A to undo.
+		hintPoint_undo_knights = Objective_AddUIElements(_challenge.victory.objectiveVictory, _challenge.stable2, false, UI_PickIDForInputMode(11219072, 11251412), true, 2 )
+	
+		if(ChallengeMission_DefenseGroupsRemaining() == 0) then
+			Rule_AddOneShot(ChallengeMission_SendWave, _challenge.attackDelay[_challenge.currentWave])
+			ChallengeMission_RemoveProductionUI("all")
+		end
+	end
+end
+
+
+function ChallengeMission_IncreaseBuildingVulnerability()
+	
+	if(villageBuildings ~= nil) then
+		for i = 1, EGroup_CountSpawned(villageBuildings) do
+			local entity = EGroup_GetEntityAt(villageBuildings, i)	
+			if(Entity_IsUnderAttack(entity, 1)) then
+				local currentHealth = Entity_GetHealthPercentage(entity)
+				if(currentHealth - .025 > 0) then
+					Entity_SetHealth(entity, currentHealth - .025)
+				end
+			end
+		end
+	end
+end
+
+--make sure AI ignores buildings when any of its units are under attack
+function ChallengeMission_RespondToPlayerAttack()
+	
+	if(villageBuildings ~= nil) then
+		
+		local sg_all_enemy_units = SGroup_CreateIfNotFound("sg_all_enemy_units")
+		local sg_all_player_units = SGroup_CreateIfNotFound("sg_all_player_units")
+		local sg_attacking_player_units = SGroup_CreateIfNotFound("sg_attacking_player_units")
+		
+		sg_all_enemy_units = Player_GetSquads(enemyPlayer)
+		sg_all_player_units = Player_GetSquads(localPlayer)
+		SGroup_Clear(sg_attacking_player_units)
+		
+		--check if any enemy units are under attack
+		local enemyIsUnderAttack = false
+		for i = 1, SGroup_Count(sg_all_enemy_units) do
+			local squad = SGroup_GetSquadAt(sg_all_enemy_units, i)
+			if(Squad_IsUnderAttack(squad, 3)) then
+				enemyIsUnderAttack = true
+			end
+		end
+		
+		--check if allied buildings are under attack
+		local buildingsUnderAttack = false
+		for i = 1, EGroup_Count(villageBuildings) do
+			local entity = EGroup_GetEntityAt(villageBuildings, i)
+			if(Entity_IsUnderAttack(entity, 3)) then
+				buildingsUnderAttack = true
+			end
+		end
+		
+		--find which player units are attacking
+		for i = 1, SGroup_Count(sg_all_player_units) do
+			local squad = SGroup_GetSquadAt(sg_all_player_units, i)
+			if(Squad_IsAttacking(squad, 3)) then
+				SGroup_Add(sg_attacking_player_units, squad)
+				
+			end
+		end
+		
+		if(enemyIsUnderAttack == true) then
+			--attack with all enemy units that are not attacking
+			for i = 1, SGroup_Count(sg_all_enemy_units) do
+				local squad = SGroup_GetSquadAt(sg_all_enemy_units, i)
+				
+				if(Squad_IsAttacking(squad, 3) == false or buildingsUnderAttack == true) then
+					--attack player units
+					SGroup_Single(sg_single, squad)
+					Cmd_Attack(sg_single, sg_attacking_player_units, false)
+					Cmd_AttackMove(sg_single, mkr_village_center, true)
+					
+				end
+			end
+			
+			--disable unit spawning/undo if the player attacks early with 1 out of 2 groups
+			if(ChallengeMission_DefenseGroupsRemaining() == 1) then
+				ChallengeMission_SendWave()
+				ChallengeMission_RemoveProductionUI("all")
+				_challenge.waveActive = false
+			end
+		end
+		
+		
+		
+	end
+end
+
+function ChallengeMission_UpdateMedals()
+	
+	if(_challenge.currentBenchmark == _challenge.benchmarks.gold)then
+		Util_StartIntel(EVENTS.Narr_GoldFailed )
+		Objective_Fail(_challenge.currentBenchmark.objective, false, false)
+		_challenge.currentBenchmark = _challenge.benchmarks.silver
+		Objective_Register(_challenge.currentBenchmark.objective, localPlayer.id)
+		Objective_Start(_challenge.currentBenchmark.objective, false, false)
+		Objective_SetCounter(_challenge.currentBenchmark.objective, _challenge.benchmarks.gold.maxUnitsDied + 1, _challenge.currentBenchmark.maxUnitsDied)
+	elseif(_challenge.currentBenchmark == _challenge.benchmarks.silver)then
+		Util_StartIntel(EVENTS.Narr_SilverFailed )
+		Objective_Fail(_challenge.currentBenchmark.objective, false, false)
+		_challenge.currentBenchmark = _challenge.benchmarks.bronze
+		Objective_Register(_challenge.currentBenchmark.objective, localPlayer.id)
+		Objective_Start(_challenge.currentBenchmark.objective, false, false)
+		Objective_SetCounter(_challenge.currentBenchmark.objective, _challenge.benchmarks.silver.maxUnitsDied + 1, _challenge.currentBenchmark.maxUnitsDied)
+	elseif(_challenge.currentBenchmark == _challenge.benchmarks.bronze)then
+		Util_StartIntel(EVENTS.Narr_BronzeFailed )
+		Objective_Fail(_challenge.currentBenchmark.objective, false, false)
+		_challenge.currentBenchmark = _challenge.benchmarks.unplaced
+		Objective_Register(_challenge.currentBenchmark.objective, localPlayer.id)
+		Objective_Start(_challenge.currentBenchmark.objective, false, false)
+		Objective_SetCounter(_challenge.currentBenchmark.objective, _challenge.benchmarks.bronze.maxUnitsDied + 1, _challenge.benchmarks.bronze.maxUnitsDied)
+	end
+	
+end
+
+function ChallengeMission_WaveWon()
+	Util_StartIntel(_challenge.celebrations[_challenge.currentWave])
+	Objective_Complete(_challenge.currentSecondObjective,true)
+end
+
+function ChallengeMission_WaveLost()
+	Util_StartIntel(EVENTS.LostMultipleBuildings)
+	Objective_Fail(_challenge.currentSecondObjective,true)
+	Rule_Remove(ChallengeMission_SendWave)
+	local numBuildings = Objective_GetCounter(_challenge.objective.protectTown);
+	numBuildings = numBuildings - 2
+	if(numBuildings >= _challenge.maxHousesLost) then
+		numBuildings = _challenge.maxHousesLost		
+		Objective_Fail(_challenge.objective.protectTown, true, false)
+		Rule_AddOneShot(Mission_Fail, _challenge.missionEndDelay)
+	end
+	Objective_IncreaseCounter(_challenge.objective.protectTown, 2)
+	
+	-- Sets 2 houses on fire and damages them
+	local burnCount = 2
+	local houses = Player_GetEntitiesFromType( villagePlayer, "scar_house" )
+	
+	for i = 1, EGroup_Count(houses) do
+		if(burnCount > 0) then
+			local house = EGroup_GetRandomSpawnedEntity(houses)
+			if(Entity_IsBurning(house) == false)then
+				-- Gets random number for fire threshold
+				local randFire = World_GetRand(1, 100)
+				-- Gets random number for damage
+				local randDamage = World_GetRand(20, 80)/100
+				-- If number is greater than building threshold
+				if (randFire > 0) then				
+					-- Damage
+					Entity_SetHealth(house, .01)
+					-- Set on Fire
+					--Entity_SetOnFire(house)
+				end
+				burnCount = burnCount - 1
+			end
+		end
+	end
+	--increase wave lost burn count so houses aren't counted twice
+	_challenge.buildingsLostEndOfWave = 2
+end
+
+
+firstUndoSpawn = "none"
+secondUndoSpawn = "none"
+
+function ChallengeMission_UpdateBuildingSpawner(inUnitType)
+	
+	local canAddNewGroup = true
+	if(ChallengeMission_DefenseGroupsRemaining() == 0)then
+		canAddNewGroup = false
+	end
+	
+	
+	--check if one of the production buildings is selected
+	if(firstUndoSpawn ~= inUnitType and secondUndoSpawn ~= inUnitType) then
+		
+		if(canAddNewGroup == true) then
+			--spawn a new group of units
+			if(inUnitType == "archers") then
+				ArcherLeaderSelected()
+				Rule_Remove(ChallengeMission_RemindPlayer)
+			end
+			if(inUnitType == "crossbowmen") then
+				CrossbowmanLeaderSelected()
+				Rule_Remove(ChallengeMission_RemindPlayer)
+			end
+			if(inUnitType == "spearmen") then
+				SpearmanLeaderSelected()
+				Rule_Remove(ChallengeMission_RemindPlayer)
+			end
+			if(inUnitType == "menatarms") then
+				ManatarmsLeaderSelected()
+				Rule_Remove(ChallengeMission_RemindPlayer)
+			end
+			if(inUnitType == "horsemen") then
+				HorsemanLeaderSelected()
+				Rule_Remove(ChallengeMission_RemindPlayer)
+			end
+			if(inUnitType == "knights") then
+				KnightLeaderSelected()
+				Rule_Remove(ChallengeMission_RemindPlayer)
+			end
+			
+			if(firstUndoSpawn ~= "none") then
+				secondUndoSpawn = firstUndoSpawn
+			end
+			firstUndoSpawn = inUnitType
+			Misc_ClearSelection()
+		end
+	
+		ChallengeMission_UpdateProductionObjective()
+	else
+		--reset all spawned units
+		ChallengeMission_RemoveProductionUI(inUnitType)
+		ChallengeMission_RemoveProductionUI("all")
+		ChallengeMission_CleanUpWave()
+		ChallengeMission_InitializeWave()
+		--ChallengeMissionDeployDummyUnits()
+		Misc_ClearSelection()
+		firstUndoSpawn = "none"
+		secondUndoSpawn = "none"
+	end
+end
+
+function ChallengeMission_UpdateProductionObjective()
+	--remove the "Train _ units" objective when all squads have been trained
+	if(ChallengeMission_DefenseGroupsRemaining() == 0)then
+		
+		if(_challenge.currentWave == 1) then
+			Objective_Stop(_challenge.objective.trainWave1)
+		elseif(_challenge.currentWave == 2) then
+			Objective_Stop(_challenge.objective.trainWave2)
+		elseif(_challenge.currentWave == 3) then
+			Objective_Stop(_challenge.objective.trainWave3)
+		elseif(_challenge.currentWave == 4) then
+			Objective_Stop(_challenge.objective.trainWave4)
+		elseif(_challenge.currentWave == 5) then
+			Objective_Stop(_challenge.objective.trainWave5)
+		elseif(_challenge.currentWave == 6) then
+			Objective_Stop(_challenge.objective.trainWave6)
+		end
+		
+	end
+end
+
+
+function ChallengeMission_Update()
+		
+	
+	if(_challenge.waveActive == true)then
+		
+		local buildingSelectionCount = 0
+		if Misc_IsEGroupSelected(_challenge.archeryRange1, false) then
+			buildingSelectionCount = buildingSelectionCount + 1
+		end
+		if Misc_IsEGroupSelected(_challenge.archeryRange2, false) then
+			buildingSelectionCount = buildingSelectionCount + 1
+		end
+		if Misc_IsEGroupSelected(_challenge.barracks1, false) then
+			buildingSelectionCount = buildingSelectionCount + 1
+		end
+		if Misc_IsEGroupSelected(_challenge.barracks2, false) then
+			buildingSelectionCount = buildingSelectionCount + 1
+		end
+		if Misc_IsEGroupSelected(_challenge.stable1, false) then
+			buildingSelectionCount = buildingSelectionCount + 1
+		end
+		if Misc_IsEGroupSelected(_challenge.stable2, false) then
+			buildingSelectionCount = buildingSelectionCount + 1
+		end
+		
+		--spawn units if only one production building is selected
+		if(buildingSelectionCount == 1) then
+			if Misc_IsEGroupSelected(_challenge.archeryRange1, false) then
+				ChallengeMission_UpdateBuildingSpawner("archers")
+			end
+			if Misc_IsEGroupSelected(_challenge.archeryRange2, false) then
+				ChallengeMission_UpdateBuildingSpawner("crossbowmen")
+			end
+			if Misc_IsEGroupSelected(_challenge.barracks1, false) then
+				ChallengeMission_UpdateBuildingSpawner("spearmen")
+			end
+			if Misc_IsEGroupSelected(_challenge.barracks2, false) then
+				ChallengeMission_UpdateBuildingSpawner("menatarms")
+			end
+			if Misc_IsEGroupSelected(_challenge.stable1, false) then
+				ChallengeMission_UpdateBuildingSpawner("horsemen")
+			end
+			if Misc_IsEGroupSelected(_challenge.stable2, false) then
+				ChallengeMission_UpdateBuildingSpawner("knights")
+			end
+		end
+		
+	end
+	
+end
+
+-- A unit is killed
+function ChallengeMission_OnDestruction(context)
+	
+	if(context.victimOwner == localPlayer) then
+		
+		if(Objective_IsCounterSet(_challenge.currentBenchmark.objective)) then
+			Objective_IncreaseCounter(_challenge.currentBenchmark.objective,1)
+			if(_challenge.currentBenchmark.maxUnitsDied ~= nil and Objective_GetCounter(_challenge.currentBenchmark.objective) > _challenge.currentBenchmark.maxUnitsDied) then
+				ChallengeMission_UpdateMedals()
+			end
+		end
+		
+		if(SGroup_IsAlive(_challenge.currentArmy) == false) then
+			if(safeguard ~= World_GetGameTicks()) then
+				ChallengeMission_WaveLost()
+				ChallengeMission_CleanUpDefense()
+				
+				if Objective_GetCounter(_challenge.objective.protectTown) < _challenge.maxHousesLost then
+					ChallengeMission_NextWave()
+				end
+				safeguard = World_GetGameTicks()
+			end
+		end
+	elseif(context.victimOwner == enemyPlayer) then
+		if(_challenge.currentWaveSquadGroup ~= nil) then
+			if(SGroup_IsAlive(_challenge.currentWaveSquadGroup) == false) then
+				if(safeguard ~= World_GetGameTicks()) then
+					_challenge.currentWaveSquadGroup = nil
+					ChallengeMission_WaveWon()
+					if Objective_GetCounter(_challenge.objective.protectTown) < _challenge.maxHousesLost then
+						ChallengeMission_NextWave()
+					end
+					safeguard = World_GetGameTicks()
+				end
+			end
+		end		
+	elseif(context.victimOwner == villagePlayer) then	-- A building
+		if Entity_IsOfType(context.victim,"building") and not Entity_IsOfType(context.victim,"farm") then
+			
+			--a single building is lost that is not part of the end of a wave
+			if(_challenge.buildingsLostEndOfWave == 0) then
+				ChallengeMission_BuildingLost()
+				Objective_IncreaseCounter(_challenge.objective.protectTown, 1)
+			end
+			
+			if Objective_GetCounter(_challenge.objective.protectTown) >= _challenge.maxHousesLost then		
+				Objective_Fail(_challenge.objective.protectTown, true, false)
+				Rule_AddOneShot(Mission_Fail, _challenge.missionEndDelay)
+			end
+		end
+	end
+end
+
+function ChallengeMission_BuildingLost()
+	--do not play message if building was lost as a result of losing a wave
+	if(_challenge.currentWaveSquadGroup ~= nil and _challenge.waveActive == false) then
+		if(SGroup_Count(_challenge.currentWaveSquadGroup) > 0) then
+			if(_challenge.buildingsLostThisWave == 0) then
+				Util_StartIntel(EVENTS.LostBuilding)
+				_challenge.buildingsLostThisWave = _challenge.buildingsLostThisWave + 1
+			elseif(_challenge.buildingsLostThisWave == 1) then
+				Util_StartIntel(EVENTS.LostMultipleBuildings)
+				_challenge.buildingsLostThisWave = _challenge.buildingsLostThisWave + 1
+			else
+				_challenge.buildingsLostThisWave = _challenge.buildingsLostThisWave + 1
+			end
+		end
+	end
+	
+end
+
+
+function ChallengeMission_CheckVictory()
+	
+	-- Store completion loss counter
+	local points = Objective_GetCounter(_challenge.currentBenchmark.objective)
+	-- Package completion time for Data Store
+	local trialInformation = {kpi = points}
+	
+	-- Provide completion time to Stats system via Data Store
+	Game_StoreTableData("trial", trialInformation)
+	
+	
+	-- Set victory objective to complete
+	Objective_Complete(_challenge.victory.objectiveVictory, false, true)
+	Objective_Complete(_challenge.victory.objectiveVictory2, false, false)
+
+	-- After a short delay end the mission.
+	Rule_AddOneShot(ChallengeMission_EndChallenge, 0)
+end
+
+function ChallengeMission_EndChallenge()
+Util_StartIntel(EVENTS.Narr_Outro)
+	Mission_Complete()
+	--Core_SetPlayerVictorious(localPlayer, nil, WR_OBJECTIVECOMPLETE)
+	
+end
+
+--this function orders units to form a line form startPos to endPos with the curvature curveStrength
+function ArcFormation(startPos, endPos, inGroup, curveStrength, inQueued, inOffset)
+	if(SGroup_CountSpawned(inGroup) == 0) then
+		return
+	end
+	
+	local fLine = Util_GetPosition(startPos)
+	fLine["x"] = endPos["x"] - startPos["x"]
+	fLine["z"] = endPos["z"] - startPos["z"]
+	
+	local tLine = Util_GetPosition(startPos)
+	tLine["x"] = fLine["z"]
+	tLine["z"] = -fLine["x"]
+	
+	
+	for i = 1, SGroup_Count(inGroup) do
+		--offset should be from 0 to 1
+		local pointD = (i - inOffset) / SGroup_Count(inGroup)
+		
+		local unitDest = Util_GetPosition(startPos)
+		--calculate the destination for each unit
+		unitDest["x"] = startPos["x"] + (pointD * fLine["x"])
+		unitDest["z"] = startPos["z"] + (pointD * fLine["z"])
+		
+		local curveMultiplier = pointD - .5
+		
+		curveMultiplier = curveMultiplier * curveMultiplier
+		curveMultiplier = .25 - curveMultiplier
+		
+		unitDest["x"] = unitDest["x"] + (tLine["x"] * curveMultiplier * curveStrength)
+		unitDest["z"] = unitDest["z"] + (tLine["z"] * curveMultiplier * curveStrength)
+		
+		--isolate each unit and give it a move order
+		local squad = SGroup_GetSquadAt(inGroup, i)
+		SGroup_Single(sg_single, squad)
+		Cmd_Move(sg_single, unitDest, inQueued)
+	end
+	
+end

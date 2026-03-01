@@ -1,0 +1,874 @@
+-------------------------------------------------------------------------
+-- Encounter framework
+-- 
+-- Relic Entertainment 2019
+--
+-- This system manages AI encounters in a script-friendly way, and can handle encounters that run through several different
+-- phases (each of which are their own AI encounter). This also system allows encounter types to be written per-project, as
+-- the needs vary drastically from project to project.
+--
+-- See: SCAR Encounter System
+--      http://relicwiki/display/CARD/SCAR+Encounter+System	(in the EE, you can Control-click on this link to go there)
+-------------------------------------------------------------------------
+
+
+
+
+-- TEMP Import and Config... this will move into Cardinal.scar eventually
+
+import("EncounterPlans/Plan_Attack.scar")
+import("EncounterPlans/Plan_Defend.scar")
+import("EncounterPlans/Plan_TownLife.scar")
+import("EncounterPlans/Plan_Move.scar")
+import("EncounterPlans/Plan_DoNothing.scar")
+
+function Project_RegisterEncounterPlans()
+	
+	AttackPlan_RegisterPlan()
+	DefendPlan_RegisterPlan()
+	TownLifePlan_RegisterPlan()
+	MovePlan_RegisterPlan()
+	DoNothingPlan_RegisterPlan()	
+
+ 	CORE_ENCOUNTER_SQUAD_COUNT_LIMIT = 250 		-- trigger an assert if an encounter has more than this number of units
+	
+end
+
+
+-- end of TEMP section
+
+
+
+
+
+--? @group Encounter
+
+
+
+function Encounter_Init()
+	
+	if t_coreEncounter_allPlans~=nil then
+		error("Encounter_Init() was already called")
+	end
+	
+	t_coreEncounter_allPlans = {}
+	t_coreEncounter_allEncounters = {}
+	
+	sg_coreEncounter_temp = SGroup_CreateIfNotFound("sg_coreEncounter_temp")
+	
+	REQUIRED = {}
+	
+	Core_CallDelegateFunctions("RegisterEncounterPlans")	
+	
+	Rule_AddOneShot(Encounter_Init_PartB, 0.125)
+
+	_b_debugEncounterPlans = Misc_IsCommandLineOptionSet("debugplans")
+	
+	Game_SetGameRestoreCallback(Encounter_RestartAll)
+end
+Scar_AddInit(Encounter_Init)
+
+
+function Encounter_Init_PartB()
+	CheatMenu_RegisterCheatFunction(CoreEncounter_DebugEncounter, "Show SCAR Encounter for Squad")	
+	CheatMenu_RegisterCheatFunction(CoreEncounter_DebugAIModule, "Show AI Module for Squad")	
+end
+
+
+function Encounter_RestartAll()
+	
+	if t_coreEncounter_allEncounters ~= nil then 
+		for i,encounter in pairs(t_coreEncounter_allEncounters) do 
+			if encounter ~= nil then 
+				_Encounter_RestartCurrentPhase(encounter)
+			end
+		end
+	end
+end
+
+--[[
+
+	Enabling debugging messages for encounters and plans:
+
+	- When you activate the "Show SCAR Encounter for Squad" option from the Mission Cheats menu, that enables debugging message for that encounter only
+	- To enable debugging messages for ALL encounters, you can either:
+		a) run the game with -debugplans in your command line arguments, or
+		b) call Encounter_EnableDebug(true) from the SCAR console to turn it on at any point in a mission (or false to turn it off)
+		
+]]
+
+
+function Encounter_EnableDebug(enable)
+	
+	_b_debugEncounterPlans = enable
+
+end
+
+
+
+--? @shortdesc Create a new SCAR encounter for the given units 
+--? @extdesc 
+--? @args PlayerID player, SGroupID/EGroupID/Table group, Table goal[, String debugName]
+--? @result 
+function Encounter_Create(player, group, goal, debugName)
+	
+	debugName = debugName or "moduleless"
+	
+	if scartype(goal) == ST_STRING then 
+		goal = {plan = goal}
+	end
+	
+	-- look up the plan	(covert it from the string to a full plan table)
+	local plan = _Encounter_FindPlan(goal.plan)
+	local nextEncounterID = AI_GetAndReserveNextTaskID(player)
+	local nextCallbackID = EventRule_GetNextUniqueRuleID()
+	
+	-- create the new encounter
+	local encounter = {
+		
+		debugName = debugName,
+		
+		plan = plan,
+		
+		player = player, 
+		goal = Clone(goal),	
+		originalGoal = Clone(goal),		-- this copy of the goal remains untouched, so it can be retrieved in its original form if necessary
+
+		sgroup = SGroup_CreateIfNotFound("Encounter (ID "..nextEncounterID..")"..debugName),
+		egroup = EGroup_CreateIfNotFound("Encounter (ID "..nextEncounterID..")"..debugName),
+		
+		encounterID = nextEncounterID,
+		callbackID = nextCallbackID,
+		
+		-- these values aren't set at this point, they're just here to describe settings that will eventually be in this table
+		currentPhase = nil,			-- holds a string of the current phase
+		currentPhaseOptions = nil,	-- holds the options passed in when transitioning into the phase - needed if we need to restart the phase
+		scratchpad = nil,			-- this is a scratchpad table for the current phase to use to store interim variables. It's flushed after the phase ends.
+		isStopped = nil,			-- set to true when the encounter has been stopped
+		
+	}
+	
+	table.insert(t_coreEncounter_allEncounters, encounter) 		-- add this ecounter to the table of all encounters	
+	
+	
+	-- process the goal data
+	if scartype(plan.defaultGoalData) == ST_TABLE then 				-- fill in any missing default values from the plan
+		_MergeGoalData(encounter.goal, plan.defaultGoalData, nil, nil, encounter.debugName)
+	end
+	if scartype(plan.preprocessGoalData) == ST_FUNCTION then 		-- run the goal through the plan's preprocess step
+		plan.preprocessGoalData(encounter.goal, encounter)
+	end
+	
+
+	-- add units to the sgroups
+	if scartype(group) == ST_SGROUP then 
+		for index, enc in pairs(t_coreEncounter_allEncounters) do
+			Encounter_RemoveSGroup(enc, group)
+		end
+		SGroup_AddGroup(encounter.sgroup, group)
+	elseif scartype(group) == ST_EGROUP then 
+		EGroup_AddEGroup(encounter.egroup, group)
+	elseif scartype(group) == ST_TABLE then 
+		for index, enc in pairs(t_coreEncounter_allEncounters) do
+			Encounter_RemoveSGroup(enc, group.sgroup)
+		end
+		SGroup_AddGroup(encounter.sgroup, group.sgroup)
+		EGroup_AddEGroup(encounter.egroup, group.egroup)
+	end
+	
+	-- check the size of this new encounter
+	if CORE_ENCOUNTER_SQUAD_COUNT_LIMIT ~= nil then 
+		if SGroup_CountSpawned(encounter.sgroup) > CORE_ENCOUNTER_SQUAD_COUNT_LIMIT then 
+			print(CoreEncounter_GetVerboseDebugName(encounter).." - over limit. Encounter has "..SGroup_CountSpawned(encounter.sgroup).." units (limit is "..CORE_ENCOUNTER_SQUAD_COUNT_LIMIT..")")
+		end
+	end
+	
+	-- hook up all AI notifications for this encounterID to the encounter systems's callback (which then farms it out to the script for the current plan & phase)
+	UnsavedEventRule_AddRuleIDEvent(_Encounter_AINotificationCallback, encounter.callbackID, GE_AIPlayer_EncounterNotification)
+
+	
+	-- if there are units in the encounter already, start the new encounter
+	_Encounter_BeginStartPhase(encounter)
+	
+	
+	return encounter											-- and return this encounter table to the user
+	
+end
+
+
+function _ResetID(encounter)
+	
+	--print("Removing encounter ID " ..encounter.encounterID)
+	EventRule_RemoveRuleIDEvent( _Encounter_AINotificationCallback, encounter.callbackID );
+	
+	encounter.encounterID = AI_GetAndReserveNextTaskID(encounter.player)
+	encounter.callbackID = EventRule_GetNextUniqueRuleID()
+	
+	UnsavedEventRule_AddRuleIDEvent(_Encounter_AINotificationCallback, encounter.callbackID, GE_AIPlayer_EncounterNotification)
+	
+	--print("Adding encounter ID " ..encounter.encounterID)
+end
+
+
+
+--? @shortdesc Gets the SGroup that holds all of the units associated with an encounter
+--? @args EncounterTable encounter 
+--? @result SGroupID
+function Encounter_GetSGroup(encounter)
+
+	return encounter.sgroup
+	
+end
+
+
+
+
+--? @shortdesc Add a squad to an existing SCAR encounter
+--? @extdesc You can also force the encounter to restart if necessary (i.e. it had previously finished)
+--? @args EncounterTable encounter, SquadID squad[, Boolean restartIfNecessary]
+function Encounter_AddSquad(encounter, squad, restartIfNecessary)
+	SGroup_Single(sg_coreEncounter_temp, squad) 
+	Encounter_AddSGroup(encounter, sg_coreEncounter_temp, restartIfNecessary)
+	SGroup_Clear(sg_coreEncounter_temp)
+end
+
+
+--? @shortdesc Add an SGroup to an existing SCAR encounter
+--? @args EncounterTable encounter, SGroupID sgroup[, Boolean restartIfNecessary]
+function Encounter_AddSGroup(encounter, sgroup, restartIfNecessary)
+
+	-- remove all squads from their current encounters (if they are in any)
+	for index, enc in pairs(t_coreEncounter_allEncounters) do	-- this is done per-encounter rather than per-squad, so it only touches each encounter once (doing so causes it to reset it's current phase)
+		Encounter_RemoveSGroup(enc, sgroup)
+	end
+	
+	-- add the squad or sgroup to the encounter's group
+	SGroup_AddGroup(encounter.sgroup, sgroup)
+		
+	-- check the new size of the encounter
+	if CORE_ENCOUNTER_SQUAD_COUNT_LIMIT ~= nil then 
+		if SGroup_CountSpawned(encounter.sgroup) > CORE_ENCOUNTER_SQUAD_COUNT_LIMIT then 
+			print(CoreEncounter_GetVerboseDebugName(encounter).." - over limit. Encounter has "..SGroup_CountSpawned(encounter.sgroup).." units (limit is "..CORE_ENCOUNTER_SQUAD_COUNT_LIMIT..")")
+		end
+	end
+	
+	if encounter.waitingForUnits == true then
+		_Encounter_BeginStartPhase(encounter)					-- check to see if the encounter can start
+	elseif SGroup_CountSpawned(encounter.sgroup) >= 1 then 
+		if _Encounter_GetCurrentPhase(encounter) ~= nil then 
+			_Encounter_RestartCurrentPhase(encounter)			-- restart the current phase with the new sgroup
+		elseif restartIfNecessary == true then
+			_Encounter_BeginStartPhase(encounter)				-- start the encounter from the beginning
+		end
+		
+	end
+	
+end
+
+
+
+
+
+--? @shortdesc Remove a squad from an existing SCAR encounter
+--? @args EncounterTable encounter, SquadID squad
+function Encounter_RemoveSquad(encounter, squad)
+	SGroup_Single(sg_coreEncounter_temp, squad) 
+	Encounter_RemoveSGroup(encounter, sg_coreEncounter_temp)
+	SGroup_Clear(sg_coreEncounter_temp)
+end
+
+--? @shortdesc Remove ALL squads from an existing SCAR encounter
+--? @args EncounterTable encounter
+function Encounter_RemoveAllSquads(encounter)
+	Encounter_RemoveSGroup(encounter, encounter.sgroup)
+end
+
+--? @shortdesc Remove all squads in an SGroup from a given SCAR encounter
+--? @args EncounterTable encounter, SGroupID sgroup
+function Encounter_RemoveSGroup(encounter, sgroup)
+
+	if SGroup_ContainsSGroup(encounter.sgroup, sgroup, ANY) then -- only do anything if the sgroup is part of this encounter
+		
+		-- remove the squad or sgroup to the encounter's group
+		SGroup_RemoveGroup(encounter.sgroup, sgroup)
+		
+		-- TODO: Remove from AI resource guidance if necessary??
+		
+		if SGroup_CountSpawned(encounter.sgroup) == 0 then 
+			
+			_Encounter_EndCurrentPhase(encounter)				-- all units gone, end the current phase
+	
+		else
+			
+			_Encounter_RestartCurrentPhase(encounter)			-- restart the current phase with the new sgroup
+			
+		end
+		
+	end
+	
+end
+
+
+
+--? @shortdesc Update the goal data for a given encounter
+--? @extdesc This will cause an encounter to restart internally
+--? @args EncounterTable encounter, Table newGoal
+function Encounter_SetGoalData(encounter, newGoal)
+
+	-- Log that the encounter target is changing
+	AIEncounter_LogDebug(encounter.player, encounter.encounterID, "Goal data changed")
+
+	-- wrap up current phase	
+	_Encounter_EndCurrentPhase(encounter)
+	
+	local plan = _Encounter_FindPlan(newGoal.plan)
+	
+	-- set new target data
+	encounter.plan = plan 
+	encounter.goal = Clone(newGoal)
+	encounter.originalGoal = Clone(newGoal)
+
+	if scartype(plan.defaultGoalData) == ST_TABLE then 
+		_MergeGoalData(encounter.goal, plan.defaultGoalData, nil, nil, encounter.debugName)
+	end
+	
+	if scartype(encounter.plan.preprocessGoalData) == ST_FUNCTION then 		-- run the goal through a preprocess step
+		encounter.plan.preprocessGoalData(encounter.goal, encounter)
+	end
+	
+	-- call the plan's start function / phase again
+	_Encounter_BeginStartPhase(encounter)
+	
+end
+
+
+
+--? @shortdesc Retrieve the goal data from a given encounter
+--? @extdesc This returns the original data as originally passed in. Internally it may have been augmented with default values and/or preprocessed in other ways, but this returns the original. 
+--? @args EncounterTable encounter
+--? @result Table
+function Encounter_GetGoalData(encounter)
+	
+	return encounter.originalGoal 
+	
+end
+
+
+--? @shortdesc Stops an encounter that is running.  
+--? @args EncounterTable encounter[, Boolean giveStopCommandToUnits]
+function Encounter_Stop(encounter, giveStopCommandToUnits)
+
+	_Encounter_EndCurrentPhase(encounter)			-- wrap up the current phase
+
+	if giveStopCommandToUnits == true and SGroup_CountSpawned(encounter.sgroup) >= 1then 
+		Cmd_Stop(encounter.sgroup)
+	end
+	
+	encounter.isStopped = true 						-- and mark the encounter as "stopped"
+	
+end
+
+
+--? @shortdesc Starts an encounter that has been stopped 
+--? @args EncounterTable encounter
+function Encounter_Start(encounter)
+	
+	encounter.isStopped = nil 						
+
+	if encounter.currentPhase == nil then		-- only start again if there is no current phase 
+		_Encounter_BeginStartPhase(encounter)
+	end
+	
+end
+
+--? @shortdesc Restarts an encounter from the beginning 
+--? @args EncounterTable encounter
+function Encounter_Restart(encounter)
+
+	encounter.isStopped = nil 						
+	
+	if encounter.currentPhase ~= nil then 		-- force the end of the current phase and start the encounter again
+		_Encounter_EndCurrentPhase(encounter)
+	end
+	
+	_Encounter_BeginStartPhase(encounter)
+	
+end
+
+--? @shortdesc Tells you whether an encounter is active or has finished 
+--? @args EncounterTable encounter
+--? 
+function Encounter_IsActive(encounter)
+
+	return encounter.isStopped == nil 
+	
+end
+
+
+
+--? @shortdesc Returns the underlying aiEncounter for the given encounter, if there is one. Returns nil otherwise. 
+--? @args EncounterTable encounter
+--? @result aiEncounter
+function Encounter_GetAIEncounter(encounter)
+	
+	return AIEncounter_GetEncounterFromID(encounter.player, encounter.encounterID)
+	
+end
+
+
+
+-- method for sending misc commands to an encounter, and the encounter type can handle this as it pleases
+-- we'll probably provide a few standard actions, like a brute force set phase action
+function Encounter_DoAction()
+	
+	
+end
+
+
+
+
+
+
+
+
+
+
+--? @shortdesc Find a SCAR encounter that's associated with a squad, sgroup, or an AI encounter 
+--? @args SquadID/SGroupID/AiEncounterID item
+--? @result EncounterTable
+function Encounter_FindAssociatedEncounter(item)
+	
+	if scartype(item) == ST_SQUAD then 
+		
+		for index, encounter in pairs(t_coreEncounter_allEncounters) do 
+			if SGroup_ContainsSquad(encounter.sgroup, Squad_GetID(item), true) then 
+				return encounter
+			end			
+		end
+		
+	elseif scartype(item) == ST_SGROUP then 
+		
+		for index, encounter in pairs(t_coreEncounter_allEncounters) do 
+			if SGroup_ContainsSGroup(encounter.sgroup, item, ANY) then 
+				return encounter
+			end			
+		end
+		
+	elseif scartype(item) == ST_NUMBER then 
+		
+		for index, encounter in pairs(t_coreEncounter_allEncounters) do 
+			if encounter.callbackID == item then 
+				return encounter
+			end			
+		end
+		
+	end
+	
+end
+
+
+
+
+
+
+
+
+--
+-- Functions for Encounter Plans
+--
+
+
+-- the delegates called above can register their plans with this function
+function Encounter_RegisterPlan(plan)
+
+	-- check this isn't already registered
+	for index, existingPlan in pairs(t_coreEncounter_allPlans) do 
+		if existingPlan.name == plan.name then 
+			fatal("Core Encounter System - trying to add a new encounter type "..plan.name..", but an encounter type with that name has already been registered")
+		end
+	end		
+		
+	
+	-- check the encounter type is valid 
+	if scartype(plan.name) ~= ST_STRING then 		
+		fatal("Trying to register an Encounter Plan that doesn't have a name.")
+	end
+	if scartype(plan.start) ~= ST_FUNCTION and scartype(plan.start) ~= ST_STRING then 		
+		fatal("Trying to register Encounter Plan "..plan.name.." that doesn't have a starting function or starting phase specified.")
+	end
+	
+	
+	-- copy the phase names into the phase table (this makes it easier to debug if you just have the phase info!)
+	if scartype(plan.phases) == ST_TABLE then
+		for index, phase in pairs(plan.phases) do 
+			phase.name = index 
+		end
+	end
+	
+	
+	-- make this table read-only (it will be shared across encounters, so don't allow things to write to it) 
+	Table_MakeReadOnly(plan, true, "Attempt to write to the read-only "..plan.name.." Encounter Plan table")
+	
+	
+	table.insert(t_coreEncounter_allPlans, plan)
+	
+end
+
+
+
+-- call this to begin the opening/starting phase for this encounter (as determined by the plan)  
+function _Encounter_BeginStartPhase(encounter)
+
+	encounter.isStopped = nil 
+	
+	 --requiresSquadsToStart being false is to make sure that townlife plans are initialized immediately
+	if encounter.sgroup == nil or encounter.player == nil then
+		
+		encounter.waitingForUnits = true 
+	
+	elseif encounter.plan.requiresSquadsToStart == false or SquadGroup_CountSpawnedAndStatsInitialized(encounter.sgroup, encounter.player) >= 1 then 
+		
+		encounter.waitingForUnits = false
+		
+		if scartype(encounter.plan.start) == ST_FUNCTION then
+			encounter.plan.start(encounter) 								-- call a start function if one was provided
+		elseif scartype(encounter.plan.start) == ST_STRING then 		
+			Encounter_BeginNewPhase(encounter, encounter.plan.start)		-- or trigger the start phase if that is designated instead
+		end
+		
+	else
+		-- encounter has no units, it's in limbo until it does
+		encounter.waitingForUnits = true 
+		Rule_AddOneShot(_CheckForSquads, 0.5, {encounter = encounter})
+		AIPlayer_SetRequiresStatsUpdate(encounter.player)
+	end	
+	
+end
+
+function _CheckForSquads(context, data)
+
+	-- it's possible this has been kicked off by another call
+	if(data.encounter.waitingForUnits == true) then
+		_Encounter_BeginStartPhase(data.encounter)
+	end
+	
+end
+
+
+-- call this function to transition the encounter between phases. It deals with calling functions to wrap up any previous phases and start the next phase, all in the correct order
+function _Encounter_TransitionToPhase(encounter, newPhase, options)
+
+	if encounter.enableDebug == true or _b_debugEncounterPlans == true then 
+		
+		print(CoreEncounter_GetVerboseDebugName(encounter).." - transitioning to "..newPhase.." Phase")
+		
+	end
+	
+	-- first, if there is a current phase then wrap that phase up
+	_Encounter_EndCurrentPhase(encounter)
+	
+	-- finally, start the new phase	
+	Encounter_BeginNewPhase(encounter, newPhase, options)
+	
+end
+
+
+-- call this function to finish an encounter
+function _Encounter_Finish(encounter, giveStopCommandToUnits, callbackName, callbackData)
+
+	if encounter.isStopped == true then
+		return 
+	elseif encounter.enableDebug == true or _b_debugEncounterPlans == true then 
+		
+		if callbackName == nil then 
+			print(CoreEncounter_GetVerboseDebugName(encounter).." - finishing")
+		else
+			print(CoreEncounter_GetVerboseDebugName(encounter).." - finishing with the "..callbackName.." callback")
+		end
+		
+	end
+
+	-- first, if there is a current phase then wrap that phase up
+	_Encounter_EndCurrentPhase(encounter)
+
+	if giveStopCommandToUnits == true and SGroup_CountSpawned(encounter.sgroup) >= 1then 
+		Cmd_Stop(encounter.sgroup)
+	end
+	
+	encounter.isStopped = true 
+
+	_Encounter_TriggerCallback(encounter, callbackName, callbackData)
+	
+end
+
+
+-- call this to end the current phase, whatever it is
+function _Encounter_EndCurrentPhase(encounter)
+	
+	local currentPhase = encounter.currentPhase
+	
+	if currentPhase ~= nil then 
+		
+		local phase = encounter.plan.phases[currentPhase]		
+		if scartype(phase.endFunction) == ST_FUNCTION then 
+			phase.endFunction(encounter)
+		end
+		
+	end
+
+	local aiEncounter = AIEncounter_GetEncounterFromID(encounter.player, encounter.encounterID)
+	if aiEncounter ~= nil then 
+		AIEncounter_Cancel(aiEncounter)
+	end
+
+	_ResetID(encounter)
+	
+	encounter.currentPhase = nil
+	encounter.currentPhaseOptions = nil 
+
+	encounter.scratchpad = {}
+	
+end
+
+
+-- call this function to kick off a new phase
+function Encounter_BeginNewPhase(encounter, newPhase, options)
+	
+	if encounter.currentPhase ~= nil then 
+		fatal("Core Encounter System - trying to start a new phase when and existing phase has not wrapped up yet.")
+	end
+
+	encounter.currentPhase = newPhase
+	encounter.currentPhaseOptions = options
+	
+	encounter.scratchpad = {}
+	
+	encounter.timeStamp_lastPhaseEnded = nil
+	
+	-- finally, start the new phase	
+	local phase = encounter.plan.phases[newPhase]	
+	if scartype(phase.startFunction) == ST_FUNCTION then 
+		phase.startFunction(encounter, options)
+	end	
+	
+end
+
+
+-- call this function to restart the current phase, with the same options it was originally called with
+function _Encounter_RestartCurrentPhase(encounter)
+
+	if encounter.currentPhase ~= nil then 
+		_Encounter_TransitionToPhase(encounter, encounter.currentPhase, encounter.currentPhaseOptions)
+	end
+	
+end
+
+function _Encounter_GetCurrentPhase(encounter)
+
+	return encounter.currentPhase 
+	
+end
+
+
+-- this is called for AI Encounter notifications, it finds the relevant encounter table and farms the response out to the appropriate function for that encounter's phase
+function _Encounter_AINotificationCallback(context)
+	
+	local encounter = Encounter_FindAssociatedEncounter(context.encounterID)	
+	
+	if encounter ~= nil and encounter.isStopped ~= true then 
+		
+		if context.notificationType == AIEncounterNotification_Cancelled then		-- this is just a reaction to a phase being shut down, so swallow this notification
+			return 
+		end
+		
+		if encounter.enableDebug == true or _b_debugEncounterPlans == true then 
+			
+			local notificationString = "<Unknown>"
+			if context.notificationType == AIEncounterNotification_Failure then 
+				notificationString = "Failure"
+			elseif context.notificationType == AIEncounterNotification_Success then 
+				notificationString = "Success"
+			elseif context.notificationType == AIEncounterNotification_Transition then 
+				notificationString = "Transition"
+			elseif context.notificationType == AIEncounterNotification_StateTreeExit then 
+				notificationString = "StateTreeExit"
+			end
+			
+			local currentPhase = encounter.currentPhase or "<No Phase>"
+			--local planName = encounter.plan.name or "<No Plan Name>" 
+			
+			print(CoreEncounter_GetVerboseDebugName(encounter).." - "..currentPhase.." Phase - "..notificationString)
+			
+		end
+		
+		local phase = encounter.plan.phases[encounter.currentPhase]
+		if scartype(phase) == ST_TABLE and scartype(phase.aiNotificationFunction) == ST_FUNCTION then 
+			phase.aiNotificationFunction(encounter, context)
+		end
+		
+	else
+		
+		print("No current encounter with ID:"..context.encounterID)
+		
+	end
+	
+	
+end
+
+
+
+
+
+
+
+--
+-- Internal functions
+--
+
+
+-- finds the details of a plan that's been registered
+function _Encounter_FindPlan(name)
+	
+	for index, plan in pairs(t_coreEncounter_allPlans) do 
+		if plan.name == name then 
+			return plan
+		end
+	end		
+
+	fatal("Core Encounter System - could not find an encounter plan with the name "..name)
+	
+end
+
+-- trigger a callback specified in the goal's callbacks table (and checks it exists first)
+function _Encounter_TriggerCallback(encounter, callbackName, callbackData)
+	
+	if scartype(callbackName) == ST_STRING and scartype(encounter.goal.callbacks) == ST_TABLE then 
+		if scartype(encounter.goal.callbacks[callbackName]) == ST_FUNCTION then 
+			encounter.goal.callbacks[callbackName](encounter, callbackData)
+		end
+	end
+
+end
+
+	
+function _MergeGoalData(data, defaults, errorList, prefix, encName)
+
+	prefix = prefix or ""
+	errorList = errorList or {}
+	encName = encName or ""
+	
+	for key, value in pairs(defaults) do
+		if data[key] == nil then 
+			
+			if value == REQUIRED then 
+				table.insert(errorList, "- "..prefix..key)				
+			elseif scartype(value) == ST_TABLE then 
+				data[key] = {}
+				_MergeGoalData(data[key], defaults[key], errorList, prefix..key..".", encName)
+			else
+				data[key] = value				
+			end
+			
+		end
+	end
+	
+	if prefix == "" and #errorList >= 1 then 
+		local errorString = "Trying to set the goal on a SCAR encounter "..encName.." but it's missing the following required items:\n"
+		for i, missingItem in pairs(errorList) do 
+			errorString = errorString..missingItem.."\n"
+		end
+		fatal(errorString)
+	end
+	
+end
+
+
+--? @shortdesc Sets the target for an encounter to a provided marker, position, sgroup, egroup, squad, or entity
+--? @extdesc When you specify a group as the target, it chooses a single squad or entity - if you pass something for the closestTo parameter it will choose the closest one to that, otherwise it will just choose the first
+--? @args AIEncounterID aiEncounter, Marker/Position/GroupID[, Marker/Position/GroupID closestTo]
+function AIEncounter_TargetGuidance_SetTarget(aiEncounter, thing, closestTo)
+	
+	if scartype(thing) == ST_SCARPOS then 
+		AIEncounter_TargetGuidance_SetTargetPosition(aiEncounter, thing)
+	elseif scartype(thing) == ST_MARKER then 
+		AIEncounter_TargetGuidance_SetTargetPosition(aiEncounter, Util_GetPosition(thing))
+	elseif scartype(thing) == ST_SQUAD then 
+		AIEncounter_TargetGuidance_SetTargetSquad(aiEncounter, thing)
+	elseif scartype(thing) == ST_ENTITY then 
+		AIEncounter_TargetGuidance_SetTargetEntity(aiEncounter, thing)
+	elseif scartype(thing) == ST_SGROUP then 
+		
+		if SGroup_CountSpawned(thing) == 0 then 
+			fatal("Trying to create an AI encounter with the target as an empty SGroup")
+		elseif scartype(closestTo) == ST_SGROUP then
+			AIEncounter_TargetGuidance_SetTargetSquad(aiEncounter, SGroup_GetClosestSquad(thing, Util_GetPosition(closestTo)))
+		else
+			AIEncounter_TargetGuidance_SetTargetSquad(aiEncounter, SGroup_GetSpawnedSquadAt(thing, 1))
+		end
+		
+	elseif scartype(thing) == ST_EGROUP then 
+		
+		if EGroup_CountSpawned(thing) == 0 then 
+			fatal("Trying to create an AI encounter with the target as an empty EGroup")
+		elseif scartype(closestTo) == ST_SGROUP then
+			AIEncounter_TargetGuidance_SetTargetEntity(aiEncounter, EGroup_GetClosestEntity(thing, Util_GetPosition(closestTo)))
+		else
+			AIEncounter_TargetGuidance_SetTargetEntity(aiEncounter, EGroup_GetSpawnedEntityAt(thing, 1))
+		end
+		
+	else
+		fatal("Trying to create an AI encounter target, but the target is of the type "..scartype_enum_tostring(thing).." which is not supported")
+	end
+	
+end
+
+
+
+function CoreEncounter_DebugEncounter(item)
+
+	if item == nil then 
+		item = Misc_GetMouseOverSquad()
+	end
+	
+	if item ~= nil then 
+		_coreEncounter_debugEncounter = Encounter_FindAssociatedEncounter(item)
+		if _coreEncounter_debugEncounter ~= nil then
+			_coreEncounter_debugEncounter.enableDebug = true
+			view(_coreEncounter_debugEncounter)
+		end
+	else
+		view()
+		if _coreEncounter_debugEncounter ~= nil then
+			_coreEncounter_debugEncounter.enableDebug = nil 
+			_coreEncounter_debugEncounter = nil
+		end
+	end
+	
+end
+
+function CoreEncounter_DebugAIModule(item)
+
+	if item == nil then 
+		item = Misc_GetMouseOverSquad()
+	end
+	
+	if item ~= nil then 
+		_AI_Module_debugModule = AI_Module_FindAssociatedModule(item)
+		if _AI_Module_debugModule ~= nil then
+			_AI_Module_debugModule.enableDebug = true
+			view(_AI_Module_debugModule)
+		end
+	else
+		view()
+		if _AI_Module_debugModule ~= nil then
+			_AI_Module_debugModule.enableDebug = nil 
+			_AI_Module_debugModule = nil
+		end
+	end
+	
+end
+
+function CoreEncounter_GetVerboseDebugName(scarEncounter)
+	return scarEncounter.debugName.." - "..scarEncounter.plan.name.." Plan - Encounter "..scarEncounter.encounterID
+end
+

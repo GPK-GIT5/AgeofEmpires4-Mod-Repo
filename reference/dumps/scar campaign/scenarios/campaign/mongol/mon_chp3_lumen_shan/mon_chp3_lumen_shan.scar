@@ -1,0 +1,1048 @@
+--
+-- Lumen Shan 1260s
+--
+-- Mongol Chapter 3
+--
+
+-- We need to import this for anything to work. We don't need anything else
+import("MissionOMatic/MissionOMatic.scar")
+-- We need to import custom objective files
+import("obj_lumen_phase1.scar")
+import("obj_lumen_secondary.scar")
+import("training_lumen.scar")
+
+import("mon_chp3_lumen_shan_automated.scar")
+
+-- Setup player data
+function Mission_SetupPlayers()
+	
+	-- Get IDs for all players
+	g_playerMongol = World_GetPlayerAt(1)
+	g_playerSong = World_GetPlayerAt(2)
+	g_playerChina = World_GetPlayerAt(3)
+	g_playerNeutral = World_GetPlayerAt(4)
+
+	-- The human player
+	Setup_SetPlayerName(g_playerMongol, Loc_GetString("$11178722"))
+	Player_SetCurrentAge(g_playerMongol, AGE_IMPERIAL)
+	Player_SetMaximumAge(g_playerMongol, AGE_IMPERIAL)
+
+	-- The main enemy AI player	
+	Setup_SetPlayerName(g_playerSong, Loc_GetString("$11178723"))
+	Player_SetCurrentAge(g_playerSong, AGE_IMPERIAL)
+	Player_SetMaximumAge(g_playerSong, AGE_IMPERIAL)
+	
+	-- The main neutral AI player	
+	Setup_SetPlayerName(g_playerChina, Loc_GetString("$11178724"))
+	Player_SetCurrentAge(g_playerChina, AGE_CASTLE)
+	Player_SetMaximumAge(g_playerChina, AGE_CASTLE)
+	
+	AI_Enable(g_playerNeutral, false)
+	
+	-- Player relationships
+	Player_SetRelationship(g_playerMongol, g_playerSong, R_ENEMY)
+	Player_SetRelationship(g_playerSong, g_playerMongol, R_ENEMY)
+	
+	-- The allied player
+	Player_SetRelationship(g_playerMongol, g_playerChina, R_ALLY)
+	Player_SetRelationship(g_playerChina, g_playerMongol, R_ALLY)
+	World_EnableSharedLineOfSight(g_playerMongol, g_playerChina, false)
+	
+	Player_SetRelationship(g_playerChina, g_playerNeutral, R_ALLY)
+	Player_SetRelationship(g_playerNeutral, g_playerChina, R_ALLY)
+	
+	Player_SetRelationship(g_playerChina, g_playerSong, R_NEUTRAL)
+	Player_SetRelationship(g_playerSong, g_playerChina, R_NEUTRAL)
+
+	-- The neutral leader-holder player
+	Setup_SetPlayerName(g_playerNeutral, Loc_GetString("$11178722"))
+	Player_SetCurrentAge(g_playerNeutral, AGE_CASTLE)
+	Player_SetMaximumAge(g_playerNeutral, AGE_CASTLE)
+	
+	Player_SetRelationship(g_playerMongol, g_playerNeutral, R_ALLY)
+	Player_SetRelationship(g_playerNeutral, g_playerMongol, R_ALLY)
+	
+	Player_SetRelationship(g_playerSong, g_playerNeutral, R_NEUTRAL)
+	Player_SetRelationship(g_playerNeutral, g_playerSong, R_NEUTRAL)
+	
+	
+end
+
+-- Setup other data
+function Mission_SetupVariables()
+	
+	Player_SetStateModelBool(g_playerMongol, "allow_mongol_stone_market", true)
+	Player_GetStateModelBool(g_playerMongol, "allow_mongol_stone_market")
+	
+	-- SGroups
+	sg_player = SGroup_CreateIfNotFound("sg_player")
+	sg_enemy = SGroup_CreateIfNotFound("sg_enemy")
+	
+	sg_intro_mongols_1 = SGroup_CreateIfNotFound("sg_intro_mongols_1")
+	sg_intro_mongols_2 = SGroup_CreateIfNotFound("sg_intro_mongols_2")
+	sg_intro_mongols_3 = SGroup_CreateIfNotFound("sg_intro_mongols_3")
+	sg_intro_mongols_4 = SGroup_CreateIfNotFound("sg_intro_mongols_4")
+	sg_intro_mongols_5 = SGroup_CreateIfNotFound("sg_intro_mongols_5")
+	
+	sg_all_intro_mongols = SGroup_CreateIfNotFound("sg_all_intro_mongols")
+	
+	sg_mongols_with_camp = SGroup_CreateIfNotFound("sg_mongols_with_camp")
+	sg_lumen_villagers_1 = SGroup_CreateIfNotFound("sg_lumen_villagers_1")
+	sg_lumen_villagers_2 = SGroup_CreateIfNotFound("sg_lumen_villagers_2")
+	
+	sg_bohekou_villagers_1 = SGroup_CreateIfNotFound("sg_bohekou_villagers_1")
+	sg_bohekou_villagers_2 = SGroup_CreateIfNotFound("sg_bohekou_villagers_2")
+	sg_bohekou_troops = SGroup_CreateIfNotFound("sg_bohekou_troops")
+	
+	sg_outro_troops = SGroup_CreateIfNotFound("sg_outro_troops")
+	sg_outro_song = SGroup_CreateIfNotFound("sg_outro_song")
+	
+	sg_outro_liu_zheng = SGroup_CreateIfNotFound("sg_outro_liu_zheng")
+	sg_outro_yuan_archers = SGroup_CreateIfNotFound("sg_outro_yuan_archers")
+	sg_outro_yuan_infantry = SGroup_CreateIfNotFound("sg_outro_yuan_infantry")
+	sg_outro_yuan_cavalry = SGroup_CreateIfNotFound("sg_outro_yuan_cavalry")
+	
+	-- EGroup
+	eg_song_fort_keep = EGroup_CreateIfNotFound("eg_song_fort_keep")
+	eg_village_lumen = EGroup_CreateIfNotFound("eg_village_lumen")
+	eg_village_bohekou = EGroup_CreateIfNotFound("eg_village_bohekou")
+	eg_bridges_wood = EGroup_CreateIfNotFound("eg_bridges_wood")
+	
+	eg_settlement_1 = EGroup_CreateIfNotFound("eg_settlement_1")
+	eg_settlement_2 = EGroup_CreateIfNotFound("eg_settlement_2")
+	
+	eg_player_walls = EGroup_CreateIfNotFound("eg_player_walls")
+	
+	-- Add some hintpoints to help orientation
+	HintPoint_Add(eg_settlement_1, true, "$11178726", LOCATION_LABEL_HEIGHT)
+	HintPoint_Add(eg_settlement_2, true, "$11178727", LOCATION_LABEL_HEIGHT)
+	HintPoint_Add(mkr_neutral_lumen, true, "$11200085", LOCATION_LABEL_HEIGHT)
+	HintPoint_Add(mkr_neutral_bohekou, true, "$11200086", LOCATION_LABEL_HEIGHT)
+	
+	-- Leader
+	g_leaderLiuZheng = Missionomatic_InitializeLeader({
+		name = "$11178725",
+		owner = g_playerMongol,
+		neutralHolder = g_playerNeutral,
+		respawns = { mkr_leader_respawn_1 },
+	})
+	
+	-- Setup the path verification system
+	g_pathChecks = {
+		west = {
+			ID = 0,
+			origin = Util_GetPosition(mkr_song_south_1),
+			target = Util_GetPosition(mkr_song_north_1),
+			blockDist = 9999999,
+			length = nil,
+			originalLength = nil,
+			pathName = "lumen_west",
+			fullyBlocked = false,
+		},
+		westAlt = {
+			ID = 1,
+			origin = Util_GetPosition(mkr_song_south_2),
+			target = Util_GetPosition(mkr_song_north_1),
+			blockDist = 9999999,
+			length = nil,
+			originalLength = nil,
+			pathName = "lumen_westalt",
+			fullyBlocked = false,
+		},
+		east = {
+			ID = 2,
+			origin = Util_GetPosition(mkr_song_south_3),
+			target = Util_GetPosition(mkr_song_north_2),
+			blockDist = 9999999,
+			length = nil,
+			originalLength = nil,
+			pathName = "lumen_east",
+			fullyBlocked = false,
+		},
+		eastAlt = {
+			ID = 3,
+			origin = Util_GetPosition(mkr_song_south_3),
+			target = Util_GetPosition(mkr_song_north_1),
+			blockDist = 9999999,
+			length = nil,
+			originalLength = nil,
+			pathName = "lumen_eastalt",
+			fullyBlocked = false,
+		}
+	}
+	
+	-- Setup the raiding system
+	Raiding_Init({
+		player = g_playerSong,
+		spawnLocations = {
+			mkr_song_south_2,
+			mkr_song_south_3,
+		},
+		despawnLocation = mkr_song_south_2_despawn,
+		scoutTargets = {
+			mkr_song_north_1,
+			mkr_song_north_2,
+		},
+		raiderComposition = {
+			{ type = "scar_horseman", ratio = Util_DifVar({0.8, 0.8, 0.6, 0.4}), },
+			{ type = "scar_knight", ratio = Util_DifVar({0.0, 0.0, 0.2, 0.3}), },
+			{ type = "scar_firelancer", ratio = Util_DifVar({0.2, 0.2, 0.2, 0.3}), },
+		},
+		sendProbes = false,
+		activeScouting = false,
+		partyLimit = Util_DifVar({1, 1, 2, 3}),
+		partySize = Util_DifVar({12, 12, 18, 24}),
+		raidSpacing = 50,
+		raidTiming = Util_DifVar({30, 30, 25, 20}),
+		canBuildRams = false,
+	})
+	
+	-- Variables
+	g_lastWallPos = nil
+	g_songHarassment = 0
+	g_pathLengthWest = nil
+	g_pathLengthEast = nil
+	g_wallStingerCooldown = { current = 0, max = 30 }
+	g_northernMarkers = {
+		mkr_song_north_1,
+		mkr_song_north_2,
+	}
+	g_southernMarkers = {
+		{ marker = mkr_song_south_1, markerAlt = mkr_song_south_2, uses = 0 },
+		{ marker = mkr_song_south_3, uses = 0 },
+	}
+	g_songAllExitMarkers = {
+		mkr_song_north_1,
+		mkr_song_north_2,
+		mkr_song_south_1,
+		mkr_song_south_2,
+		mkr_song_south_3,
+	}
+	g_songPushComplete = false
+	g_wallbreakerWaveCount = 8
+	g_songAttackersPhase3 = {}
+	g_wallbreakerNextIdx = World_GetRand(1, 2)
+	g_westSideModulo = World_GetRand(0, 1)
+	
+	-- Start with a small timer to account for scouts that may be reaching the exit just as the player walls off
+	g_escapeWarningTimer = 45
+	g_escapeWarningCount = 0
+	
+	-- Objectives
+	LumenShan_InitObjectives_Phase1()
+	LumenShan_InitObjectives_Phase2()
+	LumenShan_InitObjectives_Phase3()
+	LumenShan_InitObjectives_Phase4()
+	LumenShan_InitObjectivesSecondary()
+end
+
+function Mission_SetRestrictions()	-- set up any restrictions (i.e. locking out units, etc) in here
+
+	-- The player shouldn't get any stone to start with
+	Player_SetResource(g_playerMongol, RT_Food, 1000)
+	Player_SetResource(g_playerMongol, RT_Wood, 800)
+	Player_SetResource(g_playerMongol, RT_Gold, 800)
+	Player_SetResource(g_playerMongol, RT_Stone, 0)
+	
+	-- We're setting neutral player resources to zero so they don't build units
+	Player_SetResource(g_playerChina, RT_Food, 0)
+	Player_SetResource(g_playerChina, RT_Wood, 0)
+	Player_SetResource(g_playerChina, RT_Gold, 0)
+	Player_SetResource(g_playerChina, RT_Stone, 0)
+	
+	-- The AI needs resources and popcap to build rams
+	Player_SetResource(g_playerSong, RT_Wood, 50000)
+	Player_SetResource(g_playerSong, RT_Gold, 50000)
+	Player_SetPopCapOverride(g_playerSong, 1000)
+	
+	UI_SetPlayerDataContext(g_playerMongol, { PopulationCapOn = false })
+	
+	-- HIDE UNAVAILABLE ITEMS
+	-- Non-Defensive Chinese Buildings
+	Player_SetEntityProductionAvailability(g_playerMongol, EBP.CHINESE.BUILDING_LANDMARK_AGE1_GATEHOUSE_CONTROL_CHI, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(g_playerMongol, EBP.CHINESE.BUILDING_LANDMARK_AGE1_ACADEMY_CONTROL_CHI, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(g_playerMongol, EBP.CHINESE.BUILDING_LANDMARK_AGE2_CLOCKTOWER_CONTROL_CHI, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(g_playerMongol, EBP.CHINESE.BUILDING_LANDMARK_AGE2_PALACE_CONTROL_CHI, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(g_playerMongol, EBP.CHINESE.BUILDING_LANDMARK_AGE3_GREAT_WALL_CONTROL_CHI, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(g_playerMongol, EBP.CHINESE.BUILDING_LANDMARK_AGE3_SPIRIT_WAY_CONTROL_CHI, ITEM_REMOVED)
+	
+	-- Officials won't work, so we'll remove them
+	Player_SetSquadProductionAvailability(g_playerMongol, SBP.CHINESE.UNIT_OFFICIAL_1_CHI, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(g_playerMongol, UPG.CHINESE.UPGRADE_IMPERIAL_EXAMINATIONS_CHI, ITEM_REMOVED)
+	
+	--No relics, remove tithe barn & pagoda
+	Player_SetEntityProductionAvailability(g_playerMongol, EBP.CHINESE.BUILDING_DYNASTY_PAGODA_CONTROL_CHI, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(g_playerMongol, UPG.COMMON.UPGRADE_UNIT_RELIGIOUS_TITHE_BARN_4, ITEM_REMOVED)
+	
+	--No population limit, remove houses and villages
+	Player_SetEntityProductionAvailability(g_playerMongol, EBP.CHINESE.BUILDING_HOUSE_CONTROL_CHI, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(g_playerMongol, EBP.CHINESE.BUILDING_DYNASTY_VILLAGE_CONTROL_CHI, ITEM_REMOVED)
+	
+	--No Dynasty Remove realted upgrades
+	Player_SetUpgradeAvailability(g_playerMongol, UPG.CHINESE.UPGRADE_DYNASTY_ECON_BONUS_CHI, ITEM_REMOVED)
+	
+	-- Set tech based on difficulty and age
+	PlayerUpgrades_Auto(g_playerMongol, false)
+	PlayerUpgrades_Auto(g_playerMongol, false, {}, "chinese")
+	PlayerUpgrades_Auto(g_playerSong, true)
+	PlayerUpgrades_Auto(g_playerChina, false)
+	PlayerUpgrades_Auto(g_playerNeutral, true)
+	
+	-- Complete these upgrades to make sure players can use these units
+	Player_CompleteUpgrade(g_playerMongol, UPG.COMMON.UPGRADE_SIEGE_CHEMISTRY)
+	Player_CompleteUpgrade(g_playerMongol, UPG.MONGOL.UPGRADE_SIEGE_CHEMISTRY_MON)
+	
+	Player_SetPopCapOverride(g_playerMongol, 160)
+	
+	-- Give the Song border towers stone
+	EGroup_CompleteUpgrade(eg_songterritory, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	EGroup_CompleteUpgrade(eg_songterritory, UPG.COMMON.UPGRADE_OUTPOST_CANNON)
+	EGroup_SetInvulnerable(eg_songterritory, true)
+	EGroup_SetTargetingType(eg_songterritory, Targeting_None)
+	-- And the walls
+	EGroup_SetInvulnerable(eg_song_walls, true)
+	EGroup_SetTargetingType(eg_song_walls, Targeting_None)
+
+end
+
+function Mission_Preset()	-- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)
+	
+	-- Enable player colours
+	PlayerColour_Enable()
+	
+	Game_SetPlayerSlotColour(g_playerMongol, 1)
+    Game_SetPlayerUISlotColour(g_playerMongol, 1)
+	
+    Game_SetPlayerSlotColour(g_playerSong, 2)
+    Game_SetPlayerUISlotColour(g_playerSong, 2)
+	
+    Game_SetPlayerSlotColour(g_playerChina, 3)
+    Game_SetPlayerUISlotColour(g_playerChina, 3)
+	
+    Game_SetPlayerSlotColour(g_playerNeutral, 1)
+    Game_SetPlayerUISlotColour(g_playerNeutral, 1)
+	
+	-- Special rules for this scenario
+	Rule_AddInterval(Lumen_CheckForExit, 1)
+	Rule_AddGlobalEvent(Lumen_OnConstructionStart, GE_ConstructionStart)
+	Rule_AddGlobalEvent(Lumen_OnEntityKilled, GE_EntityKilled)
+	Rule_AddInterval(Lumen_WatchForBridges, 1)
+	Rule_AddInterval(Lumen_WatchIdleScouts, 3)
+	
+	-- Audio considerations
+	if Music_UnlockIntensity then
+		Sound_SetForceMusic(false)
+	else
+		Sound_SetForceMusic(true)
+	end
+	
+	Music_LockIntensity(MUSIC_RARE)
+	
+	-- Assign villagers to look alive
+	AssignVillagersToFarms(sg_lumen_villagers_1)
+	AssignVillagersToWood(sg_lumen_villagers_2)
+	AssignVillagersToFarms(sg_bohekou_villagers_1)
+	AssignVillagersToStone(sg_bohekou_villagers_2)
+	
+	-- Valid path structures
+	g_validPathStructures = {
+		mkr_song_south_1 = { mkr_song_path_a },
+		mkr_song_south_2 = { mkr_song_path_a },
+		mkr_song_south_3 = { mkr_song_path_b },
+		mkr_song_path_a = { mkr_song_path_d },
+		mkr_song_path_b = { mkr_song_path_c, mkr_song_path_e },
+		mkr_song_path_c = { mkr_song_path_d, mkr_song_path_e },
+		mkr_song_path_d = { mkr_song_path_c, mkr_song_path_f },
+		mkr_song_path_e = { mkr_song_path_f, mkr_song_north_2 },
+		mkr_song_path_f = { mkr_song_path_e, mkr_song_north_1 },
+	}
+	
+	-- Set up AI cached paths between specific markers to aid AI pathfinding to
+	-- detect and break through blocking walls.
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_song_north_1, Util_GetPosition(mkr_song_south_2), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_song_north_2, Util_GetPosition(mkr_song_south_2), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_song_north_1_dupe1, Util_GetPosition(mkr_song_south_3), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_song_north_2_dupe1, Util_GetPosition(mkr_song_south_3), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_song_north_1_dupe2, Util_GetPosition(mkr_song_south_1), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_song_north_2_dupe2, Util_GetPosition(mkr_song_south_1), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_neutral_lumen, Util_GetPosition(mkr_song_south_1), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_neutral_lumen_dupe_2, Util_GetPosition(mkr_song_south_2), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_neutral_lumen_dupe_3, Util_GetPosition(mkr_song_south_3), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_neutral_bohekou, Util_GetPosition(mkr_song_south_1), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_neutral_bohekou_dupe_2, Util_GetPosition(mkr_song_south_2), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_neutral_bohekou_dupe_3, Util_GetPosition(mkr_song_south_3), 5.0)
+	
+	-- Also the southward path after that
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_song_north_1_dupe3, Util_GetPosition(mkr_neutral_lumen), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_neutral_lumen_dupe_4, Util_GetPosition(mkr_neutral_bohekou), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(g_playerSong, mkr_neutral_bohekou_dupe_4, Util_GetPosition(mkr_song_south_2), 5.0)
+	
+	-- Spawn pickups
+	Lumen_SpawnPickups()
+	
+	--DEBUG: Auto Test--
+	AutoTest_OnInit()
+	
+end
+
+-- This is triggered after the intro, just as control is passed to the player
+function Mission_Start()	
+	
+	print("Mission Start with difficulty "..Game_GetSPDifficulty())
+	
+	-- on console don't restore VPS at first 
+	Cardinal_EnablePartialXboxUI(true, {VF_XboxUIVillagerPriorities})
+
+	-- start the opening objectives (if you're using ObjectiveTable style objectives)
+	Objective_Start(OBJ_ClaimArea, false)
+	
+	Music_LockIntensity(MUSIC_TENSE, 8)
+	
+	-- Init the tutorialization? Not sure if this does anything.
+	MissionTutorial_Init()
+	
+end
+
+function GetRecipe()
+
+	local recipe = {
+
+		missionType = "Blockade the Han at Lumen Shan",
+		campaign = "mongol",
+		chapter = "chapter3",
+		phase = "mission_lumen_shan",
+		
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_mongol_domination",
+				-- Lumen Shan
+				title = "$11160696",
+				-- 1268
+				date = "$11160697",
+			},
+		},
+		
+		introNIS = EVENTS.LumenShan_Intro,
+		outroNIS = EVENTS.LumenShan_Outro,
+		
+		cameraStartMarker = mkr_camera_start,
+		
+		locations = {
+			-- SETTLEMENTS
+			{ descriptor = "Lumen", marker = mkr_neutral_lumen, player = g_playerChina, egroup = eg_village_lumen, },
+			{ descriptor = "Bohekou", marker = mkr_neutral_bohekou, player = g_playerChina, egroup = eg_village_bohekou, },
+			{ descriptor = "Song Fortress", marker = mkr_song_fort, player = g_playerSong, },
+			-- OTHER
+		},
+		modules = {
+			-- PLAYER UNITS
+			{
+				descriptor = "PlayerStart",
+				type = "UnitSpawner",
+				player = g_playerMongol,
+				sgroup = sg_all_intro_mongols,
+				spawnLocation = mkr_mongol_start_2,
+				units = {
+					{ sbp = SBP.MONGOL.UNIT_LIU_ZHENG_CMP_MON, numSquads = 1, sgroup = g_leaderLiuZheng.sgroup, spawn = mkr_mongol_start_1, },
+					{ sbp = SBP.CHINESE.UNIT_FIRELANCER_4_CHI, numSquads = 25, sgroup = sg_intro_mongols_2, },
+					{ type = "scar_scout", numSquads = 1, spawn = mkr_mongol_start_scout1, },
+					{ type = "scar_scout", numSquads = 1, spawn = mkr_mongol_start_scout2, },
+				},
+			},
+			{
+				descriptor = "PlayerStart",
+				type = "UnitSpawner",
+				player = g_playerMongol,
+				sgroup = sg_all_intro_mongols,
+				spawnLocation = mkr_mongol_start_3,
+				units = {
+					{ type = "scar_horsearcher", numSquads = 15, sgroup = sg_intro_mongols_3, },
+				},
+			},
+			{
+				descriptor = "PlayerStart",
+				type = "UnitSpawner",
+				player = g_playerMongol,
+				sgroup = sg_all_intro_mongols,
+				spawnLocation = mkr_mongol_start_4,
+				units = {
+					{ type = "scar_horsearcher", numSquads = 15, sgroup = sg_intro_mongols_4, },
+				},
+			},
+			{
+				descriptor = "PlayerStart",
+				type = "UnitSpawner",
+				player = g_playerMongol,
+				sgroup = sg_all_intro_mongols,
+				spawnLocation = mkr_mongol_start_5,
+				units = {
+					{ type = "scar_knight", numSquads = 50, sgroup = sg_intro_mongols_5, },
+				},
+			},
+			-- ENEMY GARRISONS
+			{
+				descriptor = "SongFortGarrison", type = "Defend", marker = mkr_song_fort, player = g_playerSong,
+				units = {
+					{ type = "scar_manatarms", numSquads = 6, },
+					{ type = "scar_crossbowman", numSquads = 6, },
+				},
+			},
+			{
+				descriptor = "SongResist2", type = "Defend", marker = mkr_song_resist_2, player = g_playerSong,
+				leashRange = 55,
+				combatRange = 35, 
+				units = {
+					{ type = "scar_spearman", numSquads = 20, },
+				},
+				--withdrawData = { onUnitsLeft = 18, withdrawDestination = mkr_song_fort, dissolveModule = "SongFortGarrison", },
+			},
+			{
+				descriptor = "SongResist3", type = "Defend", marker = mkr_song_resist_3, player = g_playerSong,
+				leashRange = 55,
+				combatRange = 35, 
+				units = {
+					{ type = "scar_spearman", numSquads = 8, },
+					{ type = "scar_archer", numSquads = 8, },
+				},
+				--withdrawData = { onUnitsLeft = 6, withdrawDestination = mkr_song_fort, dissolveModule = "SongFortGarrison", },
+			},
+			{
+				descriptor = "SongResist4", type = "Defend", marker = mkr_song_resist_4, player = g_playerSong,
+				leashRange = 55,
+				combatRange = 35, 
+				units = {
+					{ type = "scar_archer", numSquads = 16, },
+				},
+				--withdrawData = { onUnitsLeft = 8, withdrawDestination = mkr_song_fort, dissolveModule = "SongFortGarrison", },
+			},
+			{
+				descriptor = "SongResist5", type = "Defend", marker = mkr_song_resist_5, player = g_playerSong,
+				leashRange = 55,
+				combatRange = 35, 
+				units = {
+					{ type = "scar_spearman", numSquads = 10, },
+					{ type = "scar_archer", numSquads = 10, },
+				},
+				--withdrawData = { onUnitsLeft = 12, withdrawDestination = mkr_song_fort, dissolveModule = "SongFortGarrison", },
+			},
+			-- ALLIED VILLAGES
+			{	
+				descriptor = "LumenTown", type = "TownLife",
+				location = "Lumen", canBuild = false, maxVillagers = 0,
+				spawnLocation = mkr_neutral_lumen_villagers,
+				player = g_playerChina,
+				units = {
+					{type = "scar_villager", numSquads = 3, sgroup = sg_lumen_villagers_1, },
+					{type = "scar_villager", numSquads = 2, sgroup = sg_lumen_villagers_2, },
+				},
+			},
+			{
+				descriptor = "BohekouTown", type = "TownLife",
+				location = "Bohekou", canBuild = false, maxVillagers = 0,
+				spawnLocation = mkr_neutral_bohekou_villagers,
+				player = g_playerChina,
+				units = {
+					{type = "scar_villager", numSquads = 4, sgroup = sg_bohekou_villagers_1, },
+					{type = "scar_villager", numSquads = 2, sgroup = sg_bohekou_villagers_2, },
+				},
+			},
+			{
+				descriptor = "BohekouGarrison", type = "Defend", player = g_playerChina,
+				location = "Bohekou",
+				sgroup = sg_bohekou_troops,
+				units = {
+					{ type = "scar_spearman", numSquads = 8, },
+					{ type = "scar_repeater_crossbow", numSquads = 8, },
+				},
+			},
+			-- ENEMY VILLAGES
+		},
+		objectives = {
+		},
+		playbill = {
+		},
+			audioSettings = { 
+            campaignName = "mon",
+            missionName = "rts1268lumenshan",
+        },
+		preStart = {
+		},
+	}
+	
+	return recipe
+	
+end
+
+--? @shortdesc Watches for construction of walls
+function Lumen_OnConstructionStart(context)
+	
+	local buildingOwner = Entity_GetPlayerOwner(context.entity)
+	if buildingOwner == g_playerMongol and Entity_IsOfType(context.entity, "wall") then
+		-- Update the wall position, so the AI can hunt it
+		g_lastWallPos = Util_GetPosition(context.entity)
+		
+		if Objective_IsComplete(SOBJ_Walls) == true then
+			Rule_RemoveGlobalEvent(Lumen_OnConstructionStart)
+		end
+		
+	end
+	
+end
+
+--? @shortdesc Launches a single sally from the north of the map that will attempt to make their way south and must be stopped
+--? @args NIL
+--? @result VOID
+function Lumen_LaunchSongSally()
+
+	-- Create a new army
+	g_moduleReturnSally = RovingArmy_Init({		
+		descriptor = "SongReturnSally",
+		type = "RovingArmy",
+		player = g_playerSong,
+		spawnLocation = mkr_song_north_1,
+			
+		units = {
+			{ type = "scar_manatarms", numSquads = Util_DifVar({15, 15, 20, 25}), },
+			{ type = "scar_spearman", numSquads = Util_DifVar({12, 12, 16, 20}), },
+			{ type = "scar_archer", numSquads = Util_DifVar({10, 10, 12, 14}), },
+			{ type = "scar_crossbowman", numSquads = Util_DifVar({8, 8, 10, 12}), },
+			{ type = "scar_repeater_crossbow", numSquads = Util_DifVar({6, 6, 9, 12}), },
+			{ type = "scar_grenadier", numSquads = Util_DifVar({2, 2, 6, 10}), },
+		},
+		
+		idleTimeOverride = 0,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			mkr_neutral_lumen,
+			mkr_neutral_bohekou,
+			mkr_song_south_2,
+		},
+	})
+	
+	-- This global variable says we're now allowed to check conditions on the sally
+	g_songReliefActive = false
+	g_songSallyActive = true
+	
+	-- We also want to track what units are already near the southern marker
+	-- If there are any, we should ignore them for the first minute or so of the objective
+	g_songSallyTime = World_GetGameTime()
+	sg_songSallyExemption = SGroup_CreateIfNotFound("sg_songSallyExemption")
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_songSallyExemption, mkr_song_south_2, 45)
+	
+end
+
+--? @shortdesc Checks for Song units near the exit point and deletes them, incrementing the relevant counters
+--? @args NIL
+--? @result VOID
+function Lumen_CheckForExit()
+	
+	if g_songReliefActive == true or g_songSallyActive == true then
+		
+		local testRange = 10
+		local exitSGroup = SGroup_CreateUnique("exiting")
+		
+		if g_songReliefActive == true then
+			
+			-- EXIT 1
+			local exitMarker1 = mkr_song_north_2
+			local markerGroup1 = SGroup_CreateUnique()
+			Player_GetAllSquadsNearMarker(g_playerSong, markerGroup1, exitMarker1, Marker_GetProximityRadiusOrDefault(exitMarker1, 0) + testRange)
+			
+			-- EXIT 2
+			local exitMarker2 = mkr_song_north_1
+			local markerGroup2 = SGroup_CreateUnique()
+			Player_GetAllSquadsNearMarker(g_playerSong, markerGroup2, exitMarker2, Marker_GetProximityRadiusOrDefault(exitMarker2, 0) + testRange)
+			
+			-- Combine them all
+			SGroup_AddGroup(exitSGroup, markerGroup1)
+			SGroup_AddGroup(exitSGroup, markerGroup2)
+			
+			-- Now see if there's anything to remove
+			local numSquads = SGroup_Count(exitSGroup)
+			if numSquads > 0 then
+				
+				SGroup_DestroyAllSquads(exitSGroup)
+				
+				-- Also increase the doomsday progress bar by however many just escaped
+				if Objective_IsStarted(SOBJ_BlockadeFailure) then
+					SOBJ_BlockadeFailure.counterCurrent = SOBJ_BlockadeFailure.counterCurrent + numSquads
+					
+					-- Account for the case where this actually might also end the mission
+					if SOBJ_BlockadeFailure.counterCurrent >= SOBJ_BlockadeFailure.counterMax then
+						g_failureThresholdCrossed = true
+					end
+				end
+				
+			end
+		end
+		
+		if g_songSallyActive == true then
+			
+			-- EXIT
+			local exitSGroup = SGroup_CreateUnique()
+			Player_GetAllSquadsNearMarker(g_playerSong, exitSGroup, mkr_song_south_2, Marker_GetProximityRadiusOrDefault(mkr_song_south_2, 0) + testRange)
+	
+			-- If the objective just started, we want to ignore any units who were near the exit when it started
+			if (World_GetGameTime() - g_songSallyTime) < 60 then
+				SGroup_RemoveGroup(exitSGroup, sg_songSallyExemption)
+			end
+			
+			-- Now see if there's anything to remove
+			local numSquads = SGroup_Count(exitSGroup)
+			if numSquads > 0 then
+			
+				SGroup_DestroyAllSquads(exitSGroup)
+				
+				-- Also increase the doomsday progress bar by however many just escaped
+				if Objective_IsStarted(SOBJ_FinalChance) then
+					SOBJ_FinalChance.counterCurrent = SOBJ_FinalChance.counterCurrent + numSquads-- Account for the case where this actually might also end the mission
+					if SOBJ_FinalChance.counterCurrent >= SOBJ_FinalChance.counterMax then
+						g_finaleThresholdCrossed = true
+					end
+				end
+				
+			end
+			
+		end
+		
+		SGroup_Destroy(exitSGroup)
+	end
+	
+end
+
+--? @shortdesc Starts the intro camera behaviour for the player units
+--? @args NIL
+--? @result VOID
+function Lumen_StartIntro()
+	
+	Cmd_FormationMove(g_leaderLiuZheng.sgroup, mkr_mongol_dest_1, false)
+	Cmd_FormationMove(sg_intro_mongols_2, mkr_mongol_dest_2, false)
+	Cmd_FormationMove(sg_intro_mongols_3, mkr_mongol_dest_3, false)
+	Cmd_FormationMove(sg_intro_mongols_4, mkr_mongol_dest_4, false)
+	Cmd_FormationMove(sg_intro_mongols_5, mkr_mongol_dest_5, false)
+	
+end
+
+--? @shortdesc Starts the outro
+--? @args NIL
+--? @result VOID
+function Lumen_StartOutro()
+	
+	-- Delete any leftover units
+	Player_GetAll(g_playerMongol)
+	SGroup_DestroyAllSquads(sg_allsquads)
+
+	-- Also many any enemy buildings player-owned
+	Player_GetAll(g_playerSong)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	EGroup_SetPlayerOwner(eg_allentities, g_playerMongol)
+	
+	-- Where will the units run?
+	local retreatRoute = {
+		mkr_outro_song_retreat_0,
+		mkr_outro_song_retreat_1,
+		mkr_outro_song_retreat_2,
+		mkr_outro_song_retreat_3,
+		mkr_outro_song_retreat_4,
+	}
+	
+	-- Deploy the Song retreat
+	UnitEntry_DeploySquads(g_playerSong,
+	sg_outro_song,
+	{
+		{ sbp = BP_GetSquadBlueprint("unit_spearman_4_chi"), numSquads = 30, spawn = mkr_outro_song_runners_infantry, },
+		--{ sbp = BP_GetSquadBlueprint("unit_horseman_4_chi"), numSquads = 12, spawn = mkr_outro_song_runners_cavalry, },
+	},
+	mkr_outro_song_runners_infantry)
+	MissionOMatic_SGroupCommandDelayed(sg_outro_song, retreatRoute, false, 0.25)
+	SGroup_SetAvgHealth(sg_outro_song, 0.15)
+
+	
+	-- Deploy the outro units
+	UnitEntry_DeploySquads(g_playerMongol,
+	sg_outro_troops,
+	{
+		{ sbp = BP_GetSquadBlueprint("unit_liu_zheng_cmp_mon"), numSquads = 1, sgroup = sg_outro_liu_zheng, spawn = mkr_outro_liuzheng, },
+		{ sbp = BP_GetSquadBlueprint("unit_spearman_4_chi"), numSquads = 30, sgroup = sg_outro_yuan_infantry, spawn = mkr_outro_spearmen, },
+		{ sbp = BP_GetSquadBlueprint("unit_archer_4_chi"), numSquads = 16, sgroup = sg_outro_yuan_archers, spawn = mkr_outro_archers, },
+		--{ sbp = BP_GetSquadBlueprint("unit_knight_4_mon"), numSquads = 8, sgroup = sg_outro_yuan_cavalry, spawn = mkr_outro_cavalry, },
+		{ sbp = BP_GetSquadBlueprint("unit_horsearcher_4_mon"), numSquads = 12, sgroup = sg_outro_yuan_cavalry, spawn = mkr_outro_cavalry, },
+	},
+	mkr_outro_spearmen)
+	Cmd_HoldPosition(sg_outro_liu_zheng)
+	Cmd_HoldPosition(sg_outro_yuan_infantry)
+	Cmd_HoldPosition(sg_outro_yuan_archers)
+	
+	-- to avoid the Mangudai doubling back we only give them a couple points along the route
+	Cmd_FormationAttackMove(sg_outro_yuan_cavalry, mkr_outro_song_retreat_2, false, false)
+	Cmd_FormationAttackMove(sg_outro_yuan_cavalry, mkr_outro_song_retreat_4, true, true)
+	
+	-- Buff them up so they can shoot
+	local hardpointName = "hardpoint_01"
+	local modRange = Modifier_Create(MAT_Weapon, WM_RANGE, MUT_Multiplication, false, 2, hardpointName)
+	local function _BoostArchers(gid, idx, sid)
+		local entity = Squad_GetFirstEntity(sid)
+		Modifier_ApplyToEntity(modRange, entity, 0)
+	end
+	SGroup_ForEach(sg_outro_yuan_archers, _BoostArchers)
+	
+end
+
+--? @shortdesc Compiles a valid path along Lumen Shan's various channels
+function Lumen_GetValidPath()
+	
+	-- What's the full potential list?
+	local spawnListTotal = {
+		mkr_song_south_1,
+		mkr_song_south_2,
+		mkr_song_south_3,
+	}
+	local thisNode = spawnListTotal[World_GetRand(1, #spawnListTotal)]
+	local finalPath = { thisNode, }
+	
+	-- Figure out where to go
+	while thisNode ~= nil do
+		
+		-- What are the possible next nodes?
+		local nextNodes = g_validPathStructures[Marker_GetName(thisNode)]
+		local validatedNodes = {}
+		
+		-- Make sure we don't take something already in the path
+		for idx = 1, #nextNodes, 1 do
+			if Table_Contains(finalPath, nextNodes[idx]) == false then
+				table.insert(validatedNodes, nextNodes[idx])
+			end
+		end
+		
+		-- DEBUG USAGE
+		if #validatedNodes <= 0 then
+			local debugLine = ""
+			for index, marker in pairs(finalPath) do
+				debugLine = debugLine..Marker_GetName(marker).." > "
+			end
+		end
+		
+		-- Pick a validated node
+		local nextNode = validatedNodes[World_GetRand(1, #validatedNodes)]
+		table.insert(finalPath, nextNode)
+		
+		-- Set things up for next time
+		if nextNode ~= mkr_song_north_1 and nextNode ~= mkr_song_north_2 then
+			thisNode = nextNode
+		else
+			thisNode = nil
+		end
+	end
+	
+	return finalPath
+	
+end
+
+--? @shortdesc Spawns resource pickups for off-track areas
+function Lumen_SpawnPickups()
+
+	local pickupTypes = {
+		"gold",
+		"food",
+		"wood",
+		"food",
+		"gold",
+		"gold",
+		"wood",
+		"gold",
+		"food",
+		"gold",
+		"gold",
+	}
+	
+	-- Create the pickups
+	for i = 1, #pickupTypes do
+		local marker = Marker_FromName("mkr_pickup_"..tostring(i), "")
+		Missionomatic_SpawnPickup(marker, pickupTypes[i])
+	end
+	
+end
+
+--? @shortdesc Replenishes the key Mongol structures the player might need, if they're missing
+function Lumen_ResendMongolBuildings(context, data)
+	
+	eg_tech_infantry = EGroup_CreateIfNotFound("eg_tech_infantry")
+	eg_tech_ranged = EGroup_CreateIfNotFound("eg_tech_ranged")
+	eg_tech_stables = EGroup_CreateIfNotFound("eg_tech_stables")
+	
+	EGroup_Clear(eg_tech_infantry)
+	EGroup_Clear(eg_tech_ranged)
+	EGroup_Clear(eg_tech_stables)
+	
+	eg_temp = Player_GetAllEntities(g_playerMongol)
+	
+	EGroup_Filter(eg_temp, {EBP.MONGOL.BUILDING_UNIT_INFANTRY_MON, EBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON}, FILTER_REMOVE, eg_tech_infantry)
+	EGroup_Filter(eg_temp, {EBP.MONGOL.BUILDING_UNIT_RANGED_MON, EBP.MONGOL.BUILDING_UNIT_RANGED_MOVING_MON}, FILTER_REMOVE, eg_tech_ranged)
+	EGroup_Filter(eg_temp, {EBP.MONGOL.BUILDING_UNIT_CAVALRY_MON, EBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON}, FILTER_REMOVE, eg_tech_stables)
+	
+	local unitList = {}
+	
+	if EGroup_Count(eg_tech_infantry) <= 0 then
+		table.insert(unitList, { sbp = SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON, numSquads = 1, spawn = mkr_mongol_reinforce_7, })
+	end
+	if EGroup_Count(eg_tech_ranged) <= 0 then
+		table.insert(unitList, { sbp = SBP.MONGOL.BUILDING_UNIT_RANGED_MOVING_MON, numSquads = 1, spawn = mkr_mongol_reinforce_8, })
+	end
+	if EGroup_Count(eg_tech_stables) <= 0 then
+		table.insert(unitList, { sbp = SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON, numSquads = 2, spawn = mkr_mongol_reinforce_4, })
+	end
+	
+	-- If we're missing any of these, spawn!
+	if #unitList > 0 then
+		local reinforcementSGroup = SGroup_CreateUnique("reinforcements")
+		UnitEntry_DeploySquads(g_playerMongol,
+			reinforcementSGroup,
+			unitList,
+			mkr_mongol_start_1)
+		EventCues_CallToAction("$11178742", CTA_CELEBRATE, nil, nil, reinforcementSGroup)
+	end
+	
+end
+
+--? @shortdesc Checks for entity destruction
+function Lumen_OnEntityKilled(context, data)
+
+	local killer = context.killer
+	local victim = context.victim
+	local victimOwner = context.victimOwner
+	
+	if scartype(victimOwner) == ST_PLAYER and victimOwner == g_playerMongol and Entity_HasBlueprint(victim, "wall") then
+
+		-- Only do this every 20 seconds at most
+		g_lastWarning = g_lastWarning or 0
+		local currentGameTime = World_GetGameTime()
+		if (currentGameTime - g_lastWarning) > 20 then
+			--Sound_Play2D(MUS_STING_NEGATIVE)
+			g_lastWarning = currentGameTime
+		end
+		
+		if (currentGameTime - g_lastWarning) > 6 then
+			-- Where was the entity killed?
+			local deathPos = Util_GetPosition(victim)
+			-- Issue a raid against anything near the point of death
+			Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, deathPos, 30)
+			if SGroup_Count(sg_temp) > 0 then
+				Sound_PlayWallaEngageOnSGroup(sg_temp)
+				g_lastWarning = currentGameTime
+			end
+		end
+		
+	end
+	
+end
+
+--? @shortdesc Watches for a bridge encounter and then launches a hint
+function Lumen_WatchForBridges(context, data)
+	
+	if Misc_IsEGroupOnScreen(eg_bridges_wood, 100, ANY) == true then
+		
+		eg_bridges_onscreen = EGroup_CreateIfNotFound("eg_bridges_onscreen")
+		EGroup_Clear(eg_bridges_onscreen)
+		local _CheckOnscreen = function(gid, idx, eid)
+			if Misc_IsEntityOnScreen(eid, 100) == true then
+				EGroup_Add(eg_bridges_onscreen, eid)
+			end
+		end
+		EGroup_ForEach(eg_bridges_wood, _CheckOnscreen)
+		
+		OBJ_HintBridge.targetBridge = EGroup_GetEntityAt(eg_bridges_onscreen, 1)
+		Objective_Start(OBJ_HintBridge)
+		
+		MissionTutorial_AddHintToBrokenBridge()
+		
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Watches for idle enemy scouts and redirects them
+function Lumen_WatchIdleScouts(context, data)
+	
+	Player_GetAll(g_playerSong)
+	SGroup_Filter(sg_allsquads, "scar_scout", FILTER_KEEP)
+	if SGroup_Count(sg_allsquads) <= 0 then
+		return
+	end
+	
+	-- Only bother if there are idle scouts
+	if SGroup_IsIdle(sg_allsquads, ANY) == false then
+		return
+	end
+	
+	-- Make sure this exists
+	if scartype(g_idleScoutAttempts) ~= ST_TABLE then
+		g_idleScoutAttempts = {
+			{sgroup = SGroup_CreateUnique("exit_north_1"), marker = mkr_song_north_1, },
+			{sgroup = SGroup_CreateUnique("exit_north_2"), marker = mkr_song_north_2, },
+			{sgroup = SGroup_CreateUnique("exit_south_1"), marker = mkr_song_south_1, },
+			{sgroup = SGroup_CreateUnique("exit_south_2"), marker = mkr_song_south_2, },
+			{sgroup = SGroup_CreateUnique("exit_south_3"), marker = mkr_song_south_3, },
+		}
+	end
+	
+	-- Find every idle scout and try to get them to despawn at an exit
+	local _PuntIdleScout = function(gid, idx, sid)
+		if Squad_IsIdle(sid) == false then
+			return
+		end
+		
+		local asigned = false
+		for index, attempt in pairs(g_idleScoutAttempts) do
+			if asigned == false and SGroup_ContainsSquad(attempt.sgroup, sid.SquadID, false) == false then
+				SGroup_Single(sg_temp, sid)
+				Cmd_MoveToAndDestroy(sg_temp, attempt.marker, false)
+				SGroup_Add(attempt.sgroup, sid)
+				asigned = true
+			end
+		end
+		-- If it hasn't been assigned at all, that's because it is in every group
+		-- Remove and try again next time
+		if asigned == false then
+			for index, attempt in pairs(g_idleScoutAttempts) do
+				SGroup_Remove(attempt.sgroup, sid)
+			end
+		end
+	end
+	SGroup_ForEach(sg_allsquads, _PuntIdleScout)
+	
+end
+
+--? @shortdesc Used to destroy or delete whatever should already have been deleted
+function Lumen_CheatDeleteEnemies()
+	
+	-- Delete all units in these modules; the player should have killed these off
+	local modulesToNuke = {
+		"SongFortGarrison",
+		"SongResist2",
+		"SongResist3",
+		"SongResist4",
+		"SongResist5",
+	}
+	
+	-- Now kill them all
+	for index, moduleName in pairs(modulesToNuke) do
+		local module = MissionOMatic_FindModule(moduleName)
+		if module ~= nil and module.sgroup ~= nil then
+			SGroup_DestroyAllSquads(module.sgroup)
+		end
+	end
+	
+	-- Also get rid of blocking entities the player would have destroyed
+	local markersToSearch = {
+		mkr_song_fort,
+	}
+	
+	-- Now destroy them all
+	for index, marker in pairs(markersToSearch) do
+		EGroup_Clear(eg_temp)
+		Player_GetAllEntitiesNearMarker(g_playerSong, eg_temp, marker, 60)
+		if EGroup_Count(eg_temp) > 0 then
+			EGroup_Kill(eg_temp)
+		end
+	end
+end

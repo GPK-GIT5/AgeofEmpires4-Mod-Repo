@@ -1,0 +1,235 @@
+--
+-- Zhongdu 1215 - Tutorial elements
+--
+
+import("training.scar")
+import("training/campaigntraininggoals.scar")
+
+goal_sequence_rally_sheep = "campaign_mon_chp1_zhongdu_shepherding"
+
+-- called from the mission's Mission_Start() function, so post-intro
+function MissionTutorial_Init()
+
+	UI_SetModalHoverCallback(OnHoverChange)
+	
+end
+
+function Zhongdu_SetupSheepRallyHint()
+	
+	if not Rule_Exists(Zhongdu_ListenForRallyPoint) then
+		Rule_AddGlobalEvent(Zhongdu_ListenForRallyPoint, GE_EntityCommandIssued)
+	end
+	
+	-- The UI
+	local SetRallyUI = {
+		ID = "SetRallyPoint",
+		Message = UI_PickIDForInputMode(11199140, 1000611),
+		DataTemplate ="RightClickTrainingDataTemplate",
+	}
+	
+	-- The goal itself
+	local SetRallyGoal = Training_Goal(
+		"Position",
+		SetRallyUI,
+		Zhongdu_RallyPointSet
+	)
+	
+	-- And the sequence
+	local SetRallySequence = Training_GoalSequence(
+		goal_sequence_rally_sheep, 							--id
+		1, 													-- repeatMax
+		1, 													-- remindMax
+		Zhongdu_TriggerPastureOnScreen, 					-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		Zhongdu_RallyPointSet, 				      			-- bypass
+		true, 												-- canRegress
+		{SetRallyGoal}										-- goals
+	)
+	
+	Training_AddGoalSequence(SetRallySequence)
+	Training_EnableGoalSequenceByID(goal_sequence_rally_sheep, true)
+	
+end
+
+function Zhongdu_TriggerPastureOnScreen(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingHoverInterval then	
+		
+		Player_GetAll(g_playerMongol)
+		local playerEntities = Player_GetEntities(g_playerMongol)
+	
+		goalSequence.goals[1].key = nil
+		
+		for i = 1, EGroup_Count(playerEntities) do
+			local entity = EGroup_GetEntityAt(playerEntities, i)
+			if entity ~= nil and Entity_GetBlueprint(entity) == EBP.MONGOL.BUILDING_PASTURE_MON then
+				if Misc_IsEntityOnScreen(entity, 100) then 
+					goalSequence.goals[1].key = Entity_GetID(entity)
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+function Zhongdu_ListenForRallyPoint(context)
+	
+	if context.command == CMD_RallyPoint then
+		g_rallyPointSet = true
+		Rule_RemoveMe()
+	end
+end
+
+function Zhongdu_RallyPointSet(goal)
+	
+	return g_rallyPointSet
+	
+end
+
+--
+-- GENGHIS KHAN fire arrow
+--
+function Zhongdu_TriggerGenghisHint_Xbox(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingHoverInterval then	
+		
+		Player_GetAll(g_playerMongol)
+		local squads = Player_GetSquads(g_playerMongol)
+	
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			if squad ~= nil and Squad_GetBlueprint(squad) == SBP.MONGOL.UNIT_GENGHIS_KHAN_CMP_MON then
+				if Misc_IsSquadOnScreen(squad, 100) then 
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[2].key = Squad_GetID(squad)
+					goalSequence.goals[3].key = BP_GetAbilityBlueprint("leader_improved_incendiary_attack_speed_arrow")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+function Zhongdu_TriggerGenghisHint(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingHoverInterval then	
+		
+		Player_GetAll(g_playerMongol)
+		local squads = Player_GetSquads(g_playerMongol)
+	
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			if squad ~= nil and Squad_GetBlueprint(squad) == SBP.MONGOL.UNIT_GENGHIS_KHAN_CMP_MON then
+				if Misc_IsSquadOnScreen(squad, 100) then 
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[2].key = BP_GetAbilityBlueprint("leader_improved_incendiary_attack_speed_arrow")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+function Predicate_UserHasSelectedGenghis(goal)
+	
+	Misc_GetSelectedSquads(sg_temp, true)
+	return SGroup_CountSpawned(g_leaderGenghisKhan.sgroup) >= 1 and SGroup_ContainsSGroup(sg_temp, g_leaderGenghisKhan.sgroup, ALL)
+end
+
+function Predicate_UserHasLookedAtGenghisAbility(goal)
+	
+	local abilityBP = BP_GetAbilityBlueprint("campaign_mon_chp1_zhongdu_incendiaries")
+	return SGroup_CountSpawned(g_leaderGenghisKhan.sgroup) >= 1 and (PredicateHelper_HasUserHoveredOverBP(goal, abilityBP) or training_previousAbilityBlueprint == abilityBP)
+end
+
+function Predicate_UserHasNotActivatedGenghisLeaderAbilityRecently(goalSequence)
+	
+	return Event_IsAnyRunning() == false and SGroup_CountSpawned(g_leaderGenghisKhan.sgroup) >= 1 and Player_OwnsSGroup(player1, g_leaderGenghisKhan.sgroup, ALL)
+end
+
+
+--
+-- SIEGE ENGINEERS
+--
+function Zhongdu_TriggerSiegeEngineersHint_Xbox(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingHoverInterval then	
+		
+		Player_GetAll(g_playerMongol)
+		local entities = Player_GetEntities(g_playerMongol)
+		EGroup_FilterUnderConstruction(entities, FILTER_REMOVE)
+	
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, EGroup_Count(entities) do
+			local entity = EGroup_GetEntityAt(entities, i)
+			if entity ~= nil and Entity_GetBlueprint(entity) == EBP.MONGOL.BUILDING_TECH_UNIT_INFANTRY_MON then
+				if Misc_IsEntityOnScreen(entity, 100) then 
+					goalSequence.goals[1].key = Entity_GetID(entity)
+					goalSequence.goals[1].keyIsEntity = true
+					goalSequence.goals[2].key = Entity_GetID(entity)
+					goalSequence.goals[3].key = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+function Zhongdu_TriggerSiegeEngineersHint(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingHoverInterval then	
+		
+		Player_GetAll(g_playerMongol)
+		local entities = Player_GetEntities(g_playerMongol)
+		EGroup_FilterUnderConstruction(entities, FILTER_REMOVE)
+	
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, EGroup_Count(entities) do
+			local entity = EGroup_GetEntityAt(entities, i)
+			if entity ~= nil and Entity_GetBlueprint(entity) == EBP.MONGOL.BUILDING_TECH_UNIT_INFANTRY_MON then
+				if Misc_IsEntityOnScreen(entity, 100) then 
+					goalSequence.goals[1].key = Entity_GetID(entity)
+					goalSequence.goals[1].keyIsEntity = true
+					goalSequence.goals[2].key = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	return false
+end

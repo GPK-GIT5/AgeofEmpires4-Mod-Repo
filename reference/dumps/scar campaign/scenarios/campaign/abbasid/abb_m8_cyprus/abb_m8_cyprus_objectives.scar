@@ -1,0 +1,348 @@
+import("MissionOMatic/MissionOMatic.scar")
+import("missionomatic/modules/module_rovingarmy.scar")
+import("abb_m8_cyprus_prison_logic.scar")
+import("abb_m8_cyprus_encounters.scar")
+
+
+function Cyprus_Init_Objectives()
+	
+	debug_captureLimassol = false
+	debug_destroyFamagusta = false
+	debug_destroyKyrenia = false
+	
+	if Util_GetCommandLineArgument("CaptureLimassol") then
+		debug_captureLimassol = true
+	end
+	
+	if Util_GetCommandLineArgument("DestroyFamagusta") then
+		t_difficulty.init_navy_raid_delay = 5
+		debug_destroyFamagusta = true
+	end
+	
+	if Util_GetCommandLineArgument("DestroyKyrenia") then
+		debug_destroyKyrenia = true
+	end
+	
+	if Util_GetCommandLineArgument("AccelerateEnemyAttacks") then
+		CyprusDebug_AccelerateEnemyAttacks()
+	end
+	
+	OBJ_DefendLandmarks = {
+		Title = "$11257559", --Your landmarks must survive
+		Type = ObjectiveType_Information,
+		IsFailed = function()
+			
+			local health_tc = EGroup_GetAvgHealth(eg_limassol_tc)
+			local health_how = 0
+			
+			if EGroup_CountSpawned(eg_p1_how) > 0 then
+				health_how = EGroup_GetAvgHealth(eg_p1_how)
+			end
+			
+			if health_tc == 0 and health_how < 0.0025 then
+				return true
+			end
+			
+			return false	
+		end,				
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	OBJ_DestroyNicosia = {
+		Title = "$11254234", --Destroy Nicosia
+		Type = ObjectiveType_Primary,
+		SetupUI = function()
+			hpid_nicosia = Objective_AddUIElements(OBJ_DestroyNicosia, mkr_ui_nicosia, true, "$11254213", false, 5)
+		end,				
+		OnComplete = function()
+			Mission_Complete()
+		end,
+	}
+	
+	SOBJ_DestroyNicosia_TC = {  			
+		Title = "$11254236", --Destroy Nicosia's Town Center	
+		Type = ObjectiveType_Primary,	
+		Parent = OBJ_DestroyNicosia,
+		SetupUI = function()
+			hpid_nicosia_tc = Objective_AddUIElements(SOBJ_DestroyNicosia_TC, mkr_nicosia_tc, true, "$11257381", true, 5)
+		end,
+	}
+	
+	SOBJ_DestroyNicosia_Keeps = {
+		Title = "$11254245", --Destroy the Keeps
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DestroyNicosia,
+		SetupUI = function ()
+			hpid_nicosia_keeps = Objective_AddUIElements(SOBJ_DestroyNicosia_Keeps, mkr_nicosia_keeps, true, "$11257382", true, 5)
+			Objective_SetCounter(SOBJ_DestroyNicosia_Keeps, 0, 2)
+		end,
+	}
+	
+	OBJ_HouseOfWisdom = {
+		Title = "$11252301", --Build a House of Wisdom
+		Type = ObjectiveType_Optional,
+		IsComplete = function()
+			return house_of_wisdom_complete
+		end,
+	}
+	
+	OBJ_DestroyFamagusta = {                        
+		Title = "$11254238", --Destroy Genoese docks to stop naval raids
+		Type = ObjectiveType_Battle,
+		SetupUI = function()
+			hpid_famagusta = Objective_AddUIElements(OBJ_DestroyFamagusta, mkr_ui_famagusta, true, "$11254268", false, 5)
+			
+			Objective_SetCounter(OBJ_DestroyFamagusta, 0, 3)
+		end,
+		OnStart = function()
+			if debug_destroyFamagusta then
+				CyprusDebug_DestroyFamagusta()
+			end
+		end,
+		IsComplete = function()
+			if Objective_GetCounter(OBJ_DestroyFamagusta) == 3 or Player_GetEntityCountByUnitType(player5, "scar_dock") == 0 then
+				return true
+			end
+		end,
+		PreComplete = function()
+			Cyprus_StopNavalRaids()
+		end,
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Famagusta_Destroyed)
+			
+			if Rule_Exists(Cyprus_CheckSquadDeath) then
+				Rule_Remove(Cyprus_CheckSquadDeath)
+			end
+		end,
+	}
+	
+	OBJ_DestroyKyrenia = {
+		Title = "$11254241", --Optional: Destroy Kyrenia
+		Type = ObjectiveType_Battle,
+		PreStart = function()
+			
+			if debug_destroyKyrenia then
+				Objective_Start(SOBJ_DestroyKyrenia_TC)
+			else
+				Rule_AddInterval(Monitor_Player_Kyrenia_NearProx, 2)
+			end
+		end,
+		SetupUI = function()
+			hpid_kyrenia = Objective_AddUIElements(OBJ_DestroyKyrenia, mkr_ui_kyrenia, true, "$11254269", false, 5)
+		end,
+		OnComplete = function()
+			--retreat kyrenian units
+			Rule_AddOneShot(Cyprus_KyreniaDissolveArmies, 5)
+		end,
+	}
+	
+	SOBJ_DestroyKyrenia_TC = {
+		Title = "$11257379", --Destroy Kyrenia's town center
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyKyrenia,
+		--StartAlongsideParent = true,
+		OnStart = function()
+			if debug_destroyKyrenia then
+				CyprusDebug_DestroyKyrenia()
+			end
+		end,
+	}
+	
+	OBJ_Prisoners = {
+		Title = "$11254242", --Optional: Liberate the Prison Camps
+		Type = ObjectiveType_Optional,
+		PreStart = function()
+			--reveal prison resources
+			FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_ui_prison1), 20, 30)
+			FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_ui_prison2), 20, 30)
+			FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_ui_prison3), 20, 30)
+		end,
+		OnStart = function()
+			if VOPlayed_FreeTheCaptives == false then
+				VOPlayed_FreeTheCaptives = true
+				Util_StartIntel(EVENTS.FreeTheCaptives)
+			end
+		end,
+		SetupUI = function ()
+			Objective_SetCounter(OBJ_Prisoners, i_prisonsFreed, i_prisonsFreedCounterMax)
+			
+			hpid_prison1 = Objective_AddUIElements(OBJ_Prisoners, mkr_ui_prison1, true, "$11257380", false, 5)
+			hpid_prison2 = Objective_AddUIElements(OBJ_Prisoners, mkr_ui_prison2, true, "$11257380", false, 5)
+			hpid_prison3 = Objective_AddUIElements(OBJ_Prisoners, mkr_ui_prison3, true, "$11257380", false, 5)
+			
+			table.insert(hpid_prisons, hpid_prison1)
+			table.insert(hpid_prisons, hpid_prison2)
+			table.insert(hpid_prisons, hpid_prison3)
+		end,
+		IsComplete = function()
+			return AllPrisonersRescued
+		end,
+		OnComplete = function()
+			Game_SendCustomChallengeEvent(player1, CE_ACHIEVRESCUEPRISONERSCYPRUS, 1)
+		end,
+	}
+
+	Objective_Register(OBJ_DefendLandmarks) -- Fail condition
+	Objective_Register(OBJ_DestroyNicosia) -- MAIN
+	Objective_Register(SOBJ_DestroyNicosia_TC)
+	Objective_Register(SOBJ_DestroyNicosia_Keeps)
+	
+	Objective_Register(OBJ_HouseOfWisdom)
+	
+	Objective_Register(OBJ_DestroyFamagusta) --OPTIONAL
+	
+	Objective_Register(OBJ_DestroyKyrenia) --OPTIONAL
+	Objective_Register(SOBJ_DestroyKyrenia_TC)
+	
+	Objective_Register(OBJ_Prisoners) -- OPTIONAL
+
+end
+
+function Monitor_Player_Prisons_Prox()
+	
+	if Player_AreSquadsNearMarker(player1, mkr_prison_start1) or Player_AreSquadsNearMarker(player1, mkr_prison_start2) then
+		Objective_Start(OBJ_Prisoners)
+		Rule_RemoveMe()
+	end
+end
+
+function Init_LimassolCapture()
+	
+	--Army Data
+	local defenderParams = {
+	
+		player = player7,
+		name = "limassol_defenders_land",
+		spawn = mkr_limassol_cap,
+		combatRange = 50,	
+	}
+	
+	--Army Init
+	local defenderArmy = Army_Init(defenderParams)
+	
+	--Unit Creation and SGroup Assignment
+	sg_limassol_infantry = CreateUnits(player7, CYPRUS_UNITS.LIMASSOL_DEFENDERS.CAPTURE, mkr_limassol_cap, "sg_limassol_infantry")
+	Army_AddSGroup(defenderArmy, sg_limassol_infantry)
+	
+	--Merge SGroups into Defender Sgroup
+	SGroup_AddGroup(sg_limassol_defenders, sg_limassol_infantry)
+	
+	--Location Data and Init
+	CAPTURE_LIMASSOL = Location_Init({
+			descriptor = "Limassol",
+			egroup = eg_limassol,
+			player = player7, 
+			marker = mkr_limassol_cap,
+			sgroup_defenders = sg_limassol_defenders,
+		})
+	
+	--Capture Objectives Init
+	OBJ_CaptureLimassol = {	
+		Title = "$11254254", --Capture Limassol
+		Type = ObjectiveType_Capture,
+		showTitle = false,
+		Intel_Start = EVENTS.CaptureLimassol,
+		Intel_Complete = EVENTS.LimassolCaptured,
+		PreStart = function()
+			Location_SetCapturable(CAPTURE_LIMASSOL, true)
+		end,
+		OnStart = function()
+			
+			b_limassolCaptureStarted = true
+			
+			if debug_captureLimassol then
+				CyprusDebug_CaptureLimassol()
+			end
+		end,
+		OnComplete = function()
+			
+			Rule_AddOneShot(Monitor_Nicosia_Attacks_Start, t_difficulty.nicosia_grace_timer)
+			Rule_AddInterval(Gold_Camp_Monitor, 1)
+			Rule_AddInterval(Wood_Camp_Monitor, 1)
+			Rule_AddOneShot(Tradeship_Timer, 200)
+			
+			Rule_AddGlobalEvent(Cyprus_HoW_Started, GE_ConstructionStart)
+			Rule_AddGlobalEvent(Cyprus_HoW_Constructed, GE_ConstructionComplete)
+			Rule_AddGlobalEvent(Cyprus_Ship_Built, GE_BuildItemComplete)
+			
+			Player_SetResource(player1, RT_Food, P1_RESOURCES.FOOD)
+			Player_SetResource(player1, RT_Wood, P1_RESOURCES.WOOD)
+			Player_SetResource(player1, RT_Gold, P1_RESOURCES.GOLD)
+			Player_SetResource(player1, RT_Stone, P1_RESOURCES.STONE)
+			
+			Objective_Start(OBJ_DefendLandmarks, false, false)
+			Objective_Start(OBJ_DestroyNicosia)
+			
+			Rule_AddOneShot(Cyprus_StartShipAttackCheck, 30)
+			Rule_AddOneShot(Init_Famagusta_Patrols, 15)
+			
+			--Init Autosave Points
+			Rule_AddInterval(Cyprus_AutoSaveInterval, 600)
+			
+			CreateUnits(player1, P1_UNITS.VILLAGERS, mkr_p1_villagers)
+			CreateUnits(player1, P1_UNITS.SCOUTS, mkr_p1_scouts)
+			
+			--start HoW objective is player does not start building HoW in the first 2 minutes
+			Rule_AddOneShot(Cyprus_CheckBuildHoWStart, 120)
+			
+			Rule_AddOneShot(Cyprus_LaunchInitNavalRaid, t_difficulty.init_navy_raid_delay)
+			Rule_AddOneShot(Cyprus_LaunchInitKyreniaRaid, t_difficulty.init_kyrenia_raid_delay)
+			
+			EGroup_SetInvulnerable(eg_limassol, false)
+			EGroup_SetTargetingType(eg_limassol, Targeting_Automatic)
+			return true
+		end,
+		IsFailed = function()
+			return SGroup_CountSpawned(sg_p1_land_units) == 0
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	SOBJ_DefeatLimassolRebels = 
+	{
+		Title = "$11254255", --Defeat the Limassol Defenders
+		showTitle = false,
+		showIntel = false,
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureLimassol,
+		OnStart = function()
+			EGroup_SetInvulnerable(eg_limassol_tc, true)
+		end,
+	}
+	
+	SOBJ_LocationLimassol = 
+	{
+		Title = "$11254256", --Limassol
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureLimassol,
+	}
+	
+	TOBJ_AvoidDestruction = {
+		Title = "$11258154", --Avoid destroying Limassol's buildings so you can use them after capturing the town
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_CaptureLimassol,
+		StartAlongsideParent = true,
+	}
+			
+	Objective_Register(OBJ_CaptureLimassol)
+	Objective_Register(SOBJ_DefeatLimassolRebels)
+	Objective_Register(SOBJ_LocationLimassol)
+	Objective_Register(TOBJ_AvoidDestruction)
+	
+	--Return Objectives into Location Data
+	CAPTURE_LIMASSOL.objectivePrimary = OBJ_CaptureLimassol
+	CAPTURE_LIMASSOL.objectiveSecondary = SOBJ_DefeatLimassolRebels
+	CAPTURE_LIMASSOL.objectiveCapture = SOBJ_LocationLimassol
+	
+end
+
+function Cyprus_CheckBuildHoWStart()
+	
+	if house_of_wisdom_started == false then
+		Objective_Start(OBJ_HouseOfWisdom, true, true)
+	end
+end

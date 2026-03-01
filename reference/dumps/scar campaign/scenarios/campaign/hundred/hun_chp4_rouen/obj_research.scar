@@ -1,0 +1,137 @@
+--
+-- Mission Retake Normandy and 1448 - Objective Research Cannons
+--
+
+import("sobj_capture_mine.scar")
+import("training/campaigntraininggoals.scar")
+
+function RetakeNormandy_Init_ResearchObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_ResearchCannons = {
+	
+		Title = "$11197656", --("Research Chemistry"),
+		Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.NewObj_ResearchChemistry,
+				 
+		SetupUI = CannonResearch_SetupUI, 
+		OnStart = CannonResearch_Start,
+		IsComplete = CannonResearch_IsComplete,
+		OnComplete = CannonResearch_OnComplete,
+
+	}
+	
+	SOBJ_EstablishTradeRoute = {
+	
+		Title = "$11196661", --("Capture the local trade route"),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ResearchCannons,
+		StartAlongsideParent = false,
+		OnStart = CaptureTradeRoute_Start,
+	}
+	
+	SOBJ_RaidTheRiverPort = {
+	
+		Title = "$11196662", --("Raze the River Port"),
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ResearchCannons,
+		StartAlongsideParent = false, 
+		OnStart = CaptureTheRiverPort_Start,
+	}
+	
+	SOBJ_HoldTheUniversity = {
+	
+		Title = "$11196663", --("Hold the University"),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ResearchCannons,
+		StartAlongsideParent = false,
+		OnStart = CaptureTheUniversity_Start,
+	}
+	
+	SOBJ_BuildLandmark = {
+	
+		Title = "$11183683", --("Advance to the Imperial Age"),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ResearchCannons,
+		StartAlongsideParent = false,
+		IsComplete = BuildLandmark_IsComplete,
+		OnComplete = WrapUp_ResearchObj,
+	}
+		
+	
+	Objective_Register(OBJ_ResearchCannons)
+	
+	OptionalObjective_Data = 
+	{
+		traderoute = {isCompleted = false, step = 1},
+		riverport = {isCompleted = false, step = 1},
+		minecapture = {isCompleted = false, step = 1},
+	}
+	
+	--
+	-- any other variable initialization can go in here
+	--	
+end
+
+function CannonResearch_SetupUI()
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "university", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		chemistryUI = Objective_AddUIElements(OBJ_ResearchCannons, EGroup_GetEntityAt(eg_allentities, 1), true, "$11197656", true, 6) --("Research Chemistry"),
+	end
+end
+
+function CannonResearch_Start()
+	--Init_RouenWorkshopUI()
+	
+	--LW moved the hint point into the NewObj_ResearchChemistry event
+	--hint_bbworkshop = HintPoint_Add(EGroup_GetEntityAt(eg_bbworkshop, 1), true, "$11196693", 5, nil, nil, nil, true, nil) --Bureau Brothers' Workshop
+	
+	--if Player_GetCurrentAge(player1) == Player_GetMaximumAge(player1) then
+		--Obj_SetVisible(SOBJ_BuildLandmark.ID, false)
+		--Objective_Complete(SOBJ_BuildLandmark, false)
+	--else
+		--Objective_Start(SOBJ_BuildLandmark, true)
+	--end
+end
+
+function CannonResearch_IsComplete()
+	if Player_HasUpgrade(player1, UPG.COMMON.UPGRADE_SIEGE_CHEMISTRY) then
+		return true
+	end
+end
+
+function CannonResearch_OnComplete()
+	
+	Util_AutoSave(true, true)
+	
+	Util_StartIntel(EVENTS.CannonProdAvailable)
+
+	EventCues_CallToAction("$11196713", CTA_CELEBRATE, nil, nil, eg_bbworkshop, 8) -- Cannon production available at Bureau Brothers' Workshop!
+	Sound_Play2D("mus_stinger_campaign_triumph_short")
+	Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+		
+	StartOptionals_IfNotStarted()
+	Objective_Start(SOBJ_GetCannons, true)
+	
+	Objective_RemoveUIElements(OBJ_ResearchCannons, chemistryUI)
+	
+end
+
+function DelayDiplomacyPanel()
+	--LW delay the appearance of the diplomacy panel until after the CTA has gone away so that they don't overlap.
+	Diplomacy_ShowUI(true)
+	
+	if UI_IsXboxUI() then
+		CampaignTraining_AddDiplomacyPanelHint("$11250125", "workshop_sequence")
+	else
+		Diplomacy_ShowDiplomacyUI(true)
+	end
+end
+
+function BuildLandmark_IsComplete()
+	if Player_GetCurrentAge(player1) == Player_GetMaximumAge(player1) then
+		Rule_RemoveMe()
+		Util_StartIntel(EVENTS.AgeUp_ChemistryAvailable)
+	end
+end

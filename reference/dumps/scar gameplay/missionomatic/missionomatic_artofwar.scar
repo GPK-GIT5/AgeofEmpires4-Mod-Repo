@@ -1,0 +1,644 @@
+-----------------------------------------------------------------------
+--
+-- Challenge Missions - Utility
+--
+-- Shared functionality for Art of War Missions
+--
+-----------------------------------------------------------------------
+
+import("Cardinal.scar")
+import("training/coretraininggoals.scar")
+import("MissionOMatic/MissionOMatic_utility.scar")
+
+
+
+----------------------
+-- Generic Functions
+----------------------
+
+
+--? @shortdesc Initialize challenge timers
+--? @args Int playerSlot, Table playerData
+function Missionomatic_ChallengeInit(challengeData)
+	
+	challengeStartTime = World_GetGameTime()
+	challengeCompletionTime = nil
+	
+	artOfWarIcons = {
+		victoryObjective = "icons\\races\\common\\victory_conditions\\victory_condition_settlements",
+		noMedalObjective = "icons\\fe\\medal_no.png",
+		bronzeMedalObjective = "icons\\fe\\medal_bronze.png",
+		silverMedalObjective = "icons\\fe\\medal_silver.png",
+		goldMedalObjective = "icons\\fe\\medal_gold.png",
+	}
+	
+	kpiType = challengeData.kpiType or "seconds"
+	
+	if kpiType == "seconds" then
+		
+		challengeTimer = "ChallengeTimer"
+		challengeBenchmarks = {
+			unplaced = {
+				name = "Time Elapsed",
+				goal_m = nil,
+				goal_s = nil,
+				time = nil,
+				objective = {},
+			},
+			bronze = {
+				time = challengeData.goalBronze,
+				goal_m = math.floor(challengeData.goalBronze / 60),
+				goal_s = challengeData.goalBronze % 60,
+				objective = {},
+			},
+			silver = {
+				time = challengeData.goalSilver,
+				goal_m = math.floor(challengeData.goalSilver / 60),
+				goal_s = challengeData.goalSilver % 60,
+				objective = {},
+			},
+			gold = {
+				time = challengeData.goalGold,
+				goal_m = math.floor(challengeData.goalGold / 60),
+				goal_s = challengeData.goalGold % 60,
+				objective = {},
+			}
+		}
+		
+		
+		-- Setup Benchmark Objectives
+		challengeBenchmarks.unplaced.objective = {
+			-- Set Objective Title
+			Title = "$11166938", -- "Time Elapsed"
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.noMedalObjective,
+		}
+		challengeBenchmarks.bronze.objective = {
+			-- Set Objective Title
+			Title = Loc_FormatText("$11200672", challengeBenchmarks.bronze.goal_m, challengeBenchmarks.gold.goal_s), -- "Bronze Medal (Goal %1TIME_REQUIREMENT%m %2TIME_REQUIREMENT%s) - "
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.bronzeMedalObjective,
+		}
+		challengeBenchmarks.silver.objective = {
+			-- Set Objective Title
+			Title = Loc_FormatText("$11200673", challengeBenchmarks.silver.goal_m, challengeBenchmarks.gold.goal_s), -- "Silver Medal (Goal %1TIME_REQUIREMENT%m %2TIME_REQUIREMENT%s) - "
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.silverMedalObjective,
+		}
+		challengeBenchmarks.gold.objective = {
+			-- Set Objective Title
+			Title = Loc_FormatText("$11200674", challengeBenchmarks.gold.goal_m, challengeBenchmarks.gold.goal_s), -- "Gold Medal (Goal %1TIME_REQUIREMENT%m %2TIME_REQUIREMENT%s) - "
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.goldMedalObjective,
+		}
+		
+		
+		-- Add update on simtick
+		Rule_AddInterval(ChallengeMission_Timed_Update, 0.125)
+		Rule_AddInterval(ChallengeMission_TrackScore, 0.125)
+		
+		
+	elseif kpiType == "unitsLost" then
+		
+		challengeBenchmarks = {
+			unplaced = {
+				name = "$11202197",
+				goal = nil,
+				maxUnitsDied = nil,
+				objective = {},
+			},
+			bronze = {
+				maxUnitsDied = challengeData.goalBronze,
+				objective = {},
+			},
+			silver = {
+				maxUnitsDied = challengeData.goalSilver,
+				objective = {},
+			},
+			gold = {
+				maxUnitsDied = challengeData.goalGold,
+				objective = {},
+			},
+			currentUnitsDied = 0,
+		}
+		
+		-- Setup Benchmark Objectives
+		challengeBenchmarks.unplaced.objective = {
+			-- Set Objective Title
+			Title = "$11202197", -- "Time Elapsed"
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.noMedalObjective,
+		}
+		challengeBenchmarks.bronze.objective = {
+			-- Set Objective Title
+			Title = Loc_FormatText("$11202194", challengeBenchmarks.bronze.maxUnitsDied+1),
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.bronzeMedalObjective,
+		}
+		challengeBenchmarks.silver.objective = {
+			-- Set Objective Title
+			Title = Loc_FormatText("$11202195", challengeBenchmarks.silver.maxUnitsDied+1),
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.silverMedalObjective,
+		}
+		challengeBenchmarks.gold.objective = {
+			-- Set Objective Title
+			Title = Loc_FormatText("$11202196", challengeBenchmarks.gold.maxUnitsDied+1),
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.goldMedalObjective,
+		}
+		
+		-- Initialize Gold Medal objective
+		Objective_Register(challengeBenchmarks.gold.objective)
+		Objective_Start(challengeBenchmarks.gold.objective, false, false)
+		Objective_SetCounter(challengeBenchmarks.gold.objective, 0, challengeBenchmarks.gold.maxUnitsDied)
+		currentBenchmark = challengeBenchmarks.gold
+		
+		-- Add GlobalEvent for unit death
+		Rule_AddGlobalEvent(ChallengeMission_UnitsLost_EntityKilled, GE_EntityKilled)
+		
+		-- Add Interval Rule for mission completion
+		Rule_AddInterval(ChallengeMission_TrackScore, 0.125)
+		
+		
+	elseif kpiType == "countDown" then
+		
+
+		challengeTimer = "ChallengeTimer"
+		challengeBenchmarks = {
+			unplaced = {
+				name = "Time Elapsed",
+				goal_m = nil,
+				goal_s = nil,
+				time = nil,
+				objective = {},
+			},
+			bronze = {
+				time = challengeData.goalBronze,
+				goal_m = math.floor(challengeData.goalBronze / 60),
+				goal_s = challengeData.goalBronze % 60,
+				objective = {},
+			},
+			silver = {
+				time = challengeData.goalSilver,
+				goal_m = math.floor(challengeData.goalSilver / 60),
+				goal_s = challengeData.goalSilver % 60,
+				objective = {},
+			},
+			gold = {
+				time = challengeData.goalGold,
+				goal_m = math.floor(challengeData.goalGold / 60),
+				goal_s = challengeData.goalGold % 60,
+				objective = {},
+			}
+		}
+		
+		
+		-- Setup Benchmark Objectives
+		challengeBenchmarks.unplaced.objective = {
+			-- Set Objective Title
+			Title = "$11166938", -- "Time Elapsed"
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.noMedalObjective,
+		}
+		challengeBenchmarks.bronze.objective = {
+			-- Set Objective Title
+			Title = Loc_FormatText("$11200672", challengeBenchmarks.bronze.goal_m, challengeBenchmarks.gold.goal_s), -- "Bronze Medal (Goal %1TIME_REQUIREMENT%m %2TIME_REQUIREMENT%s) - "
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.bronzeMedalObjective,
+		}
+		challengeBenchmarks.silver.objective = {
+			-- Set Objective Title
+			Title = Loc_FormatText("$11200673", challengeBenchmarks.silver.goal_m, challengeBenchmarks.gold.goal_s), -- "Silver Medal (Goal %1TIME_REQUIREMENT%m %2TIME_REQUIREMENT%s) - "
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.silverMedalObjective,
+		}
+		challengeBenchmarks.gold.objective = {
+			-- Set Objective Title
+			Title = Loc_FormatText("$11200674", challengeBenchmarks.gold.goal_m, challengeBenchmarks.gold.goal_s), -- "Gold Medal (Goal %1TIME_REQUIREMENT%m %2TIME_REQUIREMENT%s) - "
+			-- Set Objective Type
+			Type = OT_Bonus,
+			-- Set Objective Icon
+			Icon = artOfWarIcons.goldMedalObjective,
+		}
+		
+		
+		-- Add update on simtick
+		Rule_AddInterval(ChallengeMission_CountDown_Update, 0.125)
+		Rule_AddInterval(ChallengeMission_TrackScore, 0.125)
+		
+	end
+end
+
+-- Track Challenge Score
+function ChallengeMission_TrackScore()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			if (Objective_IsComplete(OBJ_Victory)) then
+				
+				if kpiType == "seconds" then
+					-- Store completion time
+					local completionSeconds = World_GetGameTime() - challengeStartTime
+					challengeCompletionTime = completionSeconds / 60
+					
+					-- Package completion time for Data Store
+					local trialInformation = {kpi = completionSeconds}
+					
+					-- Provide completion time to Stats system via Data Store
+					Game_StoreTableData("trial", trialInformation)
+					
+					print(string.format("CHALLENGE COMPLETED IN %f MINUTES", challengeCompletionTime))
+					
+					-- Pause objective timer
+					Objective_PauseTimer(currentBenchmark.objective)
+					
+				elseif kpiType == "unitsLost" then
+					-- Store completion loss counter
+					local points = Objective_GetCounter(currentBenchmark.objective)
+					
+					-- Package completion time for Data Store
+					local trialInformation = {kpi = points}
+					
+					-- Provide completion time to Stats system via Data Store
+					Game_StoreTableData("trial", trialInformation)
+					
+					print(string.format("CHALLENGE COMPLETED WITH %f UNIT DEATHS", points))
+				
+				elseif kpiType == "countDown" then
+					-- Store completion time
+					local completionSeconds = World_GetGameTime() - challengeStartTime
+					challengeCompletionTime = completionSeconds / 60
+					
+					-- Package completion time for Data Store
+					local trialInformation = {kpi = completionSeconds}
+					
+					-- Provide completion time to Stats system via Data Store
+					Game_StoreTableData("trial", trialInformation)
+					
+					print(string.format("CHALLENGE SURVIVED FOR %f MINUTES", challengeCompletionTime))
+					
+					-- Pause objective timer
+					Objective_PauseTimer(currentBenchmark.objective)
+					
+				end
+				
+				-- Remove Rule
+				Rule_RemoveMe()
+				
+			end
+		end
+	end
+end
+
+
+
+-------------------
+-- KPI: seconds
+-------------------
+
+-- Update Objectives - Called by a rule every simtic
+function ChallengeMission_Timed_Update()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If player is local (not one of the AI players)
+		if player.isLocal then		
+			
+			if kpiType == "seconds" then
+				-- Get time elapsed since start time (end of cinematic)
+				local timeElapsed = World_GetGameTime() - challengeStartTime
+				
+				-- If time elapsed meets the time requirement for Gold
+				if timeElapsed < challengeBenchmarks.gold.time then
+					
+					-- If player's current Benchmark is not set to Gold
+					if currentBenchmark ~= challengeBenchmarks.gold then
+						
+						-- Register objective
+						Objective_Register(challengeBenchmarks.gold.objective)
+						-- Start objective
+						Objective_Start(challengeBenchmarks.gold.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(challengeTimer) then
+							
+							-- End objective timer
+							Timer_End(challengeTimer)
+							
+						end	
+						
+						-- Start timer
+						Timer_Start(challengeTimer, challengeBenchmarks.gold.time)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(challengeBenchmarks.gold.objective, COUNT_UP, timeElapsed, 10)
+						
+						-- Set player's current benchmark as Gold
+						currentBenchmark = challengeBenchmarks.gold
+						
+					end
+					
+					-- If time elapsed meets the time requirement for Silver
+				elseif timeElapsed < challengeBenchmarks.silver.time then
+					
+					-- If player's current Benchmark is not set to Silver
+					if currentBenchmark ~= challengeBenchmarks.silver then
+						
+						-- Remove kpi objective
+						Objective_Fail(challengeBenchmarks.gold.objective, false, false)
+						
+						-- Register objective
+						Objective_Register(challengeBenchmarks.silver.objective)
+						-- Start objective
+						Objective_Start(challengeBenchmarks.silver.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(challengeTimer) then
+							
+							-- End objective timer
+							Timer_End(challengeTimer)
+							
+						end
+						
+						-- Start timer
+						Timer_Start(challengeTimer, challengeBenchmarks.silver.time)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(challengeBenchmarks.silver.objective, COUNT_UP, timeElapsed, 10)
+						
+						-- Set player's current benchmark as Silver
+						currentBenchmark = challengeBenchmarks.silver
+						
+						--Util_StartIntel(EVENTS.Narr_GoldFailed)
+						
+					end
+					
+					-- If time elapsed meets the time requirement for Bronze
+				elseif timeElapsed < challengeBenchmarks.bronze.time then		
+					
+					-- If player's current Benchmark is not set to Bronze
+					if currentBenchmark ~= challengeBenchmarks.bronze then
+						
+						-- Remove kpi objective
+						Objective_Fail(challengeBenchmarks.silver.objective, false, false)
+						
+						-- Register objective
+						Objective_Register(challengeBenchmarks.bronze.objective)
+						-- Start objective
+						Objective_Start(challengeBenchmarks.bronze.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(challengeTimer) then
+							
+							-- End objective timer
+							Timer_End(challengeTimer)
+							
+						end
+						
+						-- Start timer
+						Timer_Start(challengeTimer, challengeBenchmarks.bronze.time)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(challengeBenchmarks.bronze.objective, COUNT_UP, timeElapsed, 10)
+						
+						-- Set player's current benchmark as Bronze
+						currentBenchmark = challengeBenchmarks.bronze
+						
+						--Util_StartIntel(EVENTS.Narr_SilverFailed)
+						
+					end
+					
+					-- If time elapsed exceeds the time requirement for Bronze
+				else
+					
+					-- If player's current Benchmark is not set to Unplaced
+					if currentBenchmark ~= challengeBenchmarks.unplaced then
+						
+						-- Remove kpi objective
+						Objective_Fail(challengeBenchmarks.bronze.objective, false, false)
+						
+						-- Register objective
+						Objective_Register(challengeBenchmarks.unplaced.objective)
+						-- Start objective
+						Objective_Start(challengeBenchmarks.unplaced.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(challengeTimer) then
+							
+							-- End objective timer
+							Timer_End(challengeTimer)
+							
+						end	
+						
+						-- Start timer
+						Timer_Start(challengeTimer, timeElapsed)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(challengeBenchmarks.unplaced.objective, COUNT_UP, timeElapsed)
+						
+						-- Set player's current benchmark as Unplaced
+						currentBenchmark = challengeBenchmarks.unplaced
+						
+						--Util_StartIntel(EVENTS.Narr_BronzeFailed)
+						
+					end
+				end
+			end
+		end
+	end
+end
+
+
+-------------------
+-- KPI: unitsLost
+-------------------
+
+-- Global Event on Entity Death
+-- Possible TODO: Pass through a unit-type list to support filtering (eg. only traders, or all except traders)
+function ChallengeMission_UnitsLost_EntityKilled(context)
+	
+	if(context.victimOwner == World_GetPlayerAt(1)) then
+		if(Objective_IsCounterSet(currentBenchmark.objective)) then
+			Objective_IncreaseCounter(currentBenchmark.objective,1)
+			if(currentBenchmark.maxUnitsDied ~= nil and Objective_GetCounter(currentBenchmark.objective) > currentBenchmark.maxUnitsDied) then
+				ChallengeMission_UnitsLost_UpdateMedals()
+			end
+		end
+	end
+end
+
+-- 
+function ChallengeMission_UnitsLost_UpdateMedals()
+	if(currentBenchmark == challengeBenchmarks.gold)then
+		--Util_StartIntel(EVENTS.Narr_GoldFailed )
+		Objective_Fail(currentBenchmark.objective, false, false)
+		currentBenchmark = challengeBenchmarks.silver
+		Objective_Register(currentBenchmark.objective)
+		Objective_Start(currentBenchmark.objective, false, false)
+		Objective_SetCounter(currentBenchmark.objective, challengeBenchmarks.gold.maxUnitsDied + 1, currentBenchmark.maxUnitsDied)
+	elseif(currentBenchmark == challengeBenchmarks.silver)then
+		--Util_StartIntel(EVENTS.Narr_SilverFailed )
+		Objective_Fail(currentBenchmark.objective, false, false)
+		currentBenchmark = challengeBenchmarks.bronze
+		Objective_Register(currentBenchmark.objective)
+		Objective_Start(currentBenchmark.objective, false, false)
+		Objective_SetCounter(currentBenchmark.objective, challengeBenchmarks.silver.maxUnitsDied + 1, currentBenchmark.maxUnitsDied)
+	elseif(currentBenchmark == challengeBenchmarks.bronze)then
+		--Util_StartIntel(EVENTS.Narr_BronzeFailed )
+		Objective_Fail(currentBenchmark.objective, false, false)
+		currentBenchmark = challengeBenchmarks.unplaced
+		Objective_Register(currentBenchmark.objective)
+		Objective_Start(currentBenchmark.objective, false, false)
+		Objective_SetCounter(currentBenchmark.objective, challengeBenchmarks.bronze.maxUnitsDied + 1, challengeBenchmarks.bronze.maxUnitsDied)
+	end
+end
+
+-------------------
+-- KPI: CountDown
+-------------------
+
+-- Update Objectives - Called by a rule every simtic
+function ChallengeMission_CountDown_Update()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If player is local (not one of the AI players)
+		if player.isLocal then		
+			
+			if kpiType == "countDown" then
+				-- Get time elapsed since start time (end of cinematic)
+				local timeElapsed = World_GetGameTime() - challengeStartTime
+				
+				-- If time elapsed meets the time requirement for Gold
+				if timeElapsed > challengeBenchmarks.silver.time then
+					
+					-- If player's current Benchmark is not set to Gold
+					if currentBenchmark ~= challengeBenchmarks.gold then
+						
+						-- Remove kpi objective
+						Objective_Complete(challengeBenchmarks.silver.objective, true, false)
+						UI_CreateEventCue("$11166944", Loc_Empty(), "", "", "sfx_ui_event_queue_high_priority_play")
+						
+						-- Register objective
+						Objective_Register(challengeBenchmarks.gold.objective)
+						-- Start objective
+						Objective_Start(challengeBenchmarks.gold.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(challengeTimer) then
+							
+							-- End objective timer
+							Timer_End(challengeTimer)
+							
+						end	
+						
+						-- Start timer
+						Timer_Start(challengeTimer, challengeBenchmarks.gold.time)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(challengeBenchmarks.gold.objective, COUNT_DOWN, challengeBenchmarks.gold.time-timeElapsed, 10)
+						
+						-- Set player's current benchmark as Gold
+						currentBenchmark = challengeBenchmarks.gold
+						
+					end
+					
+					-- If time elapsed meets the time requirement for Silver
+				elseif timeElapsed > challengeBenchmarks.bronze.time then
+					
+					-- If player's current Benchmark is not set to Silver
+					if currentBenchmark ~= challengeBenchmarks.silver then
+						
+						-- Remove kpi objective
+						Objective_Complete(challengeBenchmarks.bronze.objective, true, false)
+						UI_CreateEventCue("$11166945", Loc_Empty(), "", "", "sfx_ui_event_queue_high_priority_play")
+						
+						-- Register objective
+						Objective_Register(challengeBenchmarks.silver.objective)
+						-- Start objective
+						Objective_Start(challengeBenchmarks.silver.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(challengeTimer) then
+							
+							-- End objective timer
+							Timer_End(challengeTimer)
+							
+						end
+						
+						-- Start timer
+						Timer_Start(challengeTimer, challengeBenchmarks.silver.time)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(challengeBenchmarks.silver.objective, COUNT_DOWN, challengeBenchmarks.silver.time-timeElapsed, 10)
+						
+						-- Set player's current benchmark as Silver
+						currentBenchmark = challengeBenchmarks.silver
+						
+						--Util_StartIntel(EVENTS.Narr_GoldFailed)
+					end
+					
+					-- If time elapsed meets the time requirement for Bronze
+				else 
+					-- If player's current Benchmark is not set to Bronze
+					if currentBenchmark ~= challengeBenchmarks.bronze then
+						
+						-- Register objective
+						Objective_Register(challengeBenchmarks.bronze.objective)
+						-- Start objective
+						Objective_Start(challengeBenchmarks.bronze.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(challengeTimer) then
+							
+							-- End objective timer
+							Timer_End(challengeTimer)
+							
+						end
+						
+						-- Start timer
+						Timer_Start(challengeTimer, challengeBenchmarks.bronze.time)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(challengeBenchmarks.bronze.objective, COUNT_DOWN, challengeBenchmarks.bronze.time-timeElapsed, 10)
+						
+						-- Set player's current benchmark as Bronze
+						currentBenchmark = challengeBenchmarks.bronze
+						
+						--Util_StartIntel(EVENTS.Narr_SilverFailed)
+						
+					end
+				end
+			end
+		end
+	end
+end

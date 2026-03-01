@@ -1,0 +1,196 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("MissionOMatic/MissionOMatic.scar")
+import("obj_landmark.scar")
+import("obj_research.scar")
+import("training_sal_chp2_township.scar")
+
+-- ////// MISSION START FUNCTIONS ///////////////////////////////////////////////////////////////////////////////
+
+-- This is called so early that there is little you can do but simple stuff like gathering player IDs
+function Mission_OnGameSetup()
+	
+	player1 = World_GetPlayerAt(1) 
+	player2 = World_GetPlayerAt(2) 
+	
+end
+
+-- This is called as soon as the game has loaded and things start running.
+function Mission_OnInit()
+	
+	-- Dynamic training is key to this tutorial mission
+	Training_SetForceEnableTraining(true)
+	
+	-- Force enable HUD widgets that are explained in the tutorial
+	UI_SetTutorializedWidgetsRequired(true)
+end
+
+-- This is a good place to initialize global variables. SGroups, data tables, Objectives etc.
+function Mission_SetupVariables()
+	
+	intro_skipped = false
+	
+	-- Init the objectives
+	BuildLandmark_InitObjectives()
+	ResearchTech_InitObjectives()
+	
+	-- Used in tracker for spawning squads
+	i_last_units = 0
+	
+	--EG for holding the landmark
+	eg_landmark = EGroup_CreateIfNotFound("eg_landmark")
+	
+	--Starting resource amounts (enough for the landmark)
+	Player_AddResource(player1, RT_Food, 200)
+	Player_AddResource(player1, RT_Gold, 100)
+end
+
+-- Values that we want to change depending on difficulty mode, we declare them as variables in here.
+function Mission_SetDifficulty()
+	
+end
+
+-- If we want to lock out any abilities, units, or other items, we usually do that in this function.
+function Mission_SetRestrictions()
+
+	-- Remove access to certain units/buildings/upgrades
+	Player_SetConstructionMenuAvailability(player1, "fre_age4", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age3_wonders", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age3", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age2_wonders", ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_INFANTRY_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_NAVAL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_OUTPOST_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_PALISADE_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_PALISADE_GATE_FRE, ITEM_REMOVED)
+	
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_SCOUT_1_FRE, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_FOOD_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_VILLAGER_HUNTING_GEAR_1, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_SCOUT_FORESTER, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_FELL_RATE_1, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_GOLD_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_STONE_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_VILLAGER_HEALTH, ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_RANGED_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TECH_UNIT_RANGED_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_ECON_MARKET_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TOWN_CENTER_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TOWN_CENTER_CAPITAL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_CAVALRY_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_TOWER_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_WALL_BASTION_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_WALL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_WALL_GATE_FRE, ITEM_REMOVED)
+	
+	-- Hide abilities
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("combat_unit_hold_position"), ITEM_REMOVED)
+
+	-- Hide Formations
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_line"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_spread"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_wedge"), ITEM_REMOVED)
+	-- Hide Death
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_unit_death"), ITEM_REMOVED)
+end
+
+-- Called right before the in-game cinematic starts. We spawn starting units, apply upgrades and issue orders.
+function Mission_Preset()
+	
+	-- Assign the villagers to their starting jobs
+	AssignVillagersToWood(sg_woodVillagers)
+	AssignVillagersToGold(sg_goldVillagers)
+	AssignVillagersToFarms(sg_farmVillagers)
+	
+	if Music_UnlockIntensity then
+        Sound_SetForceMusic(false)
+    else
+        Sound_SetForceMusic(true)
+    end
+	
+	Music_LockIntensity(MUSIC_EXPLORE)
+
+end
+
+-- No clue, I think at basically the same time as Mission_Start but just before it.
+function Mission_PreStart()
+
+end
+
+-- This is triggered after the intro, just as control is passed to the player
+function Mission_Start()
+	
+	-- Mission-o-Matic handles playing the intro
+	
+	Rule_AddInterval(Mission_Start_WaitForSpeechToFinish, 0.5)
+
+end
+
+function Mission_Start_WaitForSpeechToFinish()
+	
+	if not Event_IsAnyRunning() then
+		Rule_RemoveMe()
+
+		Objective_Start(OBJ_BuildLandmark, true, true)
+	end
+end
+
+function ProduceUnitsObjectiveTracker(context, data)
+	-- data = {objective, unit_type, desired_amount}
+
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, data.unit_type, FILTER_KEEP)
+	
+	i_last_units = SGroup_CountSpawned(sg_allsquads)
+	
+	Rule_Add(ProduceUnits_Monitor, data)
+end
+
+function ProduceUnits_Monitor(context, data)
+	-- data = {objective, unit_type, desired_amount}
+
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, data.unit_type, FILTER_KEEP)
+	
+	current_units = SGroup_CountSpawned(sg_allsquads)
+	local new_units = current_units - i_last_units
+	i_last_units = current_units
+	
+	if new_units >= 1 then 
+		
+		Objective_IncreaseCounter(data.objective, new_units)
+		
+		if Objective_GetCounter(data.objective) >= data.desired_amount then 
+			Objective_Complete(data.objective, true, true)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+-- Mission-o-Matic Recipe
+function GetRecipe()
+
+	local recipe = {
+		
+		introNIS = EVENTS.Township_Intro,
+		
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_angevin_rebellion",
+				title = LOC("Brittany"),
+				date = LOC("1065"),
+			},
+		},
+		
+	}
+			
+	return recipe
+
+end

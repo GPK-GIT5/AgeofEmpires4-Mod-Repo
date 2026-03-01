@@ -1,0 +1,393 @@
+import("cardinal.scar")
+import("missionomatic/missionomatic.scar")
+import("missionomatic/missionomatic_upgrades.scar")
+
+UT_INCLUDE = 1
+UT_EXCLUDE = 2
+UT_REQUIRE = 3
+
+UPGRADE_AGE_TYPES = {"scar_dark_age_upgrade", "scar_feudal_age_upgrade", "scar_castle_age_upgrade", "scar_imperial_age_upgrade"}
+AGE_STRINGS = { "Dark", "Feudal", "Castle", "Imperial" }
+
+function TechTree_Init()
+	--print("Initializing TechTree")
+	-- AGES --
+	ages = {}
+	for i = 1, 4 do
+		local age = {}
+		age.index = i
+		age.name = "age"..i
+		age.scar_type = "scar_"..age.name
+		table.insert(ages, age)
+	end
+	-- convert archtypes from array to dictionary
+	local _archtypes = archtypes
+	archtypes = {}
+	for _, archtype in ipairs(_archtypes) do
+		archtypes[archtype.name] = archtype
+	end
+	-- UNIT TYPES --
+	local unit_type_index = 0
+	unit_names = {}
+	for _, unit_type in ipairs(unit_types) do
+		unit_type_index = unit_type_index + 1
+		unit_type.id = unit_type_index
+		unit_type.scar_type = "scar_"..unit_type.name
+		unit_type.archtype = archtypes[unit_type.archtype_name] 
+		table.insert(unit_names, unit_type.name)
+	end
+	-- convert unit_types from array to dictionary
+	local _unit_types = unit_types
+	unit_types = {}
+	for _, unit_type in ipairs(_unit_types) do
+		unit_types[unit_type.name] = unit_type
+	end
+	-- BOSS ARCHTYPES --
+	for _, boss_archtype in ipairs(boss_archtypes) do
+		boss_archtype.archtype = archtypes[boss_archtype.name]
+	end
+	-- convert boss_archtypes from array to dictionary
+	local _boss_archtypes = boss_archtypes
+	boss_archtypes = {}
+	for _, boss_archtype in ipairs(_boss_archtypes) do
+		boss_archtypes[boss_archtype.name] = boss_archtype
+	end
+	-- RACES --
+	local rbps = {}
+	for _, faction in ipairs(factions) do
+		local rbp = Player_GetRace(faction.player)
+		if Table_Contains(rbps, rbp) == false then
+			table.insert(rbps, rbp)
+		end
+	end
+	races = {}
+	for _, rbp in ipairs(rbps) do
+		local race = {}
+		race.rbp = rbp
+		race.name = BP_GetName(rbp)
+		race.scar_type = "race_"..race.name
+		race.race_unit_types = {}
+		for unit_name, unit_type in pairs(unit_types) do
+			race.race_unit_types[unit_name] = {
+				unit_type = unit_type,
+				name = unit_name,
+				can_train = false,
+				sbps = {},
+				sbp_names = {}
+			}
+		end
+		race.race_boss_unit_types = {}
+		table.insert(races, race)
+	end
+	for _, faction in ipairs(factions) do
+		local rbp = Player_GetRace(faction.player)
+		for _, race in ipairs(races) do
+			if rbp == race.rbp then
+				faction.race = race
+				race.has_tech_tree = race.has_tech_tree or faction.has_tech_tree
+			end
+		end
+	end
+	for _, race in ipairs(races) do
+		if race.has_tech_tree then
+			print("TechTree - "..race.name)
+		end
+	end
+	
+	
+	-- LOOKUP --
+	for unit_name, unit_type in pairs(unit_types) do
+		local sbps = BP_GetSquadBlueprintsWithType_Internal({ unit_type.scar_type }, ANY)
+		for _, sbp in ipairs(sbps) do
+			local sbp_name = BP_GetName(sbp)
+			for _, race in ipairs(races) do
+				if race.has_tech_tree then
+					if BP_GetSquadTypeExtRaceCount(sbp_name) == 1 and BP_GetSquadTypeExtRaceBlueprintAtIndex(sbp_name, 0) == race.rbp then
+						local race_unit_type = race.race_unit_types[unit_name]
+						for _, age in ipairs(ages) do
+							if Squad_IsSBPOfType(sbp, age.scar_type) then
+								local collision = false
+								if race_unit_type.sbps[age.index] ~= nil then
+									collision = true
+								end
+								race_unit_type.sbps[age.index] = sbp
+								race_unit_type.sbp_names[age.index] = BP_GetName(sbp)
+								if collision then
+									local msg = race.name.." "..unit_type.name.." "..age.name.." "..BP_GetName(sbp).." COLLISION"
+									print(msg)
+									if Game_IsRTM() == false then
+										fatal(msg)
+									end
+								end
+								break	
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	for boss_archtype_name, boss_archtype in pairs(boss_archtypes) do
+		local sbps = BP_GetSquadBlueprintsWithType_Internal({ boss_archtype.scar_type }, ANY)
+		for _, sbp in ipairs(sbps) do
+			local sbp_name = BP_GetName(sbp)
+			for _, race in ipairs(races) do
+				if BP_GetSquadTypeExtRaceCount(sbp_name) == 1 and BP_GetSquadTypeExtRaceBlueprintAtIndex(sbp_name, 0) == race.rbp then
+					local race_boss_unit_type = {}
+					race_boss_unit_type.sbp = sbp
+					race_boss_unit_type.ebp = SBP_GetFirstEBP(sbp)
+					race_boss_unit_type.name = sbp_name
+					race_boss_unit_type.boss_archtype = boss_archtype
+					print("Boss found - "..boss_archtype.name.." - "..race.name.." - "..race_boss_unit_type.name)
+					table.insert(race.race_boss_unit_types, race_boss_unit_type)
+				end
+			end
+		end
+	end
+	
+	for unit_name, unit_type in pairs(unit_types) do
+		for _, race in ipairs(races) do
+			local race_unit_type = race.race_unit_types[unit_name]
+			-- calculate minimum age
+			for _, age in ipairs(ages) do
+				if race_unit_type.sbps[age.index] ~= nil then
+					race_unit_type.min_age = age.index
+					race_unit_type.can_train = true
+					break
+				end
+			end
+			-- fill in empty higher tier units
+			local previous_sbp = nil
+			local previous_sbp_name = nil
+			for _, age in ipairs(ages) do
+				if race_unit_type.sbps[age.index] == nil then
+					if previous_sbp then
+						race_unit_type.sbps[age.index] = previous_sbp
+						race_unit_type.sbp_names[age.index] = previous_sbp_name
+					end
+				else
+					previous_sbp = race_unit_type.sbps[age.index]
+					previous_sbp_name = race_unit_type.sbp_names[age.index]
+				end
+			end
+		end
+	end
+	for _, faction in ipairs(factions) do
+		if faction.has_tech_tree then
+			for unit_name, race_unit_type in pairs(faction.race.race_unit_types) do
+				if race_unit_type.can_train then
+					local resources = Player_GetSquadBPCost(faction.player, race_unit_type.sbps[race_unit_type.min_age])
+					race_unit_type.cost = math.floor(resources.food + resources.gold + resources.stone + resources.wood)
+					assert(race_unit_type.cost > 0, unit_name.." has an invalid cost")
+				end
+			end
+		end
+	end
+	wave_race = ROGUE_ENEMY_WAVE_FACTION.race
+	wave_race_unit_types = wave_race.race_unit_types
+	wave_race_boss_unit_types = wave_race.race_boss_unit_types
+	
+	for _, boss_unit_type in ipairs(wave_race_boss_unit_types) do
+		local modifier = Modifier_Create(MAT_EntityType, "health_maximum_modifier", MUT_Multiplication, false, 1.333 ^ Game_GetSPDifficulty(), boss_unit_type.ebp)
+		Modifier_ApplyToPlayer(modifier, ROGUE_ENEMY_WAVE_PLAYER, 0.0)
+	end
+end
+
+function TechTree_GetSBP(unit_name)
+	return wave_race_unit_types[unit_name].sbps[states.sim.current_age]
+end
+
+function TechTree_GetMaxValueForRaceUnitType(race_unit_type)
+	return ((race_unit_type.unit_type.archtype.max_formation_size + 1) * race_unit_type.cost)
+end
+
+function TechTree_GetRoamerUnits(value)
+	roamer_resources = roamer_resources or 0
+	roamer_resources = roamer_resources + value
+	local unit_name
+	assert(roamer_override_type == nil or roamer_override_sbp == nil, 
+		"Roamers recieving an override type and SBP, should be one or the other not both")
+	if roamer_override_type ~= nil then
+		unit_name = roamer_override_type
+	else
+		if value > 400 then
+			unit_name = "knight"
+		else
+			unit_name = "horseman"
+		end
+	end
+	if roamer_override_sbp ~= nil then
+		local race_unit_type = roamer_override_sbp
+		local unitCostTable = Player_GetSquadBPCost(ROGUE_ENEMY_ALLY_PLAYER, roamer_override_sbp)
+		local unitCost = unitCostTable.gold + unitCostTable.food + unitCostTable.wood + unitCostTable.stone 
+		local numSquads = math.floor(roamer_resources / unitCost)
+		roamer_resources = roamer_resources - (numSquads * unitCost)
+		unitname = "overrideSBP"
+		return {{ sbp = roamer_override_sbp, numSquads = numSquads, unit_name = unit_name }}
+	else
+		local race_unit_type = ROGUE_ENEMY_ALLY_FACTION.race.race_unit_types[unit_name]
+		local numSquads = math.floor(roamer_resources / race_unit_type.cost)
+		roamer_resources = roamer_resources - (numSquads * race_unit_type.cost)
+		return {{ type = race_unit_type.unit_type.scar_type, numSquads = numSquads, unit_name = unit_name }}
+	end
+end
+
+--? @shortdesc Completes upgrades for the player, based on upgrade types. Completed upgrades will have ALL of the
+--? included types, and NONE of the excluded types.
+--? @args [Player] player
+--? [Table of Integers] ages - only include ages that match one of these ages
+--? [Table of Strings] include_types - the types you want (don't include race or age types)
+--? [Table of Strings] exclude_types - the types you DONT want - defaults to empty table
+--? [Table of Blueprints] exclude_upgrades - the specific upgrades you DONT want - defaults to empty table
+--? [Bool] include_improved_mongol_upgrades - whether the improved variant of mongol ugprades should 
+--? [Enum] naval - Whether to give naval upgrade. Options are UT_INCLUDE (default), UT_EXCLUDE, UT_REQUIRE
+--? [Enum] improved_mongol - For mongol players only, whether to give improved upgrade variants. 
+--? Options are UT_INCLUDE, UT_EXCLUDE (default), UT_REQUIRE
+--? @result Integer number of upgrades completed
+function TechTree_GetUpgrades(player, ages, include_types, exclude_types, exclude_upgrades, naval, improved_mongol)
+	
+	exclude_types = exclude_types or {}
+	exclude_upgrades = exclude_upgrades or {}
+	include_improved_mongol_upgrades = include_improved_mongol_upgrades or false
+
+	local race_type = _GetPlayerRaceNameType(player)
+	local match_table = {}
+	for _, age in pairs(ages) do
+		local match_sub_table = Clone(include_types)
+		local age_type = UPGRADE_AGE_TYPES[age]
+		table.insert(match_sub_table, race_type)
+		table.insert(match_sub_table, age_type)
+		table.insert(match_table, match_sub_table)
+	end
+				
+	local matching_upgrades = BP_GetUpgradesMatchingTypes(match_table)
+	
+	--filter out upgrades
+	for i = #matching_upgrades, 1, -1 do
+		local upgrade = matching_upgrades[i]
+		local remove_upgrade = false
+		--filter out specific upgrades
+		if Table_Contains(exclude_upgrades, upgrade) then
+			remove_upgrade = true
+		--mongol improved
+		elseif (improved_mongol == UT_EXCLUDE and BP_IsUpgradeOfType(upgrade, "scar_mongol_improved") == true) then
+			remove_upgrade = true
+		elseif (improved_mongol == UT_REQUIRE and BP_IsUpgradeOfType(upgrade, "scar_mongol_improved") == false) then
+			remove_upgrade = true
+		--naval
+		elseif (naval == UT_EXCLUDE and BP_IsUpgradeOfType(upgrade, "scar_naval_upgrade") == true) then
+			remove_upgrade = true
+		elseif (naval == UT_REQUIRE and BP_IsUpgradeOfType(upgrade, "scar_naval_upgrade") == false) then
+			remove_upgrade = true
+		elseif BP_IsUpgradeOfType(upgrade, "scar_rogue_exclude") then
+			remove_upgrade = true
+		--filter out upgrade types
+		else
+			for _, exclude_type in ipairs(exclude_types) do
+				if BP_IsUpgradeOfType(upgrade, exclude_type) then
+					remove_upgrade = true
+				end
+			end
+		end
+		if remove_upgrade then
+			table.remove(matching_upgrades, i)
+		end
+	end
+	
+	return matching_upgrades
+end
+
+
+function TechTree_GrantStartingUpgrades()
+	for _, faction in ipairs(factions) do
+		if faction.unit_upgrade_level > 1 then
+			local player = faction.player
+			if debug_upgrades then
+				local race_name = Player_GetRaceName(player)
+				print("--------------------------------------------------------")
+				print("Granting Starting Unit Upgrades to "..faction.name.." - "..string.upper(race_name))
+			end
+			
+			for age = 2, faction.unit_upgrade_level do
+				local upgrades = TechTree_GetUpgrades(player, { age }, { "scar_unit_upgrade" }, nil, nil, UT_EXCLUDE, UT_EXCLUDE)
+				local age_string = AGE_STRINGS[age]
+				if debug_upgrades then
+					print("    "..age_string.." Age:")
+				end
+				for _, upgrade in ipairs(upgrades) do
+					if debug_upgrades then
+						TechTree_PrintUpgrade(upgrade)
+					end
+					Player_CompleteUpgrade(player, upgrade)
+				end
+			end
+		end
+	end
+	if ally_blacksmith_upgrade_level > 0 then
+		if debug_upgrades then
+			local race_name = Player_GetRaceName(ROGUE_ALLY_PLAYER)
+			print("--------------------------------------------------------")
+			print("Granting Starting Blacksmith Upgrades to "..ROGUE_ALLY_FACTION.name.." - "..string.upper(race_name))
+		end
+		for age = 1, ally_blacksmith_upgrade_level do
+			local upgrades = TechTree_GetUpgrades(ROGUE_ALLY_PLAYER, { age }, { "scar_military_upgrade", "scar_tiered_upgrade" }, nil, nil, UT_EXCLUDE, UT_EXCLUDE)	
+			local age_string = AGE_STRINGS[age]
+			if debug_upgrades then
+				print("    "..age_string.." Age:")
+			end
+			for _, upgrade in ipairs(upgrades) do
+				if debug_upgrades then
+					TechTree_PrintUpgrade(upgrade)
+				end
+				Player_CompleteUpgrade(ROGUE_ALLY_PLAYER, upgrade)
+			end
+		end
+	end
+	if debug_upgrades then
+		print("--------------------------------------------------------")
+	end
+end
+
+function TechTree_GrantCombatUpgrades(state, age)
+	for _, faction in ipairs(factions) do
+		if faction.gets_combat_upgrades_from_events then
+			local player = faction.player
+			if state == states.sim then
+				local naval = UT_EXCLUDE
+				if faction.race.name == "abbasid" or faction.race.name == "abbasid_ha_01" then
+					naval = UT_INCLUDE
+				end
+				local upgrades = TechTree_GetUpgrades(player, {age}, { "scar_military_upgrade" }, nil, nil, naval, UT_EXCLUDE)
+				faction.combat_upgrades_per_age[age] = upgrades
+			elseif state == states.game then
+				for _, upgrade in ipairs(faction.combat_upgrades_per_age[age]) do
+					Player_CompleteUpgrade(player, upgrade)
+				end
+			end
+		end
+	end
+end
+
+function TechTree_PrintCombatUpgrades()
+	for _, faction in ipairs(factions) do
+		if faction.gets_combat_upgrades_from_events then
+			local player = faction.player
+			local race_name = Player_GetRaceName(player)
+			print("--------------------------------------------------------")
+			print("Granting Combat Upgrades to "..faction.name.." - "..string.upper(race_name))
+			for age, upgrades in ipairs(faction.combat_upgrades_per_age) do
+				local age_string = AGE_STRINGS[age]
+				print("    "..age_string.." Age: "..#faction.combat_upgrades_per_age[age])
+				for _, upgrade in ipairs(upgrades) do
+					TechTree_PrintUpgrade(upgrade)
+				end
+			end
+		end
+	end
+end
+
+function TechTree_PrintUpgrade(upgrade)
+	local blueprint_name = BP_GetName(upgrade)
+	local display_name = Loc_ToAnsi(BP_GetUpgradeUIInfo(upgrade).screenName)
+	printColumns({ { "        - ", nil }, { display_name, 30 }, { "  - ", nil }, { blueprint_name, nil } })
+end

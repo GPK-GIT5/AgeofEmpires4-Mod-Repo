@@ -1,0 +1,196 @@
+-- 
+-- Mission-O-Matic Module - Unit Spawner
+--
+-- Barebones module to cover spawning units that don't belong anywhere else
+--
+--
+-- See: Module - Unit Spawner
+--      http://relicwiki/display/CARD/Utility+Module+-+Unit+Spawner  	(in the EE, you can Control-click on this link to go there)
+--
+
+function UnitSpawner_Init(data)
+	
+	local instance = Prefab_GetInstance(data)
+	instance.prefabName = "UnitSpawner"
+	
+	table.insert(t_unitSpawnerModules, instance)
+	table.insert(t_allModules, instance)
+	
+	if instance.sgroup == nil then
+		instance.sgroup = SGroup_CreateUnique("UnitSpawner")
+	end
+	
+	if scartype(instance.units) == ST_TABLE then
+		
+		local options = {}
+		if instance.zeroPopulation ~= nil then 
+			options.zeroPopulation = instance.zeroPopulation
+		end
+		if instance.spawnInFormation ~= nil then 
+			options.spawnInFormation = instance.spawnInFormation
+		end
+		if instance.holdPosition ~= nil then 
+			options.holdPosition = instance.holdPosition
+		end
+			
+		if instance.spawnLocation then 
+			instance.spawnLocation = ResolveSpawnLocation(instance.spawnLocation) 
+		else
+			instance.spawnLocation = ResolveSpawnLocation(instance.units[1].spawn)
+		end
+		
+		--CMP TRADERS: This is where Traders that are defined in UnitSpawner recipes are deployed using the generic DeploySquads function
+ 		UnitEntry_DeploySquads(instance.player, instance.sgroup, instance.units, instance.spawnLocation, nil, nil, options)
+		
+	end
+
+	if scartype(instance.unitProvider) == ST_TABLE then 
+		
+		instance.unitProvider.existingQueueCompleteTime = 0
+		instance.unitProvider.spawnRate = instance.unitProvider.spawnRate or 30
+
+	end
+	
+	return instance
+end
+
+function UnitSpawner_GetPosition(data)
+
+	local instance = Prefab_GetInstance(data)
+
+	return ResolveSpawnLocation(instance.spawnLocation)
+	
+end
+
+function UnitSpawner_GetSGroup(data)
+
+	local instance = Prefab_GetInstance(data)
+
+	return instance.sgroup
+
+end
+
+--? @shortdesc Unit spawners can't be defeated, for now
+function UnitSpawner_IsDefeated(moduleData)
+
+	local instance = Prefab_GetInstance(moduleData)
+	
+	return false
+	
+end
+
+function UnitSpawner_Stop(moduleData)
+
+	local instance = Prefab_GetInstance(moduleData)
+	
+	instance.isStopped = true 
+	
+end
+
+
+
+
+
+
+-- 
+-- Reinforcements (in this case, used as an off-map spawner of sorts)
+--
+
+function UnitSpawner_UnitRequest_ProvideEstimate(module, requestData)
+	
+	local instance = Prefab_GetInstance(module)
+	local unitProvider = instance.unitProvider		
+	
+	-- check to see if we should reject this request based upon module configuration
+	if unitProvider == nil then 
+		return 				-- no unitProvider data set up on this module at all
+	end
+	if unitProvider.enabled == false or instance.isStopped == true then 
+		return 	 		-- unitProvider functionality is disabled
+	end
+	if unitProvider.onlyRespondToHighPriorityRequests == true and requestData.priority ~= "high" then 
+		return 
+	end
+	if unitProvider.onlyRespondToTargetedRequests == true and requestData.explicitlySpecifiedSources ~= true then 
+		return 				-- module only responds when the request explicitly listed it as a unit source, rather than a general request 
+	end
+	
+	return _UnitSpawner_GetTimeEstimate(instance, requestData)
+	
+end
+
+
+-- start processing a unit request
+function UnitSpawner_UnitRequest_Start(module, requestData)
+
+	local instance = Prefab_GetInstance(module)
+	
+	local currentTime = World_GetGameTime()	
+	local timeToBuild = _UnitSpawner_GetTimeEstimate(instance, requestData)
+	
+	Rule_AddOneShot(UnitSpawner_UnitRequest_Complete, timeToBuild, {instance = module, requestData = requestData})		
+	instance.unitProvider.existingQueueCompleteTime = currentTime + timeToBuild
+		
+end
+
+function UnitSpawner_UnitRequest_Complete(context, data)
+	
+	local instance = Prefab_GetInstance(data)
+	local requestData = data.requestData
+	
+	local units = requestData.units 
+	local sgroup = SGroup_CreateUnique("UnitSpawner off-map spawn")
+	
+	if instance.isStopped ~= true then
+		
+		local spawnLocation = instance.spawnLocation
+		if instance.useDynamicSpawn == true then 
+			local destination = Prefab_DoAction(data.requestData.requestingModule, "GetPosition")
+			if destination ~= nil then 
+				spawnLocation = Util_FindHiddenSpawn(spawnLocation, destination, DST_FURTHEST_HIDDEN)
+			end
+		end
+		
+		UnitEntry_DeploySquads(instance.player, sgroup, units, spawnLocation)	
+		
+	end
+	
+	MissionOMatic_RequestComplete(requestData, sgroup)			
+	
+	SGroup_Destroy(sgroup)
+	
+end
+
+
+
+
+
+-- get a time estimate for how long the units will take to produce
+
+function _UnitSpawner_GetTimeEstimate(instance, requestData)
+
+	local units = requestData.units 
+	
+	
+	local timeEstimate = 0
+	
+	-- figure out how long it will take to build these units
+	for index, unit in pairs(units) do 
+		timeEstimate = timeEstimate + (instance.unitProvider.spawnRate * (unit.numSquads or 1))
+	end
+	
+	-- figure out how long it will take if this is potentially added on to the end of any units currently queued
+	local currentTime = World_GetGameTime()
+	
+	if currentTime > instance.unitProvider.existingQueueCompleteTime then 
+		
+		return timeEstimate 
+		
+	else
+		
+		return (instance.unitProvider.existingQueueCompleteTime - currentTime) + timeEstimate
+		
+	end
+	
+end
+

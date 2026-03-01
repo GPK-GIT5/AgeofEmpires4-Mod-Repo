@@ -1,0 +1,496 @@
+--
+-- Siege of Kiev 1240
+--
+
+function DestroyKiev_InitObjectives()
+	
+	OBJ_DestroyKiev = {
+		
+		Title = 11176384,
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.Districts_Start,
+		Intel_Complete = EVENTS.All_Districts,
+		
+		OnStart = function()
+			--Kiev_SpawnFirstGateDefenders()
+			
+			--DestroyKiev_AssignGateReferences()
+			
+			if t_difficulty.spawn_attack_waves then
+				DestroyKiev_SetupWaveData()
+				Rule_AddInterval(Kiev_SpawnAttackWave2, t_difficulty.main_attack_interval)
+				DestroyKiev_SetupSprawlWaveData()
+			end
+		end,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_DestroyKiev, ALL)
+		end,
+		
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		
+		IsFailed = function()		
+			SGroup_Clear(sg_temp)
+			EGroup_Clear(eg_temp)
+			
+			Player_GetAll(player1, sg_temp, eg_temp)
+			SGroup_Filter(sg_temp, "gaia", FILTER_REMOVE)
+			
+			if EGroup_IsEmpty(eg_temp) and SGroup_IsEmpty(sg_temp) then
+				return true
+			else
+				return false
+			end
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+		
+	}
+	
+	SOBJ_DestroyIndustrial = {
+		
+		Title = 11176385,
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyKiev,
+		StartAlongsideParent = true,
+		Intel_Complete = EVENTS.Industrial_District,
+		
+		SetupUI = function()
+			industrial_hpid = Objective_AddUIElements(SOBJ_DestroyIndustrial, mkr_kiev_industry, true)
+			
+			--Setting up progress UI
+			Obj_SetProgressVisible(SOBJ_DestroyIndustrial.ID, true)
+			Obj_SetProgress(SOBJ_DestroyIndustrial.ID, 0)
+			industrial_total = EGroup_CountSpawned(eg_kiev_industrial)
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(DestroyKiev_SurvivorCallout, 1, {objective = SOBJ_DestroyIndustrial, remain_trigger = 6, egroup = eg_kiev_industrial, old_hpid = industrial_hpid})
+		end,
+		
+		--Complete
+		IsComplete = function()
+			local current_industrial_amount = EGroup_CountSpawned(eg_kiev_industrial)
+			
+			if industrial_total ~= nil then
+				Obj_SetProgress(SOBJ_DestroyIndustrial.ID, 1 - (current_industrial_amount / industrial_total) )
+			end
+			
+			if current_industrial_amount == 1 and last_industrial_structure_position == nil then
+				last_industrial_structure_position = EGroup_GetPosition(eg_kiev_industrial)
+			end
+			
+			return current_industrial_amount == 0
+		end,
+		
+		PreComplete = function()
+			DestroyKiev_PlayDestructionWalla(last_industrial_structure_position)
+		end,
+		
+		OnComplete = function()
+		end,
+		
+	}
+	
+	SOBJ_DestroyOuter = {
+		
+		Title = 11176386,
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyKiev,
+		StartAlongsideParent = true,
+		Intel_Complete = EVENTS.Outer_City,
+		
+		SetupUI = function()
+			outer_hpid = Objective_AddUIElements(SOBJ_DestroyOuter, mkr_kiev_outer, true)
+			
+			--Setting up progress UI
+			Obj_SetProgressVisible(SOBJ_DestroyOuter.ID, true)
+			Obj_SetProgress(SOBJ_DestroyOuter.ID, 0)
+			outer_total = EGroup_CountSpawned(eg_kiev_outer)
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(DestroyKiev_SurvivorCallout, 1, {objective = SOBJ_DestroyOuter, remain_trigger = 16, egroup = eg_kiev_outer, old_hpid = outer_hpid})
+		end,
+		
+		IsComplete = function()
+			local current_outer_amount = EGroup_CountSpawned(eg_kiev_outer)
+			
+			if outer_total ~= nil then
+				Obj_SetProgress(SOBJ_DestroyOuter.ID, 1 - (current_outer_amount / outer_total) )
+			end
+			
+			if current_outer_amount == 1 and last_outer_structure_position == nil then
+				last_outer_structure_position = EGroup_GetPosition(eg_kiev_outer)
+			end
+			
+			return current_outer_amount == 0
+		end,
+		
+		PreComplete = function()
+			DestroyKiev_PlayDestructionWalla(last_outer_structure_position)
+		end,
+		
+		OnComplete = function()
+		end,
+		
+	}
+	
+	SOBJ_DestroyInner = {
+		
+		Title = 11176387,
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyKiev,
+		StartAlongsideParent = true,
+		Intel_Complete = EVENTS.Inner_City,
+		
+		SetupUI = function()
+			inner_hpid = Objective_AddUIElements(SOBJ_DestroyInner, mkr_kiev_inner, true)
+			
+			--Setting up progress UI
+			Obj_SetProgressVisible(SOBJ_DestroyInner.ID, true)
+			Obj_SetProgress(SOBJ_DestroyInner.ID, 0)
+			inner_total = EGroup_CountSpawned(eg_kiev_inner)
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(DestroyKiev_SurvivorCallout, 1, {objective = SOBJ_DestroyInner, remain_trigger = 10, egroup = eg_kiev_inner, old_hpid = inner_hpid})
+		end,
+		
+		IsComplete = function()
+			local current_inner_amount = EGroup_CountSpawned(eg_kiev_inner)
+			
+			if inner_total ~= nil then
+				Obj_SetProgress(SOBJ_DestroyInner.ID, 1 - (current_inner_amount / inner_total) )
+			end
+			
+			if current_inner_amount == 1 and last_inner_structure_position == nil then
+				last_inner_structure_position = EGroup_GetPosition(eg_kiev_inner)
+			end
+			
+			return EGroup_CountSpawned(eg_kiev_inner) == 0
+		end,
+		
+		PreComplete = function()
+			DestroyKiev_PlayDestructionWalla(last_inner_structure_position)
+		end,
+		
+		OnComplete = function()
+		end,
+		
+	}
+	
+	Objective_Register(OBJ_DestroyKiev)
+	Objective_Register(SOBJ_DestroyIndustrial)
+	Objective_Register(SOBJ_DestroyOuter)
+	Objective_Register(SOBJ_DestroyInner)
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			EGroup_Filter(eg_kiev_inner, {EBP.CAMPAIGN.BUILDING_DEFENSE_KIEVWALL_BASTION_CMP_RUS, EBP.CAMPAIGN.BUILDING_DEFENSE_KIEVWALL_SEGMENT_CMP_RUS}, FILTER_REMOVE)
+			EGroup_Kill(eg_kiev_inner)
+			Mission_Complete()
+		end,
+	    }
+
+		Objective_Register(OBJ_DebugComplete)	
+end
+
+function DestroyKiev_PreStart()
+	Objective_Start(OBJ_DestroyKiev)
+end
+
+function DestroyKiev_AssignGateReferences()
+
+	Rule_AddInterval(Kiev_CheckGateDamage, 1, {
+			marker = mkr_industrial_gate, 
+			gate = GATE_INDUSTRIAL,
+			module = "industrial_gate_defend",
+			spawn = mkr_industrial_gate_spawn,
+			delay = 15,
+			targets = {
+				mkr_industrial_1,
+				mkr_industrial_2,
+			},
+			})
+	
+	Rule_AddInterval(Kiev_CheckGateDamage, 1, {
+			marker = mkr_outer_gate,
+			gate = GATE_OUTER,
+			module = "outer_gate_defend",
+			spawn = mkr_outer_gate_spawn,
+			delay = 15,
+			targets = {
+				mkr_outer_1,
+				mkr_outer_2,
+			},
+			})
+	
+	Rule_AddInterval(Kiev_CheckGateDamage, 1, {
+			marker = mkr_inner_gate,
+			gate = GATE_INNER,
+			module = "inner_gate_defend",
+			spawn = mkr_inner_gate_spawn,
+			delay = 15,
+			targets = {
+				mkr_inner_1
+			},
+			})
+	
+end
+
+function DestroyKiev_Complete()		
+
+    -- remove ALL existing units    
+    for index, player in pairs(PLAYERS) do 
+        Player_GetAll(player.id)
+
+        SGroup_DestroyAllSquads(sg_allsquads)
+    end
+	
+	sg_mongke_outro = SGroup_CreateIfNotFound("sg_mongke_outro")
+	sg_wallunits_outro = SGroup_CreateIfNotFound("sg_wallunits_outro")
+	sg_wallunits_outro2 = SGroup_CreateIfNotFound("sg_wallunits_outro2")
+	sg_wallunits_outro1 = SGroup_CreateIfNotFound("sg_wallunits_outro1")
+	sg_groundunits1_outro = SGroup_CreateIfNotFound("sg_groundunits1_outro")
+	sg_groundunits_cheer_outro = SGroup_CreateIfNotFound("sg_groundunits_cheer_outro")
+	sg_outro_units_spearwalk = SGroup_CreateIfNotFound("sg_outro_units_spearwalk")
+	sg_groundunits3_cheer_outro = SGroup_CreateIfNotFound("sg_groundunits3_cheer_outro")
+	
+	UnitEntry_DeploySquads(player1, sg_mongke_outro, { sbp = SBP.MONGOL.UNIT_MONGKE_KHAN_CMP_MON, numSquads = 1, }, mkr_outro_mongke) 
+	
+	UnitEntry_DeploySquads(player1, sg_wallunits_outro, { type = "scar_archer", numSquads = 4 }, mkr_outro_units_wall )
+	
+	UnitEntry_DeploySquads(player1, sg_wallunits_outro2, { type = "scar_crossbowman", numSquads = 4 }, mkr_outro_units_wall2 )
+	
+	UnitEntry_DeploySquads(player1, sg_wallunits_outro1, { type = "scar_archer", numSquads = 4 }, mkr_outro_units_wall_destination )
+	
+	UnitEntry_DeploySquads(player1, sg_groundunits_cheer_outro, { type = "scar_spearman", numSquads = 10 }, mkr_outro_units_ground2 )
+	
+	UnitEntry_DeploySquads(player1, sg_groundunits3_cheer_outro, { type = "scar_spearman", numSquads = 15 }, mkr_outro_units_ground3 )
+	
+	UnitEntry_DeploySquads(player1, sg_groundunits1_outro, { type = "scar_horsearcher", numSquads = 10 }, mkr_outro_units_ground1 )
+	UnitEntry_DeploySquads(player1, sg_outro_units_spearwalk, { type = "scar_spearman", numSquads = 7 }, mkr_outro_units_spearmen1 )
+	UnitEntry_DeploySquads(player1, sg_outro_units_spearwalk, { type = "scar_spearman", numSquads = 7 }, mkr_outro_units_spearmen2 )
+	
+	Rule_AddOneShot(TroopMovement, 3)
+	
+	--Change the atmosphere to a nice calm sunset after a hard day's work of ruining people's lives
+	Game_TransitionToState("winter_sunset", 0)
+	
+	--Mission_Complete()
+end
+
+function TroopMovement()
+	
+	Cmd_FormationMove(sg_groundunits1_outro, mkr_outro_units_ground1_destination, false)
+	Cmd_FormationMove(sg_outro_units_spearwalk, mkr_outro_units_ground2_destination, false)
+	
+end
+
+function DestroyKiev_SetupWaveData()
+	local moduleData = {
+		type = "RovingArmy",
+		descriptor = "kiev_assault_group",
+		player = player2,
+		targetingType = ARMY_TARGETING_DISCARD,
+		scanRangeEnRoute = 40,
+		targets = {
+			mkr_player_muster,
+			mkr_sprawl_attack_2,
+			mkr_sprawl_attack_3,
+			mkr_sprawl_attack_4,
+			mkr_sprawl_attack_5
+		},
+		withdrawThreshold = 0.3,
+		fallbacks = {
+			{ marker = mkr_industrial_gate_spawn },
+			{ marker = mkr_outer_gate_spawn },
+			{ marker = mkr_inner_gate_spawn },
+		},
+		addTargetsToFallbacks = true,
+		onDeathDissolve = true,
+	}
+	
+	--Setting up wave data for attacks from the districts
+	local industrial_wave_data = {
+		descriptor = "industrial_wave",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_kiev_industry,
+		units = {
+			{type = "scar_spearman", numSquads = 5},
+			{type = "scar_archer", numSquads = 2},
+			{type = "scar_springald", numSquads = t_difficulty.defender_count_very_low},
+		},
+		staging_module = "industrial_staging",
+		assault_module_data = moduleData,
+		auto_launch = true,
+	}
+	industrial_attack = Wave_New(industrial_wave_data)
+	
+	local outer_wave_data = {
+		descriptor = "outer_wave",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_kiev_outer,
+		units = {
+			{type = "scar_horseman", numSquads = t_difficulty.defender_count_low},
+			{type = "scar_horsearcher", numSquads = t_difficulty.defender_count_low},
+		},
+		staging_module = "outer_staging",
+		assault_module_data = moduleData,
+		auto_launch = true,
+	}
+	outer_attack = Wave_New(outer_wave_data)
+	
+	local inner_wave_data = {
+		descriptor = "inner_wave",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_kiev_inner,
+		units = {
+			{type = "scar_manatarms", numSquads = t_difficulty.defender_count_low},
+			{type = "scar_crossbowman", numSquads = t_difficulty.defender_count_very_low},
+			{type = "scar_monk", numSquads = 1},
+		},
+		staging_module = "inner_staging",
+		assault_module_data = moduleData,
+		auto_launch = true,
+	}
+	inner_attack = Wave_New(inner_wave_data)
+end
+
+function DestroyKiev_SetupSprawlWaveData()
+	local moduleData = {
+		type = "RovingArmy",
+		descriptor = "sprawl_assault_group",
+		player = player2,
+		targetingType = ARMY_TARGETING_CYCLE,
+		scanRangeEnRoute = 40,
+		targets = {
+			mkr_sprawl_attack_1,
+			mkr_sprawl_attack_2,
+			mkr_sprawl_attack_3,
+			mkr_sprawl_attack_4,
+			mkr_sprawl_attack_5
+		},
+		onDeathDissolve = true,
+	}
+	
+	--Setting up wave data for attacks from the sprawl areas
+	local sprawl_data_1 = {
+		descriptor = "sprawl_wave_1",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_sprawl_spawn_1,
+		units = {
+			{type = "scar_spearman", numSquads = t_difficulty.defender_count_med}
+		},
+		staging_module = "sprawl_staging_1",
+		assault_module_data = moduleData,
+		auto_launch = true,
+	}
+	sprawl_attack_1 = Wave_New(sprawl_data_1)
+	
+	local sprawl_data_2 = {
+		descriptor = "sprawl_wave_2",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_sprawl_spawn_2,
+		units = {
+			{type = "scar_horseman", numSquads = t_difficulty.defender_count_med}
+		},
+		staging_module = "sprawl_staging_2",
+		assault_module_data = moduleData,
+		auto_launch = true,
+	}
+	sprawl_attack_2 = Wave_New(sprawl_data_2)
+	
+	local sprawl_data_3 = {
+		descriptor = "sprawl_wave_3",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_sprawl_spawn_3,
+		units = {
+			{type = "scar_archer", numSquads = t_difficulty.defender_count_med}
+		},
+		staging_module = "sprawl_staging_3",
+		assault_module_data = moduleData,
+		auto_launch = true,
+	}
+	sprawl_attack_3 = Wave_New(sprawl_data_3)
+	
+	local sprawl_data_4 = {
+		descriptor = "sprawl_wave_4",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_sprawl_spawn_4,
+		units = {
+			{type = "scar_spearman", numSquads = t_difficulty.defender_count_med}
+		},
+		staging_module = "sprawl_staging_4",
+		assault_module_data = moduleData,
+		auto_launch = true,
+	}
+	sprawl_attack_4 = Wave_New(sprawl_data_4)
+	
+	Rule_AddInterval(Kiev_SpawnSprawlAttackWave, {delay = 180, interval = Util_DifVar({60, 60, 60, 40})}, {egroup = eg_sprawl_building_1, wave_module = sprawl_attack_1})
+	Rule_AddInterval(Kiev_SpawnSprawlAttackWave, {delay = 200, interval = Util_DifVar({80, 80, 80, 60})}, {egroup = eg_sprawl_building_2, wave_module = sprawl_attack_2})
+	Rule_AddInterval(Kiev_SpawnSprawlAttackWave, {delay = 220, interval = Util_DifVar({100, 100, 100, 80})}, {egroup = eg_sprawl_building_3, wave_module = sprawl_attack_3})
+	Rule_AddInterval(Kiev_SpawnSprawlAttackWave, {delay = 240, interval = Util_DifVar({120, 120, 120, 100})}, {egroup = eg_sprawl_building_4, wave_module = sprawl_attack_4})
+end
+
+function DestroyKiev_SurvivorCallout(context, data)
+	--This function checks a district and adds hint markers to all of the remaining required structures
+	local _MakeHintpoint = function(gid, idx, eid)
+		local blipid = Objective_AddUIElements(data.objective, eid, true)	-- Destroy buildings
+		Rule_AddInterval(DestroyKiev_CheckEntityMarker, 1, {objective = data.objective, blipid = blipid, egroup = data.egroup, entity = eid, hintpoint_trigger = data.remain_trigger/2})
+	end
+	
+	if EGroup_CountSpawned(data.egroup) <= data.remain_trigger then
+		Objective_RemoveUIElements(data.objective, data.old_hpid)
+		EGroup_ForEach(data.egroup, _MakeHintpoint)
+		Rule_RemoveMe()
+	end
+end
+
+function DestroyKiev_CheckEntityMarker(context, data)
+	--This function is called by SurvivorCallout to track each entity that is marked with a hintpoint
+	if not EGroup_ContainsEntity(data.egroup, data.entity) then
+		
+		if data.blipid ~= nil then 
+			Objective_RemoveUIElements(data.objective, data.blipid)
+		end
+		if data.hpid ~= nil then 
+			Objective_RemoveUIElements(OBJ_DestroyKiev, data.hpid)
+		end
+		
+		Rule_RemoveMe()
+		
+	elseif data.hpid == nil and EGroup_CountSpawned(data.egroup) <= data.hintpoint_trigger then 
+		
+		data.hpid = Objective_AddUIElements(OBJ_DestroyKiev, data.entity, false, "$11191883", true)	-- Destroy buildings		
+		
+	end		
+end
+
+function DestroyKiev_PlayDestructionWalla(marker_location)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, marker_location, 60)
+	
+	if SGroup_CountSpawned(sg_temp) <= 30 then
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sg_temp)
+	elseif SGroup_CountSpawned(sg_temp) <= 60 then
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_temp)
+	else
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE, sg_temp)
+	end
+end

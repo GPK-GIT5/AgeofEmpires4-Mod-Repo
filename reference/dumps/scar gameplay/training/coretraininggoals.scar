@@ -1,0 +1,879 @@
+-----------------------------------------------------------------------
+--
+-- Core Training Goals
+--
+-- (c) Relic Entertainment 2018
+--
+-----------------------------------------------------------------------
+
+import("training.scar")
+import("training/coretrainingconditions.scar")
+
+Core_RegisterModule("CoreTrainingGoals")
+
+local goal_single_selection = "single_selection"
+local goal_move_unit = "move_unit"
+local goal_pan_camera = "pan_camera"
+local goal_bandbox_selection = "bandbox_selection"
+--local goal_control_group = "control_group"
+--local goal_select_control_group = "select_control_group"
+--local goal_attack_action = "attack_action" - Disabled
+--local goal_attack_move = "attack_move" - Disabled
+local goal_setup_siege = "setup_siege"
+--local goal_rotate_camera = "rotate_camera"
+--local goal_shift_queue = "shift_queue" - Disabled
+
+local training_goals_core_controls =
+{
+	goal_single_selection,
+	goal_move_unit,
+	--goal_rotate_camera,
+	--goal_shift_queue, - Disabled
+	goal_pan_camera,
+	goal_bandbox_selection,
+	--goal_control_group,
+	--goal_select_control_group,
+	--goal_attack_action, - Disabled
+	--goal_attack_move, - Disabled
+	goal_setup_siege
+}
+
+local goal_gather = "gather"
+local goal_build_villager = "build_villager"
+local goal_build_house = "build_house"
+local goal_build_towards_wonder = "build_towards_wonder"
+local goal_build_wonder = "build_wonder"
+local goal_scout_returns_sheep = "scout_returns_sheep"
+local goal_build_drop_off = "build_drop_off"
+local goal_next_idle = "goal_next_idle"
+--local goal_scout_hunts_deer = "goal_scout_hunts_deer"
+--local goal_scout_pickup_carcass = "goal_scout_pickup_carcass"
+--local goal_scout_drops_off_deer = "goal_scout_drops_off_deer"
+local goal_build_farm = "goal_build_farm"
+--local goal_scout_reveal_fow = "goal_scout_reveal_fow" - Disabled
+
+local training_goals_core_econ =
+{
+	goal_gather,
+	goal_build_villager,
+	goal_build_house,
+	goal_scout_returns_sheep,
+	goal_build_drop_off,
+	goal_next_idle,
+	--goal_scout_hunts_deer,
+	--goal_scout_pickup_carcass,
+	--goal_scout_drops_off_deer,
+	goal_build_farm
+	--goal_scout_reveal_fow
+}
+
+local training_goals_age_up =
+{
+	goal_build_towards_wonder,
+	goal_build_wonder
+}
+
+function TrainingGoal_EnableCoreControlGoals()
+	for i, goalSequenceID in ipairs(training_goals_core_controls) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function TrainingGoal_DisableCoreControlGoals()
+	for i, goalSequenceID in ipairs(training_goals_core_controls) do
+		Training_EnableGoalSequenceByID(goalSequenceID, false)
+	end
+end
+
+function TrainingGoal_EnableCoreEconGoals()
+	for i, goalSequenceID in ipairs(training_goals_core_econ) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function TrainingGoal_DisableCoreEconGoals()
+	for i, goalSequenceID in ipairs(training_goals_core_econ) do
+		Training_EnableGoalSequenceByID(goalSequenceID, false)
+	end
+end
+
+function TrainingGoal_EnableAgeUpGoals()
+	for i, goalSequenceID in ipairs(training_goals_age_up) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function TrainingGoal_DisableAgeUpGoals()
+	for i, goalSequenceID in ipairs(training_goals_age_up) do
+		Training_EnableGoalSequenceByID(goalSequenceID, false)
+	end
+end
+
+function CoreTrainingGoals_OnInit()
+	print("CoreTrainingGoals_OnInit")
+	sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	eg_currentSelection = EGroup_CreateIfNotFound("eg_currentSelection")
+	eg_nearbyDeposits = EGroup_CreateIfNotFound("eg_nearbyDeposits")
+	
+	training_currentConstructionBlueprint = nil
+	training_currentHoverBlueprint = nil
+	training_previousConstructionBlueprint = nil
+	
+	training_currentAbilityBlueprint = nil
+	training_previousAbilityBlueprint = nil
+	
+	UI_SetModalConstructionPhaseCallback(OnConstructionPhaseChange)
+	UI_SetModalAbilityPhaseCallback(OnAbilityPhaseChange)
+	UI_SetModalHoverCallback(OnHoverChange)
+	
+	-------------------------------------- Xbox Hints -------------------------------------- 
+	if ( UI_IsXboxControllerUI() ) then
+		
+		-- Common
+		local selectVillagerGoal = Training_Goal("Squad", {ID= "Press A to select a Villager.", Message = 1000990,
+			DataTemplate="GenericTrainingDataTemplate"}, UserHasSelectedAVillager)
+		
+		-- Single Selection (note, Cursor will be replaced by squad as key)
+		-- TODO: Implement reminder logic
+		local singleSelectionGoal = Training_Goal("Cursor", {ID= "Press A to select a unit.", Message = 1001033,
+			DataTemplate="GenericTrainingDataTemplate"}, UserHasASquadSelected)
+		
+		local singleSelectionGoalSequence = Training_GoalSequence(goal_single_selection, 
+			1, 1, --If these are both set to -1, it will keep repeating the training
+			UserHasNotSelectedAUnitRecentlyPredicate, 
+			UserCannotSeeSquadKey, 
+			nil, 
+			UserHasAUnitSelectedPredicate, 
+			false, 
+			{singleSelectionGoal})
+		Training_AddGoalSequence(singleSelectionGoalSequence)
+		
+		-- Move Unit
+		local moveUnitGoal = Training_Goal("LooseReticle", {ID= "Press A on the ground to move a unit.", Message = 1001032,
+			DataTemplate="GenericTrainingDataTemplate"}, UserIsMovingSpecifiedSelectedUnit)
+		local moveUnitGoalSequence = Training_GoalSequence(goal_move_unit,
+			1, 0, 
+			UserHasNotMovedASelectedVisibleUnitRecently, 
+			UserHasNoUnitSelected,
+			nil, 
+			UserIsMovingAnySelectedUnit,
+			false, 
+			{moveUnitGoal})
+		Training_AddGoalSequence(moveUnitGoalSequence)
+		
+		-- Bandbox Select
+		local bandBoxSelectGoal = Training_Goal("Squad", {ID= "HOLD A to grow a Marquee and select multiple units.", Message = 1000978,
+			DataTemplate="GenericTrainingDataTemplate"}, UserHasSelectedMultipleMilitaryUnits)
+		local bandBoxSelectGoalSequence = Training_GoalSequence(goal_bandbox_selection,
+			1, 0, 
+			UserHasMultipleUnitsOnScreen,
+			nil, 
+			nil, 
+			UserHasSelectedMultipleMilitaryUnits,
+			false, 
+			{bandBoxSelectGoal})
+		Training_AddGoalSequence(bandBoxSelectGoalSequence)
+		
+		-------------------------------------- KBM Hints --------------------------------------
+	elseif ( UI_IsXboxKBMUI() ) then
+		
+		-- Common
+		local selectVillagerGoal = Training_Goal("Squad", {ID= "LEFT CLICK to select a Villager.", Message = 11180986,
+				DataTemplate="LeftClickTrainingDataTemplate"}, UserHasSelectedAVillager)
+		local selectScoutGoal = Training_Goal("Squad", {ID= "Wild Sheep automatically herd themselves to Scouts. LEFT CLICK to select the Scout.", Message = 11180987,
+				DataTemplate="LeftClickTrainingDataTemplate"}, UserHasSelectedAScout)
+		local dropOffSheep = Training_Goal("Entity", {ID= "RIGHT CLICK on a Town Center or Mill to drop off herded Sheep.", Message = 11180988,
+				DataTemplate="RightClickTrainingDataTemplate"}, UserDropOffIssued)
+		
+		local openVillagerCommandsTabGoal = Training_Goal("CommandsCommandCardTab",
+				{ID= "Open the commands tab", Message= 1001506, DataTemplate="LeftClickTrainingDataTemplate"},
+				UserHasVillagerCommandsCardTabOpen)
+		local openVillagerEconomicTabGoal = Training_Goal("EconomicCommandCardTab",
+				{ID= "Open the economic tab", Message= 1001507, DataTemplate="LeftClickTrainingDataTemplate"},
+				UserHasVillagerEconomicCardTabOpen)
+		local openVillagerMilitaryTabGoal = Training_Goal("MilitaryCommandCardTab",
+				{ID= "Open the military tab", Message= 1001508, DataTemplate="LeftClickTrainingDataTemplate"},
+				UserHasVillagerMilitaryCardTabOpen)
+		
+		-- Scout returns sheep
+		local scoutReturnsSheep = Training_GoalSequence(goal_scout_returns_sheep, 
+			1, 0, 
+			HasAttachedScoutAndDropOffTownCenter, 
+			ScoutReturnsSheepGoalsAreInvalid, 
+			nil, 
+			UserHasIssuedADropOff, 
+			true, 
+			{selectScoutGoal,dropOffSheep})
+		Training_AddGoalSequence(scoutReturnsSheep)
+		
+		-- Pan Camera
+		local panCameraGoal = Training_Goal("ControlGroupButton1Tag", 
+			{ID= "Hold the MIDDLE MOUSE BUTTON and move the Mouse to pan the Camera.", Message= "$11180970", 
+				DataTemplate="PanCameraTrainingDataTemplate"},
+			UserHasPannedCamera)
+		local panCameraGoalSequence = Training_GoalSequence(goal_pan_camera, 
+			1, 0, 
+			AShortPeriodOfTimeHasPassed, 
+			nil,
+			nil,
+			UserHasPannedCamera,
+			false,
+			{panCameraGoal})
+		Training_AddGoalSequence(panCameraGoalSequence)
+		
+		--Rotate Camera
+		local rotateCameraGoal = Training_Goal("Cursor", 
+			{ID= "ALT AND DRAG to rotate the camera.", Message= 11185668, DataTemplate="GenericTrainingDataTemplate"},
+			UserHasRotatedCamera)
+		local rotateCamSequence = Training_GoalSequence(goal_rotate_camera,
+			1, 0,
+			AShortPeriodOfTimeHasPassed,
+			nil,
+			nil,
+			UserHasRotatedCamera,
+			false,
+			{rotateCameraGoal})
+		--Training_AddGoalSequence(rotateCamSequence)
+		
+		-- Single Selection (note, Cursor will be replaced by squad as key)
+		-- TODO: Implement reminder logic
+		local singleSelectionGoal = Training_Goal("Cursor", {ID= "LEFT CLICK to select a unit.", Message = 11180954,
+				DataTemplate="LeftClickTrainingDataTemplate"},UserHasASquadSelected)
+		
+		local singleSelectionGoalSequence = Training_GoalSequence(goal_single_selection, 
+			1, 1, --If these are both set to -1, it will keep repeating the training
+			UserHasNotSelectedAUnitRecentlyPredicate, 
+			UserCannotSeeSquadKey, 
+			nil, 
+			UserHasAUnitSelectedPredicate, 
+			false, 
+			{singleSelectionGoal})
+		Training_AddGoalSequence(singleSelectionGoalSequence)
+		
+		-- Move Unit
+		local moveUnitGoal = Training_Goal("Cursor", {ID= "RIGHT CLICK on the ground to move a unit.", Message = 11180989,
+				DataTemplate="RightClickTrainingDataTemplate"}, UserIsMovingSpecifiedSelectedUnit)
+		local moveUnitGoalSequence = Training_GoalSequence(goal_move_unit,
+			1, 0, 
+			UserHasNotMovedASelectedVisibleUnitRecently, 
+			UserHasNoUnitSelected,
+			nil, 
+			UserIsMovingAnySelectedUnit,
+			false, 
+			{moveUnitGoal})
+		Training_AddGoalSequence(moveUnitGoalSequence)
+		
+		-- Bandbox Select
+		local bandBoxSelectGoal = Training_Goal("Squad", {ID= "LEFT CLICK AND DRAG around multiple units to select them.", Message = 11184866,
+				DataTemplate="LeftClickTrainingDataTemplate"}, UserHasSelectedMultipleMilitaryUnits)
+		local bandBoxSelectGoalSequence = Training_GoalSequence(goal_bandbox_selection,
+			1, 0, 
+			UserHasMultipleUnitsOnScreen,
+			nil, 
+			nil, 
+			UserHasSelectedMultipleMilitaryUnits,
+			false, 
+			{bandBoxSelectGoal})
+		Training_AddGoalSequence(bandBoxSelectGoalSequence)
+		
+		-- Gather Food
+		local gatherGoal = Training_Goal("Squad", 
+			{ID= "RIGHT CLICK on a resource to have a Villager gather from it.", Message= 11180971, DataTemplate="RightClickTrainingDataTemplate"}, 
+			UserHasIssuedAGather)
+		local gatherGoalSequence = Training_GoalSequence(goal_gather, 
+			1, 0,
+			TimeHasPassedWithoutGathering,
+			GatherGoalsAreInvalid,
+			nil, 
+			UserIsGatheringFood,
+			true, 
+			{selectVillagerGoal, gatherGoal})
+		Training_AddGoalSequence(gatherGoalSequence)
+		
+		-- Build a Villager
+		local selectTownCenterGoal = Training_Goal("Entity", 
+			{ID= "Select the Town Center to produce a new Villager.", Message= 11180972, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			UserHasOnlyTownCenterSelected)
+		local buildVillagerGoal = Training_Goal("PBG",
+			{ID= "LEFT CLICK the Villager icon to start producing one.", Message= 11180973, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			SelectedTCHasStartedToBuildAVillager)
+		local buildVillagerSequence = Training_GoalSequence(goal_build_villager, 
+			1, 0, 
+			TimeHasPassedWithoutBuildingAVillager,
+			nil, 
+			nil,
+			UserIsBuildingAVillager, 
+			true, 
+			{selectTownCenterGoal, buildVillagerGoal})
+		Training_AddGoalSequence(buildVillagerSequence)
+		
+		-- View Landmark Requirements
+		local lookAtWonderRequirementsGoal = Training_Goal("PBG", 
+			{ID= "Build a Landmark to progress to the next Age. View the requirements here.", Message= 11180974, 
+				DataTemplate="LeftClickTrainingDataTemplate"}, UserHasOpenedLandmarkRadial)
+		
+		local buildTowardsAWonderGoalSequence = Training_GoalSequence(goal_build_towards_wonder, 
+			1, 											-- repeat max
+			0, 											-- remind max
+			TimeHasPassedAndUserCannotBuildAWonder, 	-- trigger
+			UserCannotSeeSquadKey, 						-- ignore
+			nil, 										-- remind
+			UserCanBuildAWonder, 						-- bypass
+			true, 										-- can regress
+			{selectVillagerGoal, openVillagerCommandsTabGoal, lookAtWonderRequirementsGoal})
+		Training_AddGoalSequence(buildTowardsAWonderGoalSequence)
+		
+		-- Preventing the mongol player from running this training tip.
+		if Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol" and Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol_ha_gol" then
+			-- Build a House
+			local selectHouseGoal = Training_Goal("PBG",
+				{ID= "Houses increase your population capacity. LEFT CLICK the House icon to select a House.", Message= 11184870, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserIsGoingToBuildAHouse)
+			local buildHouseGoal = Training_Goal("Cursor",
+				{ID= "LEFT CLICK in a valid location to start construction.", Message= 11180975, 
+					DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserHasStartedToBuildAHouse)
+			
+			local buildHouseSequence = Training_GoalSequence(goal_build_house, 
+				1, 0, 
+				TimeHasPassedWithoutBuildingAHouse, 
+				UserCannotSeeSquadKey, 
+				nil, 
+				UserHasStartedToBuildAHouse,
+				true, 
+				{selectVillagerGoal, openVillagerEconomicTabGoal, selectHouseGoal, buildHouseGoal})
+			Training_AddGoalSequence(buildHouseSequence)
+		end
+		
+		-- Build a Landmark to Age Up
+		if Player_GetRaceName(Game_GetLocalPlayer()) ~= "abbasid" and Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol_ha_gol" then
+			local openWonderGoal = Training_Goal("PBG", 
+				{ID= "You are ready to advance to the next Age! LEFT CLICK here to choose your Landmark.", Message= 11180976,  
+				DataTemplate="LeftClickTrainingDataTemplate"}, UserHasOpenedLandmarkRadial)
+			local selectWonderGoal = Training_Goal("XboxLandMarkSelectMenuTag", {ID= "You are ready to advance to the next Age! LEFT CLICK here to choose your Landmark.",
+				Message= 11180976, DataTemplate="LeftClickTrainingDataTemplate"}, UserIsGoingToBuildAWonder)
+			local buildWonderGoal = Training_Goal("Cursor", 
+				{ID= "LEFT CLICK in a valid location to start construction.", Message= 11180975, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserIsBuildingAWonder)
+			
+			local buildAWonderGoal = Training_GoalSequence(goal_build_wonder, 
+				1, 0, 
+				TimeHasPassedAndUserCanBuildAWonder, 
+				UserCannotSeeSquadKey, 
+				nil, 
+				UserKnowsHowToBuildWonders, 
+				true, 
+				{selectVillagerGoal, openVillagerCommandsTabGoal, openWonderGoal, selectWonderGoal, buildWonderGoal})
+			Training_AddGoalSequence(buildAWonderGoal)
+		end
+			
+		-- Build a Drop Off (Lumber Camp)
+		if Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol" then
+			local selectDropOffVillagerGoal = Training_Goal("Squad", 
+				{ID= "Lumber Camps reduce travel time for Wood gatherers. LEFT CLICK to select a Villager.", Message= 11180977, DataTemplate="LeftClickTrainingDataTemplate"},
+				UserHasSelectedAVillager)
+			local selectBuildingGoal = Training_Goal("PBG",
+				{ID= "LEFT CLICK the icon to select a Lumber Camp.", Message= 11180978, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserIsGoingToBuildDropOff)
+			local buildBuildingGoal = Training_Goal("Cursor",
+				{ID= "LEFT CLICK near trees to construct a Lumber Camp.", Message= 11180979, 
+				DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserHasStartedToBuildDropOff)
+			
+			local buildDropOffSequence = Training_GoalSequence(goal_build_drop_off, 
+				1, 0, 
+				ShouldBuildDropOff, 
+				UserCannotBuildDropoff, --ignore
+				nil, 
+				nil,
+				true, 
+				{selectDropOffVillagerGoal, openVillagerEconomicTabGoal, selectBuildingGoal, buildBuildingGoal})
+			Training_AddGoalSequence(buildDropOffSequence)
+		end
+		
+		-- Use the Focus Next Idle Builder button
+		local selectNextIdleBuilderGoal = Training_Goal("PopulationButton",
+			{ID= "LEFT CLICK find idle Villagers.", Message= 11180984, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			UserHasSelectedAnIdleVillager)
+		local selectNextIdleBuilderSequence = Training_GoalSequence(goal_next_idle, 
+			1, 0, 
+			SelectNextIdleIfVillagersIdle, 
+			NoIdleVillagers, 
+			nil, 
+			nil,
+			true, 
+			{selectNextIdleBuilderGoal})
+		Training_AddGoalSequence(selectNextIdleBuilderSequence)
+	
+			 -- Farm Goal
+		if Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol" and Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol_ha_gol" then
+				-- Build a Farm
+			local selectFarmGoal = Training_Goal("PBG",
+				{ID= "LEFT CLICK the Farm icon to select a Farm.", Message= 11180985, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserIsGoingToBuildAFarm)
+			local buildFarmGoal = Training_Goal("Cursor",
+				{ID= "LEFT CLICK near a Mill or Town Center to start construction.", Message= 11204215, 
+					DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserHasStartedToBuildAFarm)
+			
+			local buildFarmSequence = Training_GoalSequence(goal_build_farm, 
+				1, 0, 
+				SuggestBuildFarmCriteriaMet,
+				nil, 
+				nil,
+				nil, --UserHasStartedToBuildAFarm
+				true, 
+				{selectVillagerGoal, openVillagerEconomicTabGoal, selectFarmGoal, buildFarmGoal})
+			Training_AddGoalSequence(buildFarmSequence)
+		end
+		
+		--Position Siege Weapon
+		local selectSiegeUnitGoal = Training_Goal("Squad", 
+			{ID= "LEFT CLICK to select a siege weapon.", Message= 11184879, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasSelectedAnIdleSiegeUnit)
+		local setupSiegeUnitGoal = Training_Goal("Cursor", 
+			{ID= "RIGHT CLICK AND DRAG to setup the siege weapon in a specific direction.", Message= 11184880, DataTemplate="RightClickTrainingDataTemplate"}, 
+			UserHasSetupSiegeUnitInSight)
+		local setupSiegeSequence = Training_GoalSequence(goal_setup_siege, 
+			1, 0, 
+			HasSiegeUnitPredicate, 
+			AnySquadKeyInvalidOrOffscreen, 
+			nil, 
+			UserHasSetupSiegeUnitInSight, 
+			true, 
+			{selectSiegeUnitGoal,setupSiegeUnitGoal})
+		Training_AddGoalSequence(setupSiegeSequence)
+		
+	else -------------------------------------- PC Hints --------------------------------------
+		
+		-- Common
+		local selectVillagerGoal = Training_Goal("Squad", {ID= "LEFT CLICK to select a Villager.", Message = 11180986,
+				DataTemplate="LeftClickTrainingDataTemplate"}, UserHasSelectedAVillager)
+		local selectScoutGoal = Training_Goal("Squad", {ID= "Wild Sheep automatically herd themselves to Scouts. LEFT CLICK to select the Scout.", Message = 11180987,
+				DataTemplate="LeftClickTrainingDataTemplate"}, UserHasSelectedAScout)
+		local dropOffSheep = Training_Goal("Entity", {ID= "RIGHT CLICK on a Town Center or Mill to drop off herded Sheep.", Message = 11180988,
+				DataTemplate="RightClickTrainingDataTemplate"}, UserDropOffIssued)
+		
+		-- Scout returns sheep
+		local scoutReturnsSheep = Training_GoalSequence(goal_scout_returns_sheep, 
+			1, 0, 
+			HasAttachedScoutAndDropOffTownCenter, 
+			ScoutReturnsSheepGoalsAreInvalid, 
+			nil, 
+			UserHasIssuedADropOff, 
+			true, 
+			{selectScoutGoal,dropOffSheep})
+		Training_AddGoalSequence(scoutReturnsSheep)
+		
+		-- Pan Camera
+		local panCameraGoal = Training_Goal("ControlGroupButton1Tag", 
+			{ID= "Hold the MIDDLE MOUSE BUTTON and move the Mouse to pan the Camera.", Message= "$11180970", 
+				DataTemplate="PanCameraTrainingDataTemplate"},
+			UserHasPannedCamera)
+		local panCameraGoalSequence = Training_GoalSequence(goal_pan_camera, 
+			1, 0, 
+			AShortPeriodOfTimeHasPassed, 
+			nil,
+			nil,
+			UserHasPannedCamera,
+			false,
+			{panCameraGoal})
+		Training_AddGoalSequence(panCameraGoalSequence)
+		
+		--Rotate Camera
+		local rotateCameraGoal = Training_Goal("Cursor", 
+			{ID= "ALT AND DRAG to rotate the camera.", Message= 11185668, DataTemplate="GenericTrainingDataTemplate"},
+			UserHasRotatedCamera)
+		local rotateCamSequence = Training_GoalSequence(goal_rotate_camera,
+			1, 0,
+			AShortPeriodOfTimeHasPassed,
+			nil,
+			nil,
+			UserHasRotatedCamera,
+			false,
+			{rotateCameraGoal})
+		--Training_AddGoalSequence(rotateCamSequence)
+		
+		-- Single Selection (note, Cursor will be replaced by squad as key)
+		-- TODO: Implement reminder logic
+		local singleSelectionGoal = Training_Goal("Cursor", {ID= "LEFT CLICK to select a unit.", Message = 11180954,
+				DataTemplate="LeftClickTrainingDataTemplate"},UserHasASquadSelected)
+		
+		local singleSelectionGoalSequence = Training_GoalSequence(goal_single_selection, 
+			1, 1, --If these are both set to -1, it will keep repeating the training
+			UserHasNotSelectedAUnitRecentlyPredicate, 
+			UserCannotSeeSquadKey, 
+			nil, 
+			UserHasAUnitSelectedPredicate, 
+			false, 
+			{singleSelectionGoal})
+		Training_AddGoalSequence(singleSelectionGoalSequence)
+		
+		-- Move Unit
+		local moveUnitGoal = Training_Goal("Cursor", {ID= "RIGHT CLICK on the ground to move a unit.", Message = 11180989,
+				DataTemplate="RightClickTrainingDataTemplate"}, UserIsMovingSpecifiedSelectedUnit)
+		local moveUnitGoalSequence = Training_GoalSequence(goal_move_unit,
+			1, 0, 
+			UserHasNotMovedASelectedVisibleUnitRecently, 
+			UserHasNoUnitSelected,
+			nil, 
+			UserIsMovingAnySelectedUnit,
+			false, 
+			{moveUnitGoal})
+		Training_AddGoalSequence(moveUnitGoalSequence)
+		
+		-- Bandbox Select
+		local bandBoxSelectGoal = Training_Goal("Squad", {ID= "LEFT CLICK AND DRAG around multiple units to select them.", Message = 11184866,
+				DataTemplate="LeftClickTrainingDataTemplate"}, UserHasSelectedMultipleMilitaryUnits)
+		local bandBoxSelectGoalSequence = Training_GoalSequence(goal_bandbox_selection,
+			1, 0, 
+			UserHasMultipleUnitsOnScreen,
+			nil, 
+			nil, 
+			UserHasSelectedMultipleMilitaryUnits,
+			false, 
+			{bandBoxSelectGoal})
+		Training_AddGoalSequence(bandBoxSelectGoalSequence)
+		
+		-- Control Group Creation
+		--local controlGroupSelectGoal = Training_Goal("Squad", 
+			--{ID= "LEFT CLICK AND DRAG around multiple units to select them.", Message= 11184866, DataTemplate="LeftClickTrainingDataTemplate"},
+			--UserHasSelectedMultipleMilitaryUnits)
+		--local controlGroupGoal = Training_Goal("Cursor", 
+			--{ID= "Press CTRL + 1 to create a Control Group with the selected units.", Message= 11184867, DataTemplate="GenericTrainingDataTemplate"}, 
+			--UserHasCreatedControlGroup)
+		--local controlGroupGoalSequence = Training_GoalSequence(goal_control_group,
+			--1, 0, 
+			--UserHasMultipleUnitsForCtrlGroupOnScreen, --UserHasSelectedMultipleMilitaryUnitsPredicate
+			--nil, --UserHasNoUnitSelected
+			--nil, 
+			--UserHasCreatedAnyControlGroup, --bypass
+			--true, 
+			--{controlGroupSelectGoal, controlGroupGoal})
+		--Training_AddGoalSequence(controlGroupGoalSequence)
+		
+		-- Control Group Selection
+		--local selectControlGroupButtonGoal = Training_Goal("PBG", 
+		--{ID= "LEFT CLICK or Press 1 to re-select your Control Group.", Message= 11191463, DataTemplate="LeftClickTrainingDataTemplate"},
+		--UserHasSelectedControlGroup)
+		--local selectControlGroupSequence = Training_GoalSequence(goal_select_control_group,
+		--1, 0, 
+		--UserHasControlGroup,
+		--ControlGroupDoesNotExist,
+		--nil, 
+		--nil, --bypass
+		--true, 
+		--{selectControlGroupButtonGoal})
+		--Training_AddGoalSequence(selectControlGroupSequence)
+		
+		-- Gather Food
+		local gatherGoal = Training_Goal("Squad", 
+			{ID= "RIGHT CLICK on a resource to have a Villager gather from it.", Message= 11180971, DataTemplate="RightClickTrainingDataTemplate"}, 
+			UserHasIssuedAGather)
+		local gatherGoalSequence = Training_GoalSequence(goal_gather, 
+			1, 0,
+			TimeHasPassedWithoutGathering,
+			GatherGoalsAreInvalid,
+			nil, 
+			UserIsGatheringFood,
+			true, 
+			{selectVillagerGoal, gatherGoal})
+		Training_AddGoalSequence(gatherGoalSequence)
+		
+		-- Build a Villager
+		local selectTownCenterGoal = Training_Goal("Entity", 
+			{ID= "Select the Town Center to produce a new Villager.", Message= 11180972, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			UserHasOnlyTownCenterSelected)
+		local buildVillagerGoal = Training_Goal("PBG",
+			{ID= "LEFT CLICK the Villager icon to start producing one.", Message= 11180973, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			SelectedTCHasStartedToBuildAVillager)
+		local buildVillagerSequence = Training_GoalSequence(goal_build_villager, 
+			1, 0, 
+			TimeHasPassedWithoutBuildingAVillager,
+			nil, 
+			nil,
+			UserIsBuildingAVillager, 
+			true, 
+			{selectTownCenterGoal, buildVillagerGoal})
+		Training_AddGoalSequence(buildVillagerSequence)
+		
+		-- View Landmark Requirements
+		local lookAtWonderRequirementsGoal = Training_Goal("PBG", 
+			{ID= "Build a Landmark to progress to the next Age. View the requirements here.", Message= 11180974, 
+				DataTemplate="LeftClickTrainingDataTemplate"}, ASlightPeriodOfTimeHasPassed) --UserHasLookedAtWonderRequirements
+		
+		local buildTowardsAWonderGoalSequence = Training_GoalSequence(goal_build_towards_wonder, 
+			1, 											-- repeat max
+			0, 											-- remind max
+			TimeHasPassedAndUserCannotBuildAWonder, 	-- trigger
+			UserCannotSeeSquadKey, 						-- ignore
+			nil, 										-- remind
+			UserCanBuildAWonder, 						-- bypass
+			true, 										-- can regress
+			{selectVillagerGoal, lookAtWonderRequirementsGoal})
+		Training_AddGoalSequence(buildTowardsAWonderGoalSequence)
+		
+		-- Preventing the mongol player from running this training tip.
+		if Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol" and Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol_ha_gol" then
+			-- Build a House
+			local selectHouseGoal = Training_Goal("PBG",
+				{ID= "Houses increase your population capacity. LEFT CLICK the House icon to select a House.", Message= 11184870, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserIsGoingToBuildAHouse)
+			local buildHouseGoal = Training_Goal("Cursor",
+				{ID= "LEFT CLICK in a valid location to start construction.", Message= 11180975, 
+					DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserHasStartedToBuildAHouse)
+			
+			local buildHouseSequence = Training_GoalSequence(goal_build_house, 
+				1, 0, 
+				TimeHasPassedWithoutBuildingAHouse, 
+				UserCannotSeeSquadKey, 
+				nil, 
+				UserHasStartedToBuildAHouse,
+				true, 
+				{selectVillagerGoal, selectHouseGoal, buildHouseGoal})
+			Training_AddGoalSequence(buildHouseSequence)		
+		end
+		
+		-- Build a Landmark to Age Up
+		if Player_GetRaceName(Game_GetLocalPlayer()) ~= "abbasid" and Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol_ha_gol" then
+			local selectWonderGoal = Training_Goal("PBG", 
+				{ID= "Progress to the next Age! LEFT CLICK to select any available Landmark.", Message= 11180976,  
+				DataTemplate="LeftClickTrainingDataTemplate"}, UserIsGoingToBuildAWonder)
+			local buildWonderGoal = Training_Goal("Cursor", 
+				{ID= "LEFT CLICK in a valid location to start construction.", Message= 11180975, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserIsBuildingAWonder)
+			
+			local buildAWonderGoal = Training_GoalSequence(goal_build_wonder, 
+				1, 0, 
+				TimeHasPassedAndUserCanBuildAWonder, 
+				UserCannotSeeSquadKey, 
+				nil, 
+				UserKnowsHowToBuildWonders, 
+				true, 
+				{selectVillagerGoal, selectWonderGoal, buildWonderGoal})
+			Training_AddGoalSequence(buildAWonderGoal)
+		end
+		
+		-- Scout reveals fog of war - Disabled
+		--local selectScoutToRevealGoal = Training_Goal("Squad", 
+			--{ID= "Scouts are useful for revealing the map. LEFT CLICK to select the Scout.", Message= 11184871, DataTemplate="LeftClickTrainingDataTemplate"},
+			--UserHasSelectedAScout)
+		--local scoutRevealFogOfWarGoal = Training_Goal("Squad", 
+			--{ID= "RIGHT CLICK on an unrevealed area of the map.", Message= 11184872, DataTemplate="RightClickTrainingDataTemplate"},
+			--UserHasMovedNearLocation)
+		--local RevealFogOfWarGoalSequence = Training_GoalSequence(goal_scout_reveal_fow, 
+			--1, 0, 
+			--HasScoutAndSheepInFogOfWar,
+			--nil,
+			--nil, 
+			--nil,
+			--true, 
+			--{selectScoutToRevealGoal,scoutRevealFogOfWarGoal})
+		--Training_AddGoalSequence(RevealFogOfWarGoalSequence)
+			
+		-- Build a Drop Off (Lumber Camp)
+		if Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol" then
+			local selectDropOffVillagerGoal = Training_Goal("Squad", 
+				{ID= "Lumber Camps reduce travel time for Wood gatherers. LEFT CLICK to select a Villager.", Message= 11180977, DataTemplate="LeftClickTrainingDataTemplate"},
+				UserHasSelectedAVillager)
+			local selectBuildingGoal = Training_Goal("PBG",
+				{ID= "LEFT CLICK the icon to select a Lumber Camp.", Message= 11180978, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserIsGoingToBuildDropOff)
+			local buildBuildingGoal = Training_Goal("Cursor",
+				{ID= "LEFT CLICK near trees to construct a Lumber Camp.", Message= 11180979, 
+				DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserHasStartedToBuildDropOff)
+			
+			local buildDropOffSequence = Training_GoalSequence(goal_build_drop_off, 
+				1, 0, 
+				ShouldBuildDropOff, 
+				UserCannotBuildDropoff, --ignore
+				nil, 
+				nil,
+				true, 
+				{selectDropOffVillagerGoal, selectBuildingGoal, buildBuildingGoal})
+			Training_AddGoalSequence(buildDropOffSequence)
+		end
+		
+		-- Scout hunts deer
+		--local selectHunterScoutGoal = Training_Goal("Squad", 
+			--{ID= "Scouts are good at hunting Deer. LEFT CLICK to select the Scout.", Message= 11180980, DataTemplate="LeftClickTrainingDataTemplate"},
+			--UserHasSelectedAScout)
+		--local attackDeerGoal = Training_Goal("Squad", 
+			--{ID= "RIGHT CLICK on a Deer to have a Scout hunt it.", Message= 11180981, DataTemplate="RightClickTrainingDataTemplate"}, 
+			--UserHasIssuedAttack)
+		--local scoutHuntsDeer = Training_GoalSequence(goal_scout_hunts_deer, 
+			--1, 0, 
+			--HasUnAttachedScoutAndDeerInSight, 
+			--AnySquadKeyInvalidOrOffscreen, -- This function may provide unreliable results, consider changing or removing
+			--nil, 
+			--AnySquadKeyInvalid, 
+			--true, 
+			--{selectHunterScoutGoal,attackDeerGoal})
+		--Training_AddGoalSequence(scoutHuntsDeer)
+		
+		-- Pickup carcass hint - BrentA - this is a WIP for a hint that tells the player to pickup a carcass
+		-- look for carcass
+		-- look for idle scout
+		--local selectCarcassGoal = Training_Goal("Squad", 
+			--{Message="Pickup carcasses to move them. LEFT CLICK to select the Scout.", DataTemplate="LeftClickTrainingDataTemplate"},
+			--UserHasSelectedAScout) 
+		--local pickupCarcassGoal = Training_Goal("Squad", 
+			--{Message="RIGHT CLICK on the carcass to have a Scout pick it up.", DataTemplate="RightClickTrainingDataTemplate"}, 
+			--UserHasIssuedAttack)
+		--local scoutHuntsDeer = Training_GoalSequence(goal_scout_pickup_carcass, 
+			--1, 0, 
+			--HasUnAttachedScoutAndCarcassInSight, 
+			--AnySquadKeyInvalidOrOffscreen, 
+			--nil, 
+			--AnySquadKeyInvalid, 
+			--true, 
+			--{selectHunterScoutGoal,attackDeerGoal})
+		--Training_AddGoalSequence(scoutHuntsDeer)
+			
+		-- Scout drops off deer
+		--local selectScoutWithDeerGoal = Training_Goal("Squad", 
+			--{ID= "You can drop animal carcasses off.  LEFT CLICK to select the Scout.", Message= 11184873, DataTemplate="LeftClickTrainingDataTemplate"},
+			--UserHasSelectedAScout)
+		--local dropOffDeer = Training_Goal("Entity", 
+			--{ID= "RIGHT CLICK on a Town Center to drop off the animal carcass.", Message= 11184874, DataTemplate="RightClickTrainingDataTemplate"}, 
+			--DeerDropOffIssued)
+		--local scoutDropsOffDeer = Training_GoalSequence(goal_scout_drops_off_deer, 
+			--1, 0, 
+			--HasScoutCarryingFoodAndDropOffTownCenter, 
+			--nil, 
+			--nil, 
+			--nil, 
+			--true, 
+			--{selectScoutWithDeerGoal,dropOffDeer})
+		--Training_AddGoalSequence(scoutDropsOffDeer)
+		
+		-- Use the Focus Next Idle Builder button
+		local selectNextIdleBuilderGoal = Training_Goal("PopulationButton",
+			{ID= "LEFT CLICK find idle Villagers.", Message= 11180984, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			UserHasSelectedAnIdleVillager)
+		local selectNextIdleBuilderSequence = Training_GoalSequence(goal_next_idle, 
+			1, 0, 
+			SelectNextIdleIfVillagersIdle, 
+			NoIdleVillagers, 
+			nil, 
+			nil,
+			true, 
+			{selectNextIdleBuilderGoal})
+		Training_AddGoalSequence(selectNextIdleBuilderSequence)
+	
+			 -- Farm Goal
+		if Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol" and Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol_ha_gol" then
+				-- Build a Farm
+			local selectFarmGoal = Training_Goal("PBG",
+				{ID= "LEFT CLICK the Farm icon to select a Farm.", Message= 11180985, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserIsGoingToBuildAFarm)
+			local buildFarmGoal = Training_Goal("Cursor",
+				{ID= "LEFT CLICK near a Mill or Town Center to start construction.", Message= 11204215, 
+					DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserHasStartedToBuildAFarm)
+			
+			local buildFarmSequence = Training_GoalSequence(goal_build_farm, 
+				1, 0, 
+				SuggestBuildFarmCriteriaMet,
+				nil, 
+				nil,
+				nil, --UserHasStartedToBuildAFarm
+				true, 
+				{selectVillagerGoal, selectFarmGoal, buildFarmGoal})
+			Training_AddGoalSequence(buildFarmSequence)
+		end
+		
+			-- Issue Attack Action - Disabled
+		--local selectMilitaryUnitGoal = Training_Goal("Squad", 
+			--{ID= "LEFT CLICK AND DRAG to select military units.", Message= 11184875, DataTemplate="LeftClickTrainingDataTemplate"},
+			--UserHasSelectedAnIdleMilitaryUnit)
+		--local attackEnemyUnitGoal = Training_Goal("Squad", 
+			--{ID= "RIGHT CLICK to attack an enemy unit or building.", Message= 11184876, DataTemplate="RightClickTrainingDataTemplate"}, 
+			--UserHasIssuedAttackOnEnemy)
+		--local attackActionSequence = Training_GoalSequence(goal_attack_action, 
+			--1, 0, 
+			--HasEnemyUnitsInSightPredicate, 
+			--nil, --AnySquadKeyInvalidOrOffscreen
+			--nil, 
+			--nil, --Add this bypass when we have the ability to track a user-commanded Attack action = UserHasIssuedAttackOnEnemy
+			--true, 
+			--{selectMilitaryUnitGoal,attackEnemyUnitGoal})
+		--Training_AddGoalSequence(attackActionSequence)
+		
+		-- Issue Attack Move - Disabled
+		--local selectMilitaryUnitsGoal = Training_Goal("Squad", 
+			--{ID= "DOUBLE-CLICK to select units of the same type.", Message= 11184877, DataTemplate="LeftClickTrainingDataTemplate"},
+			--UserHasSelectedMilitaryUnits)
+		--local attackMoveGoal = Training_Goal("Squad", 
+			--{ID= "PRESS A and LEFT CLICK the ground near an enemy unit to Attack Move.", Message= 11184878, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			--UserHasIssuedAttackMove)
+		--local attackMoveSequence = Training_GoalSequence(goal_attack_move, 
+			--1, 0, 
+			--HasEnemyUnitsInSightWithDelayPredicate, 
+			--AnySquadKeyInvalidOrOffscreen, --nil
+			--nil, 
+			--UserHasIssuedAttackMove, --bypass
+			--true, 
+			--{selectMilitaryUnitsGoal,attackMoveGoal})
+		--Training_AddGoalSequence(attackMoveSequence)
+		
+		--Position Siege Weapon
+		local selectSiegeUnitGoal = Training_Goal("Squad", 
+			{ID= "LEFT CLICK to select a siege weapon.", Message= 11184879, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasSelectedAnIdleSiegeUnit)
+		local setupSiegeUnitGoal = Training_Goal("Cursor", 
+			{ID= "RIGHT CLICK AND DRAG to setup the siege weapon in a specific direction.", Message= 11184880, DataTemplate="RightClickTrainingDataTemplate"}, 
+			UserHasSetupSiegeUnitInSight)
+		local setupSiegeSequence = Training_GoalSequence(goal_setup_siege, 
+			1, 0, 
+			HasSiegeUnitPredicate, 
+			AnySquadKeyInvalidOrOffscreen, 
+			nil, 
+			UserHasSetupSiegeUnitInSight, 
+			true, 
+			{selectSiegeUnitGoal,setupSiegeUnitGoal})
+		Training_AddGoalSequence(setupSiegeSequence)
+		
+		--if Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol" then
+			---- Shift Queue Orders (build two Houses) - Disabled
+			--local selectVillagerForShiftQueueGoal = Training_Goal("PBG",
+				--{ID= "Units can be given multiple orders simultaneously. LEFT CLICK to select a Villager.", Message= 11185669, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				--UserHasSelectedAVillager)
+			--local selectHouseForShiftQueueGoal = Training_Goal("PBG",
+				--{ID= "LEFT CLICK the House icon to build a House.", Message= 11184870, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				--UserIsGoingToBuildAHouse)
+			--local shiftQueueGoal = Training_Goal("Cursor",
+				--{ID= "SHIFT AND LEFT CLICK twice in valid locations to construct both Houses.", Message= 11185670, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				--UserHasShiftQueued)
+			--local queueBuildSequence = Training_GoalSequence(goal_shift_queue,
+				--1, 0, 
+				--ShiftQueuePredicate,
+				--UserHasNotEnoughWood, --ignore
+				--nil,
+				--nil,
+				--true,
+				--{selectVillagerForShiftQueueGoal, selectHouseForShiftQueueGoal, shiftQueueGoal})
+			--Training_AddGoalSequence(queueBuildSequence)
+		--end
+	
+	end
+	
+	-- Disable Dynamic Training until intro movies have completed
+	TrainingGoal_DisableCoreControlGoals()
+	TrainingGoal_DisableCoreEconGoals()
+	
+end
+
+
+function CoreTrainingGoals_Start()
+	
+	-- Enable Dynamic Training when intro movies have completed
+	TrainingGoal_EnableCoreControlGoals()
+	TrainingGoal_EnableCoreEconGoals()
+	
+end
+
+function CoreTrainingGoals_OnGameOver()
+end

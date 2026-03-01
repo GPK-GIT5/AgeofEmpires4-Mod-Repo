@@ -1,0 +1,212 @@
+-----------------------------------------------------------------------
+--
+-- Ayyubid Mission 7 - Acre
+--
+-- Automated testing script
+--
+-----------------------------------------------------------------------
+
+import("GameScarUtil.scar")
+import("Prefabs.scar")
+import("standard.scar")
+import("scarutil.scar")
+import("team.scar")
+
+import("core.scar")
+
+-- We need to import this for anything to work. We don't need anything else
+import("MissionOMatic/MissionOMatic.scar")
+import("missionomatic/modules/module_rovingarmy.scar")
+
+--enumeration for objective status
+statusTable = {
+	NotRun = 0, 
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3
+}
+
+--Bool verifying if the Campaign Auto Test Agrument is present
+debug_IsCampaignAutoTest = false
+
+player1 = World_GetPlayerAt(1)
+
+-------------------------------------------------------------------------
+-- [[ ONINIT ]]
+-------------------------------------------------------------------------
+
+function AutoTest_OnInit()
+	
+	if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+
+		
+		import("test/common.scar")
+		import("test/standard_test.scar")
+		import("test/test_framework.scar")
+		--import("test/test_framework_cardinal.scar")
+
+		-- Tests using this file are driven by RPC and have no use for the on screen info of the legacy test system.
+		standard_test_on_screen_info.Hide()
+
+		print("CampaignAutoTest parameter detected")
+		debug_IsCampaignAutoTest = true
+		
+		player1 = World_GetPlayerAt(1)	
+		Game_AIControlLocalPlayer()
+		AI_Enable(player1, true)
+		print("Assuming Direct Control. Player is now AI Driven: "..tostring(AI_IsEnabled(player1)))
+		
+		
+		--Checks for the 'NoSwoopy' Arg, and disables the swoopy intro camera on true--
+		if Util_GetCommandLineArgument("NoSwoopy") then
+			Rule_AddInterval(AutoTest_SkipAndStart, 1)
+		else
+			b_introStarted = false
+			AutomatedAcre_RegisterCheckpoints()
+			Rule_AddInterval(AutoTest_PlayIntro, 1)
+		end
+				
+	end
+end
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+	if Event_IsAnyRunning() then
+		Rule_RemoveMe()
+		Game_SkipAllEvents(false)
+		AutomatedMission_Start() --Starts the autotest scar sequence
+	end
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+	if b_introStarted == false then
+		if Event_IsAnyRunning() then
+			b_introStarted = true
+		end
+	else
+		if Event_IsAnyRunning() == false then
+			Rule_RemoveMe()
+			FOW_RevealAll()
+			Rule_AddInterval(AutomatedAcre_Phase1_CheckPlayStart, 1)	-- Delays the start of the player scripted control sequence
+		end
+	end
+end
+
+--Script for kicking off the uatomated testing flow
+function AutomatedMission_Start()
+	FOW_RevealAll()
+	AutomatedAcre_RegisterCheckpoints() --Compiles the list of checkpoints
+	Rule_AddInterval(AutomatedAcre_Phase1_CheckPlayStart, 1)	-- Delays the start of the player scripted control sequence
+end
+
+--Compiles the list of checkpoints
+function AutomatedAcre_RegisterCheckpoints()
+	---- All Checkpoints Should be preceeded with Campaign Auto Test 'cat_' --
+
+	--"cat_PlayStart", when play is handed over to the player
+	CampaignAutotest_RegisterCheckpoint("cat_PlayStart", 120)
+	CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["InProgress"])
+	
+	--"cat_EnemyFortDestroyed", the player has destroyed the enemy fort and completed the first objective
+	CampaignAutotest_RegisterCheckpoint("cat_MissionComplete", 3600)
+	CampaignAutotest_SetCheckpointStatus("cat_MissionComplete", statusTable["NotRun"])	
+end
+
+--Check if the intro cine has ended successfully and control has turned over to the player.
+function AutomatedAcre_Phase1_CheckPlayStart() 
+	if Objective_IsStarted(OBJ_DestroyCrusaders) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_MissionComplete", statusTable["InProgress"])
+		Player_RovingArmy()
+		Rule_AddInterval(AutomatedAcre_MissionComplete, 1)
+		LocalCommand_EntityTargetEntityAbility(player1, eg_siegecamp, World_GetClosest(playerArmy.sgroup, Player_GetAllEntitiesFromType(player2, "tower")), BP_GetAbilityBlueprint("acre_barrage_ayy"), false, false)
+		Rule_AddInterval(Barrage_Activate, 30)
+	end	
+end
+
+--Organize the player's military units into groups and move them toward the first location.
+function AutomatedAcre_MissionComplete()
+	if Objective_IsComplete(OBJ_DestroyCrusaders) then
+		CampaignAutotest_SetCheckpointStatus("cat_MissionComplete", statusTable["Pass"])
+	else
+		if SGroup_CountSpawned(playerArmy.sgroup) < 120 then
+			
+			local units = {
+				{ type = "scar_manatarms", numSquads = 10 }, 
+				{ type = "scar_crossbowman", numSquads = 10 },
+				{ type = "scar_archer", numSquads = 10 },
+				{ type = "scar_knight", numSquads = 10 }, 
+				{ type = "scar_spearman", numSquads = 15 },
+				{ type = "scar_mangonel", numSquads = 1}, 
+				{ type = "scar_trebuchet", numSquads = 1}
+			}
+			SGroup_Clear(sg_temp)
+			CreateUnits(player1, units, mkr_siege_camp_units, sg_temp)
+			Army_AddSGroup(playerArmy, sg_temp)
+		end
+	end
+end
+
+function Player_RovingArmy()
+	
+	local data = {
+		player = player1,
+		spawn = mkr_siege_camp_units,
+		name = "player_army",
+		targets = Sort_EnemyKeeps(),
+		units = {
+			{ type = "scar_manatarms", numSquads = 10 }, 
+			{ type = "scar_crossbowman", numSquads = 10 },
+			{ type = "scar_archer", numSquads = 10 },
+			{ type = "scar_knight", numSquads = 15 }, 
+			{ type = "scar_spearman", numSquads = 10 },
+			{ type = "scar_mangonel", numSquads = 5 }, 
+			{ type = "scar_trebuchet", numSquads = 3 }
+		},
+	}
+	playerArmy = Army_Init(data)
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_REMOVE)
+	Army_AddSGroup(playerArmy, sg_allsquads)
+	sg_player_autoarmy = playerArmy.sgroup
+	
+	local data2 = {
+		player = player1,
+		spawn = mkr_siege_camp_units,
+		name = "player_army_defense",
+		targets = {mkr_siege_camp},
+		units = {
+			{ type = "scar_manatarms", numSquads = 20 }, 
+			{ type = "scar_crossbowman", numSquads = 20 },
+			{ type = "scar_archer", numSquads = 20 },
+			{ type = "scar_spearman", numSquads = 20 },
+			{ type = "scar_mangonel", numSquads = 5 }, 
+		},
+	}
+	Army_Init(data2)
+end
+
+function Sort_EnemyKeeps()
+	local KeepTable = {}
+	local _Tablerize = function(gid, index, eid)
+		table.insert(KeepTable, index, {position = Util_GetPosition(eid), combatRange = 70, leashRange = 80, dist = Util_GetDistanceSquared(eid, mkr_siege_camp_units)})
+	end
+	EGroup_ForEach(eg_crusaderkeeps, _Tablerize)
+	table.sort(KeepTable, function(a, b) return a.dist < b.dist end)
+	return KeepTable
+end
+
+function Barrage_Activate()
+	LocalCommand_EntityTargetEntityAbility(player1, eg_siegecamp, World_GetClosest(playerArmy.sgroup, Player_GetAllEntitiesFromType(player2, "tower")), BP_GetAbilityBlueprint("acre_barrage_ayy"), false, false)
+end
+
+function RF_ED()
+	Rule_AddInterval(RocksFall, 1)
+end
+
+function RocksFall()
+	eg_allenemies = Player_GetAllEntities(player2)
+	LocalCommand_EntityTargetEntityAbility(player1, eg_siegecamp, EGroup_GetRandomSpawnedEntity(eg_allenemies), BP_GetAbilityBlueprint("acre_barrage_ayy"), true, false)
+end

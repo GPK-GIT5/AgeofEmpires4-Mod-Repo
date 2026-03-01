@@ -1,0 +1,83 @@
+
+import("training.scar")
+import("training/campaigntraininggoals.scar")
+
+--
+-- Research Fire Arrows  PlayerIsResearchingIncendiary
+--
+function Pontvallain_AddHintTrade()
+	local selectTraderGoal = Training_Goal("Squad", 
+		{Message="$11201512", DataTemplate="LeftClickTrainingDataTemplate"}, --The Arsinal lets you research upgrades for your ranged units.
+		UserIsSelectingTrader)
+	
+	local tradeGoal = Training_Goal("Entity", 
+		{Message="$11201513", DataTemplate="RightClickTrainingDataTemplate"}, --Incendiary Arrows lets archers and crossbowmen deal bonus damage to buildings and siege equipment.
+		UserIsTrading)
+	
+	local tradeSequence = Training_GoalSequence(
+		"trade",									-- id 
+		1,											-- repeatMax
+		0,											-- remindMax
+		TradeTrigger,								-- trigger
+		CampaignTraining_TimeoutIgnorePredicate,	-- ignore
+		nil, 										-- remind
+		TradeIgnore,								-- bypass
+		true, 										-- canRegress
+		{ selectTraderGoal, tradeGoal })
+	
+	Training_AddGoalSequence(tradeSequence)
+	Training_EnableGoalSequenceByID(tradeSequence, true)
+end
+
+-- trigger
+function TradeTrigger(goalSequence)
+	--print("TradeTrigger")
+	
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+		local trader = FindSquadOnScreen("scar_trade_cart")
+		if trader ~= nil then
+			if EGroup_CountSpawned(eg_ally_market) > 0 then
+				goalSequence.goals[1].key = trader
+				goalSequence.goals[2].key = EGroup_GetEntityAt(eg_ally_market, 1)
+				return true	
+			end
+		end
+	end
+	return false
+end
+
+function TradeIgnore(goalSequence)
+	return UserIsTrading()
+end
+     
+function UserIsSelectingTrader(goal)
+	--print("UserIsSelectingTrader")
+	return UserIsSelectingSquadType("scar_trade_cart")
+end
+
+function UserIsTrading(goal)
+	--print("UserIsTrading")
+	return Player_GetActiveTraderCount(player1) > 0
+end
+
+-----------------
+--- UTILITY -----
+-----------------
+
+function FindSquadOnScreen(scar_type)
+	local squads = Player_GetSquadsFromType(player1, scar_type)
+	if SGroup_CountSpawned(squads) > 0 then
+		local camera_pos = Camera_GetTargetPos()
+		local closest_squad = World_GetClosest(camera_pos, squads)
+		if Misc_IsSquadOnScreen(closest_squad, 100) then
+			return closest_squad
+		end
+	end
+	return nil
+end
+
+function UserIsSelectingSquadType(squadType)
+	Misc_GetSelectedSquads(sg_temp, false)
+	SGroup_Filter(sg_temp, squadType, FILTER_KEEP)
+	return SGroup_CountSpawned(sg_temp) > 0
+end

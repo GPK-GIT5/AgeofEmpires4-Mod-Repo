@@ -1,0 +1,152 @@
+import("cardinal.scar")
+
+--? @shortdesc Provide this function with the values you want for easy and absurd, and it
+--? will give you a number that matches the current difficulty. Each difficulty step will
+--? have the same % higher value than the difficulty prior. ie. the difficulty steps are exponential
+--? @args Float story, Float absurd
+--? @result Integer
+function GetIntegerInExponentialRange(story, absurd)
+	local count = 8
+	local multiplier = (absurd / story) ^ (1 / (count - 1))
+	local numbers = {}
+	local number = story
+	for i = 1, count do
+		table.insert(numbers, math.floor(number + 0.5))
+		number = number * multiplier
+	end
+	--local s = ""
+	--for _, number in ipairs(numbers) do
+		--s = s..tostring(number)..", "
+	--end
+	--print(s)
+	
+	return Rogue_DifVar(numbers)
+end
+
+--? @shortdesc Provide this function with the values you want for easy and absurd, and it
+--? will give you a number that matches the current difficulty. Each difficulty step will
+--? have the same % higher value than the difficulty prior. ie. the difficulty steps are exponential
+--? @args Float story, Float absurd
+--? @result Float
+function GetFloatInExponentialRange(story, absurd)
+	local count = 8
+	local multiplier = (absurd / story) ^ (1 / (count - 1))
+	local numbers = {}
+	local number = story
+	for i = 1, count do
+		table.insert(numbers, number)
+		number = number * multiplier
+	end
+	--local s = ""
+	--for _, number in ipairs(numbers) do
+		--s = s..tostring(number)..", "
+	--end
+	--print(s)
+	
+	return Rogue_DifVar(numbers)
+end
+
+function GetNumSquadsFromValue(player, unit_type, value)
+	if scartype(unit_type) == ST_STRING then
+		unit_type = Cardinal_ConvertTypeToSquadBlueprint(unit_type, player)
+	end
+				
+	local resources = Player_GetSquadBPCost(player, unit_type)
+	local cost = math.floor(resources.food + resources.gold + resources.stone + resources.wood)
+	local numSquads = math.floor((value / cost) + 0.5)
+	return numSquads
+end
+
+function Rogue_OttomanVizierFix()
+	-- Wonder awards Vizier experience on construction, this sets the xp statemodel back to 0, and sets vizier points to 0 (they use the RT_Command resource)
+	for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+		if Player_GetRaceName(player) == "ottoman" then
+			Player_SetStateModelFloat(player, "imperial_council_exp_ott", 0)
+			Player_SetStateModelInt(player, "total_viziers_ott", 0)
+			Player_SetResource(player, RT_Command, 0)
+		end
+	end
+end
+
+function AllMarkers_FromNameNearPosition(name, position, distance)
+	local markers = AllMarkers_FromName(name, "")
+	local r = {}
+	local distance_squared = distance ^ 2
+	for _, marker in ipairs(markers) do
+		if World_DistanceSquaredPointToPoint(position, Marker_GetPosition(marker)) <= distance_squared then
+			table.insert(r, marker)
+		end
+	end
+	return r
+end
+
+--? @shortdesc Gets all markers that are named in such a way that they end with incrementing numbers
+--? Numbers need to be 2 digits (01, 02, 03, not 1, 2, 3)
+--? @args String prefix. if the markers are thing_01, thing_02, then prefix is "thing_"
+--? @result Table of markers
+function AllMarkers_InSequence(prefix)
+	local markers = {}
+	local index = 1
+	while true do
+		local suffix = tostring(index)
+		if index < 10 then
+			suffix = tostring(0)..suffix
+		end
+		local name = prefix..suffix
+		if Marker_Exists(name, "") then
+			local marker = Marker_FromName(name, "")
+			table.insert(markers, marker)
+			index = index + 1
+		else
+			return markers
+		end
+	end
+end
+
+function ValidateInteger(number)
+	local integer_component = math.floor(number)
+	local remainder = number - integer_component
+	assert(remainder == 0.0, "Value is "..number)
+end
+
+function Debug_PrintUnitCounts()
+	local total_unit_count = 0
+	local player_unit_count = 0
+	local enemy_unit_count = 0
+	local ally_unit_count = 0
+	local neutral_unit_count = 0
+	
+	for _, faction in ipairs(factions) do
+		SGroup_Clear(sg_temp)
+		Player_GetAll(faction.player, sg_temp)
+		local unit_count = SGroup_CountSpawned(sg_temp)
+		total_unit_count = total_unit_count + unit_count
+		if faction.is_enemy then
+			enemy_unit_count = enemy_unit_count + unit_count
+		end
+		if Table_Contains(ROGUE_HUMAN_FACTIONS, faction) then
+			player_unit_count = player_unit_count + unit_count
+		end
+		if faction == ROGUE_ALLY_FACTION then
+			ally_unit_count = ally_unit_count + unit_count
+		end
+		if faction == ROGUE_NEUTRAL_FACTION then
+			neutral_unit_count = neutral_unit_count + unit_count
+		end
+	end
+	local wave_unit_count = SGroup_CountSpawned(sg_wave_units)
+	
+	SGroup_Clear(sg_temp)
+	World_GetAllNeutralSquads(sg_temp)
+	local world_unit_count = SGroup_CountSpawned(sg_temp)
+	total_unit_count = total_unit_count + world_unit_count
+	local s = ""
+	s = s..time_string
+	s = s.." Total Units: "..total_unit_count
+	s = s.."   Player: "..player_unit_count
+	s = s.."   Enemy: "..enemy_unit_count.." ("..wave_unit_count.." from waves)"
+	s = s.."   Ally: "..ally_unit_count
+	s = s.."   Neutral: "..neutral_unit_count
+	s = s.."   World: "..world_unit_count
+	print(s)
+end

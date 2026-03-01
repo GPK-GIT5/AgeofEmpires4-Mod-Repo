@@ -1,0 +1,164 @@
+import("MissionOMatic/MissionOMatic.scar")
+import("cardinal.scar")
+
+function Man_RegisterObjectives()
+	OBJ_DummyBattle = {
+		Title = "DummyBattle", -- Dummy objective, not Displayed
+		Type = ObjectiveType_Battle,
+		IsSecret = true,
+		showTitle = false,
+	}
+	OBJ_DummyPrimary = {
+		Title = "DummyPrimary", -- Dummy objective, not Displayed
+		Type = ObjectiveType_Primary,
+		IsSecret = true,
+		showTitle = false,
+	}
+	OBJ_SendForHelp = {
+		Title = "$11253219", -- Send for help
+		Type = ObjectiveType_Primary,
+		PreStart = function()
+			local pos = SGroup_GetPosition(sg_signal_messanger)
+			map_edge_ui_element = Objective_AddUIElements(OBJ_BringSpy, pos, true, "$11253223", true, 2, nil, nil)
+		end,
+		OnComplete = function()
+			Event_StartEx(EVENTS.SpyTransitionCam, EVENT_NIS, _SpeechEvent_RestoreGameplayAudio) -- NARR: Start cam here instead
+			
+			local multiple = multiples[1]
+			SGroup_DestroyAllSquads(multiple.sgroup)
+			Table_RemoveFirstItem(singles, multiple)
+			Table_RemoveFirstItem(multiples, multiple)
+			
+			for _, holy_order in ipairs(holy_orders) do
+				CreateUnits(player2, {{ sbp = holy_order.master_sbp }}, holy_order.master_spawn, holy_order.master_sgroup)
+				SGroup_AddGroup(sg_masters, holy_order.master_sgroup)
+			end
+		end,
+		IsFailed = function()
+			if SGroup_CountSpawned(sg_spies) == 0 then
+				Objective_Fail(OBJ_BringSpy, false, false)
+				Objective_Fail(OBJ_SendForHelp, false, false)
+				Mission_Fail()
+			end
+		end,
+	}
+	OBJ_BringSpy = {
+		Title = "$11253213", -- Bring the Spy to the messenger
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SendForHelp,
+		StartAlongsideParent = true,
+	}
+	OBJ_DefendMansurah = {
+		Title = "$11253214", -- Defend Mansurah
+		Type = ObjectiveType_Information,
+		IsFailed = function()
+			if EGroup_CountActiveLandmarks(eg_landmarks) == 0 then
+				Objective_Fail(OBJ_DefendMansurah, false, false)
+				Mission_Fail()
+			end
+		end,
+	}
+	OBJ_DestroyTheHeadquarters = {
+		Title = "$11253216", -- Destroy the Headquarters
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.DestroyCampAndLeaders,
+		OnStart = function()
+			headquarters_ui_element = Objective_AddUIElements(OBJ_DestroyTheHeadquarters, eg_enemy_headquarters, true, "$11253220", true, 5, nil, nil)
+		end,
+		IsComplete = function()
+			if enemy_headquarters_killed == true then
+				Objective_Complete(OBJ_DestroyTheHeadquarters, false, false)
+				Objective_RemoveUIElements(OBJ_DestroyTheHeadquarters, headquarters_ui_element)
+				Mission_Complete()					
+			end
+		end,
+	}
+	OBJ_EliminateTheLeaders = {
+		Title = "$11253217", -- Optional: Eliminate the Grand Masters
+		Type = ObjectiveType_Optional,
+		PreStart = function()
+			Objective_SetCounter(OBJ_EliminateTheLeaders, enemy_leaders_killed, initial_leader_count)
+		end,
+		IsComplete = function()
+			Objective_SetCounter(OBJ_EliminateTheLeaders, enemy_leaders_killed, initial_leader_count)
+			if enemy_leaders_killed == initial_leader_count then
+				Objective_Complete(OBJ_EliminateTheLeaders, true, true)
+				Objective_Complete(OBJ_GrandMasterTip, false, false)
+			end
+		end,
+	}
+	OBJ_GrandMasterTip = {
+		Title = "$11257546", -- A Holy Order will flee if their leader is eliminated 
+		Type = ObjectiveType_Tip,
+	}
+	OBJ_BaybarsArrivingSoon = {
+		Title = "$11253218", -- Help arriving soon
+		Type = ObjectiveType_Optional,
+		PreStart = function()
+			baybars_timer_started_at = World_GetGameTime()
+			Objective_StartTimer(OBJ_BaybarsArrivingSoon, COUNT_DOWN, BAIBARS_DELAY)
+		end,
+		IsComplete = function()
+			local skip = false
+			if skip_activated and World_GetGameTime() >= baybars_timer_started_at + BAIBARS_DELAY then
+				skip = true
+			end
+			if Objective_GetTimerSeconds(OBJ_BaybarsArrivingSoon) <= 0 or skip then
+				return true
+			end 
+		end,
+		PreComplete = function()
+			BaybarsArrives()
+		end,
+	}
+	
+	Objective_Register(OBJ_DummyBattle)
+	Objective_Register(OBJ_DummyPrimary)
+	Objective_Register(OBJ_SendForHelp)
+	Objective_Register(OBJ_BringSpy)
+	Objective_Register(OBJ_DefendMansurah)
+	Objective_Register(OBJ_DestroyTheHeadquarters)
+	Objective_Register(OBJ_EliminateTheLeaders)
+	Objective_Register(OBJ_GrandMasterTip)
+	Objective_Register(OBJ_BaybarsArrivingSoon)
+end
+
+function StartInitialObjectives()
+	Objective_Start(OBJ_DummyBattle, false, false)
+	Objective_Start(OBJ_DummyPrimary, false, false)
+	Objective_Start(OBJ_SendForHelp)
+	Rule_Add(Transition_MonitorSpy)
+end
+
+function OnEntityKilled(context, data)
+	local victim = context.victim
+	if Entity_GetBlueprint(victim) == EBP.CRUSADER_CMP.BUILDING_LEADER_TENT_CRU then
+		print("REPORT -  Headquarters destroyed")
+		enemy_headquarters_killed = true
+	end
+end
+
+function OnSquadKilled(context, data)
+	local victim = context.victim
+	if SGroup_ContainsSquad(sg_masters, Squad_GetID(victim), true) then
+		enemy_leaders_killed = enemy_leaders_killed + 1
+		Sound_Play2D("sfx_scripted_ui_objective_counter_update")
+		if enemy_leaders_killed == 1 then
+			first_enemy_leader_killed_at = World_GetGameTime()
+		end
+		if enemy_leaders_killed == 3 then
+			invasion_delay_pending = true
+			local elapsed_time = World_GetGameTime() - first_enemy_leader_killed_at
+			if elapsed_time <= 60 then
+				Game_SendCustomChallengeEvent(player1, CE_ACHIEVKILLLEADERSMANSURAH , 1)
+			end
+		end
+		for _, holy_order in ipairs(holy_orders) do
+			if Squad_GetBlueprint(victim) == holy_order.master_sbp then
+				HolyOrder_Flee(holy_order)
+				break
+			end
+		end
+	end
+end
+

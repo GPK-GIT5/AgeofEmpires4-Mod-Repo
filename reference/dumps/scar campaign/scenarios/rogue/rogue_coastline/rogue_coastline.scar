@@ -1,0 +1,252 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("rogue/rogue.scar")
+import("rogue_coastline_data.scar")
+import("rogue_coastline_pirates.scar")
+
+function Rogue_Coastline_OnLoading()
+	Rogue_Coastline_Poi_Precache()
+end
+Scar_AddInit(Rogue_Coastline_OnLoading)
+
+function Rogue_Coastline_Poi_Precache()
+	-- Naval Precache
+	local rogue_player = PLAYERS[1].id
+	
+	local sbp_warship = Cardinal_ConvertTypeToSquadBlueprint("scar_warship", rogue_player)
+	if sbp_warship ~= nil then Scar_PrecachePrematchResource(sbp_warship) end
+	
+	local sbp_galleass = Cardinal_ConvertTypeToSquadBlueprint("scar_galleass", rogue_player)
+	if sbp_galleass ~= nil then Scar_PrecachePrematchResource(sbp_galleass) end
+end
+
+function Mission_PreInit()
+	content_pack = CONTENT_PACK_ROGUE
+	mission_name = "Contested Coastline"
+	print("------------------------------------------------------------------------")
+	print("------------- "..mission_name.." - Initializing -------------")
+	print("------------------------------------------------------------------------")
+	
+	rogue_wave_strength = 0.95
+	coastline_test_army_index = 1
+end
+
+function Mission_SetupPlayers()
+	Rogue_SetupPlayers_A()
+	
+	Rogue_AddHumanPlayer(1, COLOR_BLUE)
+	Rogue_AddEnemyWavePlayer(2, "$11231290", COLOR_PURPLE) -- Byzantines
+	Rogue_AddAllyPlayer(3, 	  "$11096698", COLOR_YELLOW) -- Allies
+	Rogue_AddEnemyAllyPlayer(4,  "$11231290", COLOR_PURPLE) -- Byzantines
+	Rogue_AddEnemyRaiderPlayer(5,"$11252504", COLOR_ORANGE) -- Arab Pirates
+	Rogue_AddNeutralPlayer(6,    "$11096698", COLOR_YELLOW) -- Allies
+	
+	Rogue_SetupPlayers_B()
+end
+
+function Mission_SetupVariables()
+	sp_difficulty = Game_GetSPDifficulty()
+	sp_pirate_difficulty = sp_difficulty
+end
+
+function Mission_Preset()
+	
+	Rogue_AddLane("west", true)
+	Rogue_AddLane("north", false)
+	Rogue_AddLane("east", true)
+	
+	Rogue_UseDefaultSchedule(true, false, 1.0)
+	
+	Rogue_SimulateEvents()
+	
+	Rogue_Coastline_SpawnRelics()
+	Rogue_Coastline_SpawnFish()
+	
+	Cmd_InstantUpgrade(eg_pirate_outposts, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	Cmd_InstantUpgrade(eg_byzantine_outposts, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	Cmd_InstantUpgrade(eg_byzantine_keeps, UPG.COMMON.UPGRADE_KEEP_SPRINGALD)
+	
+	Cmd_InstantUpgrade(eg_pirate_dock1, UPG.COMMON.UPGRADE_NAVAL_ARROWSLITS)
+	Cmd_InstantUpgrade(eg_landing_dock2, UPG.COMMON.UPGRADE_NAVAL_ARROWSLITS)
+	
+	EGroup_SetInvulnerable(eg_byzantine_walls, true)
+	EGroup_SetInvulnerable(eg_bridges, true)
+	Misc_SetEGroupSelectable(eg_bridges, false)
+	
+	Players_RevealArea(ROGUE_HUMAN_PLAYERS, Util_GetPosition(mkr_wonder), 40)
+	Players_RevealArea(ROGUE_HUMAN_PLAYERS, Util_GetPosition(mkr_tc), 75)
+	
+	ResourceSpots_InitData({35,30,15,20,20,10,0})
+	ResourceSpots_Init("mkr_resource", "gaia", 6)
+	ResourceSpots_Init("mkr_pickup", "pickup", 6)
+	ResourceSpots_Init("mkr_pickup_far", "pickup", 9)
+	ResourceSpots_Init("mkr_pickup_naval", "pickup_naval", 7) 
+	
+	-- Init outlaws data, neutral player, kidnap enabled
+	Outlaws_InitData(nil, ROGUE_ENEMY_RAIDER_PLAYER, false, "$11270013", "$11270011")
+	
+	-- Setup unit types
+	local t_unit_types_pirate = {
+		{scar_type = "scar_pirate", value = 80, tier = 1, score_multiplier = 1.0},
+		{scar_type = "scar_pirate_archer", value = 90, tier = 1, score_multiplier = 1.0},
+		{scar_type = "scar_manatarms", value = 120, tier = 2, score_multiplier = 1.0},
+		{scar_type = "scar_crossbowman", value = 120, tier = 2, score_multiplier = 1.0},
+		{scar_type = "scar_handcannon", value = 180, tier = 2, score_multiplier = 0.65},
+	}
+	Outlaws_SetUnitTypes(t_unit_types_pirate)
+	
+	-- Spawn dock
+	local ebp_dock = Cardinal_ConvertTypeToEntityBlueprint("scar_dock", ROGUE_HUMAN_PLAYERS[1])
+	CreateEntity(ROGUE_HUMAN_PLAYERS[1], ebp_dock, mkr_dock, nil)
+	
+	-- Setup pirate difficulty tuning
+	Outlaws_SetDefaultDifficultyTuning()
+	Outlaws_SetIncome(GetIntegerInExponentialRange(225, 600))
+	
+	Outlaws_FinalizeData("mkr_raid_spawn", "mkr_raid_def_spawn", 3, "eg_pirate_barracks")
+	
+	-- Setup camp raid targets
+	Outlaws_SetCampTargets(1, {mkr_pirate_attack1, mkr_pirate_attack2, mkr_pirate_attack3})
+	Outlaws_SetCampTargets(2, {mkr_pirate_attack1, mkr_pirate_attack2, mkr_pirate_attack3})
+	Outlaws_SetCampTargets(3, {mkr_pirate_attack1, mkr_pirate_attack2, mkr_pirate_attack3})
+	
+	-- Naval landings setup
+	Outlaws_SetLandingRoute({mkr_landing_route1, mkr_landing_route2})
+	
+	-- Custom POI data
+	Rogue_Coastline_SetPOIData()
+	
+	-- Points of interest
+	Rogue_POI_SetRadii("mkr_poi_t1")
+	Rogue_POI_SetRadii("mkr_poi_t2")
+	Rogue_POI_SetRadii("mkr_poi_def")
+	Rogue_POI_SetRadii("mkr_poi_naval")
+	Rogue_POI_SetRadii("mkr_poi_coastal")
+	
+	Rogue_POI_Init(ROGUE_ENEMY_ALLY_PLAYER, nil, t_poi_types_byz, 2, 2)
+	
+	-- Naval points of interest
+	Rogue_POI_Spawn("mkr_poi_naval", t_poi_types_naval, 1, 3)
+	
+	-- Coastal points of interest
+	Rogue_POI_Spawn("mkr_poi_coastal", t_poi_types_coastal, 1, 5)
+	
+	-- Defensive points of interest
+	Rogue_POI_Spawn("mkr_poi_def", t_poi_types_def, 1, 1)
+	
+	Rogue_Coastline_SetupSideBases()
+	
+end
+
+function Mission_Start()
+	Rogue_SetupPlayers_C()
+end
+
+-- triggered when the player selects the first boon and gameplay actually begins
+function Mission_Unpause()
+	
+	if sp_pirate_difficulty > ROGUE_DIFFICULTY_EASY then
+		
+		Pirates_SetNavalSpawnDelay()
+		
+		local naval_raid_start_time = Rogue_DifVar({2100,1500,1000,900,800,600,450,300}, sp_pirate_difficulty)
+		Rule_AddOneShot(Rogue_Coastline_StartNavalRaids, naval_raid_start_time)
+		
+		Rule_AddOneShot(Pirates_InitNavalTransports, naval_raid_start_time * 0.5)
+	end
+	
+	Outlaws_InitRaiding()
+end
+
+function Rogue_Coastline_SpawnRelics()
+	
+	Sites_Init("archer", "manatarms", "crossbowman")
+	Sites_CreateRelics("mkr_relic_close", 2)
+	Sites_CreateRelics("mkr_relic_far", 3)
+	
+	local relic_markers = AllMarkers_FromName("mkr_relic", "")
+	local relic_ebp = BP_GetEntityBlueprint("relic")
+	for _, marker in ipairs(relic_markers) do
+		CreateEntity(nil, relic_ebp, marker, nil, DIRECTION_BACK)
+	end
+end
+
+function Rogue_Coastline_StartNavalRaids()
+	Pirates_InitNavalRaidArmy()
+end
+
+function Rogue_Coastline_SpawnFish()
+	
+	local ebp_deep_fish = BP_GetEntityBlueprint("resource_food_deep_water_fish")
+	local deep_fish_markers = AllMarkers_FromName("mkr_resource_fish_deep", "")
+	local spawn_chance = 50
+	
+	for i, marker in ipairs(deep_fish_markers) do
+		if World_GetRand(1,100) < spawn_chance then
+			CreateEntity(nil, ebp_deep_fish, marker, nil)
+		end
+	end
+end
+
+function Rogue_Coastline_SetupSideBases()
+	base_army_index = 0
+	
+	Rogue_Coastline_SetupSideBase(1)
+	Rogue_Coastline_SetupSideBase(2)
+	Rogue_Coastline_SetupSideBase(3)
+	Rogue_Coastline_SetupSideBase(4)
+end
+
+function Rogue_Coastline_SetupSideBase(base_index)
+	
+	local unit_budget = GetIntegerInExponentialRange(350, 700)
+	local eg_name = "eg_side_keep"..tostring(base_index)
+	
+	if EGroup_Exists(eg_name) then
+		local eg_keep = EGroup_FromName(eg_name)
+		Cmd_InstantUpgrade(eg_keep, UPG.COMMON.UPGRADE_KEEP_SPRINGALD)
+		
+		local base_army_markers = AllMarkers_FromName("mkr_byz_side_army"..tostring(base_index), "")
+		
+		for i, army_marker in ipairs(base_army_markers) do
+			
+			local unit_data = Rogue_POI_GetUnitData(unit_budget, 3)
+			
+			base_army_index = base_army_index + 1
+			Rogue_Coastline_CreateBaseArmy(base_army_index, unit_data, army_marker)
+		end
+	end
+end
+
+function Rogue_Coastline_CreateBaseArmy(index, unit_data, marker)
+	
+	local army_params = {
+		name = "base_army"..tostring(index),
+		player = ROGUE_ENEMY_WAVE_PLAYER,
+		spawn = marker,
+		targetOrder = TARGET_ORDER_PATROL,
+		targets = {Util_GetPosition(marker)},
+		units = unit_data
+	}
+	Army_Init(army_params)
+end
+
+function Rogue_Coastline_TestCliff(enemy_unit_data)
+	
+	coastline_test_army_index = coastline_test_army_index + 1
+	
+	local army_params = {
+		name = "coastline_test_army"..tostring(coastline_test_army_index),
+		player = ROGUE_ENEMY_WAVE_PLAYER,
+		spawn = mkr_lane_east_left_03,
+		targetOrder = TARGET_ORDER_LINEAR,
+		targets = {mkr_lane_east_left_04, mkr_lane_east_left_05},
+		attackMoveAtTarget = true,
+		attackMoveEnRoute = true,
+		attackUnitsEnRoute = true,
+		units = enemy_unit_data
+	}
+	Army_Init(army_params)
+end
+
+

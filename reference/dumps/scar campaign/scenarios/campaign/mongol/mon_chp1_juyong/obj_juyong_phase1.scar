@@ -1,0 +1,135 @@
+--
+-- Juyong 1213 - Primary Objectives Phase 1
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_juyong_phase2.scar")
+
+--? @shortdesc Initializes the main objectives for Juyong
+function Juyong_InitObjectives_Phase1()
+
+	OBJ_Prepare = { Title = "$11180860", -- Plan your attack 
+		Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.SackFortress,
+		
+		PreStart = function()
+			--Objective_Start(SOBJ_Scout)
+			Rule_AddInterval(Juyong_CheckMountainRouteFound, 2)
+			Rule_AddInterval(Juyong_CheckZGateFound, 2)
+			Rule_AddInterval(Juyong_MongolPatrolFound, 2)
+			Rule_AddInterval(Juyong_ShowGreatWall, 2)
+			Rule_AddInterval(Juyong_ApproachGreatWall, 2)
+			Rule_AddInterval(Juyong_CheckGreatWallBreached, 2)
+			
+		end,
+		
+		OnStart = function()
+			scouts_dead = false
+			Rule_AddInterval(Juyong_CheckScoutsAlive, 1)
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_Scout) or EGroup_Count(eg_zhangjiakou_keep) <= 0
+		end,
+		
+		OnComplete = function()
+			Rule_Remove(Juyong_CheckScoutsAlive)
+			Util_StartIntel(EVENTS.MountainRoute_Discovered)
+		end,
+		
+		IsFailed = Juyong_CheckTotalFailure,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_Scout = { Title = "$11180863", -- Scout the approach to Zhangjiakou
+		Type = ObjectiveType_Primary, 
+		Parent = OBJ_Prepare,
+		
+		IsComplete = function()
+			local postModule = MissionOMatic_FindModule("JinForestPost")
+			local canSeeForestPost = Player_CanSeeSGroup(g_playerMongol, postModule.sgroup, false)
+			local insideFort = Player_AreSquadsNearMarker(g_playerMongol, eg_zhangjiakou_keep, false)
+			return canSeeForestPost or insideFort
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Prepare)
+	Objective_Register(SOBJ_Scout)
+	
+end
+
+function Juyong_CheckScoutsAlive()
+	Player_GetAll(g_playerMongol)
+	if SGroup_Count(sg_allsquads) <= 0 then
+		Rule_RemoveMe()
+		scouts_dead = true
+		Juyong_SpawnMongolArmy()
+	end
+end
+
+function Juyong_CheckMountainRouteFound()
+	Player_GetAll(g_playerMongol)
+	if Prox_AreSquadsNearMarker(sg_allsquads,mkr_mountainroute, ANY) then
+		if not Objective_IsComplete(OBJ_Prepare) then
+			Util_StartIntel(EVENTS.MountainRoute)
+		end
+		Rule_RemoveMe()
+	end
+end
+
+function Juyong_CheckZGateFound()
+	Player_GetAll(g_playerMongol)
+	if Prox_AreSquadsNearMarker(sg_allsquads,mkr_zgate, ANY)  then
+		if not Objective_IsComplete(OBJ_Prepare) then
+			Util_StartIntel(EVENTS.Head_On)
+		end
+		Rule_RemoveMe()
+	end
+end
+
+function Juyong_MongolPatrolFound()
+	if Player_CanSeeSGroup(g_playerMongol, sg_jin_mountain1, false) or Player_CanSeeSGroup(g_playerMongol, sg_jin_mountain2, false) then
+		if not Objective_IsComplete(OBJ_Prepare) and not scouts_dead then
+			Util_StartIntel(EVENTS.MountainPatrol)
+		end
+		Rule_RemoveMe()
+	end
+end
+
+function Juyong_SpawnMongolArmy()
+	
+	sg_mon_army = SGroup_CreateIfNotFound("sg_mon_army")
+	local intelEvent = EVENTS.MongolArmy_Arrival
+	
+	-- If it's complete
+	scout_phase_complete = true
+	if scouts_dead then
+		intelEvent = EVENTS.Prepare_Fail
+	end
+	
+	Action_SpawnUnits_Do({
+			player = g_playerMongol,
+			spawnLocation = start_mongol,
+			sgroup = sg_mon_army,
+			units = {
+				{ type = "scar_knight", numSquads = 20, },
+				{ type = "scar_horseman", numSquads = 20, },
+				{ type = "scar_horsearcher", numSquads = 30, },
+				{ sbp = BP_GetSquadBlueprint("unit_genghis_khan_cmp_mon"), numSquads = 1, sgroup = g_leaderGenghisKhan.sgroup, tag = "genghis_khan", },
+			},
+		})
+	Cmd_FormationMove(sg_mon_army, start_mongol_move)
+	
+	EventCues_CallToAction(11180865, CTA_CELEBRATE, intelEvent, Juyong_MongolReinforcementOnClick, Marker_GetPosition(cam_CTA_MongolArmy), 20, nil, "mus_stinger_campaign_triumph_short") -- The Mongol army has arrived!
+end

@@ -1,0 +1,282 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("obj_defeat.scar")
+
+function PrepareForBattle_InitObjectives()
+
+	OBJ_PrepareForBattle = {
+		Title = "$999511", --Prepare for Battle
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.SelectEntireArmyStart,
+		Intel_Complete = EVENTS.ReachedHenry,
+		OnStart = PrepareForBattle_Start,
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_PrepareForBattle, ALL)
+		end,
+		PreComplete = PrepareForBattle_PreComplete,
+		OnComplete = function()
+			Objective_Start(OBJ_DefeatGuy, true, true)
+			Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE) --Raise Music Intensity
+		end
+	}
+
+	SOBJ_SelectEntireArmy = {
+		Title = "$999512", --Select the entire army 
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_PrepareForBattle,
+		StartAlongsideParent = true,
+		SetupUI = SelectEntireArmy_UI,
+		OnStart = SelectEntireArmy_Start,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")		
+			Objective_Start(SOBJ_FollowToHenry, false, true)
+		end
+	}
+
+	SOBJ_FollowToHenry = {
+		Title = "$999514", --Follow the Markers to King Henri 
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_PrepareForBattle,
+		StartAlongsideParent = false,
+		SetupUI = FollowToHenry_UI,
+		OnStart = FollowToHenry_Start,
+
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_PrepareForBattle)
+	Objective_Register(SOBJ_SelectEntireArmy)
+	Objective_Register(SOBJ_FollowToHenry)
+end
+
+
+function PrepareForBattle_Start()
+	--troops have gathered now after the archer objective
+	SGroup_SetSelectable(sg_player_units, true)
+end
+
+-- ///// SelectEntireArmy //////////////////////////////////////////////
+function SelectEntireArmy_UI()
+	
+end
+
+function SelectEntireArmy_Start()
+	
+	Game_SetVisibility(VF_XboxUIQuickFind, true)
+	sg_start_selection = SGroup_CreateIfNotFound("sg_start_selection")
+	Misc_GetSelectedSquads(sg_start_selection, false)
+	
+	Goals_DPadUse()
+	Rule_Add(SelectEntireArmy_Monitor)
+end
+
+function SelectEntireArmy_Monitor()
+	
+	if Misc_IsSGroupSelected(sg_player_units, ALL) then
+
+		World_SetInteractionStage(5)
+		Objective_Complete(SOBJ_SelectEntireArmy, false, true)
+		
+		army_count = SGroup_CountSpawned(sg_player_units)
+		Rule_RemoveMe()
+	end
+end
+
+
+
+-- ///// FollowToHenry //////////////////////////////////////////////
+
+function FollowToHenry_UI()
+
+	-- Spawn in Henry and Army
+	sg_henry = SGroup_CreateIfNotFound("sg_henry") 
+	UnitEntry_DeploySquads(player3, sg_henry, {{sbp = SBP.CAMPAIGN.UNIT_KING_HENRY_CMP_SAL, numSquads = 1 }}, mkr_KH_henry)
+	Entity_SetInvulnerableMinCap(Squad_GetFirstEntity(SGroup_GetSpawnedSquadAt(sg_henry, 1)), 0.75, -1)
+	
+	sg_henry_spearmen = SGroup_CreateIfNotFound("sg_henry_spearmen") 
+	sg_henry_spearmen_01 = SGroup_CreateIfNotFound("sg_henry_spearmen_01") 
+	sg_henry_spearmen_02 = SGroup_CreateIfNotFound("sg_henry_spearmen_02") 
+	UnitEntry_DeploySquads(player3, {sg_henry_spearmen, sg_henry_spearmen_01}, {{type = "scar_spearman", numSquads = num_henry_spearmen_per_marker }}, mkr_KH_spearmen_01)
+	UnitEntry_DeploySquads(player3, {sg_henry_spearmen, sg_henry_spearmen_02}, {{type = "scar_spearman", numSquads = num_henry_spearmen_per_marker }}, mkr_KH_spearmen_02)
+	
+	sg_henry_archers = SGroup_CreateIfNotFound("sg_henry_archers") 
+	sg_henry_archers_01 = SGroup_CreateIfNotFound("sg_henry_archers_01") 
+	sg_henry_archers_02 = SGroup_CreateIfNotFound("sg_henry_archers_02") 
+	sg_henry_archers_03 = SGroup_CreateIfNotFound("sg_henry_archers_03") 
+	UnitEntry_DeploySquads(player3, {sg_henry_archers, sg_henry_archers_01}, {{type = "scar_archer", numSquads = num_henry_archers_per_marker }}, mkr_KH_archery_01)
+	UnitEntry_DeploySquads(player3, {sg_henry_archers, sg_henry_archers_02}, {{type = "scar_archer", numSquads = num_henry_archers_per_marker }}, mkr_KH_archery_02)
+	UnitEntry_DeploySquads(player3, {sg_henry_archers, sg_henry_archers_03}, {{type = "scar_archer", numSquads = num_henry_archers_per_marker }}, mkr_KH_archery_03)
+	
+	sg_henry_cavalry = SGroup_CreateIfNotFound("sg_henry_cavalry") 
+	sg_henry_cavalry_01 = SGroup_CreateIfNotFound("sg_henry_cavalry_01") 
+	sg_henry_cavalry_02 = SGroup_CreateIfNotFound("sg_henry_cavalry_02") 
+	sg_henry_cavalry_03 = SGroup_CreateIfNotFound("sg_henry_cavalry_03") 
+	UnitEntry_DeploySquads(player3, {sg_henry_cavalry, sg_henry_cavalry_01}, {{type = "scar_horseman", numSquads = num_henry_cavalry_per_marker }}, mkr_KH_cavalry_01)
+	UnitEntry_DeploySquads(player3, {sg_henry_cavalry, sg_henry_cavalry_02}, {{type = "scar_horseman", numSquads = num_henry_cavalry_per_marker }}, mkr_KH_cavalry_02)
+	UnitEntry_DeploySquads(player3, {sg_henry_cavalry, sg_henry_cavalry_03}, {{type = "scar_horseman", numSquads = num_henry_cavalry_per_marker }}, mkr_KH_cavalry_03)
+	
+	-- Spawn in reinforcements for the player
+	sg_reinforce_horsemen = SGroup_CreateIfNotFound("sg_reinforce_horsemen") 
+	UnitEntry_DeploySquads(player4, sg_reinforce_horsemen, {{type = "scar_horseman", numSquads = target_horsemen - SGroup_Count(sg_horsemen)}}, mkr_player_reinforcements_cavalry)
+	
+	sg_reinforce_spearmen = SGroup_CreateIfNotFound("sg_reinforce_spearmen") 
+	UnitEntry_DeploySquads(player4, sg_reinforce_spearmen, {{type = "scar_spearman", numSquads = target_spearmen - SGroup_Count(sg_starting_spearmen)}}, mkr_player_reinforcements_spearmen)
+	
+	sg_reinforce_archers = SGroup_CreateIfNotFound("sg_reinforce_archers") 
+	UnitEntry_DeploySquads(player4, sg_reinforce_archers, {{type = "scar_archer", numSquads = target_archers - SGroup_Count(sg_archers)}}, mkr_player_reinforcements_archers)
+
+end
+
+function FollowToHenry_Start()
+
+	--Goals_FollowToHenry()
+	first_marker_ui = Objective_AddUIElements(SOBJ_FollowToHenry, mkr_obj_3b1, true, "$999514", true, 5)
+	first_marker_aura = Objective_AddGroundReticule(SOBJ_FollowToHenry, mkr_obj_3b1, 5, BP_GetReticuleBlueprint("aura_ring"), false)
+	Rule_Add(FollowToHenry_Monitor)
+	Rule_Add (FollowToHenry_Waypoint1_Monitor)
+end
+
+function FollowToHenry_Monitor()
+
+	sg_squads_near_henry = SGroup_CreateIfNotFound("sg_squads_near_henry")
+	Player_GetAllSquadsNearMarker( player1, sg_squads_near_henry, mkr_obj_3b3, 20)
+	local count = SGroup_Count(sg_squads_near_henry)
+	
+	
+	if count > 0 then
+		Objective_SetProgressBar( SOBJ_FollowToHenry, count/army_count)
+		-- if we haven't yet set the boolean that we are in the final phase of this chain,
+		-- that means we bypassed one or more waypoints, so clean those up (and their associated rules)
+		if find_henri_final == false then
+			if Rule_Exists(FollowToHenry_Waypoint1_Monitor) then
+				Objective_RemoveUIElements(SOBJ_FollowToHenry, first_marker_ui)
+				Objective_RemoveGroundReticule(SOBJ_FollowToHenry, first_marker_aura)
+				Rule_Remove(FollowToHenry_Waypoint1_Monitor)
+			end
+			if Rule_Exists(FollowToHenry_Waypoint2_Monitor) then
+				Objective_RemoveUIElements(SOBJ_FollowToHenry, second_marker_ui)
+				Objective_RemoveGroundReticule(SOBJ_FollowToHenry, second_marker_aura)
+				Rule_Remove(FollowToHenry_Waypoint2_Monitor)
+			end
+			-- then add the UI elements for the final destination
+			Objective_AddUIElements(SOBJ_FollowToHenry, mkr_obj_3b3, true, "$11252964", true, 5)
+			Objective_AddGroundReticule(SOBJ_FollowToHenry, mkr_obj_3b3, 20, BP_GetReticuleBlueprint("aura_ring"), false)
+			-- then set the boolean to true so we don't go through this again
+			find_henri_final = true
+		end
+	end
+	
+	
+	if count >= army_count then
+		
+		Objective_Complete(SOBJ_FollowToHenry)
+		Rule_RemoveMe()	
+		
+	end
+		
+end
+
+function FollowToHenry_Waypoint1_Monitor()
+	if Prox_AreSquadsNearMarker(sg_player_units, mkr_obj_3b1, ANY, 8) then
+		Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		Objective_RemoveUIElements(SOBJ_FollowToHenry, first_marker_ui)
+		Objective_RemoveGroundReticule(SOBJ_FollowToHenry, first_marker_aura)
+		second_marker_ui = Objective_AddUIElements(SOBJ_FollowToHenry, mkr_obj_3b2, true, "$999514", true, 5)
+		second_marker_aura = Objective_AddGroundReticule(SOBJ_FollowToHenry, mkr_obj_3b2, 5, BP_GetReticuleBlueprint("aura_ring"), false)
+		Rule_Add(FollowToHenry_Waypoint2_Monitor)	
+		Rule_RemoveMe()	
+	end
+	
+end
+
+function FollowToHenry_Waypoint2_Monitor()
+	if Prox_AreSquadsNearMarker(sg_player_units, mkr_obj_3b2, ANY, 8) then
+		Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		Objective_RemoveUIElements(SOBJ_FollowToHenry, second_marker_ui)
+		Objective_RemoveGroundReticule(SOBJ_FollowToHenry, second_marker_aura)
+		-- these last ones don't need an id because they get cleaned up with the objective
+		Objective_AddUIElements(SOBJ_FollowToHenry, mkr_obj_3b3, true, "$11252964", true, 5)
+		Objective_AddGroundReticule(SOBJ_FollowToHenry, mkr_obj_3b3, 20, BP_GetReticuleBlueprint("aura_ring"), false)
+		Objective_SetProgressBar( SOBJ_FollowToHenry, 0)
+		find_henri_final = true
+		Rule_RemoveMe()
+	end
+end
+
+
+function PrepareForBattle_PreComplete()
+	
+	--cheer 
+	SGroup_Clear(sg_temp)
+	SGroup_AddGroups(sg_temp, {sg_henry_spearmen,sg_henry_archers})
+	SGroup_EnableCheering(sg_temp, true, 5)
+
+	-- give player reinforcements
+	SGroup_SetPlayerOwner(sg_reinforce_horsemen, player1)
+	SGroup_AddGroup(sg_horsemen, sg_reinforce_horsemen)
+	SGroup_SetPlayerOwner(sg_reinforce_spearmen, player1)
+	SGroup_AddGroup(sg_starting_spearmen, sg_reinforce_spearmen)
+	SGroup_SetPlayerOwner(sg_reinforce_archers, player1)
+	SGroup_AddGroup(sg_archers, sg_reinforce_archers)
+	
+	Player_GetAll(player1, sg_player_units)
+	
+	World_EnableSharedLineOfSight(player1, player3, true)
+	World_SetInteractionStage(6)
+	FOW_RevealMarker(mkr_fow_reveal_obj3b,0)
+	
+	SpawnGuyArmy()
+	
+end
+
+function SpawnGuyArmy()
+	
+	-- Spawn in Guy and Army
+	
+	sg_guy = SGroup_CreateIfNotFound("sg_guy") 
+	UnitEntry_DeploySquads(player2, sg_guy, {{sbp = SBP.CAMPAIGN.UNIT_GUYBURGUNDY_CMP_SAL, numSquads = 1 }}, mkr_GoB_guy)
+	
+	sg_guy_spearmen = SGroup_CreateIfNotFound("sg_guy_spearmen")
+	sg_guy_spearmen1 = SGroup_CreateIfNotFound("sg_guy_spearmen1")
+	sg_guy_spearmen2 = SGroup_CreateIfNotFound("sg_guy_spearmen2")
+	
+	UnitEntry_DeploySquads(player2, {sg_guy_spearmen, sg_guy_spearmen1}, {{type = "scar_spearman", numSquads = num_guy_spearmen_per_marker, ability = SPREAD_FORMATION}}, mkr_GoB_spearmen_01)
+	UnitEntry_DeploySquads(player2, {sg_guy_spearmen, sg_guy_spearmen2}, {{type = "scar_spearman", numSquads = num_guy_spearmen_per_marker, ability = SPREAD_FORMATION}}, mkr_GoB_spearmen_02)
+	
+	sg_guy_archers = SGroup_CreateIfNotFound("sg_guy_archers")
+	sg_guy_archers1 = SGroup_CreateIfNotFound("sg_guy_archers1")
+	sg_guy_archers2 = SGroup_CreateIfNotFound("sg_guy_archers2")
+	sg_guy_archers3 = SGroup_CreateIfNotFound("sg_guy_archers3")
+	
+	UnitEntry_DeploySquads(player2, {sg_guy_archers, sg_guy_archers1}, {{type = "scar_archer", numSquads = num_guy_archers_per_marker, ability = SPREAD_FORMATION}}, mkr_GoB_archers_01)
+	UnitEntry_DeploySquads(player2, {sg_guy_archers, sg_guy_archers2}, {{type = "scar_archer", numSquads = num_guy_archers_per_marker, ability = SPREAD_FORMATION}}, mkr_GoB_archers_02)
+	UnitEntry_DeploySquads(player2, {sg_guy_archers, sg_guy_archers3}, {{type = "scar_archer", numSquads = num_guy_archers_per_marker, ability = SPREAD_FORMATION}}, mkr_GoB_archers_03)
+	
+	sg_guy_cavalry = SGroup_CreateIfNotFound("sg_guy_cavalry")
+	sg_guy_cavalry1 = SGroup_CreateIfNotFound("sg_guy_cavalry1")
+	sg_guy_cavalry2 = SGroup_CreateIfNotFound("sg_guy_cavalry2") 
+	
+	UnitEntry_DeploySquads(player2, {sg_guy_cavalry, sg_guy_cavalry1}, {{type = "scar_horseman", numSquads = num_guy_cavalry_per_marker, ability = SPREAD_FORMATION }}, mkr_GoB_cavalry_01)
+	UnitEntry_DeploySquads(player2, {sg_guy_cavalry, sg_guy_cavalry2}, {{type = "scar_horseman", numSquads = num_guy_cavalry_per_marker, ability = SPREAD_FORMATION }}, mkr_GoB_cavalry_02)
+
+end
+
+
+-- Helper methods
+
+function AnyNearMarker(marker, radius)
+	
+	return Prox_AreSquadsNearMarker(sg_william, marker, false, radius)
+			or Prox_AreSquadsNearMarker(sg_archers, marker, false, radius)
+			or Prox_AreSquadsNearMarker(sg_horsemen, marker, false, radius)
+			or Prox_AreSquadsNearMarker(sg_starting_spearmen, marker, false, radius)
+end
+
+function AllNearMarker(marker, radius)
+	
+	return Prox_AreSquadsNearMarker(sg_william, marker, false, radius)
+			and Prox_AreSquadsNearMarker(sg_archers, marker, false, radius)
+			and Prox_AreSquadsNearMarker(sg_horsemen, marker, false, radius)
+			and Prox_AreSquadsNearMarker(sg_starting_spearmen, marker, false, radius)
+end

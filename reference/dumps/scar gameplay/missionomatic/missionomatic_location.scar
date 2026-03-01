@@ -1,0 +1,1011 @@
+-- 
+-- Mission-O-Matic Module - Location
+--
+-- Synchronizes modules that are tied to the same location on the map. Also provides helper functions for dealing with locations.
+--
+
+function Location_Init(data)
+
+	local instance = Prefab_GetInstance(data)
+	instance.prefabName = "Location"
+	
+	if t_allLocationPrefabs == nil then
+		t_allLocationPrefabs = {}
+	end
+	table.insert(t_allLocationPrefabs, instance)
+
+	instance.sgroup = SGroup_CreateIfNotFound("Location "..instance.descriptor.." SGroup")		
+	instance.sgroup_unassigned = SGroup_CreateIfNotFound("Location "..instance.descriptor.." Unassigned Units")	
+	
+	instance.associatedModules = {}
+	
+	if instance.autoAssociateNewBuildings == nil then 
+		instance.autoAssociateNewBuildings = true
+	end
+	
+	-- create an egroup if there isn't one (and try to populate it)
+	if instance.egroup == nil then 
+		instance.egroup = EGroup_Create("Location "..instance.descriptor)
+	end
+	
+	-- if a pre-populated egroup has not been provided, find any buildings in the area and add them
+	if EGroup_CountSpawned(instance.egroup) == 0 then 	
+		if instance.marker ~= nil then						
+			local range = math.max(Marker_GetProximityRadiusOrDefault(instance.marker, 20), 20)
+			Player_GetAllEntitiesNearMarker(instance.player, instance.egroup, instance.marker, range)
+		end
+	end
+
+	print(tostring(instance.descriptor).." has entity count "..tostring(EGroup_Count(instance.egroup)))
+	
+	-- set the position of this location
+	if instance.marker ~= nil then
+		instance.position = Util_GetPosition(instance.marker)
+		instance.range = Marker_GetProximityRadiusOrDefault(instance.marker, 0)
+		instance.direction = Marker_GetDirection(instance.marker)
+	else
+		if EGroup_CountSpawned(instance.egroup) == 0 then
+			fatal("Location "..instance.descriptor.." has no marker and no items in it's EGroup - it is positionless!")
+		end
+		instance.position = Util_GetPosition(instance.egroup)
+		instance.range = 0
+	end
+	
+	local _CheckEntity = function(gid, idx, eid)
+		local distance = Util_GetDistance(eid, instance.position)
+		if distance > (instance.range - 10) then
+			instance.range = distance + 10
+		end
+	end
+	
+	instance.data = {
+		hasBeenRazed = false,
+		hasBeenKilled = false,
+		hasBeenCaptured = false,
+		isCapturable = false,
+
+	}
+
+	instance.data.monitorRuleID = Rule_AddInterval(Location_Monitor, 1, {instance = instance})
+	return instance
+	
+end
+
+--? @shortdesc Finds a location based on the identifier
+--? @extdesc Locates locations based on identifier type: TABLE (location matching identifier), STRING (location with identifier as descriptor), ENTITY/EGROUP (location containing identifier), SCARPOS (closest location to identifier). Returns nil if nothing is found.
+--? @args TABLE/STRING/ENTITY/EGROUP/SCARPOS identifier
+--? @result TABLE location
+function LOCATION(identifier)
+
+	if t_allLocationPrefabs == nil then
+		t_allLocationPrefabs = {}
+	end
+
+	local closest_distance = 9999999
+	local closest_location = nil 
+	
+	for index, location in pairs(t_allLocationPrefabs) do 
+	
+		if scartype(identifier) == ST_TABLE then
+			if location == identifier then
+				return location 
+			end
+			
+		elseif scartype(identifier) == ST_STRING then 
+			if location.descriptor == identifier then 
+				return location
+			end
+			
+		elseif scartype(identifier) == ST_ENTITY then 
+			if EGroup_ContainsEntity(location.egroup, identifier) then
+				return location 
+			end
+		
+		elseif scartype(identifier) == ST_EGROUP then 
+			if location.egroup == identifier then
+				return location 
+			end
+		
+		elseif scartype(identifier) == ST_SCARPOS then 
+			-- find the closest
+			local distance = Util_GetDistance(identifier, location.position)
+			if distance < closest_distance then
+				closest_distance = distance
+				closest_location = location 
+			end		
+		end
+	end
+	
+	-- if we were searching by pos, we know the closest now so return that 
+	if scartype(identifier) == ST_SCARPOS and closest_location ~= nil then
+		return closest_location
+	end
+end
+
+
+--? @shortdesc Finds a location with the given descriptor. Returns nil if none exists.
+--? @args STRING descriptor
+--? @result TABLE location
+function Location_FromDescriptor(descriptor)
+	assert(scartype(descriptor) == ST_STRING, "descriptor must be a string")
+	
+	if t_allLocationPrefabs == nil then
+		t_allLocationPrefabs = {}
+	end
+	
+	for i, location in ipairs(t_allLocationPrefabs) do 
+		if location.descriptor == descriptor then 
+			return location
+		end
+	end
+	return nil
+end
+
+function Location_GetPosition(data)
+	
+	local instance = Prefab_GetInstance(data)
+	return instance.position 
+	
+end
+
+function Location_GetSGroup(data)
+	
+	local instance = Prefab_GetInstance(data)
+	return instance.sgroup
+	
+end
+
+function Location_GetEGroup(data)
+	
+	local instance = Prefab_GetInstance(data)
+	return instance.egroup
+	
+end
+
+
+--? @shortdesc Adds units to the appropriate modules associated with this location.
+--? @extdesc Villagers are added to Townlife if there is one. Military units are added to defend if there is one. Left over units are added to the sgroup_unassigned sgroup instead.
+function Location_AddSGroup(data, sgroup)
+
+	local instance = Prefab_GetInstance(data)
+
+	if #instance.associatedModules >= 1 then 
+		
+		local townLifeModules = {}
+		local otherModules = {}
+		
+		-- sort the associated modules into town life and other modules
+		for index, module in pairs(instance.associatedModules) do
+			if module.prefabName == "TownLife" then 
+				table.insert(townLifeModules, module)
+			else
+				table.insert(otherModules, module)		
+			end
+		end
+		
+		if #townLifeModules == 0 or #otherModules == 0 then 
+			
+			-- there's no split of module types, so put everything into the one module 
+			
+			local module = instance.associatedModules[1]		
+			Prefab_DoAction(module, "AddSGroup", sgroup)		
+			
+		else
+		
+			-- there is a split, so send the right units to the right sections (i.e. defenders to the defense element, villagers to the economic element, etc)
+			
+			local defenderSGroup = SGroup_CreateUnique()		
+			local villagerSGroup = SGroup_CreateUnique()		
+			
+			SGroup_AddGroup(defenderSGroup, sgroup)
+			
+			local villagerTypes = {
+				"scar_villager",
+				"scar_armed_villager",
+			}
+			SGroup_Filter(defenderSGroup, villagerTypes, FILTER_REMOVE, villagerSGroup)
+			
+			local townLifeModule = townLifeModules[1]
+			local otherModule = otherModules[1]
+			
+			Prefab_DoAction(townLifeModule, "AddSGroup", villagerSGroup)
+			Prefab_DoAction(otherModule, "AddSGroup", defenderSGroup)
+			
+			SGroup_Destroy(villagerSGroup)		
+			SGroup_Destroy(defenderSGroup)		
+			
+		end
+		
+	else
+	
+		-- anyone left over, keep them in the unassigned sgroup
+		SGroup_AddGroup(instance.sgroup_unassigned, sgroup)		
+		
+	end
+	
+
+	
+end
+
+-- Ownership
+function Location_GetPlayerOwner(data) 
+	
+	local instance = Prefab_GetInstance(data)
+	return instance.player
+	
+end
+
+function Location_SetPlayerOwner(data, newPlayer) 
+	
+	local instance = Prefab_GetInstance(data)
+	EGroup_SetPlayerOwner(instance.egroup, newPlayer)
+	for index, module in pairs(instance.associatedModules) do
+		Prefab_DoAction(module, "SetPlayerOwner", newPlayer)
+	end
+	instance.player = newPlayer
+	
+end
+
+
+function Location_AddModule(data, module)
+	
+	local instance = Prefab_GetInstance(data)
+	table.insert(instance.associatedModules, module)
+	
+end
+
+function Location_SetBuildingAssociation(data, isOn)
+	local instance = Prefab_GetInstance(data)
+	instance.autoAssociateNewBuildings = isOn
+end
+
+function Location_GetVillagerCount(data)
+	
+	local instance = Prefab_GetInstance(data)	
+	local sgroup_villagers = SGroup_CreateUnique()
+	
+	for index, module in pairs(instance.associatedModules) do 
+		local sgroup = Prefab_DoAction(module, "GetSGroup")
+		if scartype(sgroup) == ST_SGROUP then 
+			SGroup_AddGroup(sgroup_villagers, sgroup)
+		end
+	end
+	
+	SGroup_Filter(sgroup_villagers, "scar_villager", FILTER_KEEP)
+	local num_villagers = SGroup_CountSpawned(sgroup_villagers)
+	SGroup_Destroy(sgroup_villagers)
+	return num_villagers
+end
+
+function Location_Monitor(context, data)
+	
+	local instance = Prefab_GetInstance(data)	
+
+	SGroup_Clear(instance.sgroup)
+	SGroup_AddGroup(instance.sgroup, instance.sgroup_unassigned)
+	for index, module in pairs(instance.associatedModules) do 
+		local sgroup = Prefab_DoAction(module, "GetSGroup")
+		if scartype(sgroup) == ST_SGROUP then 
+			SGroup_AddGroup(instance.sgroup, sgroup)
+		end
+	end
+	
+	---- Location is Killed = all military defending units killed
+	--if instance.data.hasBeenKilled == false then
+	
+		--SGroup_Clear(sg_temp)
+		--SGroup_AddGroup(sg_temp, instance.sgroup)
+	
+		--SGroup_Filter(sg_temp, "scar_villager", FILTER_REMOVE)		-- Killing specifically refers to military units, so ignore villagers
+
+		--if SGroup_CountSpawned(sg_temp) == 0 then 
+			
+			--instance.data.hasBeenKilled = true 
+			
+		--end
+		
+	--end
+	
+	-- Location is Razed = all buildings destroyed
+	if instance.data.hasBeenRazed == false then
+		
+		EGroup_Clear(eg_temp)
+		EGroup_AddEGroup(eg_temp, instance.egroup)
+		for index, module in pairs(instance.associatedModules) do 			
+			local egroup = Prefab_DoAction(module, "GetEGroup")
+			if scartype(egroup) == ST_SGROUP then 
+				EGroup_AddEGroup(eg_temp, egroup)
+			end			
+		end
+		
+		EGroup_Filter(eg_temp, {"farm", "wall"}, FILTER_REMOVE)		-- Razing specifically refers to buildings, so ignore walls and farms
+
+		if EGroup_Count(eg_temp) == 0 then
+			instance.data.hasBeenRazed = true			
+		end
+	end 
+	
+end
+
+function Location_Stop(data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	if instance.data.monitorRuleID ~= nil then
+		Rule_RemoveWithID(instance.data.monitorRuleID)
+		instance.data.monitorRuleID = nil
+	end
+		
+	for index, module in pairs(instance.associatedModules) do
+		Prefab_DoAction(module, "Stop")
+	end
+	
+end
+
+
+-- Support for missions that involve "capturing a location"
+function Location_SetCapturable(data, enable)		-- do any setup for a building that is designated to be captured by the player during a mission
+	
+	local instance = Prefab_GetInstance(data)
+	
+	if enable == nil then enable = true end
+	
+	if enable == true and instance.data.isCapturable == false then 
+		
+		if t_allCaptureLocationPrefabs == nil then
+			t_allCaptureLocationPrefabs = {}
+			Rule_AddInterval(MissionOMatic_CaptureLocation_Monitor, 0.5)
+		end
+		table.insert(t_allCaptureLocationPrefabs, instance)
+		
+		EGroup_Duplicate(instance.egroup, eg_blah)
+		EGroup_Filter(eg_blah, {"wall", "tower", "scar_outpost", "scar_keep"}, FILTER_REMOVE)			-- we still want to be able to target/burn these structures (includes outposts, towers, gates, walls, keeps, etc)
+		
+		EGroup_SetTargetingType(eg_blah, Targeting_Manual)
+		EGroup_SetBurnExtEnabled(eg_blah, false)
+		
+		if instance.data.captureBurnThresholdModifier == nil then 
+			instance.data.captureBurnThresholdModifier = Modify_OnFireThreshold(eg_blah, MUT_Multiplication, 99999)
+		end
+		if instance.data.captureBurnDamageModifier == nil then 
+			instance.data.captureBurnDamageModifier = Modify_OnFireDamagePerTick(eg_blah, MUT_Multiplication, 0)
+		end
+		if instance.data.captureTCWeaponDisableModifiers == nil then 
+			EGroup_Duplicate(instance.egroup, eg_blah)
+			EGroup_Filter(eg_blah, "town_center", FILTER_KEEP)
+			
+			if eg_blah ~= nil and EGroup_CountSpawned(eg_blah) > 0 then
+				
+				local hardpoint_count = Entity_GetWeaponHardpointCount(EGroup_GetEntityAt(eg_blah, 1))
+				local result = nil
+				
+				if hardpoint_count > 0 then result = Modify_WeaponEnabled(eg_blah, "hardpoint_01", false) end
+				if hardpoint_count > 1 then Modify_WeaponEnabled(eg_blah, "hardpoint_02", false) end
+				if hardpoint_count > 2 then Modify_WeaponEnabled(eg_blah, "hardpoint_03", false) end
+				
+				if result ~= nil then
+					instance.data.captureTCWeaponDisableModifiers = result
+				end
+			end
+		end
+		
+		
+		if scartype(instance.sgroup_defenders) ~= ST_TABLE then
+			instance.sgroup_defenders = {instance.sgroup_defenders}
+		end
+		
+		instance.data.isCapturable = true
+		instance.data.isCaptured = false
+		instance.data.discovered = false
+		instance.data.hasMasterObjective = false
+		instance.data.defendersAlreadyMonitoringSGroup = SGroup_CreateUniqueWithPrefix("Location Capture Monitoring")
+		
+		
+		LocationCapture_CountDefenders(instance)
+		instance.data.villagerCount = Location_GetVillagerCount(data)
+		instance.data.extraVillagerCount = 0
+		
+		if instance.extraVillagerCount ~= nil then
+			instance.data.extraVillagerCount = instance.extraVillagerCount
+		end
+		
+		if instance.objectiveMaster ~= nil then
+			instance.data.hasMasterObjective = true
+		end
+		
+		local locationName = instance.objectiveCapture.Title
+		
+		Objective_AddUIElements(
+			instance.objectiveCapture, 
+			instance.marker, 
+			true, 
+			locationName, 
+			true
+		)
+		
+		-- add a red ground reticule
+		local size = math.max(Marker_GetProximityRadiusOrDefault(instance.marker, 0), 10)
+		instance.data.captureReticuleID = UI_ModalVisual_CreateReticule(BP_GetReticuleBlueprint("campaign_capturelocation_enemy"), size)
+		UI_ModalVisual_SetPosition(instance.data.captureReticuleID, Util_GetPosition(instance.marker))
+		
+		Obj_SetVisible(instance.objectiveCapture.ID, false)
+		Obj_SetProgressVisible(instance.objectiveCapture.ID, true)
+		Obj_SetProgress(instance.objectiveCapture.ID, 0)
+
+		--Objective_SetCounter(instance.objectiveSecondary, 0, instance.data.defenderCount)		-- we're just using a bar to indicate capture progress
+		
+	elseif enable == false and instance.data.isCapturable == true then 
+		EGroup_RestoreTargetingType(instance.egroup)
+		EGroup_SetBurnExtEnabled(instance.egroup, true)
+		
+		Rule_AddOneShot(Location_SetCapturableFalse_Delayed, 45, {instance = instance})
+
+		instance.data.isCapturable = false
+		instance.data.isCaptured = true
+		instance.data.discovered = true
+		instance.data.defenderCount = 0
+	end
+	
+	Location_SetTownCenterInvulnerable(data, enable)
+	
+end
+function Location_SetCapturableFalse_Delayed(context, data)
+	
+	local instance = Prefab_GetInstance(data)
+	
+	if instance.data.isCapturable == false then 
+		
+		Modifier_Remove(instance.data.captureBurnThresholdModifier)
+		Modifier_Remove(instance.data.captureBurnDamageModifier)
+		Modifier_Remove(instance.data.captureTCWeaponDisableModifiers)
+		
+		instance.data.captureBurnThresholdModifier = nil
+		instance.data.captureBurnDamageModifier = nil
+		instance.data.captureTCWeaponDisableModifiers = nil 
+		
+	end
+	
+end
+
+
+
+function LocationCapture_CountDefenders(data)
+
+	local instance = Prefab_GetInstance(data)
+	local count = 0
+
+	local sg_allCurrent = SGroup_CreateUnique()
+	local sg_removedUnits = SGroup_CreateUnique()
+	
+	for index, sgroup in pairs(instance.sgroup_defenders) do
+		local _CountSquad = function(gid, idx, sid)
+			if Squad_GetPlayerOwner(sid) == instance.player then
+				count = count + 1
+			end
+		end
+		SGroup_ForEach(sgroup, _CountSquad)
+		SGroup_AddGroup(sg_allCurrent, sgroup)
+	end
+
+	
+	if instance.data.defenderCount == nil then 
+		instance.data.defenderCount = count 
+		SGroup_AddGroup(instance.data.defendersAlreadyMonitoringSGroup, sg_allCurrent)
+	else
+
+		-- find units that still exist but are no longer in the defender groups (i.e. units that were *removed*, not killed)
+		SGroup_AddGroup(sg_removedUnits, instance.data.defendersAlreadyMonitoringSGroup)
+		SGroup_RemoveGroup(sg_removedUnits, sg_allCurrent)
+		local removedUnitCount = SGroup_CountSpawned(sg_removedUnits)
+		
+		if removedUnitCount >= 1 then 
+			instance.data.defenderCount = instance.data.defenderCount - removedUnitCount
+			SGroup_RemoveGroup(instance.data.defendersAlreadyMonitoringSGroup, sg_removedUnits)
+		end
+
+		-- find units that are new to the defender groups		
+		SGroup_RemoveGroup(sg_allCurrent, instance.data.defendersAlreadyMonitoringSGroup)
+		local newUnitCount = SGroup_CountSpawned(sg_allCurrent)
+		
+		if newUnitCount >= 1 then 
+			instance.data.defenderCount = instance.data.defenderCount + newUnitCount
+			SGroup_AddGroup(instance.data.defendersAlreadyMonitoringSGroup, sg_allCurrent)
+		end
+		
+		
+	end
+
+	SGroup_Destroy(sg_allCurrent)
+	SGroup_Destroy(sg_removedUnits)
+	
+	return count
+	
+end
+
+
+function MissionOMatic_CaptureLocation_Monitor()
+	
+	for index, location in pairs(t_allCaptureLocationPrefabs) do 
+		
+		if location.data.discovered then
+			
+			local defendersRemaining = LocationCapture_CountDefenders(location)
+						
+			if defendersRemaining == 0 then
+								
+				Location_Capture(location, World_GetPlayerAt(1))
+				
+				if location.data.hasMasterObjective then
+					Objective_Show(location.objectivePrimary, true, false)
+					Objective_Show(location.objectiveSecondary, false, false)
+				end
+				
+				Objective_Complete(location.objectiveSecondary, false)
+				Objective_Complete(location.objectiveCapture, false)
+				Objective_Complete(location.objectivePrimary)
+				
+				table.remove(t_allCaptureLocationPrefabs, index)
+				
+			else
+				
+				local defendersKilled = location.data.defenderCount - defendersRemaining
+				--Objective_SetCounter(location.objectiveSecondary, defendersKilled, location.data.defenderCount)		-- we're just using a bar to indicate capture progress
+				
+				local progress = defendersKilled / location.data.defenderCount
+				Obj_SetProgress(location.objectiveCapture.ID, progress)
+				Obj_SetProgress(location.objectiveSecondary.ID, progress)
+				
+			end
+			
+		else
+
+			Player_GetAll(World_GetPlayerAt(1))
+			if SGroup_CountSpawned(sg_allsquads) >= 1 then
+		
+				if Prox_AreSquadsNearMarker(sg_allsquads, location.marker, false) then
+					
+					location.data.discovered = true
+					Obj_SetProgressVisible(location.objectiveSecondary.ID, true)
+					Obj_SetProgress(location.objectiveSecondary.ID, 0)
+					
+					if location.data.hasMasterObjective then
+						--replace 'capture x' with 'defeat enemies'
+						Objective_Show(location.objectivePrimary, false, false)
+						Objective_Start(location.objectiveSecondary, false)
+					else
+						Objective_Start(location.objectiveSecondary)
+					end
+					
+				end
+				
+			end
+		end
+	end
+end
+
+
+function Location_SetTownCenterInvulnerable(data, enable)
+	
+	local instance = Prefab_GetInstance(data)
+	
+	local _IsTownCenter = function(gid, idx, eid)
+		
+		if Entity_IsOfType(eid, "town_center") then
+			
+			if enable then
+				Entity_SetInvulnerableMinCap(eid, 0.05, 0)
+			else
+				Entity_SetInvulnerableMinCap(eid, 0, 0)
+			end
+		end
+		
+	end
+	EGroup_ForEach(instance.egroup, _IsTownCenter)
+	
+end
+
+-- Capture a location
+function Location_Capture(data, newPlayer)
+
+	local instance = Prefab_GetInstance(data)
+	
+	if instance.data.hasBeenCaptured == false then
+		
+		local oldPlayer = instance.player
+		local oldRace = Player_GetRace(oldPlayer)
+		local newRace = Player_GetRace(newPlayer)
+		
+		Location_Stop(data)
+		
+		local _CheckEntity = function(gid, idx, eid)
+			if World_OwnsEntity(eid) then 
+				EGroup_Remove(gid, eid)
+			end
+		end
+		EGroup_ForEach(instance.egroup, _CheckEntity)
+		
+		Location_SetPlayerOwner(data, newPlayer)
+		
+		--spawn villagers to replace any that were killed
+		local count = instance.data.villagerCount - Location_GetVillagerCount(instance)
+		count = count + instance.data.extraVillagerCount
+		
+		if count > 0 then
+			if instance.marker_spawn == nil then instance.marker_spawn = instance.marker end
+			UnitEntry_DeploySquads(newPlayer, nil, {{ type = "scar_villager", numSquads = count }}, instance.marker_spawn, nil, nil, {})
+		end
+		
+		
+		if newRace ~= oldRace and instance.blockCivConversionOnCapture ~= true then
+			
+			--convert any surviving villagers to the new owner's civ type
+			local _SwapVillagers = function(gid, idx, sid)
+				if Squad_IsOfType(sid, "scar_villager") then
+					local villagerSBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", newRace, false)
+					local villagerEBP = Cardinal_ConvertTypeToEntityBlueprint("villager", newRace, false)
+					
+					Squad_ConvertBlueprint(sid, villagerSBP)
+					Entity_ConvertBlueprint(Squad_GetFirstEntity(sid), villagerEBP)
+					--print("Converted villager to new owner race")
+				end
+			end
+			
+			if SGroup_CountSpawned(instance.sgroup) > 0 then
+				SGroup_ForEach(instance.sgroup, _SwapVillagers)
+			end
+			
+			
+			--convert any surviving structures to the new owner's civ type
+			local typesToConvert = {
+				"town_center_capital",
+				"town_center_non_capital",
+				"scar_house",
+				"scar_barracks",
+				"scar_archeryrange",
+				"scar_stable",
+				"scar_blacksmith",
+				"scar_arsenal",
+				"farm",
+				"scar_lumbercamp",
+				"scar_miningcamp",
+				"scar_gristmill",
+				"scar_market",
+				"stone_wall_section",			
+				"stone_wall_bastion",			
+				"stone_gate",			
+				"palisade_wall_section",			
+				"palisade_wall_bastion",			
+				"palisade_gate",
+				"stone_wall_tower",
+				"scar_outpost",
+				"scar_university",
+				"scar_monastery",
+				"scar_siegeworkshop",
+				"scar_keep",
+			}
+			
+			local eg_wallEntities = EGroup_CreateUniqueWithPrefix("");
+			
+			local _SwapBlueprint = function(gid, idx, eid) 
+				if World_OwnsEntity(eid) == false then 
+					for index, buildingType in pairs(typesToConvert) do 
+						if Entity_IsOfType(eid, buildingType) then
+
+							if Entity_RequiresSlottedSplineUpdateAfterBlueprintConversion(eid) then						--Add any wall entities to our walls egroup (for later)
+								EGroup_Add(eg_wallEntities, eid)
+							end
+							
+							local newBlueprints = Cardinal_ConvertTypeToEntityBlueprint(buildingType, newPlayer, true)
+							if newBlueprints == nil then 
+								newBlueprints = {}
+							end
+							
+							for index = #newBlueprints, 1, -1 do 														-- remove any "packed up" buildings (i.e. Mongols) - we want to find the deployed versions
+								if Entity_IsEBPOfType(newBlueprints[index], "mobile_building") == true then 
+									table.remove(newBlueprints, index)
+								end
+							end
+							
+							if newBlueprints[1] ~= nil then
+								Entity_ConvertBlueprint(eid, newBlueprints[1])
+								return --breaks out of for loop of typesToConvert
+							else
+								print("WARNING: Trying to convert a location but could not find a suitable ebp with the type "..buildingType.." for the race "..Player_GetRaceName(newPlayer))
+							end
+						end
+					end -- typesToConvert loop
+				end
+			end -- _SwapBlueprint function
+			
+			EGroup_ForEach(instance.egroup, _SwapBlueprint)
+			
+			Misc_UpdateSlottedSplinesContainingEGroupAfterBlueprintConversion(eg_wallEntities)
+			
+			if EGroup_IsValid(eg_wallEntities.EGroupID) then
+				EGroup_Destroy(eg_wallEntities)
+			end
+			
+		end
+		
+		-- fix up has_capital flags on player state models
+		if Player_HasBuilding(oldPlayer, "town_center_capital")	then
+			Player_SetStateModelFloat(oldPlayer, "has_capital", 1.0)
+		else
+			Player_SetStateModelFloat(oldPlayer, "has_capital", 0.0)		
+		end
+		if Player_HasBuilding(newPlayer, "town_center_capital")	then
+			Player_SetStateModelFloat(newPlayer, "has_capital", 1.0)
+		else
+			Player_SetStateModelFloat(newPlayer, "has_capital", 0.0)		
+		end
+		
+		-- mark the location as having been captured
+		Location_SetCapturable(data, false)
+		instance.data.hasBeenCaptured = true
+		
+		--
+		-- start the "location capture" animation 
+		--
+		
+		-- remove the current red ground reticlue 
+		UI_ModalVisual_Destroy(instance.data.captureReticuleID)	
+		instance.data.captureReticuleID = nil 
+		
+		-- queue up a quick sequence of red/blue ground reticules that flash to indicate the capture
+		Rule_AddOneShot(Location_Capture_AddReticule, 0.25, {instance = instance, duration = 0.25, reticuleBP = BP_GetReticuleBlueprint("campaign_capturelocation_enemy")})
+		Rule_AddOneShot(Location_Capture_AddReticule, 0.75, {instance = instance, duration = 0.25, reticuleBP = BP_GetReticuleBlueprint("campaign_capturelocation_enemy")})
+		Rule_AddOneShot(Location_Capture_AddReticule, 1.25, {instance = instance, duration = 1, reticuleBP = BP_GetReticuleBlueprint("campaign_capturelocation_self")})
+	end
+end
+
+function Location_Capture_AddReticule(context, data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	local size = math.max(Marker_GetProximityRadiusOrDefault(instance.marker, 0), 10)
+	local reticuleID = UI_ModalVisual_CreateReticule(data.reticuleBP, size)
+	UI_ModalVisual_SetPosition(reticuleID, Util_GetPosition(instance.marker))
+
+	if data.duration ~= nil then -- if there is a duration set, queue up the remove function for that time
+		Rule_AddOneShot(Location_Capture_RemoveReticule, data.duration, {reticuleID = reticuleID})
+	end
+	
+end
+function Location_Capture_RemoveReticule(context, data)
+	UI_ModalVisual_Destroy(data.reticuleID)	
+end	
+		
+
+
+function Location_HasBeenKilled(data)
+	
+	local instance = Prefab_GetInstance(data)	
+	return instance.data.hasBeenKilled
+	
+end
+
+function Location_HasBeenRazed(data)
+
+	local instance = Prefab_GetInstance(data)	
+	return instance.data.hasBeenRazed
+
+end
+
+function Location_HasBeenCaptured(data)
+
+	local instance = Prefab_GetInstance(data)	
+	return instance.data.hasBeenCaptured
+
+end
+
+
+
+-- This section of script is NOT per location instance, so that is why it is named MissionOMatic and not Location 
+-- It's just in this file because it deals with locations!
+--
+--[[
+		TODOs:
+		- shift position and range as things get added / destroyed?
+		- try to shift ranges so a single player doesn't have overlap? 
+]]
+
+
+function MissionOMatic_InitializeLocationMonitoring()
+
+	eg_orphanBuildings = EGroup_CreateIfNotFound("eg_orphanBuildings")
+	eg_allBuildings = EGroup_CreateIfNotFound("eg_allBuildings")					-- this is a temp scratch group and is deleted by the end of this function
+	eg_associatedBuildings = EGroup_CreateIfNotFound("eg_associatedBuildings")		-- this one, too
+	
+	t_orphanBuildings_newEntityList = {}
+	LOCATION_ASSOCIATION_DISTANCE = 40
+	
+	-- find any buildings on the map that are NOT included in any location
+	for index, player in pairs(PLAYERS) do 
+		Player_GetAll(player.id)
+		EGroup_AddEGroup(eg_allBuildings, eg_allentities)
+	end
+	if t_allLocationPrefabs == nil then
+		t_allLocationPrefabs = {}
+	else
+		for index, location in pairs(t_allLocationPrefabs) do 
+			EGroup_RemoveGroup(eg_allBuildings, location.egroup)		
+		end
+	end
+	
+	local pass = 1
+	
+	-- see if we can associate any of these right now (any that aren't are put into eg_orphanBuildings)
+	repeat
+			
+		EGroup_Clear(eg_associatedBuildings)
+
+		local _CheckEntity = function(gid, idx, eid)
+			local location = MissionOMatic_AssociateEntityWithNearbyLocation(eid, true)
+			if location ~= nil and MissionOMatic_LocationAcceptsEntity(location, eid) then
+				EGroup_Add(eg_associatedBuildings, eid)
+			end
+		end
+	
+		EGroup_ForEach(eg_allBuildings, _CheckEntity)
+		
+		EGroup_RemoveGroup(eg_allBuildings, eg_associatedBuildings)
+	
+		print("Initial entity-Location association pass "..pass.." - "..EGroup_Count(eg_associatedBuildings).." buildings associated")
+		pass = pass + 1
+		
+	until EGroup_Count(eg_associatedBuildings) == 0
+	
+	EGroup_Destroy(eg_associatedBuildings)
+	EGroup_Destroy(eg_allBuildings)	
+	
+	-- register a callback for every time a new building is constructed
+	Rule_AddGlobalEvent(MissionOMatic_LocationMonitoring_EntityConstructedCallback, GE_ConstructionComplete)
+
+end
+
+function MissionOMatic_LocationMonitoring_EntityConstructedCallback(context, data)		-- this function is called by the game every time a new building is constructed
+	MissionOMatic_AssociateEntityWithNearbyLocation(context.entity)
+end
+
+
+--? @shortdesc Associate an entity with a suitable nearby location. The entity will be added to the location's egroup.
+--? @extdesc If no suitable location is found, it is moved into the eg_orphanBuildings group, so it can be tried again later (maybe by then other buildings will connect it to a location)
+--? @args EntityID entity
+--? @result LocationTable
+function MissionOMatic_AssociateEntityWithNearbyLocation(entity, duringInitialization)
+
+	if World_OwnsEntity(entity) == true or Entity_IsPartOfSquad(entity) == true then
+		return
+	end
+	
+	local player = Util_GetPlayerOwner(entity)
+	if scartype(player) ~= ST_NIL then
+		
+		local shortlist = {}
+		
+		-- search through locations and find a suitable home, and build a shortlist of other potential locations and the distance from them if no home is found
+		for index, location in pairs(t_allLocationPrefabs) do 
+			
+			-- We want to make sure we're not including walls if we don't want to
+			if location.player == player and EGroup_CountSpawned(location.egroup) >= 1 and MissionOMatic_LocationAcceptsEntity(location, entity) and location.autoAssociateNewBuildings ~= false then 
+				
+				-- if it's within the location's range, we have a winner
+				if Util_GetDistance(entity, location.position) <= location.range then
+					MissionOMatic_AssociateEntityToLocation(entity, location, duringInitialization)
+					return location
+				end
+				
+				-- record the distance to this location, and add this location to the shortlist
+				local distance = Util_GetDistance(entity, EGroup_GetClosestEntity(location.egroup, Util_GetPosition(entity)))
+				
+				if distance <= 30 then 
+					local entry = {
+						location = location,
+						distance = distance,
+					}
+					table.insert(shortlist, entry)
+				end
+				
+			end
+			
+		end
+	
+		-- if we have a shortlist, find the closest one and add it to that
+		if #shortlist >= 1 then 
+		
+			table.sort(shortlist, function (a, b) return a.distance < b.distance end)
+			
+			local closestLocation = shortlist[1].location
+			MissionOMatic_AssociateEntityToLocation(entity, closestLocation, duringInitialization)
+	
+			-- TODO:
+			-- readjust location's position and range to accomodate this new item (that was outside it's existing range but we decided it should be part of it anyway)
+			
+			return closestLocation
+			
+		end
+	end
+	-- we didn't find anything, add it to the "buildings with no location" group for now - it might get added to a location later on if it connects up
+	EGroup_Add(eg_orphanBuildings, entity)
+	
+end
+
+
+-- once a home is found, this associates an entity to a location and kicks off the wider search (in case that linked up other orphan buildings)
+function MissionOMatic_AssociateEntityToLocation(entity, location, duringInitialization)
+
+	EGroup_Add(location.egroup, entity)			
+	EGroup_Remove(eg_orphanBuildings, entity)
+	
+	if duringInitialization ~= true then 
+	
+		-- check if any of the other entities in eg_orphanBuildings are now connected up to this location
+		
+		local newEntry = {
+			entityWorldID = Entity_GetID(entity),
+			location = location,
+		}
+		table.insert(t_orphanBuildings_newEntityList, newEntry)	
+		
+		if Rule_Exists(MissionOMatic_AssociateOrphanBuildings) == false then 
+			Rule_AddInterval(MissionOMatic_AssociateOrphanBuildings, 1)
+		end
+		
+	end
+	
+end
+
+
+
+function MissionOMatic_AssociateOrphanBuildings()
+
+	if #t_orphanBuildings_newEntityList == 0 then
+		Rule_RemoveMe()
+	else
+		
+		local data = t_orphanBuildings_newEntityList[1]
+		table.remove(t_orphanBuildings_newEntityList, 1)
+		
+		if Entity_IsValid(data.entityWorldID) then
+		
+			local location = data.location
+			local entityPos = Util_GetPosition(Entity_FromID(data.entityWorldID))
+		
+			-- make a list of orphan buildings near this entity
+			local nearbyEntities = {}
+			local _CheckEntity = function(gid, idx, eid)
+				local player = MissionOMatic_GetPlayer(eid)
+				if location.player == player and Util_GetDistance(eid, entityPos) <= LOCATION_ASSOCIATION_DISTANCE and MissionOMatic_LocationAcceptsEntity(location, eid) then
+					table.insert(nearbyEntities, eid)
+				end
+			end
+			EGroup_ForEach(eg_orphanBuildings, _CheckEntity)
+	
+			-- associate them with the location, and then add those entities to the list of buildings to try and associate nearby orphans to
+			for index, entity in pairs(nearbyEntities) do
+			
+				EGroup_Add(location.egroup, entity)			
+				EGroup_Remove(eg_orphanBuildings, entity)
+				
+				local newEntry = {
+					entityWorldID = Entity_GetID(entity),
+					location = location,
+				}
+				table.insert(t_orphanBuildings_newEntityList, newEntry)
+					
+			end
+	
+		end
+		
+	end
+	
+end
+
+function MissionOMatic_LocationAcceptsEntity(location, eid)
+
+	-- this function lets us potentially filter out specific items later on...
+	-- unused for now 
+	
+	return true
+	
+end

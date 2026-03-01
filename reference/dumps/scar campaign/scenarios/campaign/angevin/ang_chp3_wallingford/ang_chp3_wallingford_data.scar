@@ -1,0 +1,909 @@
+function Wallingford_InitData1()
+	combat_started = false
+	groups_reduced_to_half = 0
+	camps_destroyed = 0
+	startingWallDestroyed = false
+	wave_unit_index = 0
+	waves_prepared = 3
+	
+	LAUNCH_ATTACK_2 = 100
+	LAUNCH_ATTACK_3 = 225
+	
+	LAUNCH_ATTACK_4_APPROX = 350    
+	LAUNCH_ATTACK_5_APPROX = 475    
+	LAUNCH_ATTACK_6_APPROX = 675 --could intercept if the player uses reinforcements immediately
+	LAUNCH_ATTACK_7_APPROX = 800 --could intercept if the player hesitates
+	
+	PREPARE_TIME = 210
+	
+	ATTACK_INTERVAL = 125
+	
+	REINFORCEMENTS_DELAY = 600
+	
+	wallingford_seconds = { 0 }
+	
+	spawn_info = {}
+	spawn_info["ne"] = { wave = "wave_ne", defeated = false }
+	spawn_info["n"] = { wave = "wave_n", defeated = false }
+	spawn_info["nw"] = { wave = "wave_nw", defeated = false }
+	
+	intro_targets = {
+		{ mkr_enemy_path_ne_4, mkr_player_base },
+		{ mkr_enemy_path_n_7, mkr_enemy_path_n_8, mkr_player_base },
+		{ mkr_enemy_path_nw_5, mkr_enemy_path_nw_6, mkr_player_base },
+	}
+	wave_targets_a = {
+		nw = { mkr_enemy_path_nw_1, mkr_enemy_path_nw_2, mkr_enemy_path_nw_3, mkr_enemy_path_nw_4 },
+		n = { mkr_enemy_path_n_1, mkr_enemy_path_n_2, mkr_enemy_path_n_3, mkr_enemy_path_n_4, mkr_enemy_path_n_5, mkr_enemy_path_n_6 },
+		ne = { mkr_enemy_path_ne_1, mkr_enemy_path_ne_2 }
+	}
+	wave_targets_b = {
+		nw = { mkr_enemy_path_nw_5, mkr_enemy_path_nw_6, mkr_player_base },
+		n = { mkr_enemy_path_n_7, mkr_enemy_path_n_8, mkr_player_base },
+		ne = { mkr_enemy_path_ne_3, mkr_enemy_path_ne_4, mkr_player_base }
+	}
+	intro_wave_launched = { false, false, false }
+	arrive_events = { nil, EVENTS.SECOND_ATTACK, EVENTS.THIRD_ATTACK }
+	dead_events = { nil, EVENTS.SECOND_ATTACK_DEFEATED, EVENTS.THIRD_ATTACK_DEFEATED }
+	
+	
+	eg_wallingford = EGroup_CreateIfNotFound("eg_wallingford")
+	eg_enemy_fort_ne = EGroup_CreateIfNotFound("eg_enemy_fort_ne")
+	eg_enemy_fort_n = EGroup_CreateIfNotFound("eg_enemy_fort_n")
+	eg_enemy_fort_nw = EGroup_CreateIfNotFound("eg_enemy_fort_nw")
+	eg_player_walls = Player_GetEntitiesFromType(player1, "wall")
+	EGroup_Filter(eg_player_walls, "stone_wall_tower", FILTER_REMOVE)
+		
+	sg_player_reinforcements = SGroup_CreateIfNotFound("sg_player_reinforcements") 
+	sg_player_villagers_food = SGroup_CreateIfNotFound("sg_player_villagers_food")
+	sg_player_villagers_wood = SGroup_CreateIfNotFound("sg_player_villagers_wood")
+	sg_player_villagers_gold = SGroup_CreateIfNotFound("sg_player_villagers_gold")
+	sg_player_villagers_stone = SGroup_CreateIfNotFound("sg_player_villagers_stone") 
+	sg_intro_assault_1 = SGroup_CreateIfNotFound("sg_intro_assault_1")
+	
+	Wallingford_LoadUnitTables()
+end
+
+function Wallingford_InitData2()
+	intro_assault_1 = MissionOMatic_FindModule("intro_assault_1")
+	intro_assault_2 = MissionOMatic_FindModule("intro_assault_2")
+	intro_assault_3 = MissionOMatic_FindModule("intro_assault_3")
+	intro_assault_modules = { intro_assault_1, intro_assault_2, intro_assault_3 }
+	
+	incoming_assault_modules = {}
+	arrived_assault_modules = { intro_assault_1, intro_assault_2, intro_assault_3 }
+	
+	siege_patrol_1 = MissionOMatic_FindModule("siege_patrol_1")
+	siege_patrol_2 = MissionOMatic_FindModule("siege_patrol_2")
+	siege_patrol_3 = MissionOMatic_FindModule("siege_patrol_3")
+	siege_patrol_4 = MissionOMatic_FindModule("siege_patrol_4")
+	siege_patrol_5 = MissionOMatic_FindModule("siege_patrol_5")
+	
+	enemy_defend_1 = MissionOMatic_FindModule("enemy_defend_1")
+	enemy_defend_2 = MissionOMatic_FindModule("enemy_defend_2")
+	enemy_defend_3 = MissionOMatic_FindModule("enemy_defend_3")
+	enemy_defend_4 = MissionOMatic_FindModule("enemy_defend_4")
+	
+	reinforcements_first_1 = MissionOMatic_FindModule("reinforcements_first_1")
+	reinforcements_first_2 = MissionOMatic_FindModule("reinforcements_first_2")
+	reinforcements_first_3 = MissionOMatic_FindModule("reinforcements_first_3")
+	reinforcements_second_1 = MissionOMatic_FindModule("reinforcements_second_1")
+	reinforcements_second_2 = MissionOMatic_FindModule("reinforcements_second_2")
+	
+	reinforcement_sources = {
+		{ reinforcements_first_1, reinforcements_first_2, reinforcements_first_3 },
+		{ reinforcements_second_1, reinforcements_second_2 },
+	}
+	reinforcement_indexes = { 0, 0 }
+	
+	final_wave = MissionOMatic_FindModule("final_wave")
+	
+	defender_info = {}
+	defender_info[1] = { module = enemy_defend_1 }
+	defender_info[2] = { module = enemy_defend_2 }
+	defender_info[3] = { module = enemy_defend_3 }
+	defender_info[4] = { module = enemy_defend_4 }
+	
+	for i = 1, #defender_info do
+		defender_info[i].initial_count = SGroup_CountSpawned(defender_info[i].module.sgroup)
+		defender_info[i].is_half = false
+	end
+	
+	camp_data = { 
+		{ egroup = camp_1 }, 
+		{ egroup = camp_2 }, 
+		{ egroup = camp_3 }, 
+		{ egroup = camp_4 }, 
+	}
+	for i = #camp_data, 1, -1 do
+		camp_data[i].position = EGroup_GetPosition(camp_data[i].egroup)
+	end
+end
+
+function Wallingford_LoadUnitTables()
+	enemy_defend_units_a = {
+		{type = "scar_spearman", numSquads = Util_DifVar({5, 7, 10, 14})},
+		{type = "scar_crossbowman", numSquads = Util_DifVar({4, 5, 7, 10})},
+	}
+	enemy_defend_units_b = {
+		{type = "scar_spearman", numSquads = Util_DifVar({5, 7, 10, 14})},
+		{type = "scar_archer", numSquads = Util_DifVar({5, 7, 10, 14})},
+	}
+	siege_patrol_units = {
+		{type = "scar_manatarms", numSquads = Util_DifVar({4, 5, 7, 10})},
+	}
+	siege_patrol_units_cavalry = {
+		{type = "scar_knight", numSquads = Util_DifVar({4, 5, 7, 10})},
+	}
+	enemy_reinforce_units_first = {
+		{ type = "scar_manatarms", numSquads = Util_DifVar({4, 5, 7, 10}) },
+	}
+	enemy_reinforce_units_second = {
+		{ type = "scar_spearman", numSquads = Util_DifVar({4, 5, 7, 10}) },
+		{ type = "scar_springald", numSquads = Util_DifVar({0, 0, 1, 2}) },
+	}
+	enemy_defend_front_1 = {
+		{ type = "scar_crossbowman", numSquads = Util_DifVar({5, 7, 10, 14}) },
+		{ type = "scar_manatarms", numSquads = Util_DifVar({5, 7, 10, 14}) },
+	}
+	enemy_defend_front_2 = {
+		{ type = "scar_archer", numSquads = Util_DifVar({5, 7, 10, 14}) },
+		{ type = "scar_spearman", numSquads = Util_DifVar({5, 7, 10, 14}) },
+	}
+	enemy_defend_fort = {
+		{type = "scar_manatarms", numSquads = Util_DifVar({5, 7, 10, 14})},
+		{type = "scar_archer", numSquads = Util_DifVar({7, 10, 14, 20})},
+		{type = "scar_mangonel", numSquads = Util_DifVar({0, 0, 1, 2})},
+	}
+	
+	wave_units_story = {
+		{
+			{ type = "scar_spearman",    numSquads = 11 }, 
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 10 }, 
+			{ type = "scar_crossbowman", numSquads = 5 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{
+			{ type = "scar_spearman",   numSquads = 6 }, 
+			{ type = "scar_archer",      numSquads = 6 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+		},
+		{
+			{ type = "scar_manatarms",    numSquads = 8 }, 
+			{ type = "scar_archer",      numSquads = 8 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{ 
+			{ type = "scar_manatarms",   numSquads = 6 }, 
+			{ type = "scar_archer",      numSquads = 6 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+		},
+		--reinforcements
+		{
+			{ type = "scar_horseman",    numSquads = 6 }, 
+			{ type = "scar_manatarms",   numSquads = 6 },
+			{ type = "scar_archer",      numSquads = 6 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 6 }, 
+			{ type = "scar_crossbowman", numSquads = 6 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+			{ type = "scar_mangonel",    numSquads = 1 },
+		},
+		{
+			{ type = "scar_spearman",    numSquads = 8 },
+			{ type = "scar_archer",      numSquads = 8 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 8 },
+			{ type = "scar_crossbowman", numSquads = 8 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{ 
+			{ type = "scar_knight",      numSquads = 4 },
+			{ type = "scar_manatarms",   numSquads = 4 }, 
+			{ type = "scar_archer",      numSquads = 4 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+	}
+	
+	wave_units_easy = {
+		{
+			{ type = "scar_spearman",    numSquads = 14 }, 
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 12 }, 
+			{ type = "scar_crossbowman", numSquads = 6 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{
+			{ type = "scar_spearman",   numSquads = 8 }, 
+			{ type = "scar_archer",      numSquads = 8 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+		},
+		{
+			{ type = "scar_manatarms",    numSquads = 10 }, 
+			{ type = "scar_archer",      numSquads = 10 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{ 
+			{ type = "scar_manatarms",   numSquads = 8 }, 
+			{ type = "scar_archer",      numSquads = 8 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+		},
+		--reinforcements
+		{
+			{ type = "scar_horseman",    numSquads = 10 }, 
+			{ type = "scar_manatarms",   numSquads = 10 },
+			{ type = "scar_archer",      numSquads = 10 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 10 }, 
+			{ type = "scar_crossbowman", numSquads = 10 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+			{ type = "scar_mangonel",    numSquads = 1 },
+		},
+		{
+			{ type = "scar_spearman",    numSquads = 14 },
+			{ type = "scar_archer",      numSquads = 14 },
+			{ type = "scar_siege_tower", numSquads = 2 },
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 10 },
+			{ type = "scar_crossbowman", numSquads = 10 },
+			{ type = "scar_ram",         numSquads = 1 },
+			{ type = "scar_springald",   numSquads = 1 },
+		},
+		{ 
+			{ type = "scar_knight",      numSquads = 5 },
+			{ type = "scar_manatarms",   numSquads = 8 }, 
+			{ type = "scar_archer",      numSquads = 8 },
+			{ type = "scar_mangonel",    numSquads = 1 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+	}
+	
+	wave_units_normal = {
+		{
+			{ type = "scar_spearman",    numSquads = 18 },
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 14 },
+			{ type = "scar_crossbowman", numSquads = 8 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{
+			{ type = "scar_spearman",   numSquads = 10 }, 
+			{ type = "scar_archer",      numSquads = 10 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+		},
+		{
+			{ type = "scar_manatarms",    numSquads = 10 }, 
+			{ type = "scar_archer",      numSquads = 10 },
+			{ type = "scar_ram",         numSquads = 2 },
+		},
+		{ 
+			{ type = "scar_manatarms",   numSquads = 10 },
+			{ type = "scar_archer",      numSquads = 10 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+		},
+		--reinforcements
+		{
+			{ type = "scar_horseman",    numSquads = 12 },
+			{ type = "scar_manatarms",   numSquads = 12 },
+			{ type = "scar_archer",      numSquads = 12 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 12 },
+			{ type = "scar_crossbowman", numSquads = 12 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+			{ type = "scar_mangonel",    numSquads = 1 },
+		},
+		{
+			{ type = "scar_spearman",    numSquads = 16 }, 
+			{ type = "scar_archer",      numSquads = 16 },
+			{ type = "scar_siege_tower", numSquads = 2 },
+		},
+		{ 
+			{ type = "scar_manatarms",   numSquads = 12 },
+			{ type = "scar_crossbowman", numSquads = 12 },
+			{ type = "scar_ram",         numSquads = 1 },
+			{ type = "scar_springald",   numSquads = 1 },
+		},
+		{ 
+			{ type = "scar_knight",      numSquads = 7 },
+			{ type = "scar_manatarms",   numSquads = 10 },
+			{ type = "scar_archer",      numSquads = 10 },
+			{ type = "scar_mangonel",    numSquads = 1 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+	}
+	
+	wave_units_hard = {
+		{
+			{ type = "scar_spearman",    numSquads = 24 },
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 16 },
+			{ type = "scar_crossbowman", numSquads = 10 },
+			{ type = "scar_ram",         numSquads = 1 },
+		},
+		{
+			{ type = "scar_spearman",   numSquads = 12 }, 
+			{ type = "scar_archer",      numSquads = 12 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+		},
+		{
+			{ type = "scar_manatarms",    numSquads = 10 }, 
+			{ type = "scar_archer",      numSquads = 10 },
+			{ type = "scar_ram",         numSquads = 3 },
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 12 },
+			{ type = "scar_archer",      numSquads = 12 },
+			{ type = "scar_siege_tower", numSquads = 2 },
+		},
+		--reinforcements
+		{
+			{ type = "scar_horseman",    numSquads = 12 },
+			{ type = "scar_manatarms",   numSquads = 12 },
+			{ type = "scar_archer",      numSquads = 12 },
+			{ type = "scar_ram",         numSquads = 2 },
+		},
+		{
+			{ type = "scar_manatarms",   numSquads = 12 },
+			{ type = "scar_crossbowman", numSquads = 12 },
+			{ type = "scar_siege_tower", numSquads = 1 },
+			{ type = "scar_mangonel",    numSquads = 2 },
+		},
+		{
+			{ type = "scar_spearman",    numSquads = 18 }, 
+			{ type = "scar_archer",      numSquads = 18 },
+			{ type = "scar_siege_tower", numSquads = 3 },
+		},
+		{ 
+			{ type = "scar_manatarms",   numSquads = 14 },
+			{ type = "scar_crossbowman", numSquads = 14 },
+			{ type = "scar_ram",         numSquads = 2 },
+			{ type = "scar_springald",   numSquads = 1 },
+		},
+		{ 
+			{ type = "scar_knight",      numSquads = 7 },
+			{ type = "scar_manatarms",   numSquads = 10 },
+			{ type = "scar_archer",      numSquads = 10 },
+			{ type = "scar_mangonel",    numSquads = 2 },
+			{ type = "scar_ram",         numSquads = 2 },
+		},
+	}
+	wave_units = Util_DifVar({wave_units_story, wave_units_easy, wave_units_normal, wave_units_hard})
+	intro_units_1 = Wallingford_GetWaveUnits()
+	intro_units_2 = Wallingford_GetWaveUnits()
+	intro_units_3 = Wallingford_GetWaveUnits()
+end
+
+function GetRecipe()	
+	local recipe = {
+		
+		audioSettings = { campaignName = "ang", missionName = "rts1153wallingford" },
+		enableShroud = true,
+		campaign = "english",
+		chapter = "chapter3",
+		phase = "mission_wallingford",
+		
+		introNIS = EVENTS.ANG_ECAM1153WALLINGFORD_Intro,
+		
+		locations = {}, 
+		
+		modules = {
+			-- NORTHEAST
+			{
+				type = "Defend",
+				descriptor = "enemy_defend_ne",
+				marker = mkr_enemy_defend_ne,
+				player = player2,
+				useCustomDirection = true,
+				units = enemy_defend_fort,
+			},
+			{
+				type = "Defend",
+				descriptor = "enemy_defend_ne_front_1",
+				marker = mkr_enemy_defend_ne_front_1,
+				player = player2,
+				useCustomDirection = true,
+				units = enemy_defend_front_1,
+			},
+			{
+				type = "Defend",
+				descriptor = "enemy_defend_ne_front_2",
+				marker = mkr_enemy_defend_ne_front_2,
+				player = player2,
+				useCustomDirection = true,
+				units = enemy_defend_front_2,
+			},
+			{
+				type = "Defend",
+				descriptor = "enemy_staging_ne",
+				marker = mkr_enemy_staging_ne,
+				player = player2,
+				useCustomDirection = true,
+			},
+			-- NORTH
+			{
+				type = "Defend",
+				descriptor = "enemy_defend_n",
+				marker = mkr_enemy_defend_n,
+				player = player2,
+				useCustomDirection = true,
+				units = enemy_defend_fort,
+			},
+			{
+				type = "Defend",
+				descriptor = "enemy_defend_n_front_1",
+				marker = mkr_enemy_defend_n_front_1,
+				player = player2,
+				useCustomDirection = true,
+				units = enemy_defend_front_1,
+			},
+			{
+				type = "Defend",
+				descriptor = "enemy_defend_n_front_2",
+				marker = mkr_enemy_defend_n_front_2,
+				player = player2,
+				useCustomDirection = true,
+				units = enemy_defend_front_2,
+			},
+			{
+				type = "Defend",
+				descriptor = "enemy_staging_n",
+				marker = mkr_enemy_staging_n,
+				player = player2,
+				useCustomDirection = true,
+			},
+			-- NORTHWEST
+			{
+				type = "Defend",
+				descriptor = "enemy_defend_nw",
+				marker = mkr_enemy_defend_nw,
+				player = player2,
+				useCustomDirection = true,
+				units = enemy_defend_fort,
+			},
+			
+			{
+				type = "Defend",
+				descriptor = "enemy_defend_nw_front_1",
+				marker = mkr_enemy_defend_nw_front_1,
+				player = player2,
+				useCustomDirection = true,
+				units = enemy_defend_front_1,
+			},
+			{
+				type = "Defend",
+				descriptor = "enemy_defend_nw_front_2",
+				marker = mkr_enemy_defend_nw_front_2,
+				player = player2,
+				useCustomDirection = true,
+				units = enemy_defend_front_2,
+			},
+			{
+				type = "Defend",
+				descriptor = "enemy_staging_nw",
+				marker = mkr_enemy_staging_nw,
+				player = player2,
+				useCustomDirection = true,
+			},
+			-- Other Defenders
+			{
+				type = "RovingArmy",
+				descriptor = "enemy_defend_1",
+				target = mkr_enemy_defend_1,
+				player = player2,
+				spawnLocation = mkr_enemy_defend_1,
+				units = enemy_defend_units_a,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "enemy_defend_2",
+				target = mkr_enemy_defend_2,
+				player = player2,
+				spawnLocation = mkr_enemy_defend_2,
+				units = enemy_defend_units_b,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "enemy_defend_3",
+				target = mkr_enemy_defend_3,
+				player = player2,
+				spawnLocation = mkr_enemy_defend_3,
+				units = enemy_defend_units_a,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "enemy_defend_4",
+				target = mkr_enemy_defend_4,
+				player = player2,
+				spawnLocation = mkr_enemy_defend_4,
+				units = enemy_defend_units_b,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "reinforcements_first_1",
+				target = mkr_reinforcements_first_1,
+				player = player2,
+				spawnLocation = mkr_reinforcements_first_1,
+				units = enemy_reinforce_units_first,
+				useCustomDirection = true,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "reinforcements_first_2",
+				target = mkr_reinforcements_first_2,
+				player = player2,
+				spawnLocation = mkr_reinforcements_first_2,
+				units = enemy_reinforce_units_first,
+				useCustomDirection = true,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "reinforcements_first_3",
+				target = mkr_reinforcements_first_3,
+				player = player2,
+				spawnLocation = mkr_reinforcements_first_3,
+				units = enemy_reinforce_units_first,
+				useCustomDirection = true,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "reinforcements_second_1",
+				target = mkr_reinforcements_second_1,
+				player = player2,
+				spawnLocation = mkr_reinforcements_second_1,
+				units = enemy_reinforce_units_second,
+				useCustomDirection = true,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "reinforcements_second_2",
+				target = mkr_reinforcements_second_2,
+				player = player2,
+				spawnLocation = mkr_reinforcements_second_2,
+				units = enemy_reinforce_units_second,
+				useCustomDirection = true,
+			},
+
+			-- PATROLLERS
+			{
+				type = "RovingArmy",
+				descriptor = "siege_patrol_1",
+				targetingType = ARMY_TARGETING_RANDOM,
+				targets = { mkr_siege_patrol_1_a, mkr_siege_patrol_1_b, mkr_siege_patrol_1_c },
+				player = player2,
+				useCustomDirection = true,
+				idleTime = 10,
+				spawnLocation = mkr_siege_patrol_1_c,
+				units = siege_patrol_units,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "siege_patrol_2",
+				targetingType = ARMY_TARGETING_RANDOM,
+				targets = { mkr_siege_patrol_2_a, mkr_siege_patrol_2_b, mkr_siege_patrol_2_c },
+				player = player2,
+				useCustomDirection = true,
+				idleTime = 12,
+				spawnLocation = mkr_siege_patrol_2_c,
+				units = siege_patrol_units,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "siege_patrol_3",
+				targetingType = ARMY_TARGETING_RANDOM,
+				targets = { mkr_siege_patrol_3_a, mkr_siege_patrol_3_b, mkr_siege_patrol_3_c },
+				player = player2,
+				useCustomDirection = true,
+				idleTime = 10,
+				spawnLocation = mkr_siege_patrol_3_a,
+				units = siege_patrol_units,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "siege_patrol_4",
+				targetingType = ARMY_TARGETING_RANDOM,
+				targets = { mkr_siege_patrol_4_a, mkr_siege_patrol_4_b, mkr_siege_patrol_4_c },
+				player = player2,
+				useCustomDirection = true,
+				idleTime = 12,
+				spawnLocation = mkr_siege_patrol_4_a,
+				units = siege_patrol_units,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "siege_patrol_5",
+				targetingType = ARMY_TARGETING_REVERSE,
+				targets = { mkr_siege_patrol_5_a, mkr_siege_patrol_5_b, mkr_siege_patrol_5_c, mkr_siege_patrol_5_d, mkr_siege_patrol_5_e, 
+					mkr_siege_patrol_5_f, mkr_siege_patrol_5_g, mkr_siege_patrol_5_h, mkr_siege_patrol_5_i, mkr_siege_patrol_5_j },
+				player = player2,
+				useCustomDirection = false,
+				idleTime = 3,
+				spawnLocation = mkr_siege_patrol_5_a,
+				units = siege_patrol_units_cavalry,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "intro_assault_1",
+				player = player2,
+				sgroup = sg_intro_assault_1,
+				targetingType = ARMY_TARGETING_DISCARD,
+				spawnLocation = mkr_enemy_spawn_attackers_first,
+				units = intro_units_1,
+				onDeathDissolve = true,
+				attackMoveEnRoute = attackMoveStyle_attackEverything,
+				attackMoveAtTarget = attackMoveStyle_attackEverything,
+				onlyAtTargetForFinal = true,
+				lane = "ne",
+				is_intro_module = true,
+				cavalryCanBuildRams = false,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "intro_assault_2",
+				player = player2,
+				targetingType = ARMY_TARGETING_DISCARD,
+				units = intro_units_2,
+				spawnLocation = mkr_enemy_spawn_attackers_second,
+				origin = mkr_enemy_base_n,
+				onDeathDissolve = true,
+				attackMoveEnRoute = attackMoveStyle_attackEverything,
+				attackMoveAtTarget = attackMoveStyle_attackEverything,
+				onlyAtTargetForFinal = true,
+				lane = "n",
+				close_event = EVENTS.SECOND_ATTACK,
+				dead_event = EVENTS.SECOND_ATTACK_DEFEATED,
+				is_intro_module = true,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "intro_assault_3",
+				player = player2,
+				targetingType = ARMY_TARGETING_DISCARD,
+				units = intro_units_3,
+				spawnLocation = mkr_enemy_spawn_attackers_third,
+				origin = mkr_enemy_base_nw,
+				onDeathDissolve = true,
+				attackMoveEnRoute = attackMoveStyle_attackEverything,
+				attackMoveAtTarget = attackMoveStyle_attackEverything,
+				onlyAtTargetForFinal = true,
+				lane = "nw",
+				close_event = EVENTS.THIRD_ATTACK,
+				dead_event = EVENTS.THIRD_ATTACK_DEFEATED,
+				is_intro_module = true,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "patrol_1",
+				player = player2,
+				targetingType = ARMY_TARGETING_REVERSE,
+				spawnLocation = mkr_enemy_patrol_1a,
+				targets = { mkr_enemy_patrol_1a, mkr_enemy_patrol_1b, mkr_enemy_patrol_1c },
+				units = {
+					{type = "scar_knight", numSquads = Util_DifVar({5, 7, 10, 14})},
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "patrol_2",
+				player = player2,
+				targetingType = ARMY_TARGETING_REVERSE,
+				spawnLocation = mkr_enemy_patrol_2a,
+				targets = { mkr_enemy_patrol_2a, mkr_enemy_patrol_2b },
+				units = {
+					{type = "scar_spearman", numSquads = Util_DifVar({4, 5, 7, 10})},
+					{type = "scar_archer", numSquads = Util_DifVar({4, 5, 7, 10})},
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "patrol_3",
+				player = player2,
+				targetingType = ARMY_TARGETING_REVERSE,
+				spawnLocation = mkr_enemy_patrol_3a,
+				targets = { mkr_enemy_patrol_3a, mkr_enemy_patrol_3b, mkr_enemy_patrol_3c, mkr_enemy_patrol_3d },
+				units = {
+					{type = "scar_knight", numSquads = Util_DifVar({5, 7, 10, 14})},
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "patrol_4",
+				player = player2,
+				targetingType = ARMY_TARGETING_REVERSE,
+				spawnLocation = mkr_enemy_patrol_4a,
+				targets = { mkr_enemy_patrol_4a, mkr_enemy_patrol_4b, mkr_enemy_patrol_4c, mkr_enemy_patrol_4d },
+				units = {
+					{type = "scar_horseman", numSquads = Util_DifVar({5, 7, 10, 14})},
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "patrol_5",
+				player = player2,
+				targetingType = ARMY_TARGETING_RANDOM,
+				spawnLocation = mkr_enemy_patrol_5a,
+				targets = { mkr_enemy_patrol_5a, mkr_enemy_patrol_5b, mkr_enemy_patrol_5b },
+				fallbacks = {},
+				units = {
+					{type = "scar_manatarms", numSquads = Util_DifVar({4, 5, 7, 10})},
+					{type = "scar_springald", numSquads = Util_DifVar({0, 1, 2, 3})},
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "patrol_6",
+				player = player2,
+				targetingType = ARMY_TARGETING_REVERSE,
+				spawnLocation = mkr_enemy_patrol_6a,
+				targets = { mkr_enemy_patrol_6a, mkr_enemy_patrol_6b, mkr_enemy_patrol_6c },
+				fallbacks = {},
+				units = {
+					{type = "scar_horseman", numSquads = Util_DifVar({5, 7, 10, 14})},
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "patrol_7",
+				player = player2,
+				targetingType = ARMY_TARGETING_REVERSE,
+				spawnLocation = mkr_enemy_patrol_7a,
+				targets = { mkr_enemy_patrol_7a, mkr_enemy_patrol_7b, mkr_enemy_patrol_7c },
+				fallbacks = {},
+				units = {
+					{type = "scar_knight", numSquads = Util_DifVar({4, 5, 7, 10})},
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "final_wave",
+				player = player2,
+				targets = {},
+				fallbacks = {},
+				spawnLocation = mkr_enemy_spawn_final_wave,
+				units = {
+					{type = "scar_manatarms", numSquads = Util_DifVar({9, 12, 17, 24})},
+					{type = "scar_spearman", numSquads = Util_DifVar({9, 12, 17, 24})},
+					{type = "scar_horseman", numSquads = Util_DifVar({9, 12, 17, 24})},
+				},
+			},
+		},
+		
+		
+		objectives = {},	
+		playbill = {},
+		preStart = {
+			actions = {},
+		},
+		onStart = {
+			intelEvent = "",
+			expositionCamera = {},
+			titleCard = {
+				title = 11160640,  -- Wallingford
+				date = 11160641,   -- 1153
+				icon = "icons/campaign/campaign_angevin_the_anarchy", 
+			},
+			actions = {},
+		},
+		onWin = {},
+		onLose = {},
+	}
+	
+	return recipe
+end
+
+
+function SetupWaves()
+	local assault_data_ne = {
+		type = "RovingArmy",
+		descriptor = "enemy_assault_ne",
+		player = player2,
+		targetingType = ARMY_TARGETING_DISCARD,
+		spawnLocation = mkr_enemy_path_ne_1,
+		origin = mkr_enemy_base_ne,
+		targets = wave_targets_a["ne"],
+		onDeathDissolve = true,
+		attackMoveEnRoute = attackMoveStyle_normal,
+		attackMoveAtTarget = attackMoveStyle_attackEverything,
+		onlyAtTargetForFinal = true,
+		onCompleteFunction = Wallingford_OnComplete,
+		lane = "ne",
+	}
+	local assault_data_n = {
+		type = "RovingArmy",
+		descriptor = "enemy_assault_n",
+		player = player2,
+		targetingType = ARMY_TARGETING_DISCARD,
+		spawnLocation = mkr_enemy_path_n_1,
+		origin = mkr_enemy_base_n,
+		targets = wave_targets_a["n"],
+		onDeathDissolve = true,
+		attackMoveEnRoute = attackMoveStyle_normal,
+		attackMoveAtTarget = attackMoveStyle_attackEverything,
+		onlyAtTargetForFinal = true,
+		onCompleteFunction = Wallingford_OnComplete,
+		lane = "n",
+	}
+	local assault_data_nw = {
+		type = "RovingArmy",
+		descriptor = "enemy_assault_nw",
+		player = player2,
+		targetingType = ARMY_TARGETING_DISCARD,
+		spawnLocation = mkr_enemy_path_nw_1,
+		origin = mkr_enemy_base_nw,
+		targets = wave_targets_a["nw"],
+		onDeathDissolve = true,
+		attackMoveEnRoute = attackMoveStyle_normal,
+		attackMoveAtTarget = attackMoveStyle_attackEverything,
+		onlyAtTargetForFinal = true,
+		onCompleteFunction = Wallingford_OnComplete,
+		lane = "nw",
+	}
+	
+	local wave_data_ne = {
+		descriptor = "wave_ne",
+		player = player2,	
+		use_separate_spawns = true,
+		spawn = mkr_enemy_base_ne,
+		units = {},
+		staging_module = "enemy_staging_ne",
+		assault_module_data = assault_data_ne,
+		ignore_build_times = false,
+		auto_launch = true,  
+		auto_launch_delay = 20,
+		on_auto_launch_function = Wallingford_OnLaunch,
+		units = {},
+	}
+	local wave_data_n = {
+		descriptor = "wave_n",
+		player = player2,	
+		use_separate_spawns = true,
+		spawn = mkr_enemy_base_n,
+		units = {},
+		staging_module = "enemy_staging_n",
+		assault_module_data = assault_data_n,
+		ignore_build_times = false,
+		auto_launch = true, 
+		auto_launch_delay = 20,
+		on_auto_launch_function = Wallingford_OnLaunch,
+	}
+	local wave_data_nw = {
+		descriptor = "wave_nw",
+		player = player2,	
+		use_separate_spawns = true,
+		spawn = mkr_enemy_base_nw,
+		units = {},
+		staging_module = "enemy_staging_nw",
+		assault_module_data = assault_data_nw,
+		ignore_build_times = false,
+		auto_launch = true,
+		auto_launch_delay = 20,
+		on_auto_launch_function = Wallingford_OnLaunch,
+	}
+	
+	wave_ne = Wave_New(wave_data_ne)
+	wave_n = Wave_New(wave_data_n)
+	wave_nw = Wave_New(wave_data_nw)
+	
+	Wave_OverrideUnitBuildTime("scar_spearman", 3)
+	Wave_OverrideUnitBuildTime("scar_archer", 3)
+	Wave_OverrideUnitBuildTime("scar_crossbowman", 3)
+	Wave_OverrideUnitBuildTime("scar_manatarms", 3)
+	Wave_OverrideUnitBuildTime("scar_knight", 3)
+	Wave_OverrideUnitBuildTime("scar_horseman", 3)
+	Wave_OverrideUnitBuildTime("scar_springald", 5)
+	Wave_OverrideUnitBuildTime("scar_mangonel", 5)
+	Wave_OverrideUnitBuildTime("scar_siege_tower", 5)
+end

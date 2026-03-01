@@ -1,0 +1,225 @@
+--
+-- Dover - Hold Off Siege
+--
+
+function HoldOffSiege_InitObjectives()
+	
+	OBJ_SiegeStrength = {
+		Title = "$11193218", -- Enemy reinforcement level for next attack
+		Type = ObjectiveType_Information,
+		OnStart = function()
+		end,		
+	}
+	
+	OBJ_HoldOffSiege = {
+		
+		Title = "$11180355", -- Hold off the French Siege
+		Type = ObjectiveType_Battle,
+		Intel_Start = EVENTS.Hubert_PostIntro,
+		PreStart = function()
+			Objective_SetCounter(OBJ_HoldOffSiege, 0, 4)
+		end,
+		OnStart = function()
+			
+			Rule_AddOneShot(Dover_StartInitialAttack, 10)
+			Objective_Start(SOBJ_DefeatFrenchUnits, false, false)	
+			Dover_WallArchersHoldPosition()
+		    
+			Music_UnlockIntensity()
+			Music_LockIntensity(MUSIC_TENSE_RARE, 20)
+		end,
+		OnComplete = function()
+			Mission_Complete()
+			--Objective_Start(OBJ_SiegeWave1, false, true)
+		end,
+	}
+	
+	SOBJ_DefeatFrenchUnits = {
+		
+		killCount = 0,
+		counterGoal = 100,
+		Title = "$11180356", -- Defeat the first French attack
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_HoldOffSiege,
+		OnStart = function()
+			Obj_SetProgressVisible(SOBJ_DefeatFrenchUnits.ID, true)
+			
+			SOBJ_DefeatFrenchUnits.killCount = introKillCount
+			Obj_SetProgress(SOBJ_DefeatFrenchUnits.ID, SOBJ_DefeatFrenchUnits.killCount / SOBJ_DefeatFrenchUnits.counterGoal)
+			
+			Rule_AddGlobalEvent(Dover_OnEntityKilled, GE_EntityKilled)
+		end,
+		IsComplete = function()
+			
+			if SGroup_CountSpawned(sg_fre_attacknorth) == 0 and 
+				SGroup_CountSpawned(sg_fre_attacksouth) == 0 and 
+				SGroup_CountSpawned(sg_fre_introattack) == 0 then
+				return true
+			end
+			
+			if SOBJ_DefeatFrenchUnits.killCount >= SOBJ_DefeatFrenchUnits.counterGoal then
+				return true
+			end
+			return false
+		end,
+		PreComplete = function()
+			
+			Objective_SetCounter(OBJ_HoldOffSiege, 1, 4)
+		
+			Rule_Remove(Dover_ReleaseSiegeUnits_Wave1)
+			Rule_Remove(Dover_ReleaseSiegeUnits_Wave2)
+			Dover_Retreat_Initial()
+		end,
+		OnComplete = function()
+			Obj_SetVisible(SOBJ_DefeatFrenchUnits.ID, false)
+		end
+	}	
+	OBJ_DebugComplete = {
+		Title = LOC("Debug Complete"),
+		Type = OT_Primary,
+		showTitle = false,
+		Cheat = function()
+			Player_GetAll(g_playerFrench)
+			SGroup_DestroyAllSquads(sg_allsquads)
+			
+			Player_GetAll(g_playerNorman)
+			EGroup_Filter(eg_allentities, "palisade_gate", FILTER_KEEP)
+			EGroup_Kill(eg_allentities)
+			
+			Mission_Complete()
+			--Dover_InitOutro()
+			--Util_StartIntel(EVENTS.Victory)
+		end,
+	}
+	
+	Objective_Register(OBJ_SiegeStrength)
+	
+	Objective_Register(OBJ_HoldOffSiege)
+	Objective_Register(SOBJ_DefeatFrenchUnits)
+	Objective_Register(OBJ_DebugComplete)
+	
+end
+
+function Dover_OnEntityKilled(context)
+
+	-- Only count kills/losses due to player activity (not debug or surrender kills) 
+	if scartype(context.killer) ~= ST_NIL then
+	
+		local killer = nil
+		local distance = Util_GetDistance(context.killer, castle_main)
+
+		if scartype(context.killer) == ST_ENTITY and not World_OwnsEntity(context.killer) then
+			killer = Entity_GetPlayerOwner(context.killer)
+		elseif scartype(context.killer) == ST_SQUAD and not World_OwnsSquad(context.killer) then
+			killer = Squad_GetPlayerOwner(context.killer)
+		end
+
+		if scartype(killer) == ST_PLAYER and scartype(context.victimOwner) == ST_PLAYER then
+			
+			if Objective_IsStarted(OBJ_DestroySiegeCamp) then
+				if scartype(context.victim) == ST_ENTITY then
+					
+					local countSpawned = EGroup_CountSpawned(eg_frenchcamp_production)
+					local countKilled = 4 - countSpawned
+					Objective_SetCounter(OBJ_DestroySiegeCamp, countKilled, 4)
+					
+				end
+			end
+			
+			if context.victimOwner.PlayerID == g_playerFrench.PlayerID and distance < 200 then	
+				
+				if Objective_IsStarted(SOBJ_DefeatFrenchUnits) and not Objective_IsComplete(SOBJ_DefeatFrenchUnits) then
+					
+					SOBJ_DefeatFrenchUnits.killCount = SOBJ_DefeatFrenchUnits.killCount + 1
+					Obj_SetProgress(SOBJ_DefeatFrenchUnits.ID, SOBJ_DefeatFrenchUnits.killCount / SOBJ_DefeatFrenchUnits.counterGoal)
+					--print (tostring(SOBJ_DefeatFrenchUnits.killCount) .. " / " .. tostring(SOBJ_DefeatFrenchUnits.counterGoal) )
+					
+				elseif Objective_IsStarted(SOBJ_RepelSiege1) and not Objective_IsComplete(SOBJ_RepelSiege1) then
+					
+					SOBJ_RepelSiege1.killCount = SOBJ_RepelSiege1.killCount + 1
+					Obj_SetProgress(SOBJ_RepelSiege1.ID, SOBJ_RepelSiege1.killCount / SOBJ_RepelSiege1.counterGoal)
+					--print (tostring(SOBJ_RepelSiege1.killCount) .. " / " .. tostring(SOBJ_RepelSiege1.counterGoal) )
+					
+				elseif Objective_IsStarted(SOBJ_RepelSiege2) and not Objective_IsComplete(SOBJ_RepelSiege2) then
+					
+					SOBJ_RepelSiege2.killCount = SOBJ_RepelSiege2.killCount + 1
+					Obj_SetProgress(SOBJ_RepelSiege2.ID, SOBJ_RepelSiege2.killCount / SOBJ_RepelSiege2.counterGoal)
+					--print (tostring(SOBJ_RepelSiege2.killCount) .. " / " .. tostring(SOBJ_RepelSiege2.counterGoal) )
+					
+				elseif Objective_IsStarted(SOBJ_RepelFrenchSiege) and not Objective_IsComplete(SOBJ_RepelFrenchSiege) then
+					
+					SOBJ_RepelFrenchSiege.killCount = SOBJ_RepelFrenchSiege.killCount + 1
+					Obj_SetProgress(SOBJ_RepelFrenchSiege.ID, SOBJ_RepelFrenchSiege.killCount / SOBJ_RepelFrenchSiege.counterGoal)
+					--print (tostring(SOBJ_RepelFrenchSiege.killCount) .. " / " .. tostring(SOBJ_RepelFrenchSiege.counterGoal) )
+					
+				end
+			end
+		end
+	end
+end
+
+-- first attack waves
+function Dover_StartInitialAttack()
+	
+	RovingArmy_AddSGroup(MissionOMatic_FindModule("AttackNorth"), sg_fre_introattackarchers)
+	RovingArmy_SetTargets(MissionOMatic_FindModule("AttackNorth"), north_targets)
+	RovingArmy_SetTargets(MissionOMatic_FindModule("AttackSouth"), south_targets)
+	
+	RovingArmy_SetTargets(MissionOMatic_FindModule("RangedSiegeNorth"), north_targets)
+	RovingArmy_SetTargets(MissionOMatic_FindModule("RangedSiegeSouth"), south_targets)
+	
+	Rule_AddOneShot(Dover_ReleaseSiegeUnits_Wave1, 20)
+	
+end
+
+function Dover_ReleaseSiegeUnits_Wave1()
+	
+	RovingArmy_AddSGroup(MissionOMatic_FindModule("AttackNorth"), sg_fre_introdefendnorth1)	
+	Dover_SpawnWave(t_init_waves, 1, "AttackSouth", french_main_rally, french_attack_south)
+	Rule_AddOneShot(Dover_ReleaseSiegeUnits_Wave2, 20)
+end	
+
+function Dover_ReleaseSiegeUnits_Wave2()
+	
+	RovingArmy_AddSGroup(MissionOMatic_FindModule("AttackNorth"), sg_fre_introdefendnorth2)	
+	Dover_SpawnWave(t_init_waves, 2, "AttackSouth", french_main_rally, french_attack_south)
+end	
+
+function Dover_Retreat_Initial()
+	local defendNorth = MissionOMatic_FindModule("DefendNorth")
+	local defendSouth = MissionOMatic_FindModule("DefendSouth")
+	TransferModuleIntoModule("AttackNorth", "DefendNorth")
+	TransferModuleIntoModule("AttackSouth", "DefendSouth")
+	Cmd_Move(defendNorth.sgroup, french_attack_north)
+	Cmd_Move(defendSouth.sgroup, french_attack_south)
+	
+	-- AUDIO CHEERS
+	Sound_PlayOnSquad(WALLA_CAMP_FEAR_SMALL, sg_fre_defendnorth)
+	Sound_PlayOnSquad(WALLA_CAMP_FEAR_SMALL, sg_fre_defendsouth)
+	
+	Rule_AddOneShot(Dover_Retreat_Final, 5)
+	--Rule_AddInterval(Dover_CheckFrenchRetreated, 1)
+end
+
+function Dover_Retreat_Final()
+	
+	Player_GetAllSquadsNearMarker(g_playerNorman, sg_temp, castle_main, 100)
+	Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+	SiegeWaves_StartWave1()
+end
+
+--function Dover_CheckFrenchRetreated()
+	--SGroup_Clear(sg_temp)
+	--Player_GetAllSquadsNearMarker(player2, sg_temp, castle_main, 70)
+	
+	--if SGroup_Count(sg_temp) <= 2 then
+	
+		----Objective_Complete(OBJ_HoldOffSiege, false, true)
+		--Player_GetAllSquadsNearMarker(g_playerNorman, sg_temp, castle_main, 100)
+		--Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+		--SiegeWaves_StartWave1()
+		
+		--Rule_RemoveMe()
+	--end
+--end
+		

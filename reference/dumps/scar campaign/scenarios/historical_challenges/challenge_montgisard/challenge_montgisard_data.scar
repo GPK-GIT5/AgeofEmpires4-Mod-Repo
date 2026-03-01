@@ -1,0 +1,622 @@
+-- Developed by Forgotten Empires
+
+-- Mission data and variables
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("MissionOMatic/MissionOMatic_utility.scar")
+
+function Montgisard_InitData()
+	
+	-- Bools
+	deleteHint = false				-- Controls when the dynamic hints need to be deleted
+	objectiveStarted = false		-- Used to trigger for showing the Sacred Sites dynamic hints
+	heroRespawning = false			-- Check if the hero is being respawned
+	conquerorActivated = false		-- Trigger when Conqueror mode is activated
+	conquerorExpired = false		-- Becomes true if Conqueror mode is not triggered, used to deactivate the relative objective
+	triggerActivated = false		-- Used to trigger the second part of the objective that activate Conqueror Mode when completed
+	pushbackVoiceline = false		-- Used to trigger a voice line at around 20 minutes
+	attackVoiceline = false			-- Used to trigger a voice line just for the first enemy attack
+	reinforceVoiceline = false		-- Used to trigger a voice line just for the first enemy reinforce
+	lastCapturedSite = nil			-- Keeps track of the last site captured by the player
+	playerReinforce_1 = false		-- Keeps track of the bonus reinforcements players get
+	playerReinforce_2 = false
+	playerReinforce_3 = false
+	playerReinforce_4 = false
+	
+	-- Medals time
+	goldTime = 17
+	silverTime = 25
+	bronzeTime = 60
+	conquerorCountdown = 25
+	goldMedalFailed = false
+	silverMedalFailed = false
+	bronzeMedalFailed = false
+	timeSinceStart = 0
+	
+	-- Used to trigger bonus units when capturing sites
+	SS1 = false
+	SS2 = false
+	SS3 = false
+	SS4 = false
+	
+	firstCapture = {
+		SS1,
+		SS2,
+		SS3,
+		SS4,
+	}
+	
+	-- Used to track and destroy attack group rams when all other units are killed
+	sg_attackGroup_1 = SGroup_CreateIfNotFound("sg_attackGroup_1")
+	sg_attackGroup_2 = SGroup_CreateIfNotFound("sg_attackGroup_2")
+	sg_attackGroup_3 = SGroup_CreateIfNotFound("sg_attackGroup_3")
+	sg_attackGroup_4 = SGroup_CreateIfNotFound("sg_attackGroup_4")
+	sg_attackGroup_5 = SGroup_CreateIfNotFound("sg_attackGroup_5")
+	
+	attackSGroups = {
+		sg_attackGroup_1,
+		sg_attackGroup_2,
+		sg_attackGroup_3,
+		sg_attackGroup_4,
+		sg_attackGroup_5
+	}
+	
+	-- Rule IDs to spawn Sacret Sites bonuses
+	sacredSite1 = nil
+	sacredSite2 = nil
+	sacredSite3 = nil
+	sacredSite4 = nil
+	
+	bonusRules = {
+		sacredSite1,
+		sacredSite2,
+		sacredSite3,
+		sacredSite4,
+	}
+	
+	ramRule = nil				-- ID for the rule that checks if rams are the only remaining units
+	
+	darkBonus = false
+	feudalBonus = false
+	castleBonus = false
+	
+	-- Point of Interests completion
+	ramsComplete = false
+	miningcampComplete = false
+	miningcampComplete_2 = false
+	miningcampComplete_3 = false
+	miningcampComplete_4 = false
+	prisonComplete = false
+	mangonelsComplete = false
+	monasteryComplete = false
+	fortressComplete = false
+	extraSiteComplete = false
+	campDestroyed = false
+	tower1Destroyed = false
+	tower2Destroyed = false
+	completedPOI = 0
+	totalPOI = 6 --8
+	rewardPOI = false
+	TrackAlliedAttack = false
+	timeSinceIdle = 0
+	
+	-- Ints
+	playerSitesHeld = 0
+	enemySitesHeld = 4
+	attackStrenghtCM = 24
+	attackStrenghtPostBronze = 20
+	
+	extraSite_numSquads = {
+		front = 6,
+		side1 = 6,
+		side2 = 6,
+		back = 6,
+	}
+	extraSite_totalUnits = extraSite_numSquads.front+extraSite_numSquads.side1+extraSite_numSquads.side2+extraSite_numSquads.back+3
+	
+	campClearedPercent = 0 -- Total number of units + buildings destroyed in the extra site (conqueror mode)
+	unitsKilled = 0 -- For conqueror mode activation
+	totalKilled = 5 -- For conqueror mode activation
+	unitsKilled_extraSite = 0 -- For conqueror mode activation
+	buildingsDestroyed_extraSite = 0 -- For conqueror mode activation
+	
+	previousSitesHeld = 0
+	previousSitesHeld_enemy = 4
+	totalReinforces = 0
+	totalAttacks = 0
+	
+	-- Floats
+	startTime = 0
+	lastVictoryUpdateTime = 0
+	WALK_SPEED = 2.5
+	timeSinceTrebAttack = 0			-- Keeps track if the enemy has already launched an attack to target player's trebuchets
+	
+	-- Sacred Sites owner
+	site1Owner = Util_GetPlayerOwner(eg_SacredSite_1)
+	site2Owner = Util_GetPlayerOwner(eg_SacredSite_2)
+	site3Owner = Util_GetPlayerOwner(eg_SacredSite_3)
+	site4Owner = Util_GetPlayerOwner(eg_SacredSite_4)
+	
+	previousSite1Owner = Util_GetPlayerOwner(eg_SacredSite_1)
+	previousSite2Owner = Util_GetPlayerOwner(eg_SacredSite_2)
+	previousSite3Owner = Util_GetPlayerOwner(eg_SacredSite_3)
+	previousSite4Owner = Util_GetPlayerOwner(eg_SacredSite_4)
+	
+	-- SGroups player
+	sg_villagers_berries = SGroup_CreateIfNotFound("sg_villagers_berries")
+	sg_villagers_wood = SGroup_CreateIfNotFound("sg_villagers_wood")
+	sg_villagers_gold = SGroup_CreateIfNotFound("sg_villagers_gold")
+	sg_villagers_farm = SGroup_CreateIfNotFound("sg_villagers_farm")
+	
+	sg_test = SGroup_CreateIfNotFound("sg_test")
+	
+	sg_scout = SGroup_CreateIfNotFound("sg_scout")
+	sg_startingarmy1 = SGroup_CreateIfNotFound("sg_startingarmy1")
+	sg_startingarmy2 = SGroup_CreateIfNotFound("sg_startingarmy2")
+	sg_grandmaster = SGroup_CreateIfNotFound("sg_grandmaster")
+	sg_king = SGroup_CreateIfNotFound("sg_king")
+	
+	-- SGroups enemy
+	sg_fortress1_starting = SGroup_CreateIfNotFound("sg_fortress1_starting")
+	sg_fortress2_starting = SGroup_CreateIfNotFound("sg_fortress2_starting")
+	sg_fortress3_starting = SGroup_CreateIfNotFound("sg_fortress3_starting")
+	sg_fortress4_starting = SGroup_CreateIfNotFound("sg_fortress4_starting")
+	
+	sg_SS1_leader = SGroup_CreateIfNotFound("sg_SS1_leader")
+	sg_SS2_leader = SGroup_CreateIfNotFound("sg_SS2_leader")
+	sg_SS3_leader = SGroup_CreateIfNotFound("sg_SS3_leader")
+	sg_SS4_leader = SGroup_CreateIfNotFound("sg_SS4_leader")
+	
+	sg_extraSite_units = SGroup_CreateIfNotFound("sg_extraSite_units")
+	
+	-- EGroups
+	eg_SacredSite_1 = EGroup_CreateIfNotFound("eg_SacredSite_1")
+	eg_SacredSite_2 = EGroup_CreateIfNotFound("eg_SacredSite_2")
+	eg_SacredSite_3 = EGroup_CreateIfNotFound("eg_SacredSite_3")
+	eg_SacredSite_4 = EGroup_CreateIfNotFound("eg_SacredSite_4")
+	eg_extraSite = EGroup_CreateIfNotFound("eg_extraSite")
+	eg_extraTower1 = EGroup_CreateIfNotFound("eg_extraTower1")
+	eg_extraTower2 = EGroup_CreateIfNotFound("eg_extraTower2")
+	eg_extraCamp = EGroup_CreateIfNotFound("eg_extraCamp")
+	eg_treasure = EGroup_CreateIfNotFound("eg_treasure")
+	eg_starting_tc = EGroup_CreateIfNotFound("eg_starting_tc")
+	eg_player_outpost_1 = EGroup_CreateIfNotFound("eg_player_outpost_1")
+	eg_player_outpost_2 = EGroup_CreateIfNotFound("eg_player_outpost_2")
+	
+	-- Buildings for fortress 1
+	eg_archery_1 = EGroup_CreateIfNotFound("eg_archery_1")
+	eg_barracks_1 = EGroup_CreateIfNotFound("eg_barracks_1")
+	eg_stable_1 = EGroup_CreateIfNotFound("eg_stable_1")
+	eg_siege_1 = EGroup_CreateIfNotFound("eg_siege_1")
+	
+	-- Buildings for fortress 2
+	eg_archery_2 = EGroup_CreateIfNotFound("eg_archery_2")
+	eg_barracks_2 = EGroup_CreateIfNotFound("eg_barracks_2")
+	eg_stable_2 = EGroup_CreateIfNotFound("eg_stable_2")
+	eg_siege_2 = EGroup_CreateIfNotFound("eg_siege_2")
+	
+	-- Buildings for fortress 3
+	eg_archery_3 = EGroup_CreateIfNotFound("eg_archery_3")
+	eg_barracks_3 = EGroup_CreateIfNotFound("eg_barracks_3")
+	eg_stable_3 = EGroup_CreateIfNotFound("eg_stable_3")
+	eg_siege_3 = EGroup_CreateIfNotFound("eg_siege_3")
+	
+	-- Buildings for fortress 4
+	eg_archery_4 = EGroup_CreateIfNotFound("eg_archery_4")
+	eg_barracks_4 = EGroup_CreateIfNotFound("eg_barracks_4")
+	eg_stable_4 = EGroup_CreateIfNotFound("eg_stable_4")
+	eg_siege_4 = EGroup_CreateIfNotFound("eg_siege_4")
+	
+	-- Enemy Outposts EGroups
+	eg_springaldTowers = EGroup_CreateIfNotFound("eg_springaldTowers")
+	eg_cannonTowers = EGroup_CreateIfNotFound("eg_cannonTowers")
+	eg_arrowslitsTowers = EGroup_CreateIfNotFound("eg_arrowslitsTowers")
+	eg_reinforcedTowers = EGroup_CreateIfNotFound("eg_reinforcedTowers")
+	eg_garrisonedTowers = EGroup_CreateIfNotFound("eg_garrisonedTowers")
+	eg_garrisonedTowers_full = EGroup_CreateIfNotFound("eg_garrisonedTowers_full")
+	
+	-- Tent camps for Sacred Sites bonuses
+	eg_SSbonus1 = EGroup_CreateIfNotFound("eg_SSbonus1")
+	eg_SSbonus2 = EGroup_CreateIfNotFound("eg_SSbonus2")
+	eg_SSbonus3 = EGroup_CreateIfNotFound("eg_SSbonus3")
+	eg_SSbonus4 = EGroup_CreateIfNotFound("eg_SSbonus4")
+	
+	-- Tents only egroups
+	eg_SS1tent = EGroup_CreateIfNotFound("eg_SS1tent")
+	eg_SS2tent = EGroup_CreateIfNotFound("eg_SS2tent")
+	eg_SS3tent = EGroup_CreateIfNotFound("eg_SS3tent")
+	eg_SS4tent = EGroup_CreateIfNotFound("eg_SS4tent")
+	
+	tentGroups = {
+		eg_SSbonus1,
+		eg_SSbonus2,
+		eg_SSbonus3,
+		eg_SSbonus4,
+	}
+	tentOnly = {
+		eg_SS1tent,
+		eg_SS2tent,
+		eg_SS3tent,
+		eg_SS4tent,
+	}
+	
+	-- EGroup buildings table
+	site_1 = {
+		EGroup_GetPosition(eg_archery_1),
+		EGroup_GetPosition(eg_barracks_1),
+		EGroup_GetPosition(eg_stable_1),
+		EGroup_GetPosition(eg_siege_1)
+	}
+	site_2 = {
+		EGroup_GetPosition(eg_archery_2),
+		EGroup_GetPosition(eg_barracks_2),
+		EGroup_GetPosition(eg_stable_2)
+	}
+	site_3 = {
+		EGroup_GetPosition(eg_archery_3),
+		EGroup_GetPosition(eg_barracks_3),
+		EGroup_GetPosition(eg_stable_3),
+		EGroup_GetPosition(eg_siege_3)
+	}
+	site_4 = {
+		EGroup_GetPosition(eg_archery_4),
+		EGroup_GetPosition(eg_barracks_4),
+		EGroup_GetPosition(eg_stable_4)
+	}
+	
+	-- Hintpoint table for attack warning ui
+	hintpoint_warning1 = nil
+	hintpoint_warning2 = nil
+	hintpoint_warning3 = nil
+	hintpoint_warning4 = nil
+	
+	warningHintpoints = {
+		hintpoint_warning1,
+		hintpoint_warning2,
+		hintpoint_warning3,
+		hintpoint_warning4
+	}
+	
+	warningMarkers ={
+		mkr_warningDistance_1,
+		mkr_warningDistance_2,
+		mkr_warningDistance_3,
+		mkr_warningDistance_4
+	}
+	
+	outer1 = nil
+	outer2 = nil
+	outer3 = nil
+	outer4 = nil
+	
+	reticulesOuter = {
+		outer1,
+		outer2,
+		outer3,
+		outer4
+	}
+	
+	inner1 = nil
+	inner2 = nil
+	inner3 = nil
+	inner4 = nil
+	
+	reticulesInner = {
+		inner1,
+		inner2,
+		inner3,
+		inner4
+	}
+	
+	reticuleCurrentSize = 0
+	
+	--Dynamic hints
+	goal_sacred_sites = "campaign_historical_challenges_montgisard_sacredsites"
+
+end
+
+function Montgisard_SetupLocations()
+	
+	sacredSite_position1 = Util_GetPosition(mkr_sacredsite_1)
+	sacredSite_position2 = Util_GetPosition(mkr_sacredsite_2)
+	sacredSite_position3 = Util_GetPosition(mkr_sacredsite_3)
+	sacredSite_position4 = Util_GetPosition(mkr_sacredsite_4)
+	
+	--For Conqueror mode
+	conquerorPos = Util_GetPosition(mkr_sacredsite_1)
+	
+end
+
+function Montgisard_InitPatrolPaths()
+	
+	-- Sgroups patrols
+	sg_enemyPatrol_01 = SGroup_CreateIfNotFound("sg_enemyPatrol_01")
+	sg_enemyPatrol_02 = SGroup_CreateIfNotFound("sg_enemyPatrol_02")
+	sg_enemyPatrol_03 = SGroup_CreateIfNotFound("sg_enemyPatrol_03")
+	sg_enemyPatrol_04 = SGroup_CreateIfNotFound("sg_enemyPatrol_04")
+	sg_enemyPatrol_05 = SGroup_CreateIfNotFound("sg_enemyPatrol_05")
+	sg_enemyPatrol_06 = SGroup_CreateIfNotFound("sg_enemyPatrol_06")
+	sg_enemyPatrol_07 = SGroup_CreateIfNotFound("sg_enemyPatrol_07")
+	
+	-- Patrol paths
+	path01 = {
+		mkr_patrol01_01,
+		mkr_patrol01_02,
+		mkr_patrol01_03,
+		mkr_patrol01_04,
+	}
+	
+	path01_reverse = {
+		mkr_patrol01_04,
+		mkr_patrol01_03,
+		mkr_patrol01_02,
+		mkr_patrol01_01,
+	}
+	
+	path02 = {
+		mkr_patrol02_01,
+		mkr_patrol02_02,
+		mkr_patrol02_03,
+		mkr_patrol02_04,
+	}
+	
+	path02_reverse = {
+		mkr_patrol02_04,
+		mkr_patrol02_03,
+		mkr_patrol02_02,
+		mkr_patrol02_01,
+	}
+	
+	path03 = {
+		mkr_patrol03_01,
+		mkr_patrol03_02,
+		mkr_patrol03_03,
+	}
+	
+	path03_reverse = {
+		mkr_patrol03_03,
+		mkr_patrol03_02,
+		mkr_patrol03_01,
+	}
+	
+	path04 = {
+		mkr_patrol04_01,
+		mkr_patrol04_02,
+		mkr_patrol04_03,
+		mkr_patrol04_04,
+	}
+	
+	path04_reverse = {
+		mkr_patrol04_04,
+		mkr_patrol04_03,
+		mkr_patrol04_02,
+		mkr_patrol04_01,
+	}
+	
+	path05 = {
+		mkr_patrol05_01,
+		mkr_patrol05_02,
+		mkr_patrol05_03,
+		mkr_patrol05_04,
+		mkr_patrol05_05,
+		mkr_patrol05_06,
+		mkr_patrol05_07,
+	}
+	
+	path05_reverse = {
+		mkr_patrol05_07,
+		mkr_patrol05_06,
+		mkr_patrol05_05,
+		mkr_patrol05_04,
+		mkr_patrol05_03,
+		mkr_patrol05_02,
+		mkr_patrol05_01,
+	}
+	
+	path06 = {
+		mkr_patrol06_01,
+		mkr_patrol06_02,
+		mkr_patrol06_03,
+	}
+	
+	path06_reverse = {
+		mkr_patrol06_03,
+		mkr_patrol06_02,
+		mkr_patrol06_01,
+	}
+	
+	path07 = {
+		mkr_patrol07_01,
+		mkr_patrol07_02,
+		mkr_patrol07_03,
+		mkr_patrol07_04,
+	}
+	
+	path07_reverse = {
+		mkr_patrol07_04,
+		mkr_patrol07_03,
+		mkr_patrol07_02,
+		mkr_patrol07_01,
+	}
+
+end
+
+function Montgisard_AttackGroupsData()
+	
+	fortress1_attackArmy = {
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01, pos = mkr_SS1_spawn1, num = 6},
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, pos = mkr_SS1_spawn2, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, pos = mkr_SS1_spawn3, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01, pos = mkr_SS1_spawn5, num = 6},
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, pos = mkr_SS1_spawn4, num = 8},
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01, pos = mkr_SS1_spawn6, num = 4},
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01, pos = mkr_SS1_spawn7, num = 4},
+	}
+	
+end
+
+function Montgisard_SetupDiplomacy()
+	
+	Player_SetRelationship(localPlayer, enemyPlayer, R_ENEMY)
+	Player_SetRelationship(localPlayer, enemyPlayer_2, R_ENEMY)
+	Player_SetRelationship(localPlayer, neutralPlayer, R_ALLY)
+	Player_SetRelationship(localPlayer, mapPlayer, R_ENEMY)
+	Player_SetRelationship(localPlayer, allyPlayer, R_ALLY)
+	
+	Player_SetRelationship(enemyPlayer, localPlayer, R_ENEMY)
+	Player_SetRelationship(enemyPlayer, enemyPlayer_2, R_ALLY)
+	Player_SetRelationship(enemyPlayer, neutralPlayer, R_ALLY)
+	Player_SetRelationship(enemyPlayer, mapPlayer, R_ALLY)
+	Player_SetRelationship(enemyPlayer, allyPlayer, R_ENEMY)
+	
+	Player_SetRelationship(enemyPlayer_2, neutralPlayer, R_NEUTRAL) -- ENEMY
+	Player_SetRelationship(enemyPlayer_2, mapPlayer, R_ALLY)
+	Player_SetRelationship(enemyPlayer_2, allyPlayer, R_ENEMY)
+	
+	Player_SetRelationship(neutralPlayer, mapPlayer, R_ALLY)
+	Player_SetRelationship(neutralPlayer, allyPlayer, R_ALLY)
+	Player_SetRelationship(neutralPlayer, enemyPlayer, R_NEUTRAL)
+	
+	World_EnableSharedLineOfSight(localPlayer, neutralPlayer, false)
+	World_EnableSharedLineOfSight(allyPlayer, neutralPlayer, false)
+	
+end
+
+-- Get current sites for the provided player. Take Player ID and counter boolean (optional, default value is FALSE).
+--
+-- If "counter" arg is FALSE, function returns a table of sites in that player possession.
+-- If "counter" arg is TRUE, function returns the number of sites in that player possession.
+function Montgisard_GetCurrentSites(player, counter)
+
+	local sacredSites = {
+		mkr_sacredsite_1,
+		mkr_sacredsite_2,
+		mkr_sacredsite_3,
+		mkr_sacredsite_4,
+	}
+	local neutralSites = {
+		mkr_sacredsite_1,
+		mkr_sacredsite_2,
+		mkr_sacredsite_3,
+		mkr_sacredsite_4,
+	}
+	
+	local sitesCounter = 4
+	
+	if counter == nil then
+		counter = false
+	end
+	
+	if scartype(player) == ST_PLAYER then
+		if Util_GetPlayerOwner(eg_SacredSite_1) ~= player then
+			Table_RemoveFirstItem(sacredSites, mkr_sacredsite_1)
+			sitesCounter = sitesCounter - 1
+		end
+		
+		if Util_GetPlayerOwner(eg_SacredSite_2) ~= player then
+			Table_RemoveFirstItem(sacredSites, mkr_sacredsite_2)
+			sitesCounter = sitesCounter - 1
+		end
+		
+		if Util_GetPlayerOwner(eg_SacredSite_3) ~= player then
+			Table_RemoveFirstItem(sacredSites, mkr_sacredsite_3)
+			sitesCounter = sitesCounter - 1
+		end
+		
+		if Util_GetPlayerOwner(eg_SacredSite_4) ~= player then
+			Table_RemoveFirstItem(sacredSites, mkr_sacredsite_4)
+			sitesCounter = sitesCounter - 1
+		end	
+	elseif player == "neutral" then
+		-- Neutral sites
+		if Util_GetPlayerOwner(eg_SacredSite_1) ~= nil then
+			Table_RemoveFirstItem(neutralSites, mkr_sacredsite_1)
+			sitesCounter = sitesCounter - 1
+		end
+		if Util_GetPlayerOwner(eg_SacredSite_2) ~= nil then
+			Table_RemoveFirstItem(neutralSites, mkr_sacredsite_2)
+			sitesCounter = sitesCounter - 1
+		end
+		if Util_GetPlayerOwner(eg_SacredSite_3) ~= nil then
+			Table_RemoveFirstItem(neutralSites, mkr_sacredsite_3)
+			sitesCounter = sitesCounter - 1
+		end
+		if Util_GetPlayerOwner(eg_SacredSite_4) ~= nil then
+			Table_RemoveFirstItem(neutralSites, mkr_sacredsite_4)
+			sitesCounter = sitesCounter - 1
+		end
+	end
+	
+	if counter == true then
+		return sitesCounter
+	elseif scartype(player) == ST_PLAYER then
+		return sacredSites
+	elseif player == "neutral" then
+		return neutralSites
+	end
+	
+end
+
+function Montgisard_SetupModifiers()
+	
+	-- Add modifiers to each unit type to enable them to capture sacred sites
+	
+	local sbps = {
+		SBP.TEMPLAR.UNIT_ARCHER_2_TEM,
+		SBP.TEMPLAR.UNIT_ARCHER_3_TEM,
+		SBP.TEMPLAR.UNIT_ARCHER_4_TEM,
+		SBP.TEMPLAR.UNIT_CROSSBOWMAN_3_TEM,
+		SBP.TEMPLAR.UNIT_CROSSBOWMAN_4_TEM,
+		SBP.TEMPLAR.UNIT_SPEARMAN_1_TEM,
+		SBP.TEMPLAR.UNIT_SPEARMAN_2_TEM,
+		SBP.TEMPLAR.UNIT_SPEARMAN_3_TEM,
+		SBP.TEMPLAR.UNIT_SPEARMAN_4_TEM,
+		SBP.TEMPLAR.UNIT_MANATARMS_3_TEM,
+		SBP.TEMPLAR.UNIT_MANATARMS_4_TEM,
+		SBP.TEMPLAR.UNIT_SCOUT_1_TEM,
+		SBP.TEMPLAR.UNIT_VILLAGER_1_TEM,
+		SBP.TEMPLAR.UNIT_HORSEMAN_2_TEM,
+		SBP.TEMPLAR.UNIT_HORSEMAN_3_TEM,
+		SBP.TEMPLAR.UNIT_HORSEMAN_4_TEM,
+		SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_3_TEM,
+		SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_4_TEM,
+		SBP.TEMPLAR.UNIT_MANGONEL_3_TEM,
+		SBP.TEMPLAR.UNIT_RAM_3_TEM,
+		SBP.TEMPLAR.UNIT_SIEGE_TOWER_3_TEM,
+		SBP.TEMPLAR.UNIT_SPRINGALD_3_TEM,
+		SBP.TEMPLAR.UNIT_TREBUCHET_4_CW_TEM,
+		SBP.TEMPLAR.UNIT_WORKSHOP_RAM_3_TEM,
+		SBP.TEMPLAR.UNIT_CHEVALIER_CONFRERE_2_TEM,
+		SBP.TEMPLAR.UNIT_CHEVALIER_CONFRERE_3_TEM,
+		SBP.TEMPLAR.UNIT_CHEVALIER_CONFRERE_4_TEM,
+		SBP.TEMPLAR.UNIT_CONDOTTIERO_4_TEM,
+		SBP.TEMPLAR.UNIT_GENITOUR_3_TEM,
+		SBP.TEMPLAR.UNIT_GENITOUR_4_TEM,
+		SBP.TEMPLAR.UNIT_GENOESE_CROSSBOW_3_TEM,
+		SBP.TEMPLAR.UNIT_GENOESE_CROSSBOW_4_TEM,
+		SBP.TEMPLAR.UNIT_HEAVY_SPEARMAN_3_TEM,
+		SBP.TEMPLAR.UNIT_HEAVY_SPEARMAN_4_TEM,
+		SBP.TEMPLAR.UNIT_KNIGHT_HOSPITALLER_2_TEM,
+		SBP.TEMPLAR.UNIT_KNIGHT_HOSPITALLER_3_TEM,
+		SBP.TEMPLAR.UNIT_KNIGHT_HOSPITALLER_4_TEM,
+		SBP.TEMPLAR.UNIT_SERJEANT_2_TEM,
+		SBP.TEMPLAR.UNIT_SERJEANT_3_TEM,
+		SBP.TEMPLAR.UNIT_SERJEANT_4_TEM,
+		SBP.TEMPLAR.UNIT_SZLATCHA_KNIGHT_4_TEM,
+		SBP.TEMPLAR.UNIT_TEUTONIC_KNIGHT_4_TEM,
+		SBP.TEMPLAR.UNIT_ODO_CMP_TEM,
+		SBP.TEMPLAR.UNIT_BALDWIN_CMP_TEM,
+	}
+	
+	local capture_buff = nil
+	
+	for i = 1, #sbps do
+		capture_buff = Modifier_Create(MAT_SquadType, "capture_rate_squad_modifier", MUT_Addition, true, 10, sbps[i])
+		Modifier_ApplyToPlayer(capture_buff, localPlayer, 0)
+	end
+	for i = 1, #sbps do
+		capture_buff = Modifier_Create(MAT_SquadType, "capture_revert_rate_squad_modifier", MUT_Addition, true, 10, sbps[i])
+		Modifier_ApplyToPlayer(capture_buff, localPlayer, 0)
+	end
+	
+end

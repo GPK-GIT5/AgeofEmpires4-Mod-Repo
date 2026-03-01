@@ -1,0 +1,105 @@
+-----------------------------------------------------------------------
+--
+-- No Victory Condition Mode for Cardinal, used in Campaign
+--
+-- (c) Relic Entertainment 2017
+--
+-----------------------------------------------------------------------
+
+import("cardinal.scar")
+
+-- UI support
+import("gameplay/event_cues.scar")
+import("gameplay/currentageui.scar")
+import("gameplay/chi/current_dynasty_ui.scar")
+import("gameplay/templar/templar_age_up_ui.scar")
+import("gameplay/cheat.scar") 
+
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+
+_match = {
+	options = {},
+	is_cheat_enabled = false,
+	is_nomad_start = false,
+	
+}
+
+-----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+Core_RegisterModule("None")
+
+
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+
+-- Callback invoked by OnGameSetup() in core.scar
+function None_OnGameSetup()
+	
+	Setup_GetWinConditionOptions(_match.options)
+	_match.is_nomad_start = Setup_GetIsNomadStart()
+	
+	--Shared vision
+	if not _match.options.section_starting_conditions
+		or not _match.options.section_starting_conditions.option_vision
+		or _match.options.section_starting_conditions.option_vision.enum_value == _match.options.section_starting_conditions.option_vision.enum_items.option_vision_default then
+		Core_UnregisterModule("Vision")	
+	end
+	
+	_match.is_cheat_enabled = Misc_IsCommandLineOptionSet("cheat")
+	_match.revealMap = Misc_IsCommandLineOptionSet("no_fow")
+end
+
+
+function None_OnInit()
+
+	UI_AllTerritoryHide()
+
+	local winConditionOptions = {}
+	Setup_GetWinConditionOptions(winConditionOptions)
+	
+	local initialUnitsNone = false
+	if (winConditionOptions.section_starting_conditions and winConditionOptions.section_starting_conditions.option_initial_units) then
+		initialUnitsNone = (winConditionOptions.section_starting_conditions.option_initial_units.enum_value == winConditionOptions.section_starting_conditions.option_initial_units.enum_items.initial_units_none)
+	end	
+	
+	if initialUnitsNone or Misc_IsCommandLineOptionSet("no_units") then
+	
+		-- Remove initial units and buildings
+		for i, player in pairs(PLAYERS) do				
+			SGroup_DestroyAllSquads(Player_GetSquads(player.id))
+			EGroup_DestroyAllEntities(Player_GetEntities(player.id))
+			print(string.format("None_OnInit() - Removed all squads & entities owned by Player %d", player.index))
+		end			
+		
+	end
+		
+	-- Optionally remove gaia animals
+	if Misc_IsCommandLineOptionSet("no_gaia") then    
+        local egroup = EGroup_CreateUnique()
+        World_GetAllNeutralEntities(egroup)
+        EGroup_Filter(egroup, "animal", FILTER_KEEP)
+        EGroup_DestroyAllEntities(egroup)    		
+		EGroup_Destroy(egroup)
+		print(string.format("None_OnInit() - All neutral animal entities removed"))
+    end
+	
+end
+
+
+function None_Start()
+	-- Fog of war options
+	if (_match.options.section_starting_conditions and _match.options.section_starting_conditions.option_fow) then
+		if (_match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_explore) then 
+			FOW_ExploreAll()
+		elseif (_match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_reveal) then
+			FOW_ForceRevealAllUnblockedAreas()
+		end
+	end
+
+end

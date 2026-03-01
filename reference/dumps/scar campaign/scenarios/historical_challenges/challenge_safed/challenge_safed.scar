@@ -1,0 +1,1614 @@
+-- Developed by Forgotten Empires
+
+import("MissionOMatic/MissionOMatic.scar")
+import("challenge_safed_data.scar")
+import("challenge_safed_treb_attack.scar")
+import("challenge_safed_ram_attack.scar")
+import("challenge_safed_villagerlife.scar")
+import("challenge_safed_objectives.scar")
+import("training.scar")
+import("challenge_safed_training.scar")
+
+-- This is called very early on in the mission's initialization. So early, in fact, that there 
+-- is very little you can do. You can, however, use it to do simple stuff like gathering player IDs
+function Mission_SetupPlayers()
+	
+	PlayerColour_Enable() --turn on custom colour configuration for this session
+	
+	--You as the player, Knights Templar (blue)
+	player1 = Missionomatic_InitPlayer(1, { name = "$11265367", currentAge = AGE_CASTLE, maxAge = AGE_CASTLE })
+	
+	--Enemy AI, Mamluck Sultanate (red)
+	player2 = Missionomatic_InitPlayer(2, { name = "$11253300", currentAge = AGE_CASTLE, maxAge = AGE_CASTLE })
+	
+	--Ally fortress repair, Knights Templar (yellow)
+	player3 = Missionomatic_InitPlayer(3, { name = "$11172342", currentAge = AGE_CASTLE, maxAge = AGE_CASTLE })
+	World_EnableSharedLineOfSight(player1, player3, false)
+	AI_Enable(player3, false) --disable AI for ally, player3 only repairs the fortress
+	
+	--Neutral acting as world. This is to prevent enemy player from attacking neutral buildings (yellow)
+	player4 = Missionomatic_InitPlayer(4, { name = "$11172025", currentAge = AGE_CASTLE, maxAge = AGE_CASTLE })
+	World_EnableSharedLineOfSight(player1, player4, false)
+	AI_Enable(player4, false) --disable AI for ally, player4 acts as a neutral e.g. town villager life
+	
+	--Fortress building is only assigned to this team. This is so event "player attack" alerts do not trigger
+	player5 = Missionomatic_InitPlayer(5, { name = "$11265367", currentAge = AGE_CASTLE, maxAge = AGE_CASTLE })
+	
+	Player_SetRelationship(player1, player2, R_ENEMY)
+	Player_SetRelationship(player1, player3, R_ALLY)
+	Player_SetRelationship(player1, player4, R_ALLY)
+	Player_SetRelationship(player1, player5, R_ALLY)
+	Player_SetRelationship(player2, player1, R_ENEMY)
+	Player_SetRelationship(player2, player3, R_ENEMY)
+	Player_SetRelationship(player2, player4, R_ALLY)
+	Player_SetRelationship(player2, player5, R_ENEMY)
+	Player_SetRelationship(player3, player1, R_ALLY)
+	Player_SetRelationship(player3, player2, R_ENEMY)
+	Player_SetRelationship(player3, player4, R_ALLY)
+	Player_SetRelationship(player3, player5, R_ALLY)
+	Player_SetRelationship(player4, player1, R_ALLY)
+	Player_SetRelationship(player4, player2, R_ALLY)
+	Player_SetRelationship(player4, player3, R_ALLY)
+	Player_SetRelationship(player4, player5, R_ALLY)
+	
+	Game_SetPlayerUISlotColour(player1, COLOR_BLUE)
+	Game_SetPlayerUISlotColour(player2, COLOR_RED)
+	Game_SetPlayerUISlotColour(player3, COLOR_YELLOW)
+	Game_SetPlayerUISlotColour(player4, COLOR_YELLOW)
+	Game_SetPlayerUISlotColour(player5, COLOR_BLUE)
+	
+end
+
+
+
+
+-- This is a good place to initialize all of your global variables. For example, creating any 
+-- SGroups or EGroups you want to use in the mission, any tables of data, etc
+function Mission_SetupVariables()
+	
+	SAFED_PLAYER_VILLAGERS_TOTAL_COUNT = 7 --the number of starting villagers player1 is given
+	
+	--EGroups, SGroups
+	Safed_Init_ESG_Data()
+	
+	--main gameplay loop settings
+	SAFED_FORTRESS_DAMAGE_RECEIVED_SCALE = 0.145 --multiplier on fortress damage received
+	SAFED_FORTRESS_DAMAGE_RECEIVED_SCALE_ENDING = 0.5 --after mining stone 4, lower damage by percentage amount to accommodate travel time to final siege camp
+	SAFED_FORTRESS_DAMAGE_EMPATHY_THRESHOLD = 0.35 --fortress health percent when the empathy damage kicks in
+	SAFED_FORTRESS_DAMAGE_RECEIVED_SCALE_EMPATHY = 0.5 --empathy damage, lower damage by this percentage if fortress health is in bronze medal range
+	SAFED_FORTRESS_ENTITY = EGroup_GetSpawnedEntityAt(eg_fortress, 1)
+	SAFED_FORTRESS_HEALTH = Entity_GetHealthPercentage(SAFED_FORTRESS_ENTITY)
+	SAFED_FORTRESS_HEALTH_INT = math.floor(SAFED_FORTRESS_HEALTH * 100 + 0.5) --rounded to whole number and used with loc
+	SAFED_FORTRESS_NOTIFY_THRESHOLDS = {
+		{ value = 0.5, notified = false, sfx = { MUS_STINGER_WARNING, SFX_VICTORY_TIMER_FIRST }, cooldown_end = 0 },
+		{ value = 0.3, notified = false, sfx = { MUS_STING_NEGATIVE, SFX_VICTORY_TIMER_SECOND }, cooldown_end = 0 },
+		{ value = 0.1, notified = false, sfx = { MUS_STINGER_ALERT, SFX_VICTORY_TIMER_FINAL }, cooldown_end = 0 },
+	}
+	SAFED_FORTRESS_NOTIFICATION_COOLDOWN = 120 --cooldown time of percentage health notifier
+	SAFED_STONE_CARRY_CAPACTIY_SCALE = 2 --multiplier on villager carry capacity
+	SAFED_STONE_HARVEST_RATE = 6 --villager harvest rate on stone
+	SAFED_STONE_REPAIR_COST = 7 --stone repair cost per second to repair the fortress
+	SAFED_STONE_NODE_AMOUNT = 900 --total stone amount each node contains
+	SAFED_STONE_NODE_COUNT = EGroup_Count(eg_stone_deposit) --number of stone nodes
+	SAFED_STONE_DEPLETED_COUNT = 0 --number of stone nodes that are depleted
+	SAFED_STONE_NOTIFY_INTERVAL = 7 * 60 --timed interval to show no stone event cue notification since last depleted
+	SAFED_STONE_NOTIFY_LAST_TRIGGER_TIME = 0 --tracking the time the last no stone event cue notification appeared
+	SAFED_REPAIR_RATE = 0.3 --player3 repair rate on the fortress
+	SAFED_MILITARY_PRODUCTION_RATE = 20 --multiplier on player1 military production rate
+	
+	SAFED_TREB_SPAWNS = Marker_GetSequence("mkr_enemy_trebuchet", "")
+	SAFED_TREB_MOVE_TOS = Marker_GetSequence("mkr_enemy_trebuchet_move", "")
+	SAFED_TREB_SPAWN_INTERVAL = 8 --spawn interval for each treb
+	SAFED_TREB_ATTACK_INTERVAL = 2.75 --attack speed interval
+	
+	SAFED_RAM_MODIFY_DAMAGE_WALL = 0.175 --multiplier for ram damage against stone wall
+	SAFED_RAM_MODIFY_DAMAGE_FORTRESS = 2.5 --multiplier for ram damage against the fortress
+		
+	SAFED_MINE_TOWN_MARKERS = Marker_GetSequence("mkr_mine_town", "") --table of mine town markers found
+	SAFED_MINE_TOWN_CURRENT_WAVE = nil --the current enemy wave at mine town
+	SAFED_LAST_STONE_MINE_UI_OBJECTIVE = nil --the last stone mine UI objective that appears
+	
+	--resouces gifted on each successful depletion of a stone mine
+	SAFED_GIFTED_RESOURCES1 = { food = 850, wood = 200, gold = 150 }
+	SAFED_GIFTED_RESOURCES2 = { food = 1300, wood = 880, gold = 530 }
+	SAFED_GIFTED_RESOURCES3 = { food = 1320, wood = 410, gold = 550 }
+	SAFED_GIFTED_RESOURCES4 = { food = 3220, wood = 1880, gold = 2000 }
+	
+	--resource chest pickup amounts
+	SAFED_RESOURCE_PICKUP_WOOD_AMOUNT = 50
+	SAFED_RESOURCE_PICKUP_FOOD_AMOUNT = 100
+	SAFED_RESOURCE_PICKUP_GOLD_AMOUNT = 100
+	SAFED_RESOURCE_PICKUP_STONE_AMOUNT = 100
+	
+	SAFED_CM_ACTIVATED = false --conqueror mode
+	SAFED_CM_ACTIVATE_TIME = math.ceil(5 * 60) --5:00 time in seconds game checks if conqueror mode will activate
+	SAFED_CM_VILLAGER_COUNT = 7 --number of alive villagers or greater required at activation time
+	SAFED_CM_TREB_SPAWNS = Marker_GetSequence("mkr_cm_enemy_trebuchet", "") --conqueror mode additional trebs
+	SAFED_CM_TREB_MOVE_TOS = Marker_GetSequence("mkr_cm_enemy_trebuchet_move", "")
+	
+	SAFED_UNITS_COST = Safed_Unit_Cost_Init() --player1 table of units utilized in mission and the cost of each one
+	
+end
+
+
+
+
+--Returns the recipe for this mission
+function GetRecipe()
+	
+	local recipe = {
+		introNIS = EVENTS.Camera_Intro,
+		audioSettings = {
+			campaignName = "tem",
+			missionName = "rts_safed",
+		},	
+		locations = {
+			{
+				descriptor = "safed",
+				marker = mkr_safed,
+				player = player3
+			},
+			{
+				descriptor = "mine_town1",
+				marker = SAFED_MINE_TOWN_MARKERS[1],
+				player = player3
+			},
+			{
+				descriptor = "mine_town2",
+				marker = SAFED_MINE_TOWN_MARKERS[2],
+				player = player3
+			},
+			{
+				descriptor = "mine_town3",
+				marker = SAFED_MINE_TOWN_MARKERS[3],
+				player = player3
+			},
+			{
+				descriptor = "mine_town4",
+				marker = SAFED_MINE_TOWN_MARKERS[4],
+				player = player3
+			},
+			{
+				descriptor = "siege_camp",
+				marker = mkr_siege_camp,
+				player = player2,
+				sgroup_defenders = { 
+					sg_enemy_siege_camp,
+					sg_enemy_trebuchets
+				},
+			},
+		},
+		onWin = {},
+		onLose = {},
+	}
+	
+	return recipe
+
+end
+
+
+
+
+-- Setup any restrictions (i.e. locking out units, etc) in here
+function Mission_SetRestrictions()	
+	
+	--bp to remove
+	local templar_ebp = {
+		"BUILDING_ARCHERY_RANGE_TEM",
+		"BUILDING_BARRACKS_TEM",
+		"BUILDING_DEFENSE_FORTRESS_TEM",
+		"BUILDING_DEFENSE_OUTPOST_TEM",
+		"BUILDING_DOCK_TEM",
+		"BUILDING_HOUSE_CONTROL_TEM",
+		"BUILDING_LUMBERCAMP_TEM",
+		"BUILDING_MARKET_TEM",
+		"BUILDING_MILL_TEM",
+		"BUILDING_MINING_CAMP_TEM",
+		"BUILDING_MONASTERY_TEM",
+		"BUILDING_RESOURCE_FARM_TEM",
+		"BUILDING_SIEGE_WORKSHOP_TEM",
+		"BUILDING_STABLE_TEM",
+		"BUILDING_TECH_BLACKSMITH_TEM",
+		"BUILDING_TECH_UNIVERSITY_TEM",
+		"BUILDING_TOWN_CENTER_CAPITAL_TEM",
+		"BUILDING_TOWN_CENTER_TEM",
+		"BUILDING_WONDER_TEM",
+		"BUILDING_DEFENSE_PALISADE_BASTION_TEM",
+		"BUILDING_DEFENSE_PALISADE_GATE_TEM",
+		"BUILDING_DEFENSE_PALISADE_WALL_TEM",
+		"BUILDING_DEFENSE_STONE_TOWER_TEM",
+		"BUILDING_DEFENSE_STONE_WALL_BASTION_TEM",
+		"BUILDING_DEFENSE_STONE_WALL_GATE_TEM",
+		"BUILDING_DEFENSE_STONE_WALL_TEM",
+	}
+	
+	for key, value in ipairs(templar_ebp) do
+		Player_SetEntityProductionAvailability(player1, EBP.TEMPLAR[value], ITEM_REMOVED)
+	end
+	
+	local templar_sbp = {
+		"UNIT_SPRINGALD_3_TEM",
+		"UNIT_RAM_3_TEM",
+		"UNIT_WORKSHOP_RAM_3_TEM",
+		"UNIT_SIEGE_TOWER_3_TEM",
+		"UNIT_CROSSBOWMAN_4_TEM",
+		"UNIT_SCOUT_1_TEM",
+		"UNIT_HORSEMAN_4_TEM",
+		"UNIT_KNIGHT_TEMPLAR_4_TEM",
+		"UNIT_MANATARMS_4_TEM",
+		"UNIT_SPEARMAN_4_TEM",
+		"UNIT_TREBUCHET_4_CW_TEM",
+	}
+	
+	for key, value in ipairs(templar_sbp) do
+		Player_SetSquadProductionAvailability(player1, SBP.TEMPLAR[value], ITEM_REMOVED)
+	end
+	
+	--upgrades to remove
+	local templar_upg = {
+		"UPGRADE_COUNTERWEIGHT_DEFENSES",
+		"UPGRADE_DESERT_CITADELS",
+		"UPGRADE_FANATICISM",
+		"UPGRADE_IRON_CLAMPS_TEM",
+		"UPGRADE_KEEP_TREBUCHET",
+		"UPGRADE_LETTRE_DE_CHANGE_TEM",
+		"UPGRADE_RULE_OF_TEMPLARS_TEM",
+		"UPGRADE_SAFE_PASSAGE_TEM",
+		"UPGRADE_TREASURE_TOWER_TEM",
+		"UPGRADE_UNIT_HEAVY_SPEARMAN_4_TEM",
+		"UPGRADE_UNIT_KNIGHT_TEMPLAR_4_TEM",
+		"UPGRADE_UNIT_HOSPITALLER_3_TEM",
+		"UPGRADE_UNIT_HOSPITALLER_4_TEM",
+		"UPGRADE_UNIT_GENITOUR_4_TEM",
+		"UPGRADE_UNIT_GENOESE_CROSSBOW_4_TEM",
+	}
+	
+	for key, value in ipairs(templar_upg) do
+		Player_SetUpgradeAvailability(player1, UPG.TEMPLAR[value], ITEM_REMOVED)
+	end
+	
+	local common_upg = {
+		"UPGRADE_SIEGE_ADJUSTABLE_CROSSBAR",
+		"UPGRADE_SIEGE_CHEMISTRY",
+		"UPGRADE_SIEGE_CORNED_GUNPOWDER",
+		"UPGRADE_SIEGE_COUNTERWEIGHT",
+		"UPGRADE_SIEGE_ENGINEERS",
+		"UPGRADE_SIEGE_MATHEMATICS",
+		"UPGRADE_SIEGE_ROLLER_TRIGGER",
+		"UPGRADE_SIEGE_STEEL_BORE",
+		"UPGRADE_SIEGE_WEAPON_SPEED",
+		"UPGRADE_SIEGE_WORKS",
+		"UPGRADE_TECH_MILITARY_ACADEMY",
+		"UPGRADE_SIEGE_ENGINEERS",
+		"UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1",
+		"UPGRADE_SCOUT_FORESTER",
+		"UPGRADE_SCOUT_LOS_INCREASE",
+		"UPGRADE_ECON_RESOURCE_FOOD_HARVEST_RATE_2",
+		"UPGRADE_ECON_RESOURCE_WOOD_FELL_RATE_1",
+		"UPGRADE_ECON_RESOURCE_WOOD_HARVEST_RATE_2",
+		"UPGRADE_ECON_RESOURCE_STONE_HARVEST_RATE_2",
+		"UPGRADE_ECON_RESOURCE_GOLD_HARVEST_RATE_2",
+		"UPGRADE_ECON_VILLAGER_HUNTING_GEAR_1",
+		"UPGRADE_UNIT_SPEARMAN_4",
+		"UPGRADE_UNIT_HORSEMAN_4",
+		"UPGRADE_UNIT_MANATARMS_4",
+		"UPGRADE_UNIT_ARCHER_4",
+		"UPGRADE_UNIT_CROSSBOWMAN_4",
+		"UPGRADE_UNIT_KNIGHT_4",
+		"UPGRADE_RAM_SCALING",
+		"UPGRADE_RANGED_ARMOR_III",
+		"UPGRADE_RANGED_DAMAGE_III",
+		"UPGRADE_MELEE_ARMOR_III",
+		"UPGRADE_MELEE_DAMAGE_III",
+		"UPGRADE_KEEP_SPRINGALD",
+		"UPGRADE_TECH_UNIVERSITY_MURDER_HOLES_4"
+	}
+	
+	for key, value in ipairs(common_upg) do
+		Player_SetUpgradeAvailability(player1, UPG.COMMON[value], ITEM_REMOVED)
+	end
+	
+	
+	--Templar specific upgrades
+	--=========================================================================
+	Player_CompleteUpgrade(player1, UPG.TEMPLAR.UPGRADE_AGE_DARK_COM_1_TEM)
+	--Player_CompleteUpgrade(player1, UPG.TEMPLAR.UPGRADE_AGE_DARK_COM_2_TEM)
+	--Player_CompleteUpgrade(player1, UPG.TEMPLAR.UPGRADE_AGE_DARK_COM_3_TEM)
+	
+	--Player_CompleteUpgrade(player1, UPG.TEMPLAR.UPGRADE_AGE_FEUDAL_COM_1_TEM)
+	--Player_CompleteUpgrade(player1, UPG.TEMPLAR.UPGRADE_AGE_FEUDAL_COM_2_TEM)
+	Player_CompleteUpgrade(player1, UPG.TEMPLAR.UPGRADE_AGE_FEUDAL_COM_3_TEM)
+	
+	--Player_CompleteUpgrade(player1, UPG.TEMPLAR.UPGRADE_AGE_CASTLE_COM_1_TEM)
+	--Player_CompleteUpgrade(player1, UPG.TEMPLAR.UPGRADE_AGE_CASTLE_COM_2_TEM)
+	--Player_CompleteUpgrade(player1, UPG.TEMPLAR.UPGRADE_AGE_CASTLE_COM_3_TEM)
+	--=========================================================================
+	
+	--Player1 common upgrades	
+	local player_upgrades = {
+		"UPGRADE_MELEE_ARMOR_I",
+		"UPGRADE_MELEE_DAMAGE_I",
+		"UPGRADE_RANGED_ARMOR_I",
+		"UPGRADE_RANGED_DAMAGE_I",
+		"UPGRADE_UNIT_SPEARMAN_2",
+		"UPGRADE_UNIT_SPEARMAN_3",
+		"UPGRADE_UNIT_ARCHER_3",
+		"UPGRADE_UNIT_HORSEMAN_3"
+	}
+	
+	for key, value in ipairs(player_upgrades) do
+		Player_CompleteUpgrade(player1, UPG.COMMON[value])
+	end
+	
+	--AI upgrades
+	local ai_upgrades = {
+		"UPGRADE_UNIT_SPEARMAN_2",
+		"UPGRADE_UNIT_SPEARMAN_3",
+		"UPGRADE_UNIT_ARCHER_3",
+		"UPGRADE_UNIT_HORSEMAN_3",
+		"UPGRADE_UNIT_HORSEARCHER_3",
+		"UPGRADE_RAM_SCALING",
+		"UPGRADE_SIEGE_ENGINEERS"
+	}
+	
+	for key, value in ipairs(ai_upgrades) do
+		Player_CompleteUpgrade(player2, UPG.COMMON[value])
+	end
+	
+end
+
+
+
+
+-- This is called right before the swoopy-cam starts, as the game fades up from black. After the recipe is processed.
+-- We do things such as spawning starting units or applying upgrades
+function Mission_Preset()
+	
+	--music intensity rules
+	Rule_AddInterval(Safed_Music, 1)
+	
+	-- =================================
+	
+	--Init Objectives
+	
+	-- =================================
+	
+	Safed_Init_Objectives()
+	
+	-- =================================
+	
+	--Init Player and Enemy Encounters
+	
+	-- =================================
+	
+	--starting units
+	Safed_Init_Player_Starting_Units()
+	
+	--enemy siege camp units
+	Safed_Init_Enemy_Siege_Camp_Units()
+	
+	--enemy ram units
+	Safed_Init_Enemy_Rams()
+	
+	--enemy encounters between villages
+	Safed_Init_Enemy_Encounters()
+	
+	--villager life
+	Safed_Init_Villager_Life()
+	
+	--save villagers
+	Safed_Init_Save_Villagers()
+	
+	--pickups
+	Safed_Init_Pickups()
+	
+	-- =================================
+	
+	--Apply Modifiers
+	
+	-- =================================
+	
+	--modify Safed city entities here
+	Safed_Modify_Safed_City()
+	
+	--modify fortress entity, fire tick damage, damage received, disable arrows, etc.
+	Safed_Modify_Fortress()
+	
+	--modify player2 enemy tents
+	Safed_Modify_Enemy_Tents()
+	
+	--modify stone node amounts
+	Safed_Modify_Stone_Node_Amounts()
+	
+	--modify carry capacity and misc rates
+	Safed_Modify_Villager_Rates()
+	
+	--modify stone gather rates and efficiency
+	Rule_AddInterval(Safed_Modify_Stone_Gather_Rates, 0.5)
+	
+	--modify production rate of military buildings
+	Modify_ProductionRate(eg_military_structure, SAFED_MILITARY_PRODUCTION_RATE)
+	
+end
+
+
+
+
+-- This is run after the swoopy-cam finishes, but before the HUD is revealed and the player is granted control
+function Mission_PreStart()
+	
+	--removes pop cap
+	for index, player in pairs(PLAYERS) do
+		local current_player = World_GetPlayerAt(index)
+		UI_SetPlayerDataContext(current_player, { hide_condensed_objectives_override = true, PopulationCapOn = false })
+		Player_SetMaxPopulation(current_player, CT_Personnel, 999)
+    end
+	
+	--force subtitles
+	UI_SetForceShowSubtitles(true)
+	
+	--player1 no resources
+	Player_SetResource(player1, RT_Food, 0)
+	Player_SetResource(player1, RT_Wood, 0)
+	Player_SetResource(player1, RT_Gold, 0)
+	Player_SetResource(player1, RT_Stone, 112)
+	
+	--player3 unlimited wood/stone, we don't see this as player1
+	--player3 as an ally repairs the fortress only when player1 has stone resource
+	Player_SetResource(player3, RT_Wood, 999999999)
+	Player_SetResource(player3, RT_Stone, 999999999)
+	
+	--reveal a small patch of fow area outside of the city walls between the trebuchets and the wall for consistency
+	FOW_RevealMarker(mkr_safed_fow_reveal, -1)
+	
+end
+
+
+
+
+-- This is run after the HUD is revealed and the player is granted control. It's a good place to
+-- start the first objectives
+function Mission_Start()
+	
+	--fortress health update, every tick
+	Rule_Add(Safed_Fortress_Health_Update)
+	
+	--fortress player3 ungarrisoning and repairing
+	Rule_AddInterval(Safed_Fortress_Repair, 1)
+	
+	--monitors player's stone inventory
+	Rule_Add(Safed_Monitor_Player_Stone)
+	
+	--monitors when stone mine is depleted and increments objective
+	Rule_AddInterval(Safed_Monitor_Stone_Resource_Depleted, 1)
+	
+	--when villagers arrive at each mining town
+	for i, marker in ipairs(SAFED_MINE_TOWN_MARKERS) do
+		Rule_AddInterval(Safed_Arrival_At_Town, 1, {
+			townIndex = i,
+			sgroup = sg_player_vills,
+			markerID = marker,
+			fowRadius = 35
+		})
+	end
+	
+	--conqueror mode check
+	Rule_AddInterval(Safed_CM_Activate, 1)
+	
+	--start primary objective
+	Objective_Start(OBJ_SaveFortressPrimary, false, true)
+	
+end
+
+
+
+
+--starting vills (sg_player_vills) modify carry capacity and rates
+function Safed_Modify_Villager_Rates()
+	
+	if (SGroup_CountSpawned(sg_player_vills) < 1) then
+		return false
+	end
+	
+	--player vill bp
+	local vill_bp = Squad_GetBlueprint(SGroup_GetSquadAt(sg_player_vills, 1))
+	
+	--player1 vill repair rate, set very low so player doesn't leave vills behind to repair fortress and game the system
+	mod_player_vill_repair_rate = Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "repair_rate_modifier", MUT_Multiplication, false, 0.01, vill_bp), player1, 0)
+	
+	--modify player3 (ally) repair rate
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "repair_rate_modifier", MUT_Multiplication, false, SAFED_REPAIR_RATE, vill_bp), player3, 0)
+	
+	--modify player1 stone harvest rates
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_stone", MUT_Multiplication, false, SAFED_STONE_HARVEST_RATE, vill_bp), player1, 0.0)
+	
+	--modify player1 wood harvest rates
+	--this is because templar can harvest wood without a lumbercamp and would be able to simply repair the fortress without ever leaving their base
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_wood", MUT_Multiplication, false, 0.005, vill_bp), player1, 0.0)
+		
+	--player4, illusion that villager life is mining stone
+	local sg_neutral_vills = Player_GetSquadsFromType(player4, "villager")
+	local vill_neutral_bp = Squad_GetBlueprint(SGroup_GetSquadAt(sg_neutral_vills, 1))
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_stone", MUT_Multiplication, false, 0, vill_neutral_bp), player4, 0.0)
+	
+	--villager stone carry capacity
+	Modify_StoneCarryCapacity(sg_player_vills, SAFED_STONE_CARRY_CAPACTIY_SCALE)
+	
+end
+
+
+
+
+--modifies remaining and total stone amounts
+function Safed_Modify_Stone_Node_Amounts()
+	
+	if (EGroup_Count(eg_stone_deposit) < 1) then
+		return
+	end
+	
+	local _setStoneAmount = function(gid, idx, eid)
+		Entity_SetRemainingResourceDepositAmount(eid, SAFED_STONE_NODE_AMOUNT)
+		local mod_contained_amount_stone = Modifier_Create(MAT_Entity, "resource_contained_amount_stone", MUT_Set, true, SAFED_STONE_NODE_AMOUNT, "")
+		Modifier_ApplyToEntity(mod_contained_amount_stone, eid, 0)
+	end
+	
+	EGroup_ForEach(eg_stone_deposit, _setStoneAmount)
+	
+end
+
+
+
+
+--modifies fortress fire tick damage, damage received, and disable hardpoints (firing weapons)
+function Safed_Modify_Fortress()
+	
+	if (EGroup_Count(eg_fortress) < 1) then
+		return
+	end
+		
+	local entity_hardpoint_count = Entity_GetWeaponHardpointCount(SAFED_FORTRESS_ENTITY)
+		
+	--disables all hardpoints (weapon firing)
+	for i = 1, entity_hardpoint_count do
+		local num_str = i
+		if (i < 10) then
+			num_str = "0"..i
+		end
+		--disable hardpoint
+		Modify_WeaponEnabled(eg_fortress, "hardpoint_"..num_str, false)
+	end
+	
+	--remove ability to scuttle the fortress
+	if (Entity_HasAbility(SAFED_FORTRESS_ENTITY, BP_GetAbilityBlueprint("core_building_scuttle"))) then
+		Entity_RemoveAbility(SAFED_FORTRESS_ENTITY, BP_GetAbilityBlueprint("core_building_scuttle"))
+	end
+	
+	--remove ability to return to work
+	if (Entity_HasAbility(SAFED_FORTRESS_ENTITY, BP_GetAbilityBlueprint("hold_return_to_work"))) then
+		Entity_RemoveAbility(SAFED_FORTRESS_ENTITY, BP_GetAbilityBlueprint("hold_return_to_work"))
+	end
+	
+	--fortress remove tick fire damage
+	Entity_SetBurnExtEnabled(eg_fortress, false)
+	
+	--fortress scale damage received
+	mod_fortress_received_dmg = Modify_ReceivedDamage(eg_fortress, SAFED_FORTRESS_DAMAGE_RECEIVED_SCALE, false)
+	
+	--fortress abilities removed
+	Player_SetAbilityAvailability(player5, BP_GetAbilityBlueprint("keep_influence_tem_buff_info"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player5, BP_GetAbilityBlueprint("aura_desert_citadels"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player5, BP_GetAbilityBlueprint("treasure_tower_tem"), ITEM_REMOVED)
+	
+	--enables the empathy damage for bronze medal players
+	Rule_AddInterval(Safed_Fortress_Empathy_Damage, 0.5)
+	
+end
+
+
+
+
+--if fortress health is in bronze medal range, decrease the damage taken
+--only applies if conqueror mode is not enabled
+--only applies before the final siege objective (last objective already enables a dmg decrease)
+function Safed_Fortress_Empathy_Damage()
+	
+	--fortress no longer exists, early objectives complete, CM activated remove rule
+	if (EGroup_Count(eg_fortress) < 1 or
+		Objective_IsStarted(SOBJ_StopBombardment) == true or
+		SAFED_CM_ACTIVATED == true) then
+		
+		if (mod_fortress_received_dmg_empathy ~= nil) then
+			Modifier_Remove(mod_fortress_received_dmg_empathy)
+		end
+		
+		Rule_RemoveMe()
+		return
+	end	
+	
+	--fortress damage decreased if health is in bronze medal range
+	if (SAFED_FORTRESS_HEALTH <= SAFED_FORTRESS_DAMAGE_EMPATHY_THRESHOLD and Objective_IsComplete(OBJ_SaveFortressPrimary) ~= true) then
+		if (safed_fortress_damage_empathy_enabled == nil) then
+			mod_fortress_received_dmg_empathy = Modify_ReceivedDamage(eg_fortress, SAFED_FORTRESS_DAMAGE_RECEIVED_SCALE_EMPATHY, false)
+			safed_fortress_damage_empathy_enabled = true
+		end
+	end
+	
+	--health is greater than set threshold, remove the empathy damage
+	if (SAFED_FORTRESS_HEALTH > SAFED_FORTRESS_DAMAGE_EMPATHY_THRESHOLD and safed_fortress_damage_empathy_enabled ~= nil) then
+		if (#mod_fortress_received_dmg_empathy > 0) then
+			Modifier_Remove(mod_fortress_received_dmg_empathy)
+		end
+		
+		safed_fortress_damage_empathy_enabled = nil
+	end
+	
+end
+
+
+
+
+--updates fortress health global vars every tick
+function Safed_Fortress_Health_Update()
+	
+	--fortress no longer exists, remove rule
+	if (EGroup_Count(eg_fortress) < 1) then
+		Rule_RemoveMe()
+		return
+	end
+
+	--update fortress health globals
+	if (SAFED_FORTRESS_ENTITY ~= nil) then
+		SAFED_FORTRESS_HEALTH = Entity_GetHealthPercentage(SAFED_FORTRESS_ENTITY)
+		SAFED_FORTRESS_HEALTH_INT = math.floor(SAFED_FORTRESS_HEALTH * 100 + 0.5)
+	end
+
+	--current game time (used for cooldown tracking)
+	local current_time = World_GetGameTime()
+
+	--notify player via event cue with thresholds
+	for key, threshold in ipairs(SAFED_FORTRESS_NOTIFY_THRESHOLDS) do
+
+		--check if health drops below the threshold, notification hasn't been sent, and cooldown has passed
+		if (SAFED_FORTRESS_HEALTH <= threshold.value and not threshold.notified and current_time >= threshold.cooldown_end) then
+			
+			--mark threshold as notified
+			threshold.notified = true
+			
+			--set cooldown end time
+			threshold.cooldown_end = current_time + SAFED_FORTRESS_NOTIFICATION_COOLDOWN
+
+			--show event cue notification
+			local fortress_health_event_options = {
+				lifetime = 10,
+				message = Loc_FormatText("$11268429", SAFED_FORTRESS_HEALTH_INT), --Fortress Health: %1%%%
+				sfx = threshold.sfx[1],
+				icon = "icons/event_queue_high_priority",
+				template = "high_priority"
+			}
+
+			Safed_Show_Event_Cue(fortress_health_event_options)
+			Sound_Play2D(threshold.sfx[2])
+		
+		end
+
+		--if health rises above the threshold, reset the notification (but don't reset the cooldown)
+		if (SAFED_FORTRESS_HEALTH > threshold.value) then
+			threshold.notified = false
+		end
+
+	end
+	
+end
+
+
+
+
+--ungarrisons allied villagers to repair fortress if player has stone and fortress damage exists
+function Safed_Fortress_Repair()
+	
+	--fortress no longer exists, remove rule
+	if (EGroup_Count(eg_fortress) < 1) then
+		Rule_RemoveMe()
+		return
+	end
+	
+	--allied repair crew eliminated by enemies, no more auto repairs
+	if (SGroup_CountSpawned(sg_neutral_vills) < 1) then
+		Rule_RemoveMe()
+		return
+	end
+	
+	local player_stone_total = Player_GetResource(player1, RT_Stone)
+	
+	--neutral villagers ungarrison and begin repairs if fortress health is less than 100 and player has stone
+	if (SAFED_FORTRESS_HEALTH < 1.0 and player_stone_total > 0) then
+		
+		Cmd_EjectOccupants(eg_fortress, mkr_neutral_villagers_ungarrison, true)
+		
+		Cmd_Ability(sg_neutral_vills, BP_GetAbilityBlueprint("villager_repair"), eg_fortress, true, true)
+		
+		--pay the stone price for repair
+		--prevents going in the negative
+		if (player_stone_total < SAFED_STONE_REPAIR_COST) then
+			Player_GiftResource(player1, RT_Stone, -player_stone_total)
+		elseif (player_stone_total >= SAFED_STONE_REPAIR_COST) then
+			Player_GiftResource(player1, RT_Stone, -SAFED_STONE_REPAIR_COST)
+		end
+	
+	--fortress has no damage and no stone in local player's inventory. Neutral vills will garrison
+	else	
+		Cmd_Garrison(sg_neutral_vills, eg_fortress, true, true, true)
+	end
+	
+end
+
+
+
+
+--modifies the stone gather efficiency rate based on the number of total villagers gathering stone at once
+--less than the total number of villagers gathering stone, the effiency gather rate is decreased
+function Safed_Modify_Stone_Gather_Rates()
+	
+	if (SGroup_CountSpawned(sg_player_vills) < 1) then
+		Rule_RemoveMe()
+		return
+	end
+
+	local gathering_stone_count = Player_GetNumGatheringSquads(player1, RT_Stone)
+
+	--first iteration, no new gathering stone number
+	if (new_gathering_stone_count == nil) then
+		new_gathering_stone_count = 0
+	end
+
+	--new count is not the same as the previous interval, we'll change the effeciency and set the new gathering count
+	if (new_gathering_stone_count ~= gathering_stone_count) then
+		
+		--resets modifier, otherwise it stacks on each iteration
+		if (mod_harvest_stone ~= nil) then
+			Modifier_Remove(mod_harvest_stone)
+		end
+		
+		--less villagers gathering stone, stone gather efficiency is lowered
+		local stone_efficiency_gather_rate = gathering_stone_count / SAFED_PLAYER_VILLAGERS_TOTAL_COUNT
+		
+		--applies efficiency modifier
+		local vill_bp = Squad_GetBlueprint(SGroup_GetSquadAt(sg_player_vills, 1))
+		mod_harvest_stone = Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_efficiency_stone", MUT_Multiplication, false, stone_efficiency_gather_rate, vill_bp), player1, 0.0)
+		
+		--the new total count for tracking on next interval
+		new_gathering_stone_count = gathering_stone_count
+	end
+	
+end
+
+
+
+
+--when villager arrives at the mining town
+--reveal town with FOW radius
+--removes objective UI element
+--changes ownership of nearest stone mine entity to player
+--starts attack wave
+function Safed_Arrival_At_Town(context, data)
+	
+	local current_wave_data = SAFED_MINE_TOWN_WAVES[data.townIndex]
+	local mkr_wave_trigger = Marker_FromName("mkr_wave_trigger"..tostring(data.townIndex), "")
+	
+	--villagers arrive near marker
+	if (Prox_AreSquadsNearMarker(data.sgroup, data.markerID, false, Marker_GetProximityRadiusOrDefault(data.markerID, 50))) then
+		
+		--cancels an existing attack wave if it exists
+		Safed_Cancel_Wave()
+		
+		--FOW reveal town
+		FOW_PlayerRevealArea(player1, Util_GetPosition(data.markerID), data.fowRadius, -1)
+		
+		--stone mine ownership change
+		Safed_Change_Nearby_Entities_Owner(eg_stone_mine, data.markerID, player1)
+		
+		--start attack wave when player is gathering stone and villagers are in proximity of the wave trigger
+		if (Player_GetNumGatheringSquads(player1, RT_Stone) > 0 and Prox_AreSquadsNearMarker(sg_player_vills, mkr_wave_trigger, false, Marker_GetProximityRadiusOrDefault(mkr_wave_trigger, 10))) then
+			
+			--remove objective UI
+			if (SAFED_LAST_STONE_MINE_UI_OBJECTIVE ~= nil) then
+				Objective_RemoveUIElements(SOBJ_LocationSecureStone, SAFED_LAST_STONE_MINE_UI_OBJECTIVE)
+			end
+			
+			SAFED_MINE_TOWN_CURRENT_WAVE = Safed_Trigger_Town_Attack_Wave(current_wave_data, data.markerID)
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+end
+
+
+
+
+--monitors and updates the number of stone nodes that have been depleted
+--followed by revealing the next mine location, increasing objective count
+function Safed_Monitor_Stone_Resource_Depleted()
+	
+	if (eg_stone_deposit_depleted == nil) then
+		eg_stone_deposit_depleted = Clone(eg_stone_deposit)
+	end
+	
+	local _stone_depleted = function(gid, idx, eid)
+		
+		--the condition when stone deposit is zero
+		if (Entity_GetRemainingResourceDepositAmount(eid) <= 0) then
+			
+			if (SAFED_STONE_DEPLETED_COUNT == nil) then
+				SAFED_STONE_DEPLETED_COUNT = 0
+			end
+			
+			SAFED_STONE_DEPLETED_COUNT = SAFED_STONE_DEPLETED_COUNT + 1
+			
+			--the current town, closest marker from completed mine
+			--if the player mines them out of order
+			current_mine_town_marker = Util_GetClosestMarker(eid, SAFED_MINE_TOWN_MARKERS)
+			
+			--prep data for Safed_Stone_Depleted()
+			if (SAFED_STONE_DEPLETED_COUNT == 1) then
+				
+				current_mine_gifted_resources = SAFED_GIFTED_RESOURCES1
+				next_mine_town_location = LOCATION("mine_town2")
+				
+			elseif (SAFED_STONE_DEPLETED_COUNT == 2) then
+				
+				current_mine_gifted_resources = SAFED_GIFTED_RESOURCES2
+				next_mine_town_location = LOCATION("mine_town3")
+				
+			elseif (SAFED_STONE_DEPLETED_COUNT == 3) then
+				
+				current_mine_gifted_resources = SAFED_GIFTED_RESOURCES3
+				next_mine_town_location = LOCATION("mine_town4")
+				
+			elseif (SAFED_STONE_DEPLETED_COUNT == 4) then
+				
+				current_mine_gifted_resources = SAFED_GIFTED_RESOURCES4
+				next_mine_town_location = nil
+				
+			end
+			
+			--stone is depleted, stop attack waves, change owner of military buildings, gift resources, etc.
+			Safed_Stone_Depleted(eg_military_structure, current_mine_town_marker, player1, next_mine_town_location, current_mine_gifted_resources)
+			
+			--increases the objective counter of mines that have been depleted
+			if (Objective_IsCounterSet(SOBJ_SecureStone)) then
+				Objective_IncreaseCounter(SOBJ_SecureStone)
+			end
+			
+			--increased depleted count, remove from egroup for tracking
+			EGroup_Remove(eg_stone_deposit_depleted, eid)
+		end
+		
+		--all stone resources are depleted, stop running rule
+		if (EGroup_Count(eg_stone_deposit_depleted) == 0) then
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+	EGroup_ForEach(eg_stone_deposit_depleted, _stone_depleted)
+	
+end
+
+
+
+
+--when stone is depleted:
+--changes ownership EGroup/BP structures to player
+--currentMarkerID is the town marker
+--reveals next stone mine village to proceed to
+--gifts resources to player
+function Safed_Stone_Depleted(EGroup, currentMarkerID, player, nextLocation, giftedResources)
+	
+	Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sg_player_vills)
+	
+	--entity change owner
+	local changed_eids = Safed_Change_Nearby_Entities_Owner(EGroup, currentMarkerID, player1)
+	
+	--clear previously converted military buildings
+	EGroup_Clear(eg_military_changed_buildings)
+	--add to the egroup the last changed military buildings
+	for key, entity in ipairs(changed_eids) do
+		EGroup_Add(eg_military_changed_buildings, entity)
+	end
+	--filters out misc buildings that are not military producing like the mill at mine town 4
+	EGroup_Filter(eg_military_changed_buildings, "military_production_building", FILTER_KEEP)
+	
+	--position of the military buildings
+	local entity_pos = nil
+	if (EGroup_Count(eg_military_changed_buildings) > 0) then
+		entity_pos = EGroup_GetPosition(eg_military_changed_buildings)
+	end
+	
+	if (hintpoint_reinforce_army ~= nil) then
+		HintPoint_Remove(hintpoint_reinforce_army)
+	end
+	
+	hintpoint_reinforce_army = HintPoint_Add(entity_pos, true, "$11268430", 5)
+	
+	--reveal next stone location
+	if (nextLocation ~= nil) then
+		Safed_Reveal_Stone(nextLocation)
+	end
+	
+	--gifted resources
+	if (giftedResources ~= nil) then		
+		
+		--only play the event intel the first time, not every time for gifted resources
+		local trigger_intel = nil
+		if (SAFED_EVENTS_GIFTED_RESOURCES_PREV_PLAYED == false) then
+			trigger_intel = EVENTS.GiftedResources
+		end
+		
+		--LOC: Reinforce your army
+		EventCues_CallToAction("$11268430", CTA_CELEBRATE, trigger_intel, nil, entity_pos, 30, "icons/cta/illustrations/15_pay_tribute_b")
+		
+		if giftedResources.food ~= nil then Player_GiftResource(player, RT_Food, giftedResources.food) end
+		if giftedResources.wood ~= nil then Player_GiftResource(player, RT_Wood, giftedResources.wood) end
+		if giftedResources.gold ~= nil then Player_GiftResource(player, RT_Gold, giftedResources.gold) end
+		if giftedResources.stone ~= nil then Player_GiftResource(player, RT_Stone, giftedResources.stone) end
+		
+		Sound_Play2D("sfx_ui_tribute_received_play")
+		
+	end
+	
+	--gift villagers
+	Rule_AddOneShot(Safed_Gift_Villagers, 2.5)
+	
+end
+
+
+
+
+--gifts villagers if player loses any after completing stone mines 1-2
+function Safed_Gift_Villagers()
+	
+	local vills_lost = math.max(0, SAFED_PLAYER_VILLAGERS_TOTAL_COUNT - SGroup_CountSpawned(sg_player_vills))
+	
+	--escape if no vills lost, conqueror mode was activated, and stone completed count is over 2
+	if (vills_lost == 0 or SAFED_CM_ACTIVATED == true or SAFED_STONE_DEPLETED_COUNT > 2) then
+		return
+	end
+	
+	if (SGroup_CountSpawned(sg_player_vills) > 0) then
+		local vills_to_gift = math.floor(vills_lost / 2)
+		local vill_spawn_position = SGroup_GetPosition(sg_player_vills)
+
+		UnitEntry_DeploySquads(
+			player1,
+			sg_player_vills,
+			{
+				{ type = "scar_villager", numSquads = vills_to_gift }
+			},
+			vill_spawn_position
+		)
+	end
+	
+end
+
+
+
+
+--changes owner of EGroup to playerId near markerID
+--returns table of eids that were changed
+function Safed_Change_Nearby_Entities_Owner(EGroup, markerID, playerId)
+	
+	local changed_results = {}
+	
+	--duplicate the EGroup as EGroup_FilterByProximity() permanently modifies the eg
+	EGroup_Duplicate(EGroup, eg_temp)
+	local eg_nearby_entities = EGroup_FilterByProximity(eg_temp, markerID, nil, FILTER_KEEP)
+	
+	if (EGroup_Count(eg_nearby_entities) < 1) then
+		print('Safed_Change_Nearby_Entities_Owner no nearby entities found in radius of:'..Marker_GetName(markerID))
+		return false
+	end
+	
+	local building_types_to_convert = {
+		"town_center_capital",
+		"town_center_non_capital",
+		"scar_house",
+		"scar_barracks",
+		"scar_archeryrange",
+		"scar_stable",
+		"scar_blacksmith",
+		"scar_arsenal",
+		"farm",
+		"scar_lumbercamp",
+		"scar_miningcamp",
+		"scar_gristmill",
+		"scar_market",
+		"stone_wall_section",			
+		"stone_wall_bastion",			
+		"stone_gate",			
+		"palisade_wall_section",			
+		"palisade_wall_bastion",			
+		"palisade_gate",
+		"stone_wall_tower",
+		"scar_outpost",
+		"scar_university",
+		"scar_monastery",
+		"scar_siegeworkshop",
+		"scar_keep",
+	}
+	
+	local _change_owner = function(gid, idx, eid)	
+		--changes building BP
+		for i, building_type in pairs(building_types_to_convert) do 
+			if (Entity_IsOfType(eid, building_type)) then
+				
+				local new_bp = Cardinal_ConvertTypeToEntityBlueprint(building_type, playerId, true)
+				
+				if (new_bp[1] == nil) then 
+					new_bp = {}
+				end
+				
+				if (new_bp[1] ~= nil) then
+					--convert entity to player
+					Entity_SetPlayerOwner(eid, playerId)
+					Entity_ConvertBlueprint(eid, new_bp[1])
+					table.insert(changed_results, eid)
+					return --breaks out of for loop of building_types_to_convert
+				else
+					print("WARNING: Trying to convert an EBP but could not find a suitable EBP with the type "..building_type.." for the race "..Player_GetRaceName(playerId))
+				end
+				
+			end
+		end
+	end
+	
+	EGroup_ForEach(eg_nearby_entities, _change_owner)
+	
+	return changed_results
+	
+end
+
+
+
+
+--reveals stone in FOW at each location in order with objective UI
+function Safed_Reveal_Stone(location)
+	
+	local location_marker = location.marker
+	local location_stone = Misc_FindDepositsOfTypeCloseToPosition(
+		RT_Stone,
+		Cardinal_ConvertTypeToEntityBlueprint("villager", player1),
+		Marker_GetPosition(location_marker),
+		Marker_GetProximityRadiusOrDefault(location_marker, 50)
+	)
+	
+	if (EGroup_Count(location_stone) < 1) then
+		print("no stone found in radius of:"..Marker_GetName(location_marker))
+		return
+	end
+	
+	local location_stone_entity = EGroup_GetEntityAt(location_stone, 1)
+	local location_stone_position = Entity_GetPosition(location_stone_entity)
+	
+	--needs to be cleared as Misc_FindDepositsOfTypeCloseToPosition returns global group eg_Misc_FindNearbyDepositOfType_result
+	--results in group error when Safed_Reveal_Stone() is called again
+	EGroup_Clear(location_stone)
+	
+	--Objective UI element communicated to the player on the map
+	SAFED_LAST_STONE_MINE_UI_OBJECTIVE = Objective_AddUIElements(
+			SOBJ_LocationSecureStone, 
+			location_stone_position, 
+			true, 
+			"$11190196", --Stone Bounty
+			true
+		)
+	
+	--reveal stone deposit in FOW
+	FOW_PlayerRevealArea(player1, location_stone_position, 10, -1)
+	
+	--path arrows to the first mine
+	if (g_minimapPaths == nil and SAFED_STONE_DEPLETED_COUNT == 0) then
+		MarkerPaths_GenerateIcons("mine1_path", AllMarkers_FromName("mine1_path", ""), "military_route_self")
+	else
+		MarkerPaths_ClearIcons("mine1_path")
+	end
+	
+end
+
+
+
+
+--monitors the player's total stone in inventory
+function Safed_Monitor_Player_Stone()
+
+	local player_stone_amount = Player_GetResource(player1, RT_Stone)
+	
+	--display UI warning message when player runs out of stone
+	if (player_stone_amount <= 0) then
+		
+		local stone_depleted_event_options = {
+			event_type = 800,
+			lifetime = 10.0,
+			message = "$11268431", --Stone depleted. Mine stone for the fortress to be repaired
+			sfx = "sfx_ui_popCap_reached_play",
+			icon = "icons/event_queue_high_priority",
+			template = "high_priority"
+		}
+		
+		local current_time = World_GetGameTime()
+		
+		--first time running, we don't check time
+		if (SAFED_STONE_NOTIFY_LAST_TRIGGER_TIME == 0) then
+			Safed_Show_Event_Cue(stone_depleted_event_options)
+			SAFED_STONE_NOTIFY_LAST_TRIGGER_TIME = current_time
+		--check if enough time has passed after first event cue
+		elseif (current_time - SAFED_STONE_NOTIFY_LAST_TRIGGER_TIME >= SAFED_STONE_NOTIFY_INTERVAL) then
+			Safed_Show_Event_Cue(stone_depleted_event_options)
+			SAFED_STONE_NOTIFY_LAST_TRIGGER_TIME = current_time
+		end
+		
+	end
+	
+end
+
+
+
+
+--modify city of safed, removes wall scuttling, sets entities health and on fire
+function Safed_Modify_Safed_City()
+
+	--set wall health near markers
+	local wall_health = { 0.1, 0.1, 0.6, 0.1, 1 }
+	for i = 1, #wall_health do
+		local marker_str = "mkr_wall_health"..tostring(i)
+		local marker = Marker_FromName(marker_str, "")
+		if (marker ~= nil) then
+			local walls_near_marker = Player_GetEntitiesFromTypeInArea(player1, "wall", marker, 10)
+			local _set_wall_health = function(gid, idx, eid)
+				Entity_SetHealth(eid, wall_health[i])
+			end
+			EGroup_ForEach(walls_near_marker, _set_wall_health)
+		end
+	end
+	
+	--set wall tower health near markers
+	local tower_health = { 0.1, 0.1 }
+	for i = 1, #tower_health do
+		local marker_str = "mkr_wall_tower_health"..tostring(i)
+		local marker = Marker_FromName(marker_str, "")
+		if (marker ~= nil) then
+			local wall_towers_near_marker = Player_GetEntitiesFromTypeInArea(player1, "stone_wall_tower", marker, 10)
+			local _set_wall_tower_health = function(gid, idx, eid)
+				Entity_SetHealth(eid, tower_health[i])
+			end
+			EGroup_ForEach(wall_towers_near_marker, _set_wall_tower_health)
+		end
+	end
+	
+	--remove player ability to scuttle walls
+	local safed_walls = Player_GetAllEntitiesFromType(player1, "wall")
+	local _modify_walls = function(gid, idx, eid)	
+		if (Entity_HasAbility(eid, BP_GetAbilityBlueprint("core_building_scuttle_no_enemies"))) then
+			Entity_RemoveAbility(eid, BP_GetAbilityBlueprint("core_building_scuttle_no_enemies"))
+		end
+	end
+	EGroup_ForEach(safed_walls, _modify_walls)
+	
+	--remove player ability to scuttle wall towers
+	local wall_towers = Player_GetAllEntitiesFromType(player1, "stone_wall_tower")
+	local _modify_wall_towers = function(gid, idx, eid)
+		--remove combat_ext from wall towers, otherwise siege army will charge
+		Entity_SetExtEnabled(eid, "combat_ext", false)
+		--remove site from wall towers
+		Entity_SetExtEnabled(eid, "sight_ext", false)
+		--remove ability to scuttle towers
+		if (Entity_HasAbility(eid, BP_GetAbilityBlueprint("core_building_scuttle_no_enemies"))) then
+			Entity_RemoveAbility(eid, BP_GetAbilityBlueprint("core_building_scuttle_no_enemies"))
+		end
+		--remove burning as this is shown visually with low health and we don't want the buildings scuttling
+		Entity_SetBurnExtEnabled(eid, false)
+		
+	end
+	EGroup_ForEach(wall_towers, _modify_wall_towers)
+	
+	--all buildings in Safed city
+	Player_GetAllEntitiesNearMarker(player1, eg_blah, mkr_safed, Marker_GetProximityRadiusOrDefault(mkr_safed, 50))
+	
+	--remove ability to select Safed city buildings with the exception of the Fortress
+	EGroup_Filter(eg_blah, EBP.TEMPLAR.BUILDING_DEFENSE_FORTRESS_TEM, FILTER_REMOVE, eg_blah)
+	UI_SetUIExtEnabled(eg_blah, false)
+	
+	--remove burn - visually they will appear burning, but they won't lose health and the icon will not appear
+	local _remove_building_burn = function(gid, idx, eid)
+		Entity_SetBurnExtEnabled(eid, false)
+	end
+	
+	--remove burn from walls as the nearby demolished ones won't have the demolished slopes
+	EGroup_Filter(eg_blah, "wall", FILTER_REMOVE, eg_blah)
+	--apply burn removal
+	EGroup_ForEach(eg_blah, _remove_building_burn)
+	
+end
+
+
+
+
+--modify player2 enemy tent ebps to not be targetted and remove UI
+function Safed_Modify_Enemy_Tents()
+	
+	--military tents a
+	eg_tents = Player_GetEntitiesFromBlueprint(player2, EBP.CRUSADER_CMP.BUILDING_MILITARY_TENT_A_CRU)
+	
+	--leader tents
+	eg_tents_leader = Player_GetEntitiesFromBlueprint(player2, EBP.TEMPLAR.BUILDING_LEADER_TENT_SAFED_TEM)
+	EGroup_AddEGroup(eg_tents, eg_tents_leader)
+	
+	--military tents b
+	eg_tents_b = Player_GetEntitiesFromBlueprint(player2, EBP.CRUSADER_CMP.BUILDING_MILITARY_TENT_B_CRU)
+	EGroup_AddEGroup(eg_tents, eg_tents_b)
+	
+	--remove UI healthbar
+	UI_SetUIExtEnabled(eg_tents, false)
+	
+	local _remove_targeting = function(gid, idx, eid)
+		Entity_SetTargetingType(eid, Targeting_None)
+	end
+	EGroup_ForEach(eg_tents, _remove_targeting)
+	
+end
+
+
+
+
+--show event cue
+function Safed_Show_Event_Cue(options)
+	
+	local event_type = options.event_type or -1
+	local lifetime = options.lifetime or 10.0
+	local repeat_count = options.repeat_enabled or 0
+	local repeat_time = options.repeat_time or 0
+	local message = options.message or ""
+	local sfx = options.sfx or "sfx_ui_event_queue_high_priority_play"
+	local icon = options.icon or ""
+	local color = options.color or {r = 255, g = 255, b = 255, a = 255}
+	local template = options.template or "low_priority"
+	local style = options.style or ECV_Queue | ECV_Title
+	
+	if (_events.enabled) then
+		UI_CreateEventCueClickable(event_type, lifetime, repeat_count, repeat_time, message, Loc_Empty(), template, icon, sfx, color.r, color.g, color.b, color.a, style, __DoNothing)
+	end
+	
+end
+
+
+
+
+-- MUSIC INTENSITY
+-- =====================================================
+
+--music intensity rules
+function Safed_Music()
+	
+	--music is locked, unlock it
+	if (safed_music_intensity_unlocked == nil) then
+		
+		--mission starts with music locked with intense music
+		--after mining stone 1 we unlock the intense music and make it gameplay-driven
+		if (SAFED_STONE_DEPLETED_COUNT == 1) then
+			Music_UnlockIntensity()
+			safed_music_intensity_unlocked = true
+			print("music,unlocked: mine 1 completed")
+			
+			--init music for fortress based on health
+			Rule_AddInterval(Safed_Music_Fortress, 1)
+			
+		end
+	else --music is unlocked, lock it
+		
+		--last objective, we bring back the intense music
+		if (Objective_IsStarted(SOBJ_StopBombardment) == true) then
+			Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE)
+			safed_music_intensity_unlocked = nil
+			print("music,locked: last objective")
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+end
+
+
+
+
+--music intensity that changes depending on fortress health
+function Safed_Music_Fortress()
+	
+	--last objective, remove rule as intensity lock is init
+	if (Objective_IsStarted(SOBJ_StopBombardment) == true) then
+		Rule_RemoveMe()
+	end
+	
+	--fortress low on health, change the music
+	--unlock intensity, fortress greater than value
+	if (SAFED_FORTRESS_HEALTH > SAFED_FORTRESS_NOTIFY_THRESHOLDS[2].value and safed_music_fortress_unlocked == nil) then
+		Music_UnlockIntensity()
+		safed_music_fortress_locked = nil
+		safed_music_fortress_unlocked = true
+		print("music,unlocked: fortress health")
+	elseif (SAFED_FORTRESS_HEALTH <= SAFED_FORTRESS_NOTIFY_THRESHOLDS[2].value and safed_music_fortress_locked == nil) then
+		Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE)
+		safed_music_fortress_locked = true
+		safed_music_fortress_unlocked = nil
+		print("music,locked: fortress health")
+	end
+	
+end
+
+
+
+
+-- CONQUEROR MODE
+-- =====================================================
+
+function Safed_CM_Activate()
+	
+	local current_time = math.floor(World_GetGameTime())
+	
+	if (current_time <= SAFED_CM_ACTIVATE_TIME and
+			SGroup_CountSpawned(sg_player_vills) >= SAFED_CM_VILLAGER_COUNT and
+			SAFED_STONE_DEPLETED_COUNT == 2) then
+			
+		SAFED_CM_ACTIVATED = true
+		--inform game code that the conqueror mode was activated during the mission
+		Game_StoreTableData("conquerorMode", {activated = true})
+		
+		--more trebs
+		Safed_Init_Treb_Attack(SAFED_CM_TREB_SPAWNS, SAFED_CM_TREB_MOVE_TOS, "sg_cm_enemy_trebuchets")
+		
+		--adds a delay here to give time for the additional trebs to arrive before notification
+		Rule_AddOneShot(Safed_CM_Notifier, 10)
+		
+		Rule_RemoveMe()
+	end
+	
+	--time is passed, stop checking
+	if (current_time > SAFED_CM_ACTIVATE_TIME) then
+		Rule_RemoveMe()
+	end
+	
+end
+
+
+
+
+--conqueror mode notification in addition to:
+--modified fortress received damage
+--increase unit counts
+function Safed_CM_Notifier()
+		
+	--play intel
+	local trigger_intel = nil
+	trigger_intel = EVENTS.ConquerorMode
+	
+	--view position when clicking cta view
+	local view_position = nil
+	if (SGroup_Count(sg_enemy_trebuchets) > 0) then
+		view_position = SGroup_GetPosition(sg_enemy_trebuchets)
+	else
+		view_position = Marker_GetPosition(mkr_siege_camp)
+	end
+	
+	--LOC: Conqueror Mode
+	EventCues_CallToAction("$11266822", CTA_ALARM, trigger_intel, nil, view_position, 30, "icons/cta/illustrations/alarm")
+	Sound_Play2D("ui/stingers/medal_opportunity")
+	
+	--increase unit counts for added difficulty
+	Rule_AddOneShot(Safed_CM_Modify_Unit_Count, 0)
+	
+	--give trebuchets a buff effect
+	--objecttemplates > rgos > fx
+	SGroup_SetAnimatorAction(sg_enemy_trebuchets, "fx_act_buff_siege")
+	
+end
+
+
+
+
+--modifies unit count with existing armies when conqueror mode is enabled
+function Safed_CM_Modify_Unit_Count()
+	
+	local function _Safed_Additional_Units(count)
+		local additional_units
+		
+		--apply scaling based on current unit count
+		if (count <= 2) then
+			additional_units = 1  --small group, add 1 unit
+		elseif (count <= 6) then
+			additional_units = math.ceil(count * 0.1)  --moderate group, add 10% more units
+		else
+			additional_units = math.ceil(count * 0.05)  --large group, add 5% more units
+		end
+		
+		return additional_units
+	end
+	
+	--modify enemy encounter total count
+	local all_current_armies = t_armyEncounterFamily_allFamilies
+	
+	for key, row in ipairs(all_current_armies) do
+		local current_sgroup = Army_GetSGroup(row.army)
+		
+		--t_armyEncounterFamily_allFamilies can contain wavegenerator armies that will register as zero count so we test it here
+		if (SGroup_CountSpawned(current_sgroup) > 0) then
+			
+			local cm_units = {}
+		
+			for i, j in ipairs(row.army.idealUnits) do
+				local squad_type_count = j.numSquads
+				local additional_units
+				
+				--no mangonels
+				if (j.type ~= "scar_mangonel") then
+					additional_units = _Safed_Additional_Units(squad_type_count)
+					table.insert(cm_units, { sbp = j.sbp, type = j.type, numSquads = additional_units })
+				end
+				
+			end
+			
+			--the squad count only changes if the player can't see the squad
+			if (Player_CanSeeSGroup(player1, current_sgroup, ANY) == false and #cm_units > 0) then
+				UnitEntry_DeploySquads(player2, current_sgroup, cm_units, SGroup_GetPosition(current_sgroup))
+				--warp to it's initial spawn position so the new units are not separated from the rest
+				SGroup_FormationWarpToPos(current_sgroup, row.army.spawn.position)
+			end
+			
+		end
+		
+	end
+	
+end
+
+
+
+
+-- NIS INTRO
+-- =====================================================
+
+function HC_Safed_IntroSetup()
+	
+	sg_intro_trebs = SGroup_CreateIfNotFound("sg_intro_trebs")
+	UnitEntry_DeploySquads(
+		player2,
+		sg_intro_trebs,
+		{
+			{ type = "scar_trebuchet_cw", count = 1, spawn = mkr_enemy_trebuchet_move1 },
+			{ type = "scar_trebuchet_cw", count = 1, spawn = mkr_enemy_trebuchet_move2 },
+			{ type = "scar_trebuchet_cw", count = 1, spawn = mkr_intro_trebuchet },
+			{ type = "scar_trebuchet_cw", count = 1, spawn = mkr_enemy_trebuchet3 },
+		}
+	)
+	
+	--walls/buildings with low health at mission load creates physics rubble
+	--this cleans up the fallen rubble for the intro scene
+	Rule_AddOneShot(HC_Safed_Intro_Purge_Physics, 0.5)
+	
+	--Make sure no real damage is dealt
+	Modify_WeaponDamage(sg_intro_trebs, "hardpoint_01", 0.0)
+	Modify_WeaponReload(sg_intro_trebs, "hardpoint_01", 0.1)
+	Modify_WeaponCooldown(sg_intro_trebs, "hardpoint_01", 0.1)
+	
+	mod_wall_damage = Modify_ReceivedDamage(eg_safed_walls, 0.0)
+	mod_building_damage = Modify_ReceivedDamage(eg_safed_buildings, 0.0)
+	
+	SGroup_Single(sg_temp, SGroup_GetSquadAt(sg_intro_trebs, 1))
+	Cmd_Attack(sg_temp, mkr_wall_health1, false)
+	
+	SGroup_Single(sg_temp, SGroup_GetSquadAt(sg_intro_trebs, 2))
+	Cmd_Attack(sg_temp, mkr_wall_health2, false)
+	
+	SGroup_Single(sg_temp, SGroup_GetSquadAt(sg_intro_trebs, 3))
+	Cmd_Attack(sg_temp, mkr_wall_health3, false)
+	
+	SGroup_Single(sg_temp, SGroup_GetSquadAt(sg_intro_trebs, 4))
+	Cmd_Move(sg_temp, mkr_enemy_trebuchet_move3, false, false, mkr_wall_health4)
+	Cmd_Attack(sg_temp, mkr_wall_health4, true)
+	
+end
+
+
+
+
+--this cleans up the fallen rubble for the intro scene
+function HC_Safed_Intro_Purge_Physics()
+	Physics_PurgeOrphans()
+end
+
+
+
+
+function HC_Safed_Intro_Intermission()
+	
+	Squad_Destroy(SGroup_GetSquadAt(sg_intro_trebs, 4))
+
+end
+
+
+
+
+function HC_Safed_IntroTeardown()
+	
+	if SGroup_Exists("sg_intro_trebs") == true then
+		SGroup_DestroyAllSquads(sg_intro_trebs)
+		SGroup_Destroy(sg_intro_trebs)
+	end
+	
+	--trebuchet attack here, so as not to clash with the intro camera
+	Safed_Init_Treb_Attack(SAFED_TREB_SPAWNS, SAFED_TREB_MOVE_TOS, "sg_enemy_trebuchets")
+	
+	Rule_AddOneShot(HC_Safed_IntroTeardown_Delayed, 5)
+	
+end
+
+
+
+
+function HC_Safed_IntroTeardown_Delayed()
+	
+	Modifier_Remove(mod_wall_damage)
+	Modifier_Remove(mod_building_damage)
+	
+end
+
+
+
+
+-- CHEATS
+-- =====================================================
+
+--cheat to the last objective to clear the siege camp
+function cheatlast()
+	
+	Objective_RemoveUIElements(SOBJ_LocationSecureStone, SAFED_LAST_STONE_MINE_UI_OBJECTIVE)
+	Safed_Stone_Depleted(eg_military_structure, SAFED_MINE_TOWN_MARKERS[1], player1, LOCATION("mine_town2"), nil)
+	SAFED_STONE_DEPLETED_COUNT = 1
+	
+	Objective_RemoveUIElements(SOBJ_LocationSecureStone, SAFED_LAST_STONE_MINE_UI_OBJECTIVE)
+	Safed_Stone_Depleted(eg_military_structure, SAFED_MINE_TOWN_MARKERS[2], player1, LOCATION("mine_town3"), nil)
+	SAFED_STONE_DEPLETED_COUNT = 2
+	
+	Objective_RemoveUIElements(SOBJ_LocationSecureStone, SAFED_LAST_STONE_MINE_UI_OBJECTIVE)
+	Safed_Stone_Depleted(eg_military_structure, SAFED_MINE_TOWN_MARKERS[3], player1, LOCATION("mine_town4"), nil)
+	SAFED_STONE_DEPLETED_COUNT = 3
+	
+	Objective_RemoveUIElements(SOBJ_LocationSecureStone, SAFED_LAST_STONE_MINE_UI_OBJECTIVE)
+	Safed_Stone_Depleted(eg_military_structure, SAFED_MINE_TOWN_MARKERS[4], player1, nil, nil)
+	SAFED_STONE_DEPLETED_COUNT = 4
+	
+	Objective_IncreaseCounter(SOBJ_SecureStone)
+	Objective_IncreaseCounter(SOBJ_SecureStone)
+	Objective_IncreaseCounter(SOBJ_SecureStone)
+	Objective_IncreaseCounter(SOBJ_SecureStone)
+	
+end
+
+--give insane resources and units
+function cheatgive()
+	
+	Player_GiftResource(player1, RT_Food, 999999999)
+	Player_GiftResource(player1, RT_Wood, 999999999)
+	Player_GiftResource(player1, RT_Gold, 999999999) 
+	Player_GiftResource(player1, RT_Stone, 999999999)
+	
+	local player_vill_position = SGroup_GetPosition(sg_player_vills)
+
+	UnitEntry_DeploySquads(
+		player1,
+		sg_cheat_military,
+		{
+			{ sbp = SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_3_TEM, numSquads = 30 },
+		},
+		player_vill_position
+	)
+	
+end

@@ -1,0 +1,152 @@
+--
+-- Lincoln 1141 - Welsh
+--
+
+function Welsh_InitObjectives()
+	
+	OBJ_Rendezvous = {
+		
+		Title = "$11180387", -- Rendezvous with Welsh allies
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.WelshRendezvousStart,
+		OnStart = function()
+			
+			SGroup_AddGroup(sg_welsh_army, sg_welsh_army_a)
+			SGroup_AddGroup(sg_welsh_army, sg_welsh_army_b)
+			SGroup_AddGroup(sg_welsh_army, sg_welsh_army_c)
+			
+			hpid_welsh = Objective_AddUIElements(OBJ_Rendezvous, sg_welsh_army_b, true, 11181039, false)
+			
+			--Rule_AddOneShot(SetMinimumIntensityMusicForced, 1)
+				
+			Rule_AddInterval(Rendezvous_Check, 1)
+			Music_UnlockIntensity()
+			
+		end,
+		OnComplete = function()
+			Objective_RemoveUIElements(OBJ_Rendezvous, hpid_welsh)
+		end,
+	}
+	
+	OBJ_HelpWelsh = {
+		
+		Title = "$11191485", -- Help your Welsh allies
+		Type = ObjectiveType_Primary,
+		Intel_Complete = EVENTS.WelshRendezvousSuccess,
+		OnStart = function()
+			
+			hpid_help_welsh = Objective_AddUIElements(OBJ_Rendezvous, sg_welsh_army_b, true, 11181039, false)
+			flank_init_count = SGroup_CountSpawned(sg_flank_all)
+			
+			Objective_SetProgressBar(OBJ_HelpWelsh, 0)
+		end,
+		OnComplete = function()
+			Music_StopMedium()
+			
+			Lincoln_SetAdvanceWelshTargets()
+			Objective_RemoveUIElements(OBJ_Rendezvous, hpid_help_welsh)
+			
+			Util_AutoSave(true)
+		end,
+	}
+	
+	Objective_Register(OBJ_Rendezvous)
+	Objective_Register(OBJ_HelpWelsh)
+end
+
+
+function Rendezvous_HelpCheck()
+	
+	local flank_current_count = SGroup_CountSpawned(sg_flank_all)
+	local progress = (flank_init_count - flank_current_count) / flank_init_count
+	Objective_SetProgressBar(OBJ_HelpWelsh, progress)
+	
+	if SGroup_CountSpawned(sg_flank_all) < 5 then
+		
+		Objective_SetProgressBar(OBJ_HelpWelsh, 1)
+		
+		Defend_Disband(MissionOMatic_FindModule("FlankGuards1"))
+		Defend_Disband(MissionOMatic_FindModule("FlankGuards2"))
+		Defend_Disband(MissionOMatic_FindModule("FlankGuards3"))
+		RovingArmy_Disband(MissionOMatic_FindModule("FlankAssault1"))
+		RovingArmy_Disband(MissionOMatic_FindModule("FlankAssault2"))
+		RovingArmy_Disband(MissionOMatic_FindModule("FlankAssault3"))
+		
+		Cmd_Move(sg_flank_all, mkr_field_trigger)
+		
+		Objective_Complete(OBJ_HelpWelsh)
+		Rule_RemoveMe()
+	end
+end
+
+function Rendezvous_Check()
+	
+	local welsh_position = Util_GetPosition(sg_welsh_army)
+	
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_meeting_point, ANY, 40) then
+		
+		Objective_Complete(OBJ_Rendezvous, false)
+		Objective_Start(OBJ_HelpWelsh)
+		Rule_AddInterval(Rendezvous_HelpCheck, 1)
+		
+		Rule_RemoveMe()
+	end
+	
+	Player_GetAll(playerWelsh)
+	if not welsh_under_attack then
+		
+		local welsh_count = SGroup_CountSpawned(sg_allsquads)
+		
+		if welsh_count < init_welsh_count then
+			welsh_under_attack = true
+			
+			Objective_Complete(OBJ_Rendezvous, false)
+			--Objective_Start(OBJ_HelpWelsh)
+			
+			EventCues_CallToAction("$11180388", CTA_ALARM, EVENTS.WelshUnderAttack, EVENTS.WelshUnderAttackOnLook, sg_welsh_army_a) -- Welsh allies under attack!
+			Sound_Play2D(MUS_STINGER_ALERT)
+			Sound_Play2D("sfx_campaign_scripted_large_group_fear")
+		end
+		
+	else
+		
+		if SGroup_CountSpawned(sg_welsh_army_a) <= 15 then
+			Rendezvous_SpawnWelshReinforcements("WelshArmyA", mkr_welsh_dest_a4)
+		elseif SGroup_CountSpawned(sg_welsh_army_b) <= 15 then
+			Rendezvous_SpawnWelshReinforcements("WelshArmyB", mkr_welsh_dest_b4)
+		elseif SGroup_CountSpawned(sg_welsh_army_c) <= 15 then
+			Rendezvous_SpawnWelshReinforcements("WelshArmyC", mkr_welsh_dest_c4)
+		end
+
+	end
+	
+	if not welsh_at_meeting_point then
+		if Prox_AreSquadsNearMarker(sg_allsquads, mkr_meeting_point, ANY, 40) then
+			welsh_at_meeting_point = true
+			
+			SpawnUnitsToModule({{ type = "scar_archer", numSquads = 8}}, "FlankAssault1", mkr_flank_assault1)
+			SpawnUnitsToModule({{ type = "scar_archer", numSquads = 8}}, "FlankAssault2", mkr_flank_assault2)
+			SpawnUnitsToModule({{ type = "scar_archer", numSquads = 8}}, "FlankAssault3", mkr_flank_assault3)
+			
+			Rule_AddInterval(Lincoln_ReinforceFlankAttackers, 10)
+		end
+	end
+end
+
+function Rendezvous_SpawnWelshReinforcements(moduleName, destMarker)
+	
+	local units = {
+		{type = "scar_archer", numSquads = 4},
+		{type = "scar_spearman", numSquads = 6}
+	}
+	
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(playerWelsh, sg_temp, units, mkr_welsh_c, nil, nil)
+	Cmd_FormationAttackMove(sg_temp, destMarker)
+	SGroup_AddGroup(sg_welsh_army, sg_temp)
+	
+	Prefab_DoAction(MissionOMatic_FindModule(moduleName), "AddSGroup", sg_temp)
+	
+end
+

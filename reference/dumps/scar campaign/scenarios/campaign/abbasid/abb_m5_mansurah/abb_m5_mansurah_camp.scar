@@ -1,0 +1,1130 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")	
+
+
+function Camp_Init()
+	
+	LIGHTHOUSE_STAY_TIME = 30
+	LIGHTHOUSE_COOLDOWN = 120
+	PATROL_COOLDOWN = 15
+	REST_COOLDOWN = 10
+	IDLE_TIME_MIN = 5
+	IDLE_TIME_MAX = 15
+	
+	all_members = {}
+
+	local lighthouse_queue_markers = { mkr_lighthouse_q1, mkr_lighthouse_q2, mkr_lighthouse_q3, mkr_lighthouse_q4 }
+	local tent_guard_markers = { mkr_guard_20, mkr_guard_21, mkr_guard_22, mkr_guard_23, mkr_guard_24, mkr_guard_25  }
+	local lighthouse_h_queue_markers = { mkr_h_lighthouse_q1, mkr_h_lighthouse_q2, mkr_h_lighthouse_q3, mkr_h_lighthouse_q4 }
+	local lighthouse_home = Lighthouse_Init(
+		"lighthouse_h", 
+		mkr_h_lighthouse_entry, 
+		{mkr_h_lighthouse_waypoint_2, mkr_h_lighthouse_waypoint_1}, 
+		{mkr_h_lighthouse_waypoint_1, mkr_h_lighthouse_waypoint_2}, 
+		lighthouse_h_queue_markers
+	)
+	pool_tents = {
+		name = "pool_tents",
+		spawn = mkr_tents_spawn,
+		wander = Wander_Init({ mkr_wander_tents_1, mkr_wander_tents_2 }), 
+		rests = { 
+			Rest_Init("tent_fires",  CreateMarkersAroundFires(eg_tent_fires),  false, 90, 180, 700),
+			Rest_Init("tent_guards", tent_guard_markers, false, 120, 240, 300),
+		},
+		lighthouse = Lighthouse_Init("lighthouse_1", mkr_lighthouse_entry, {mkr_lighthouse_arrival}, {mkr_lighthouse_discharge}, lighthouse_queue_markers), 
+		lighthouse_chance = 30, --20 x 6(occupancy_factor) = 120    120 x 2(population factor) = 240 maximum
+		patrols = {},
+		patrol_chance = 0,
+		production_discharge_markers = { mkr_common_discharge_1, mkr_common_discharge_2, mkr_infantry_discharge_1 },
+	}
+	
+	pool_tents_siege = {
+		name = "pool_tents_siege",
+		spawn = mkr_tents_spawn,
+		wander = Wander_Init({}), --todo can remove
+		rests = { 
+			Rest_Init("siege_guard",  AllMarkers_FromName("mkr_siege_guard", ""),  false, nil, nil, 1000), --need to support guards that never leave
+		},
+		lighthouse = nil, 
+		lighthouse_chance = 0,
+		patrols = {},
+		patrol_chance = 0,
+		production_discharge_markers = { mkr_common_discharge_1, mkr_common_discharge_2, mkr_siege_discharge_1, mkr_siege_discharge_2 },
+	}
+	
+	pool_field_west = {
+		name = "pool_field_west",
+		spawn = mkr_field_west_spawn,
+		wander = Wander_Init({ mkr_wander_field_west_1, mkr_wander_field_west_2, mkr_wander_field_west_3 }),
+		rests = {
+			Rest_Init("river", 		 	  AllMarkers_FromName("mkr_river_1", ""),	     false, 90, 180, 100),
+			Rest_Init("cavalry_line_3",AllMarkers_FromName("mkr_cavalry_rest_3", ""), false, 90, 180, 100),
+		},
+		lighthouse = nil, 
+		lighthouse_chance = 0,
+		patrols = {
+			Patrol_Init("mkrs_patrol_1", false, false),
+			Patrol_Init("mkrs_patrol_1", false, true),
+			Patrol_Init("mkrs_patrol_2", false, false),
+			Patrol_Init("mkrs_patrol_2", false, true),
+		},
+		patrol_chance = 400,
+		production_discharge_markers = { mkr_common_discharge_1, mkr_common_discharge_2, mkr_cavalry_discharge_1 },
+	}
+	
+	pool_field_east = {
+		name = "pool_field_east",
+		spawn = mkr_field_east_spawn,
+		wander = Wander_Init({ mkr_wander_field_east_1, mkr_wander_field_east_2, mkr_wander_field_east_3 }),
+		rests = {
+			Rest_Init("pond_1", CreateMarkerCircle(Marker_GetPosition(mkr_pond_1), 10, 20), false, 90, 180, 100),
+			Rest_Init("pond_2", CreateMarkerCircle(Marker_GetPosition(mkr_pond_2), 10, 20), false, 90, 180, 100),
+		},
+		lighthouse = nil, 
+		lighthouse_chance = 0,
+		patrols = {
+			Patrol_Init("mkrs_patrol_3", false, false),
+			Patrol_Init("mkrs_patrol_3", false, true),
+			Patrol_Init("mkrs_patrol_4", false, false),
+			Patrol_Init("mkrs_patrol_4", false, true),
+		},
+		patrol_chance = 400,
+		production_discharge_markers = { mkr_common_discharge_1, mkr_common_discharge_2, mkr_cavalry_discharge_1, mkr_cavalry_discharge_2, mkr_cavalry_discharge_3, mkr_cavalry_discharge_4 },
+	}
+	
+	pool_field_south = {
+		name = "pool_field_south",
+		spawn = mkr_field_south_spawn,
+		wander = Wander_Init({ mkr_wander_field_south_1, mkr_wander_field_south_2, mkr_wander_field_south_3, mkr_wander_field_south_4 }),
+		rests = {
+			Rest_Init("cavalry_line_1", AllMarkers_FromName("mkr_cavalry_rest_1", ""), false, 90, 180, 100),
+		},
+		lighthouse = nil, 
+		lighthouse_chance = 0,
+		patrols = {
+			Patrol_Init("mkrs_patrol_5", false, false),
+			Patrol_Init("mkrs_patrol_5", false, true),
+			Patrol_Init("mkrs_patrol_6", false, false),
+			Patrol_Init("mkrs_patrol_6", false, true),
+		},
+		patrol_chance = 400,
+		production_discharge_markers = { mkr_common_discharge_1, mkr_common_discharge_2, mkr_cavalry_discharge_1, mkr_cavalry_discharge_2, mkr_cavalry_discharge_south },
+	}
+	
+	local special_fire_markers = { mkr_fire_elite_1, mkr_fire_elite_2, mkr_fire_elite_3 }
+	--local elite_guard_markers = { mkr_guard_elite_1, mkr_guard_elite_2, mkr_guard_elite_3, mkr_guard_elite_4, mkr_guard_elite_5, mkr_guard_elite_6 } 
+	pool_home = {
+		name = "pool_home",
+		spawn = mkr_home_spawn,
+		wander = Wander_Init({ mkr_wander_home }), 
+		rests = { 
+			--Rest_Init("guard_master", { mkr_master_guard_1, mkr_master_guard_2 }, 	false, 180, 360, 1000), --bodyguards
+			--Rest_Init("guard_elite", elite_guard_markers,  							false, 180, 360, 700),	--palisade guards
+			Rest_Init("fires_home",  CreateMarkersAroundFires(eg_home_fires),    	false, 60, 120, 400),	--fires
+			Rest_Init("fire_special",special_fire_markers, 							false, 30, 60, 100),	--master fire
+		},
+		lighthouse = lighthouse_home, 
+		lighthouse_chance = 30,
+		patrols = {},
+		patrol_chance = 0,
+		muster = home_muster,
+		production_discharge_markers = {},
+	}
+	
+	pool_home_master = {
+		name = "pool_home_master",
+		spawn = mkr_home_spawn,
+		wander = Wander_Init({ mkr_wander_home }),
+		rests = {
+			Rest_Init("fire_master", {mkr_fire_master}, false, 30, 60, 666),
+		},
+		lighthouse = nil,
+		lighthouse_chance = 0,
+		patrols = {},
+		patrol_chance = 0,
+		muster = home_muster,
+		production_discharge_markers = {},
+	}
+	
+	pools = { 
+		pool_tents,
+		pool_tents_siege,
+		pool_field_west,
+		pool_field_east,
+		pool_field_south,
+		pool_home,
+		pool_home_master,
+	}
+	
+	for i, pool in ipairs(pools) do
+		Pool_Init(pool)
+	end
+
+	buildingTrainer = BuildingTrainer_Init(eg_production)
+	mapEdgeTrainer = MapEdgeTrainer_Init(player2, mkr_enemy_spawn, 3)
+	
+	Rule_AddInterval(Camp_Monitor, 1)
+end
+
+function Camp_Monitor(context, data)
+	local cohort_0_unitTable = {}
+	for _, pool in ipairs(pools) do
+		Pool_Monitor(pool)
+	end
+end
+
+function Camp_SpawnUnitsIntoPools(cohort_id, units, sgroup)
+	Camp_StardardizeUnits(units)
+	units = Camp_AssignPools(units)
+	for i, unitRow in ipairs(units) do
+		Pool_SpawnUnits(unitRow.pool, { unitRow }, cohort_id, sgroup)
+	end
+end
+
+
+
+function Camp_SpawnUnitsFromBuildings(cohort_id, units, delay)
+	Camp_StardardizeUnits(units)
+	units = Camp_AssignPools(units)
+	for i, unitRow in ipairs(units) do
+		BuildingTrainer_TrainUnits(buildingTrainer, { unitRow }, delay, Camp_OnUnitSpawnedFromBuilding, nil, { pool = unitRow.pool, cohort_id = cohort_id })
+	end
+end
+
+function Camp_OnUnitSpawnedFromBuilding(context, data)
+	local pool = data.pool
+	local cohort_id = data.cohort_id
+	local member = Member_Init(context.unit, context.sbp, pool, cohort_id)
+	member.skipWaitNextIdle = true
+	for i, marker in ipairs(pool.production_discharge_markers) do
+		SGroup_AttackMove(member.sgroup, marker, true)
+	end
+	if unitSBPs[member.sbp].buildingType == "siege_workshop" then
+		Rest_AddMember(pool.rests[1], member)
+	else
+		Wander_AddMember(pool.wander, member, true)	
+	end
+	Modify_UnitSpeedWhenNotInCombat(member.sgroup, WALK_SPEED, MUT_Set)
+	
+	UnitTable_RemoveUnitsBySBP(pool.follower_units_in_queue, member.sbp, 1)
+end
+
+function Camp_SpawnUnitsFromMapEdge(cohort_id, units, delay, sgroup, onComplete, should_walk)
+	Camp_StardardizeUnits(units)
+	units = Camp_AssignPools(units)
+	for i, unitRow in ipairs(units) do
+		MapEdgeTrainer_TrainUnits(mapEdgeTrainer, { unitRow }, delay, Camp_OnUnitSpawnedFromMapEdge, onComplete, { pool = unitRow.pool, cohort_id = cohort_id, sgroup = sgroup, should_walk = should_walk })
+	end
+end
+
+function Camp_OnUnitSpawnedFromMapEdge(context, data)
+	local pool = data.pool
+	local cohort_id = data.cohort_id
+	local should_walk = data.should_walk
+	local sgroup = data.sgroup
+	local member = Member_Init(context.unit, context.sbp, pool, cohort_id)
+	if sgroup then
+		SGroup_Add(sgroup, context.unit)
+	end
+	member.skipWaitNextIdle = true
+	for i, marker in ipairs(pool.production_discharge_markers) do
+		SGroup_AttackMove(member.sgroup, marker, true)
+	end
+	if unitSBPs[member.sbp].buildingType == "siege_workshop" then
+		Rest_AddMember(pool.rests[1], member)
+	else
+		Wander_AddMember(pool.wander, member, true)	
+	end
+	if should_walk then
+		Modify_UnitSpeedWhenNotInCombat(member.sgroup, WALK_SPEED, MUT_Set)
+	end
+end
+
+function Camp_AddMaster(holy_order)
+	local member = Member_Init(SGroup_GetSquadAt(holy_order.master_sgroup, 1), holy_order.master_sbp, holy_order.master_pool, 0)
+	member.skipWaitNextIdle = true
+	for i, marker in ipairs(holy_order.master_waypoints) do
+		SGroup_AttackMove(member.sgroup, marker, true)
+	end
+	Wander_AddMember(holy_order.master_pool.wander, member, true)	
+	Modify_UnitSpeedWhenNotInCombat(member.sgroup, holy_order.master_walk_speed, MUT_Set)
+end
+
+function Camp_SpawnUnitsIntoMuster(cohort_id, units, sgroup)
+	return CreateUnits(player2, units, mkr_muster, sgroup)
+end
+
+function Camp_MusterCohort(cohort_id, sgroup)
+	--print(invasion.name.." mustered")
+	for i, pool in ipairs(pools) do
+		Pool_ReleaseMembers(pool, cohort_id, sgroup)
+	end
+end
+
+function Camp_StardardizeUnits(units)
+	for i, unitRow in ipairs(units) do
+		if unitRow.type then
+			unitRow.sbp = Cardinal_ConvertTypeToSquadBlueprint(unitRow.type, player2, false)
+		end
+	end
+end
+
+function Camp_AssignPools(units)
+	local new_units = {}
+	for _, unitRow in ipairs(units) do
+		if unitRow.pool then
+			table.insert(new_units, { sbp = unitRow.sbp, numSquads = unitRow.numSquads, pool = unitRow.pool })
+		else
+			local possible_pools = unitSBPs[unitRow.sbp].pools
+			local replacement_rows = Camp_GetUnitRowReplacements(unitRow, possible_pools)
+			for _, replacement_row in ipairs(replacement_rows) do
+				if replacement_row.numSquads > 0 then
+					table.insert(new_units, replacement_row)
+				end
+			end
+		end
+	end
+	return new_units
+end
+
+function Camp_GetUnitRowReplacements(unitRow, possible_pools)
+	local replacement_rows = {}
+	for i, pool in ipairs(possible_pools) do
+		replacement_rows[i] = { sbp = unitRow.sbp, numSquads = 0, pool = pool }
+	end
+	for i = 1, unitRow.numSquads do
+		local index = World_GetRand(1, #possible_pools)
+		replacement_rows[index].numSquads = replacement_rows[index].numSquads + 1
+	end
+	return replacement_rows
+end
+
+----------------------------------------------------------------------------------
+------------------------------------ POOL ----------------------------------------
+----------------------------------------------------------------------------------
+
+function Pool_Init(pool)
+	pool.follower_units_ideal = {}
+	pool.follower_units_in_queue = {}
+	pool.idle_members = {}
+	pool.lighthouse_chances = {}
+	pool.lighthouse_chances[0] = pool.lighthouse_chance * 5 --nobody
+	pool.lighthouse_chances[1] = pool.lighthouse_chance * 6 --occupant only
+	pool.lighthouse_chances[2] = pool.lighthouse_chance * 3  --1 slot
+	pool.lighthouse_chances[3] = pool.lighthouse_chance * 2  --2 slots
+	pool.lighthouse_chances[4] = pool.lighthouse_chance * 1  --3 slots
+	pool.lighthouse_chances[5] = 0  		  				 --4 slots
+	return pool
+end
+
+function Pool_SpawnUnits(pool, units, cohort_id, sgroup)
+	for i, unitRow in ipairs(units) do
+		if unitRow.type then
+			unitRow.sbp = Cardinal_ConvertTypeToSquadBlueprint(unitRow.type, player2, false)
+		end
+		if cohort_id == 0 then
+			UnitTable_AddUnitsBySBP(pool.follower_units_ideal, unitRow.sbp, unitRow.numSquads)
+		end
+		for j = 1, unitRow.numSquads do
+			SGroup_Clear(sg_single)
+			CreateUnits(player2, {{sbp = unitRow.sbp}}, pool.spawn, sg_single)
+			local member = Member_Init(SGroup_GetSquadAt(sg_single, 1), unitRow.sbp, pool, cohort_id)
+			if unitSBPs[member.sbp].buildingType == "siege_workshop" then
+				Rest_AddMember(member.pool.rests[1], member)
+			else
+				Wander_AddMember(member.pool.wander, member, false)	
+			end
+			Modify_UnitSpeedWhenNotInCombat(member.sgroup, WALK_SPEED, MUT_Set)
+			--print("modification applied")
+			
+			if sgroup ~= nil then
+				SGroup_AddGroup(sgroup, member.sgroup)
+			end
+		end
+	end
+end
+
+function Pool_Monitor(pool)
+	for i = #pool.idle_members, 1, -1 do
+		local member = pool.idle_members[i]
+		if Member_IsAlive(member) then
+			if World_GetGameTime() >= member.done_wait_at then
+				table.remove(pool.idle_members, i) --switched tasks
+				Member_AssignNewActivity(member)
+			end
+		else
+			table.remove(pool.idle_members, i) --dead
+		end
+	end
+	Pool_CountMembers(pool)
+	if ENEMY_REINFORCEMENT_DELAY ~= -1 then
+		Pool_MonitorFollowers(pool)
+	end
+end
+
+function Pool_AddMemberToIdle(pool, member)
+	local done_wait_at = 0
+	if member.skipWaitNextIdle == false then
+		done_wait_at = World_GetGameTime() + World_GetRand(IDLE_TIME_MIN, IDLE_TIME_MAX)
+	end
+	member.skipWaitNextIdle = false 
+	member.done_wait_at = done_wait_at
+	table.insert(pool.idle_members, member)
+end
+
+function Pool_ReleaseMembers(pool, cohort_id, sgroup)	
+	local released_members = {}
+	
+	for i = #pool.idle_members, 1, -1 do
+		local member = pool.idle_members[i]
+		if member.cohort_id == cohort_id then
+			if Member_IsAlive(member) then
+				table.insert(released_members, member)
+			end
+			table.remove(pool.idle_members, i)
+		end
+	end
+	--print(#released_members.." members after idle")
+	
+	for i, rest in ipairs(pool.rests) do
+		Rest_ReleaseMembers(rest, released_members, cohort_id)
+	end
+	--print(#released_members.." members after rests")
+	
+	if pool.lighthouse then
+		Lighthouse_ReleaseMembers(pool.lighthouse, released_members, cohort_id)
+	end
+	--print(#released_members.." members after lighthouse")
+	
+	Wander_ReleaseMembers(pool.wander, released_members, cohort_id)
+	--print(#released_members.." members after wander")
+	
+	for i, patrol in ipairs(pool.patrols) do
+		Patrol_ReleaseMembers(patrol, released_members, cohort_id)
+	end
+	--print(#released_members.." members after patrols")
+	
+	for i, member in ipairs(released_members) do
+		all_members[member.squadID] = nil
+		SGroup_Add(sgroup, member.squad)
+		Remove_UnitSpeedInCombatModifier(sgroup)
+	end
+end
+
+
+function Pool_CountMembers(pool)
+	pool.member_count =  #pool.idle_members + #pool.wander.members
+	for i, rest in ipairs(pool.rests) do
+		pool.member_count = pool.member_count + rest.member_count
+	end
+	if pool.lighthouse then
+		pool.member_count = pool.member_count + pool.lighthouse.member_count
+	end
+	for i, patrol in ipairs(pool.patrols) do
+		pool.member_count = pool.member_count + #patrol.members
+	end
+end
+
+function Pool_MonitorFollowers(pool)
+	-- start with ideal units
+	local follower_units_missing = Clone(pool.follower_units_ideal)
+	 
+	-- subtract living units
+	for _, member in ipairs(pool.idle_members) do
+		UnitTable_RemoveUnitsBySBP(follower_units_missing, member.sbp)
+	end
+	for _, member in ipairs(pool.wander.members) do
+		UnitTable_RemoveUnitsBySBP(follower_units_missing, member.sbp)
+	end
+	for _, rest in ipairs(pool.rests) do
+		for _, slot in ipairs(rest.slots) do
+			if slot.member then
+				UnitTable_RemoveUnitsBySBP(follower_units_missing, slot.member.sbp)
+			end
+		end
+	end
+	if pool.lighthouse then
+		if pool.lighthouse.entering_member then
+			UnitTable_RemoveUnitsBySBP(follower_units_missing, pool.lighthouse.entering_member.sbp)
+		end
+		if pool.lighthouse.occupant_member then
+			UnitTable_RemoveUnitsBySBP(follower_units_missing, pool.lighthouse.occupant_member.sbp)
+		end
+		for _, slot in ipairs(pool.lighthouse.queue_slots) do
+			if slot.member then
+				UnitTable_RemoveUnitsBySBP(follower_units_missing, slot.member.sbp)
+			end
+		end
+		for _, member in ipairs(pool.lighthouse.enroute_members) do
+			UnitTable_RemoveUnitsBySBP(follower_units_missing, member.sbp)
+		end
+	end
+	for _, patrol in ipairs(pool.patrols) do
+		for _, member in ipairs(patrol.members) do
+			UnitTable_RemoveUnitsBySBP(follower_units_missing, member.sbp)
+		end
+	end
+	
+	-- subtract queued units
+	UnitTable_RemoveUnits(follower_units_missing, pool.follower_units_in_queue)
+	
+	-- add missing units to queue
+	if UnitTable_CountUnits(follower_units_missing) > 0 then
+		UnitTable_AddUnits(pool.follower_units_in_queue, follower_units_missing)
+		Camp_SpawnUnitsFromBuildings(0, follower_units_missing, ENEMY_REINFORCEMENT_DELAY)
+		print(tostring(UnitTable_CountUnits(follower_units_missing)).." units will start spawning in "..ENEMY_REINFORCEMENT_DELAY.." seconds")
+	end
+end
+
+
+--? @shortdesc Includes idle, wander, rest, and lighthouse
+function Pool_CountPotentialLighthouseMembers(pool)
+	local count = #pool.idle_members + pool.lighthouse.member_count
+	for i, rest in ipairs(pool.rests) do
+		count = count + rest.member_count
+	end
+	count = count + #pool.wander.members
+	return count
+end
+
+----------------------------------------------------------------------------------
+-------------------------------- Wander ----------------------------------------
+----------------------------------------------------------------------------------
+
+function Wander_Init(markers)
+	assert(markers)
+	-- by storing areas in a table of size->marker pairs, we can randomly choose a marker, with a weighted probability determined by its size.
+	local wander = { 
+		areas = {}, 
+		members = {} 
+	}
+	
+	for i, marker in ipairs(markers) do
+		local size
+		if Marker_GetProximityRadiusOrDefault(marker, -1) > -1 then
+			size = 3.1415926535 * (Marker_GetProximityRadiusOrDefault(marker, -1) ^ 2) 
+		else
+			size = Marker_GetProximityDimensionsOrDefault(marker, -1, -1).x * Marker_GetProximityDimensionsOrDefault(marker, -1, -1).z
+		end
+		table.insert(wander.areas, { marker = marker, size = math.floor(size) })
+	end
+	Rule_AddInterval(Wander_Monitor, 1, { wander = wander })
+	return wander
+end
+
+function Wander_Monitor(context, data)
+	local wander = data.wander
+	if #wander.members > 0 then
+		for i = #wander.members, 1, -1 do
+			local member = wander.members[i]
+			if Member_IsAlive(member) then
+				if Squad_IsIdle(member.squad) then
+					table.remove(wander.members, i)
+					Pool_AddMemberToIdle(member.pool, member)
+				end
+			else
+				table.remove(wander.members, i)
+			end
+		end
+	end
+end
+
+--member is verified already
+function Wander_AddMember(wander, member, skip_commands)
+	table.insert(wander.members, member)
+	if skip_commands ~= true then
+		local marker = GetRandomMarkerFromAreas(wander.areas)
+		SGroup_AttackMove(member.sgroup, Marker_GetRandomPositionInternal(marker))
+	end
+end
+
+function Wander_ReleaseMembers(wander, released_members, cohort_id)
+	for i = #wander.members, 1, -1 do
+		local member = wander.members[i]
+		if Member_IsAlive(member) and member.cohort_id == cohort_id then
+			table.insert(released_members, member)
+			table.remove(wander.members, i)
+		end
+	end
+end
+
+----------------------------------------------------------------------------------
+-------------------------------- LIGHTHOUSE ----------------------------------------
+----------------------------------------------------------------------------------
+
+function Lighthouse_Init(name, mkr_entry, arrival_markers, discharge_markers, queue_markers)
+	local lighthouse = {
+		name = name,
+		entering_member = nil,
+		occupant_member = nil,
+		mkr_entry = mkr_entry,
+		arrival_markers = arrival_markers,
+		discharge_markers = discharge_markers,
+		queue_slots = {},
+		enroute_members = {},
+		enroute_member_rules = {},
+		member_count = 0,
+	}
+
+	--print(lighthouse.name.." initialized")
+	for i, marker in ipairs(queue_markers) do
+		table.insert(lighthouse.queue_slots, { marker = marker, member = nil })
+	end
+	lighthouse.slot_count = 1 + #lighthouse.queue_slots
+	
+	Rule_AddInterval(Lighthouse_Monitor, 1, { lighthouse = lighthouse })
+	return lighthouse
+end
+
+function Lighthouse_AddMember(lighthouse, member)
+	--print(lighthouse.name.." added squad")
+	table.insert(lighthouse.enroute_members, member)
+	local ruleID = Rule_AddInterval(Lighthouse_MonitorEnrouteMember, 0.25, { lighthouse = lighthouse, member = member })
+	local queued = false
+	for _, marker in ipairs(lighthouse.arrival_markers) do
+		SGroup_AttackMove(member.sgroup, marker, queued)	
+		queued = true
+	end
+	lighthouse.enroute_member_rules[member.id] = ruleID
+	lighthouse.member_count = lighthouse.member_count + 1
+end
+
+function Lighthouse_MonitorEnrouteMember(context, data) 
+	--print("Lighthouse_MonitorIncomingSquad")
+	local member = data.member
+	local lighthouse = data.lighthouse
+	if Member_IsAlive(member) then
+		if Squad_IsIdle(member.squad) then
+			Table_RemoveFirstItem(lighthouse.enroute_members, member)
+			lighthouse.enroute_member_rules[member.id] = nil
+			Lighthouse_MemberArrived(lighthouse, member) --arrived
+			Rule_RemoveMe()
+		end
+	else
+		Table_RemoveFirstItem(lighthouse.enroute_members, member) --dead
+		lighthouse.enroute_member_rules[member.id] = nil
+		Rule_RemoveMe()	
+		lighthouse.member_count = lighthouse.member_count - 1
+	end
+end
+
+function Lighthouse_GetBestSlot(lighthouse)
+	if lighthouse.entering_member == nil and lighthouse.occupant_member == nil then
+		return -1
+	else
+		for i, slot in ipairs(lighthouse.queue_slots) do
+			if slot.member == nil then
+				return slot
+			end
+		end
+	end
+	fatal("lighthouse has no valid slot")
+end
+
+function Lighthouse_MemberArrived(lighthouse, member)
+	--print(lighthouse.name.." squad arrived")
+	local slot = Lighthouse_GetBestSlot(lighthouse)
+	if slot == -1 then
+		Lighthouse_SendMemberIn(lighthouse, member)
+	else
+		Lighthouse_MoveMemberToSlot(lighthouse, member, slot)
+	end
+end
+
+function Lighthouse_SendMemberIn(lighthouse, member)
+	--print(lighthouse.name.." sending squad in")
+	SGroup_Move(member.sgroup, lighthouse.mkr_entry)
+	lighthouse.ruleID_MonitorEnteringMember = Rule_AddInterval(Lighthouse_MonitorEnteringMember, 0.25, { lighthouse = lighthouse, member = member })
+	lighthouse.entering_member = member
+end
+
+function Lighthouse_MonitorEnteringMember(context, data)
+	--print("Lighthouse_MonitorEnteringMember")
+	local lighthouse = data.lighthouse
+	local member = data.member
+	if Member_IsAlive(member) then
+		if Squad_IsIdle(member.squad) then
+			Lighthouse_MemberEnters(lighthouse, member) --entered
+			Rule_RemoveMe()
+			lighthouse.ruleID_MonitorEnteringMember = nil
+		end
+	else
+		lighthouse.entering_member = nil --dead
+		Rule_RemoveMe()
+		lighthouse.ruleID_MonitorEnteringMember = nil
+		lighthouse.member_count = lighthouse.member_count - 1
+		assert(lighthouse.member_count >= 0, "member count too low")
+	end
+end
+
+function Lighthouse_MemberEnters(lighthouse, member)
+	--print(lighthouse.name.." squad goes in")
+	lighthouse.occupantSBP = Squad_GetBlueprint(member.squad) 
+	lighthouse.ruleID_MemberExits = Rule_AddOneShot(Lighthouse_MemberExits, LIGHTHOUSE_STAY_TIME, { lighthouse = lighthouse })
+	SGroup_Clear(member.sgroup)
+	Squad_Destroy(member.squad)
+	member.squad = nil
+	member.squadID = nil
+	lighthouse.entering_member = nil
+	lighthouse.occupant_member = member
+end
+
+function Lighthouse_MemberExits(context, data)
+	--print(lighthouse.name.." squad comes out")
+	local lighthouse = data.lighthouse
+	local member = lighthouse.occupant_member
+	CreateUnits(player2, {sbp = lighthouse.occupantSBP}, lighthouse.mkr_entry, member.sgroup)
+	member.squad = SGroup_GetSquadAt(member.sgroup, 1)
+	member.squadID = Squad_GetID(member.squad)
+	member.can_lighthouse_at = World_GetGameTime() + LIGHTHOUSE_COOLDOWN
+	lighthouse.occupant_member = nil
+	lighthouse.ruleID_MemberExits = nil 
+	member.skipWaitNextIdle = true
+	SGroup_Single(member.sgroup, member.squad)
+	local queued = false
+	for _, marker in ipairs(lighthouse.discharge_markers) do
+		SGroup_AttackMove(member.sgroup, marker, queued)	
+		queued = true
+	end
+	Wander_AddMember(member.pool.wander, member, true)
+	lighthouse.member_count = lighthouse.member_count - 1
+	Modify_UnitSpeedWhenNotInCombat(member.sgroup, WALK_SPEED, MUT_Set)
+end
+
+function Lighthouse_MoveMemberToSlot(lighthouse, member, slot)
+	--print(lighthouse.name.." squad moved to slot")
+	slot.member = member
+	SGroup_AttackMove(member.sgroup, slot.marker)
+end
+
+function Lighthouse_Monitor(context, data)
+	local lighthouse = data.lighthouse
+	Lighthouse_ValidateMembers(lighthouse)
+	local slotIndex = Lighthouse_FindHole(lighthouse)
+	if slotIndex == -1 then
+		Lighthouse_SendMemberIn(lighthouse, lighthouse.queue_slots[1].member)
+		lighthouse.queue_slots[1].member = nil
+		slotIndex = 1
+	end
+	if slotIndex then
+		for i = slotIndex, #lighthouse.queue_slots do
+			if (i + 1) <= #lighthouse.queue_slots then
+				if lighthouse.queue_slots[i].member == nil and lighthouse.queue_slots[i+1].member ~= nil then
+					Lighthouse_MoveMemberToSlot(lighthouse, lighthouse.queue_slots[i+1].member, lighthouse.queue_slots[i])
+					lighthouse.queue_slots[i+1].member = nil
+				end
+			end
+		end
+	end
+end
+
+function Lighthouse_ValidateMembers(lighthouse)
+	if lighthouse.entering_member and Member_IsAlive(lighthouse.entering_member) == false then
+		lighthouse.entering_member = nil 
+		lighthouse.member_count = lighthouse.member_count - 1
+		Rule_RemoveWithID(lighthouse.ruleID_MonitorEnteringMember)
+		lighthouse.ruleID_MonitorEnteringMember = nil	
+		assert(lighthouse.member_count >= 0, "member count too low")
+	end
+	for i, slot in ipairs(lighthouse.queue_slots) do
+		if slot.member and Member_IsAlive(slot.member) == false then
+			slot.member = nil
+			lighthouse.member_count = lighthouse.member_count - 1
+		end
+	end
+end
+
+function Lighthouse_FindHole(lighthouse)
+	if (lighthouse.entering_member == nil and lighthouse.occupant_member == nil) and lighthouse.queue_slots[1].member ~= nil then
+		return -1
+	else
+		if #lighthouse.queue_slots > 0 then
+			for i = 1, #lighthouse.queue_slots do
+				if (i + 1) <= #lighthouse.queue_slots then
+					if lighthouse.queue_slots[i].member == nil and lighthouse.queue_slots[i + 1].member ~= nil then
+						return i
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
+function Lighthouse_ReleaseMembers(lighthouse, released_members, cohort_id)
+	-- occupant
+	if lighthouse.occupant_member and lighthouse.occupant_member.cohort_id == cohort_id then --does not have a squad
+		SGroup_Clear(sg_single)
+		CreateUnits(player2, {sbp = lighthouse.occupantSBP}, lighthouse.mkr_entry, sg_single)
+		lighthouse.occupant_member.squad = SGroup_GetSquadAt(sg_single, 1)
+		lighthouse.occupant_member.squadID = Squad_GetID(lighthouse.occupant_member.squad)
+		SGroup_AddGroup(lighthouse.occupant_member.sgroup, sg_single)
+		table.insert(released_members, lighthouse.occupant_member)
+		lighthouse.occupant_member = nil
+		lighthouse.member_count = lighthouse.member_count - 1 
+		Rule_RemoveWithID(lighthouse.ruleID_MemberExits)
+		lighthouse.ruleID_MemberExits = nil	
+	--entering
+	elseif lighthouse.entering_member and Member_IsAlive(lighthouse.entering_member) and lighthouse.entering_member.cohort_id == cohort_id then
+		table.insert(released_members, lighthouse.entering_member)
+		lighthouse.entering_member = nil
+		lighthouse.member_count = lighthouse.member_count - 1
+		Rule_RemoveWithID(lighthouse.ruleID_MonitorEnteringMember)
+		lighthouse.ruleID_MonitorEnteringMember = nil	
+	end
+	-- queue
+	for i, slot in ipairs(lighthouse.queue_slots) do
+		if slot.member and Member_IsAlive(slot.member) and slot.member.cohort_id == cohort_id then
+			table.insert(released_members, slot.member)
+			slot.member = nil
+			lighthouse.member_count = lighthouse.member_count - 1
+		end
+	end
+	-- enroute
+	for i, member in ipairs(lighthouse.enroute_members) do
+		if Member_IsAlive(member) and member.cohort_id == cohort_id then
+			table.insert(released_members, member)
+			table.remove(lighthouse.enroute_members, i)
+			lighthouse.member_count = lighthouse.member_count - 1
+			Rule_RemoveWithID(lighthouse.enroute_member_rules[member.id])
+			lighthouse.enroute_member_rules[member.id] = nil
+		end
+	end
+end
+
+----------------------------------------------------------------------------------
+---------------------------------- REST ------------------------------------------
+----------------------------------------------------------------------------------
+
+function Rest_Init(name, markers, master_only, stay_time_min, stay_time_max, chance)
+	local rest = {
+		name = name,
+		slots = {},
+		member_count = 0,
+		master_only = master_only,
+		chance = chance,
+		stay_time_min = stay_time_min, 
+		stay_time_max = stay_time_max,
+	}
+	--custom positions style rest
+	assert(scartype(markers) == ST_TABLE)
+	for i, mkr in ipairs(markers) do
+		table.insert(rest.slots, { id = i, position = Marker_GetPosition(mkr), direction = Marker_GetDirection(mkr), member = nil })
+	end
+	
+	Rule_AddInterval(Rest_Monitor, 1, { rest = rest })
+	return rest
+end
+	
+function Rest_HasSpace(rest)
+	return rest.member_count < #rest.slots
+end
+
+function Rest_Monitor(context, data)
+	local rest = data.rest
+	for i, slot in ipairs(rest.slots) do
+		if slot.member then
+			if Member_IsAlive(slot.member) then
+				if slot.member.leave_at and World_GetGameTime() >= slot.member.leave_at then
+					slot.member.skipWaitNextIdle = true
+					Pool_AddMemberToIdle(slot.member.pool, slot.member)
+					slot.member.can_rest_at = World_GetGameTime() + REST_COOLDOWN
+					slot.member = nil
+					rest.member_count = rest.member_count - 1
+				end
+			else
+				slot.member = nil
+				rest.member_count = rest.member_count - 1
+			end
+		end
+	end
+end
+
+function Rest_AddMember(rest, member)
+	local available_slots = {}
+	for i, slot in ipairs(rest.slots) do
+		if slot.member == nil then
+			table.insert(available_slots, slot)
+		end
+	end
+	if #available_slots > 0 then
+		local slot = Table_GetRandomItem(available_slots)
+		SGroup_AttackMove(member.sgroup, slot.position, true)
+		SGroup_MoveAndFace(member.sgroup, slot.position, slot.direction, nil, true)
+		if rest.stay_time_min then
+			member.leave_at = World_GetGameTime() + World_GetRand(rest.stay_time_min, rest.stay_time_max)
+		end
+		slot.member = member
+		rest.member_count = rest.member_count + 1
+	else
+		fatal("rest has no valid slots")
+	end
+end
+
+function Rest_ReleaseMembers(rest, released_members, cohort_id)
+	for i, slot in ipairs(rest.slots) do
+		if slot.member and Member_IsAlive(slot.member) and slot.member.cohort_id == cohort_id then
+			table.insert(released_members, slot.member)
+			slot.member = nil
+			rest.member_count = rest.member_count -1
+		end
+	end
+end
+
+----------------------------------------------------------------------------------
+--------------------------------- PATROL -----------------------------------------
+----------------------------------------------------------------------------------
+
+function Patrol_Init(name_of_markers, reverse)
+	local patrol = {
+		members = {},
+		markers = AllMarkers_FromName(name_of_markers, ""),
+		available_at = 0,
+	}
+	if reverse then
+		Table_Reverse(patrol.markers)
+	end
+	Rule_AddInterval(Patol_Monitor, 1, { patrol = patrol })
+	return patrol
+end
+
+function Patrol_AddMember(patrol, member)
+	table.insert(patrol.members, member)
+	patrol.available_at = World_GetGameTime() + PATROL_COOLDOWN
+	for i, marker in ipairs(patrol.markers) do
+		SGroup_AttackMove(member.sgroup, marker, true)
+	end
+end
+
+function Patol_Monitor(context, data)
+	local members = data.patrol.members
+	for i = #members, 1, -1 do
+		local member = members[i]
+		if Member_IsAlive(member) then
+			if Squad_IsIdle(member.squad) then
+				table.remove(members, i)
+				member.skipWaitNextIdle = true
+				Pool_AddMemberToIdle(member.pool, member)
+			end
+		else
+			table.remove(members, i)
+		end
+	end
+end
+
+function Patrol_ReleaseMembers(patrol, released_members, cohort_id)
+	for i = #patrol.members, 1, -1 do
+		local member = patrol.members[i]
+		if Member_IsAlive(member) and member.cohort_id == cohort_id then
+			table.insert(released_members, member)
+			table.remove(patrol.members, i)
+		end
+	end
+end
+
+
+----------------------------------------------------------------------------------
+---------------------------------- MEMBER ----------------------------------------
+----------------------------------------------------------------------------------
+
+function Member_NewID()
+	member_index = member_index or 0
+	member_index = member_index + 1
+	return member_index
+end
+
+function Member_Init(squad, sbp, pool, cohort_id)
+	local member = { 
+		id = Member_NewID(), 
+		squad = squad, 
+		squadID = Squad_GetID(squad), 
+		sbp = sbp,
+		done_wait_at = World_GetGameTime() + World_GetRand(IDLE_TIME_MIN, IDLE_TIME_MAX), 
+		can_lighthouse_at = World_GetGameTime() + LIGHTHOUSE_COOLDOWN,
+		can_rest_at = 0,
+		pool = pool,
+		cohort_id = cohort_id,
+	}
+	member.sgroup = SGroup_CreateUniqueWithPrefix("sg_member_"..member.id)
+	SGroup_Add(member.sgroup, member.squad)
+	member.is_master = (
+		member.sbp == SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_MASTER_CRU or
+		member.sbp == SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_MASTER_CRU or
+		member.sbp == SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU
+	)
+	member.can_patrol = (
+		member.is_master == false and
+		member.sbp ~= SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU
+	)
+	member.can_lighthouse = member.sbp ~= SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU
+	member.can_rest = member.sbp ~= SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU
+		
+	all_members[member.squadID] = member
+	return member
+end
+
+function Member_IsAlive(member)
+	if Squad_IsValid(member.squadID) and Squad_IsAlive(member.squad) then
+		return true
+	else
+		all_members[member.squadID] = nil
+		if member.sgroup then
+			SGroup_Destroy(member.sgroup)
+			member.sgroup = nil
+		end
+		return false
+	end
+end
+
+function Member_FromSquad(squad)
+	local member = all_members[Squad_GetID(squad)]
+	assert(member)
+	return member
+end
+
+function Member_AssignNewActivity(member)
+	local rand = World_GetRand(1, 1000)
+	local chance_floor = 0
+	
+	local lighthouse 
+	lighthouse, chance_floor = Member_FindAvailableLighthouse(member, chance_floor, rand)
+	if lighthouse then
+		--print("assigned_to_lighthouse")
+		Lighthouse_AddMember(lighthouse, member)
+		return
+	end
+	
+	local rest 
+	rest, chance_floor = Member_FindAvailableRest(member, chance_floor, rand)
+	if rest then
+		--print("assigned_to_rest")
+		Rest_AddMember(rest, member)
+		return
+	end
+	
+	local patrol
+	patrol, chance_floor = Member_FindAvailablePatrol(member, chance_floor, rand)
+	if patrol then
+		--print("assigned_to_patrol")
+		Patrol_AddMember(patrol, member)
+		return
+	end
+
+	Wander_AddMember(member.pool.wander, member, false)
+end
+
+function Member_FindAvailablePatrol(member, chance_floor, rand)
+	local pool = member.pool
+	local returned_patrol = nil
+	local available_patrols = {}
+	for i, patrol in ipairs(pool.patrols) do
+		if World_GetGameTime() >= patrol.available_at then
+			if member.can_patrol then 
+				table.insert(available_patrols, patrol)
+			end
+		end
+	end
+	if #available_patrols > 0 then
+		chance_floor = chance_floor + pool.patrol_chance
+		if rand <= chance_floor then
+			returned_patrol = Table_GetRandomItem(available_patrols)
+		end
+		
+	end
+	return returned_patrol, chance_floor
+end
+
+function Member_FindAvailableLighthouse(member, chance_floor, rand)
+	local pool = member.pool
+	local lighthouse = pool.lighthouse
+	local returned_lighthouse = nil
+	if lighthouse and World_GetGameTime() >= member.can_lighthouse_at and member.can_lighthouse then
+		assert(lighthouse.member_count >= 0 and lighthouse.member_count <= 5, "lighthouse member_count is INVALID. value is "..lighthouse.member_count)
+		local lighthouse_chance = pool.lighthouse_chances[lighthouse.member_count]
+		local member_count = math.max(Pool_CountPotentialLighthouseMembers(pool), 15) --15 to 60
+		local population_factor = 30/member_count --0.5 to 2
+		local lighthouse_chance_modified = math.floor(lighthouse_chance * population_factor)
+		--print("lighthouse_chance="..lighthouse_chance.."    population_factor="..population_factor.."   lighthouse_chance_modified="..lighthouse_chance_modified)
+		chance_floor = chance_floor + lighthouse_chance_modified
+		if rand <= chance_floor then
+			returned_lighthouse = lighthouse
+		end
+		
+	end
+	return returned_lighthouse, chance_floor
+end
+
+function Member_FindAvailableRest(member, chance_floor, rand)
+	local pool = member.pool
+	local returned_rest = nil
+	if World_GetGameTime() >= member.can_rest_at then
+		if #pool.rests > 0 then
+			local available_rests = {}
+			for i, rest in ipairs(pool.rests) do
+				if Rest_HasSpace(rest) and member.can_rest then
+					table.insert(available_rests, rest)
+				end
+			end
+			for i, available_rest in ipairs(available_rests) do
+				chance_floor = chance_floor + available_rest.chance
+				if rand <= chance_floor then
+					returned_rest = available_rest
+					break
+				end
+			end
+		end
+	end
+	return returned_rest, chance_floor
+end
+
+-----------------------------------------------------------------------------
+---------------------------------- MISC -------------------------------------
+-----------------------------------------------------------------------------
+
+function CreateMarkersAroundFires(eg_fires)
+	local markers = {}
+	
+	for i = 1, EGroup_CountSpawned(eg_fires) do
+		local fire = EGroup_GetSpawnedEntityAt(eg_fires, i)
+		markers = Table_Concatenate(markers, CreateMarkerCircle(Entity_GetPosition(fire), 3.5, 6))
+	end
+	return markers
+end
+
+function CreateMarkerCircle(central_position, radius, slot_count)
+	local slot_angle = 360 / slot_count
+	local markers = {}
+	for i = 1, slot_count do
+		local angle = i * slot_angle
+		local rad = math.rad(angle)
+		local x = central_position.x + math.cos(rad) * radius
+		local z = central_position.z + math.sin(rad) * radius
+		local y = World_GetHeightAt(x, z)
+		local position = World_Pos(x, y, z)
+		local direction = Util_GetDirectionFromAtoB(position, central_position)
+		table.insert(markers, Marker_Create(tostring(i), "Prefab", position, direction, 0))
+	end	
+	return markers
+end
+
+--? @shortdesc Takes a table of key-value pairs, where the keys are the items, and the values are the weights. The chance that a particular key is chosen is proportional to its associated weight. Weights should be integers.  
+--? @result Returns a random key according to the weights, or returns nil if there are no valid choices.
+function GetRandomMarkerFromAreas(areas)
+	local total_weight = 0
+	local cumulative_weights = {}
+	for _, area in ipairs(areas) do
+		total_weight = total_weight + area.size
+		table.insert(cumulative_weights, {marker = area.marker, weight = total_weight})
+	end
+	if total_weight > 0 then
+		local r = World_GetRand(1, total_weight)
+
+		for _, row in ipairs(cumulative_weights) do
+			if row.weight >= r then
+				return row.marker
+			end
+		end
+
+	end
+	return nil
+end

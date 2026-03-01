@@ -1,0 +1,93 @@
+import("MissionOMatic/MissionOMatic.scar")
+import("cardinal.scar")
+
+function Ambushes_SpawnAlliedMonks()
+	
+	local sg_monk_1 = CreateUnits(player4, {{ type = "scar_monk", numSquads = 1 }}, mkr_monk_spawn_1, "sg_monk_1")
+	local sg_monk_2 = CreateUnits(player4, {{ type = "scar_monk", numSquads = 1 }}, mkr_monk_spawn_2, "sg_monk_2")
+	local sg_monk_3 = CreateUnits(player4, {{ type = "scar_monk", numSquads = 1 }}, mkr_monk_spawn_3, "sg_monk_3")
+	SGroup_MoveAndFace(sg_monk_1, mkr_monk_dest_1)
+	SGroup_MoveAndFace(sg_monk_2, mkr_monk_dest_2)
+	SGroup_MoveAndFace(sg_monk_3, mkr_monk_dest_3)
+end
+
+function Ambushes_Init()
+	ambush_1 = {
+		attack_army = ambush_1_attack,
+		guard_army = ambush_1_guard,
+		destinations = { mkr_ambush_1_dest_1, mkr_ambush_1_dest_2 },
+		onCleared = function()
+			log("ambush_1 cleared")
+			Ambushes_SpawnAlliedMonks()
+		end,
+	}
+	ambush_3 = {
+		attack_army = ambush_3_attack,
+		guard_army = ambush_3_guard,
+		destinations = { mkr_ambush_3_dest_1 },
+	}
+	ambush_4 = {
+		attack_army = ambush_4_attack,
+		guard_army = ambush_4_guard,
+		destinations = { mkr_ambush_4_dest_1, mkr_ambush_4_dest_2 },
+	}
+	ambush_5 = {
+		attack_army = ambush_5_attack,
+		guard_army = ambush_5_guard,
+		destinations = { mkr_ambush_5_dest_1, mkr_ambush_5_dest_2 },
+	}
+	
+	ambushes = { ambush_1, ambush_3, ambush_4, ambush_5 }
+	
+	for i, ambush in ipairs(ambushes) do
+		ambush.is_waiting = true
+		ambush.source = Army_GetTarget(ambush.attack_army).marker
+		ambush.attack_army.ambush = ambush
+		ambush.is_cleared = false
+		ambush.attack_army.onCompleteFunction = function(army)
+			army.ambush.is_waiting = true
+		end
+	end
+	
+	Rule_AddInterval(Ambushes_Monitor, 2)
+end
+
+function Ambush_DestinationIsTriggered(ambush)
+	for i, dest in ipairs(ambush.destinations) do
+		
+		if Player_AreSquadsNearMarker(player1, dest) then
+			return dest
+		end
+	end
+	return nil
+end
+
+function Ambushes_Monitor()
+	for i, ambush in ipairs(ambushes) do
+		if ambush.is_cleared == false and Army_IsDead(ambush.attack_army) and Army_IsDead(ambush.guard_army) then
+			ambush.is_cleared = true
+			if ambush.onCleared then
+				ambush.onCleared()
+			end
+		end
+		
+		if Army_IsDead(ambush.attack_army) == false then
+			if ambush.active_at == nil then
+				local dest = Ambush_DestinationIsTriggered(ambush)
+				if dest then
+					ambush.active_at = World_GetGameTime() + t_diff.ambush_delay
+				end
+			end
+			
+			if ambush.active_at and World_GetGameTime() >= ambush.active_at and ambush.is_waiting then
+				local dest = Ambush_DestinationIsTriggered(ambush)
+				if dest then
+					local target_1 = Marker_GetPosition(dest)
+					local target_2 = ambush.source
+					Army_SetTargets(ambush.attack_army, { target_1, target_2 })
+					ambush.is_waiting = false
+				end
+			end
+		end
+	end
+end

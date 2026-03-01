@@ -1,0 +1,197 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("rogue/rogue.scar")
+import("rogue_system_test_data.scar")
+
+function Mission_PreInit()
+	content_pack = CONTENT_PACK_ROGUE
+	mission_name = "Rogue System Test"
+	print("------------------------------------------------------------------------")
+	print("------------- "..mission_name.." - Initializing -------------")
+	print("------------------------------------------------------------------------")
+	rogue_wave_strength = 1.0
+end
+
+function Mission_SetupPlayers()
+	Rogue_SetupPlayers_A()
+	
+	Rogue_AddHumanPlayer(1, COLOR_BLUE)
+	Rogue_AddEnemyWavePlayer(2, "enemy_wave", COLOR_PURPLE) -- Byzantines
+	Rogue_AddAllyPlayer(3, 	  "allies", COLOR_YELLOW) -- Allies
+	Rogue_AddEnemyAllyPlayer(4,  "enemy_allies", COLOR_PURPLE) -- Byzantines
+	Rogue_AddEnemyRaiderPlayer(5,"enemy_raiders", COLOR_ORANGE) -- Arab Pirates
+	Rogue_AddNeutralPlayer(6,    "neutral", COLOR_YELLOW) -- Allies
+	
+	Rogue_SetupPlayers_B()
+end
+
+function Mission_Preset()
+	
+	Player_SetPopCapOverride(ROGUE_HUMAN_PLAYERS[1], 200) -- for test map only
+	RogueTest_InitChampionData() -- for test map only
+	RogueTest_InitBossData() -- for test map only
+	
+	KillEnemyUnits()	-- for test map only
+	Rogue_AddLane("west", true)
+	Rogue_AddLane("north", false)
+	Rogue_AddLane("east", true)
+	Rogue_UseDefaultSchedule(true, false, 1.0)
+	
+	Rogue_SimulateEvents()
+
+	view(states)
+	FOW_RevealArea(wonder_position, 30, -1)
+	
+end
+
+function Mission_Start()
+	Rule_Add(KillUnitsNearWonder) -- for test map only
+	Sites_Init()
+	SpawnSites()
+	
+	FOW_PlayerRevealAll(ROGUE_HUMAN_PLAYERS[1])
+end
+
+function Mission_Unpause()
+	
+end
+
+-- for test map only
+function KillEnemyUnits()
+	Player_GetAll(ROGUE_ENEMY_WAVE_PLAYER, sg_temp)
+	SGroup_Kill(sg_temp)
+end
+
+-- for test map only
+function KillUnitsNearWonder(context, data)
+	if wonder_position ~= nil then
+		Player_GetAllSquadsNearMarker(ROGUE_ENEMY_WAVE_PLAYER, sg_temp, wonder_position, 30)
+		SGroup_Kill(sg_temp)
+	end
+end
+
+function SpawnSites()
+	local site_pickup_markers = AllMarkers_FromName("mkr_site_pickup", "")
+	local site_camp_small_markers = AllMarkers_FromName("mkr_site_camp_small", "")
+	local site_camp_large_markers = AllMarkers_FromName("mkr_site_camp_large", "")
+	
+	for _, marker in ipairs(site_pickup_markers) do
+		Site_CreatePickup(marker)
+	end
+	for _, marker in ipairs(site_camp_small_markers) do
+		Site_CreateCampSmall(marker)
+	end
+	for _, marker in ipairs(site_camp_large_markers) do
+		Site_CreateCampLarge(marker)
+	end
+	
+	local pickup_markers = AllMarkers_FromName("mkr_pickup", "")
+	for _, pickup_marker in ipairs(pickup_markers) do
+		local pickup_ebp = Table_GetRandomItem(pickup_ebps)
+		CreateEntity(ROGUE_ENEMY_ALLY_PLAYER, pickup_ebp, pickup_marker, nil, DIRECTION_BACK)
+	end
+end
+
+function RogueTest_SpawnChampions(name1, name2, custom_units1, custom_units2)
+	
+	-- clear any previous units
+	if SGroup_CountSpawned(sg_roguetest1) > 0 then
+		SGroup_DestroyAllSquads(sg_roguetest1)
+	end
+	if SGroup_CountSpawned(sg_roguetest2) > 0 then
+		SGroup_DestroyAllSquads(sg_roguetest2)
+	end
+	
+	local champion1 = Rogue_POI_GetChampionByName(name1)
+	local champion2 = Rogue_POI_GetChampionByName(name2)
+	
+	UnitEntry_DeploySquads(ROGUE_HUMAN_PLAYERS[1], sg_roguetest1, {sbp = champion1, numSquads = 1}, mkr_champion_p1)
+	UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_roguetest2, {sbp = champion2, numSquads = 1}, mkr_champion_p2)
+	
+	if custom_units1 == nil then
+		UnitEntry_DeploySquads(ROGUE_HUMAN_PLAYERS[1], sg_roguetest1, t_test_units, mkr_champion_p1)
+	else
+		UnitEntry_DeploySquads(ROGUE_HUMAN_PLAYERS[1], sg_roguetest1, custom_units1, mkr_champion_p1)
+	end
+	
+	if custom_units2 == nil then
+		UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_roguetest2, t_test_units, mkr_champion_p2)
+	else
+		UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_roguetest2, custom_units2, mkr_champion_p2)
+	end
+	
+	Cmd_FormationAttackMove(sg_roguetest2, mkr_champion_p1)
+end
+
+function RogueTest_SpawnAllChampions()
+	
+	SGroup_Clear(sg_roguetest1)
+	for i = 1, #t_champion_types do
+		UnitEntry_DeploySquads(ROGUE_HUMAN_PLAYERS[1], sg_roguetest1, {sbp = t_champion_types[i].sbp, numSquads = 1}, mkr_champion_p1)
+	end
+	Cmd_FormationMove(sg_roguetest1, mkr_champion_p1)
+end
+
+function RogueTest_SpawnBoss(shortname, set_player_army, unit_count_multiplier, custom_enemy_units)
+	
+	if set_player_army then
+		
+		if SGroup_CountSpawned(sg_roguetest1) > 0 then
+			SGroup_DestroyAllSquads(sg_roguetest1)
+		end
+		
+		for a = 1, unit_count_multiplier do
+			UnitEntry_DeploySquads(ROGUE_HUMAN_PLAYERS[1], sg_roguetest1, t_test_units_vs_boss, mkr_champion_p1)
+		end
+
+		Cmd_FormationAttackMove(sg_roguetest1, mkr_champion_p2)
+	end
+	
+	if SGroup_CountSpawned(sg_roguetest2) > 0 then
+		SGroup_DestroyAllSquads(sg_roguetest2)
+	end
+	
+	SGroup_Clear(sg_test_boss)
+	local chosen_boss = nil
+	for i = 1, #t_test_bosses do
+		if t_test_bosses[i].shortname == shortname then
+			chosen_boss = t_test_bosses[i]
+		end
+	end
+	
+	local blueprint = BP_GetSquadBlueprint(chosen_boss.name)
+	
+	UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_test_boss, {sbp = blueprint, numSquads = 1}, mkr_champion_p2)
+	
+	for a = 1, unit_count_multiplier do
+		
+		if custom_enemy_units == nil then
+			UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_test_boss_bodyguard, chosen_boss.units, mkr_champion_p2)
+		else
+			UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_test_boss_bodyguard, custom_enemy_units, mkr_champion_p2)
+		end
+	end
+	
+	local _modHealth = function(gid, idx, sid)
+		local entity = Squad_GetFirstEntity(sid)
+		local health_modifier = Modifier_Create(MAT_Entity,"health_maximum_modifier", MUT_Multiplication, false, 2.5, entity)
+		Modifier_ApplyToEntity(health_modifier, entity, 0)
+	end
+	SGroup_ForEach(sg_test_boss, _modHealth)
+	
+	SGroup_AddGroup(sg_roguetest2, sg_test_boss)
+	SGroup_AddGroup(sg_roguetest2, sg_test_boss_bodyguard)
+	
+	Cmd_FormationAttackMove(sg_roguetest2, mkr_champion_p1)
+end
+
+function RogueTest_SpawnAllBosses()
+	SGroup_Clear(sg_test_boss)
+	for i = 1, #t_test_bosses do
+		local blueprint = BP_GetSquadBlueprint(t_test_bosses[i].name)
+		UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_test_boss, {sbp = blueprint, numSquads = 1}, mkr_champion_p2)
+	end
+	Cmd_FormationMove(sg_test_boss, mkr_champion_p2)
+end
+
+

@@ -1,0 +1,217 @@
+--
+-- Ugra - Mongol Waves
+--
+
+
+function MongolWaves_InitObjectives()
+	
+	OBJ_FindMongols = {
+		
+		Title = "$11180261", -- Prepare for the Mongols
+		Type = ObjectiveType_Primary,
+		--Intel_Complete = EVENTS.ScoutFord,
+		SetupUI = function()
+			Objective_StartTimer(OBJ_FindMongols, COUNT_DOWN, prepareTimer, 15)
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(Ugra_UpdateForceCount, updateLoopPeriod)
+			Rule_AddInterval(MongolWaves_CheckMoveUnitStart, 1)
+			Rule_AddInterval(MongolWaves_CheckPrepareCompletion, 1)
+			
+			if UI_IsXboxControllerUI() then
+				MissionTutorial_IvanLeaderAura_XBox()
+			else
+				MissionTutorial_IvanLeaderAura()
+			end
+			
+			Rule_AddOneShot(Ugra_PrepareTimerComplete, (prepareTimer * 0.66))
+			
+			SpawnUnitsToModule({{ type = "scar_manatarms", numSquads = 16 }, { type = "scar_spearman", numSquads = 8 }, { type = "scar_archer", numSquads = 18 },},"DefendMonFord3_1", mkr_monford2_spawn)
+			SpawnUnitsToModule({{ type = "scar_manatarms", numSquads = 16 }, { type = "scar_spearman", numSquads = 8 }, { type = "scar_archer", numSquads = 18 },},"DefendMonFord3_2", mkr_monford2_spawn)
+		end,
+	}
+	
+	OBJ_PrepareForMongols = {
+		
+		Title = "$11180261", -- Prepare for the Mongols
+		Type = ObjectiveType_Primary,
+		Intel_Complete = EVENTS.ScoutFord,
+		OnComplete = function()
+			Objective_Start(OBJ_RepelMongols, false)	
+		end,
+	}
+	
+	SOBJ_MoveToNorthFord = {
+		
+		Title = "$11183131", -- North Ford
+		Type = ObjectiveType_TugOfWar,
+		Parent = OBJ_FindMongols,
+		StartAlongsideParent = true,
+
+		SetupUI = function()
+			Obj_SetProgressVisible(SOBJ_MoveToNorthFord.ID, true)
+			Objective_AddGroundReticule(SOBJ_MoveToNorthFord, mkr_rusford1, Marker_GetProximityRadius(mkr_rusford1), BP_GetReticuleBlueprint("campaign_capturelocation_self"))
+			Objective_AddUIElements(SOBJ_MoveToNorthFord, mkr_rusford1, true, nil, false, nil, nil, nil, "icons/objectives/objective_battle")
+		end,
+	}
+	
+	SOBJ_MoveToSouthFord = {
+		
+		Title = "$11183132", -- South Ford
+		Type = ObjectiveType_TugOfWar,
+		Parent = OBJ_FindMongols,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			Obj_SetProgressVisible(SOBJ_MoveToSouthFord.ID, true)
+			Objective_AddGroundReticule(SOBJ_MoveToSouthFord, mkr_rusford2, Marker_GetProximityRadius(mkr_rusford2), BP_GetReticuleBlueprint("campaign_capturelocation_self"))
+			Objective_AddUIElements(SOBJ_MoveToSouthFord, mkr_rusford2, true, nil, false, nil, nil, nil, "icons/objectives/objective_battle")
+		end,
+	}
+	
+	--SOBJ_Prepare = {
+		
+		--Title = "$11183127", -- Build up your forces to face the Mongols
+		--Type = ObjectiveType_Primary,
+		--Parent = OBJ_FindMongols,
+		--StartAlongsideParent = true,
+		--OnStart = function()
+			--Rule_AddInterval(MongolWaves_CheckMoveUnitStart, 1)
+		--end,
+		
+		--IsComplete = function()
+			--if Objective_GetTimerSeconds(OBJ_FindMongols) <= 0 then 
+				----Objective_Complete(SOBJ_ScoutFord, false)
+				--return true
+			--end
+		--end,
+	--}
+	
+	OBJ_MoveUnitsToFords = {
+		
+		Title = "$11205805", -- Move units to the the Fords
+		Type = ObjectiveType_Primary,
+	}
+	
+	OBJ_RepelMongols = {
+		
+		Title = "$11183133", -- Repel Mongol Vanguard
+		Type = ObjectiveType_Battle,
+		
+		Intel_Complete = EVENTS.MongolsRepeled,
+		
+		OnStart = function()
+			Sound_SetMinimumMusicCombatIntensity(801, 0) 
+			Objective_Start(SOBJ_RepelWave1, true)
+		end,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_RepelMongols, ALL)
+		end,
+		OnComplete = function()
+			Objective_Complete(OBJ_FindMongols, false)
+			Objective_Start(OBJ_MaintainSuperiority)
+		end,
+	}
+	
+	SOBJ_RepelWave1 = {
+		
+		Title = "$11180263", -- Repel Mongol Scouts at South Ford
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_RepelMongols,
+		
+		OnStart = function()
+			SpawnUnitsToModule({ type = "scar_horseman", numSquads = 6 },"ScoutAttack2", mkr_monford2_spawn)
+			Objective_AddUIElements(SOBJ_RepelWave1, mkr_rusford2, true, nil, false, nil, nil, nil)
+		end,
+		
+		IsComplete = function()
+			return SGroup_IsEmpty(sg_mon_scoutwave2)
+		end,
+		OnComplete = function()
+			Objective_Start(SOBJ_RepelWave2)
+		end,
+	}
+	
+	SOBJ_RepelWave2 = {
+		
+		Title = "$11180264", -- Repel Mongol Scouts at North Ford
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_RepelMongols,
+		
+		Intel_Start = EVENTS.MongolProbe,
+		
+		OnStart = function()
+			SpawnUnitsToModule({ type = "scar_horseman", numSquads = 6 },"ScoutAttack1", mkr_monford1_spawn)
+			Objective_AddUIElements(SOBJ_RepelWave2, mkr_rusford1, true, nil, false, nil, nil, nil)
+		end,
+		
+		IsComplete = function()
+			return SGroup_IsEmpty(sg_mon_scoutwave1)
+		end,
+
+	}
+	
+	Objective_Register(OBJ_FindMongols)
+	Objective_Register(OBJ_PrepareForMongols)
+	
+	Objective_Register(SOBJ_MoveToNorthFord)
+	Objective_Register(SOBJ_MoveToSouthFord)
+	
+	Objective_Register(OBJ_MoveUnitsToFords)
+	
+	Objective_Register(OBJ_RepelMongols)
+	Objective_Register(SOBJ_RepelWave1)
+	Objective_Register(SOBJ_RepelWave2)
+	
+end
+
+function MongolWaves_CheckPrepareCompletion()
+	
+	if Objective_GetTimerSeconds(OBJ_FindMongols) <= 0 then	
+		Objective_StopTimer(OBJ_FindMongols)
+		Objective_UpdateText(OBJ_FindMongols, "$11180258", nil, false)
+		Objective_Complete(OBJ_PrepareForMongols)
+		Rule_RemoveMe()
+	end
+end
+
+function MongolWaves_CheckMoveUnitStart()
+	
+	if Objective_GetTimerSeconds(OBJ_FindMongols) <= 120 then 
+		Objective_Start(OBJ_MoveUnitsToFords)
+		Rule_RemoveMe()
+	elseif Player_GetTotalPopulation(player1) >= 130 then
+		Objective_Start(OBJ_MoveUnitsToFords)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function RepelWave1_Start()
+	SpawnUnitsToModule({ type = "scar_horseman", numSquads = 6 },"ScoutAttack2", mkr_monford2_spawn)
+end
+
+function RepelWave2_Start()
+	SpawnUnitsToModule({ type = "scar_horseman", numSquads = 6 },"ScoutAttack1", mkr_monford1_spawn)
+end
+
+--function Ugra_CheckFordsScouted()
+	--Player_GetAll(player1)
+	--local north = 	Prox_AreSquadsNearMarker(sg_allsquads,mkr_northford, ANY, 30)
+	--local south = 	Prox_AreSquadsNearMarker(sg_allsquads,mkr_southford, ANY, 30)
+	--local bridge = 	Prox_AreSquadsNearMarker(sg_allsquads,mkr_bridge, ANY, 30)
+	
+	--if north or south or bridge then
+		--Cmd_Move(sg_mon_scout_intro, mkr_monfort)
+		--Objective_Complete(SOBJ_Prepare, false)
+		--Objective_Complete(SOBJ_ScoutFord)
+		--Rule_RemoveMe()
+	--end
+--end
+
+
+function Ugra_PrepareTimerComplete()
+	prepareTimerComplete = true
+end

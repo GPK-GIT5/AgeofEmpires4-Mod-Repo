@@ -1,0 +1,352 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+statusTable = {
+	NotRun = 0,
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3 
+}
+b_introStarted = false
+
+
+function AutoTest_OnInit()
+    if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+        import("test/common.scar")
+        import("test/standard_test.scar")
+        import("test/test_framework.scar")
+        
+        print("CampaignAutoTest parameter detected")
+        debug_IsCampaignAutoTest = true
+		
+        AutomatedTyre_RegisterCheckpoints()    
+        
+        Game_AIControlLocalPlayer()
+        AI_Enable(player1, true)
+        print("Assuming Direct Control. Player is now AI Driven: "..tostring(AI_IsEnabled(player1)))
+        
+        if Util_GetCommandLineArgument("NoSwoopy") then
+            Rule_AddInterval(AutoTest_SkipAndStart, 1)
+        else
+            Rule_AddInterval(AutoTest_PlayIntro, 1)
+        end          
+    end
+end
+
+function AutomatedTyre_RegisterCheckpoints()
+   
+    CampaignAutotest_RegisterCheckpoint("cat_PlayStart", 60)
+    CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable.InProgress)
+    
+    CampaignAutotest_RegisterCheckpoint("cat_RaidVillagers", 605)
+    CampaignAutotest_SetCheckpointStatus("cat_RaidVillagers", statusTable.NotRun)
+    
+	CampaignAutotest_RegisterCheckpoint("cat_PrepareArmy", 905)
+    CampaignAutotest_SetCheckpointStatus("cat_PrepareArmy", statusTable.NotRun)
+	
+	CampaignAutotest_RegisterCheckpoint("cat_DestroyBeast", 605)
+    CampaignAutotest_SetCheckpointStatus("cat_DestroyBeast", statusTable.NotRun)
+end
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+    if Event_IsAnyRunning() then
+        Rule_RemoveMe()
+        Game_SkipAllEvents(false)
+        AutomatedMission_Start()
+    end
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+--If this is the first check since the intro event started, then starting checking for the end only after it starts
+    if b_introStarted == false then  
+        if Event_IsAnyRunning() then
+            b_introStarted = true
+        end
+    else
+        if Event_IsAnyRunning() == false then
+            Rule_RemoveMe()
+            AutomatedMission_Start()
+        end
+    end
+end
+
+function AutomatedMission_Start()
+	
+	Rule_AddInterval(AutomatedTyre_Phase0_CheckPlayStart, 1)
+	
+	AutomatedTyre_RaiderCount = 15
+	AutomatedTyre_RaiderTarget = 1
+	
+	--build a list of raid targets
+	raid_targets = {}
+	for i, camp in ipairs(camps) do
+		
+		local army = Army_FindFromName(camp.army_name)
+		table.insert(raid_targets, { sgroup = army.sgroup, camp = camp })
+		
+		for a, group in ipairs(villager_groups) do
+			if group.camp == camp then
+				table.insert(raid_targets, { sgroup = group.sgroup, camp = camp })
+			end
+		end
+	end
+	
+	Rule_AddInterval(AutomatedTyre_MonitorRaiders, 3)
+	
+end
+
+function AutomatedTyre_MonitorRaiders()
+	--Phase 1: Raiding
+	--do we need reinforcements?
+	if SGroup_CountSpawned(sg_p1_raiders) < AutomatedTyre_RaiderCount then
+		local units = { sbp = SBP.AYYUBID_CMP.UNIT_TURKIC_HORSEARCHER_2_AYY, numSquads = 5 }
+		CreateUnits(player1, units, mkr_turkish_horse_archers_spawn, sg_p1_raiders)
+	end
+	
+	--find units to target
+	if SGroup_IsMoving(sg_p1_raiders, ALL) == false then
+		local target_found = false
+		
+		if target_found == false then
+			
+			for i, target in ipairs(raid_targets) do
+				
+				if target.camp.alive and SGroup_CountSpawned(target.sgroup) > 0 and SGroup_IsInHoldEntity(target.sgroup, ALL) == false then
+					
+					target_found = true
+					local pos = Util_GetPosition(target.sgroup)
+					
+					if Prox_AreSquadsNearMarker(sg_p1_raiders, pos, ANY, 15) then
+						Cmd_Attack(sg_p1_raiders, target.sgroup)
+					else
+						Cmd_Move(sg_p1_raiders, pos)
+					end
+					
+					break
+				end
+			end
+		end
+		
+		--go home if no target found
+		if target_found == false then
+			Cmd_Move(sg_p1_raiders, mkr_p1_base)
+		end
+	end
+	
+end
+
+function AutomatedTyre_InitBuildUp()
+	
+	--defender army
+	p1_defender_army_params = {
+		name = "p1_defender_army",
+		player = player1,
+		spawn = mkr_p1_init_army,
+		targetOrder = TARGET_ORDER_PATROL,
+		attackBuildings = BUILDINGS_THREATENING,
+		targets = AllMarkers_FromName("mkr_p1_test_defend", ""),
+		units = {}
+	}
+	p1_defender_army = Army_Init(p1_defender_army_params)
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "military", FILTER_KEEP)
+
+	SGroup_AddGroup(sg_p1_defenders, sg_allsquads)
+	Army_AddSGroup(p1_defender_army, sg_allsquads)
+	
+	AutomatedTyre_VillagersAssigned = false
+	AutomatedTyre_DefenderCount = 30
+	
+	CampaignAutotest_SetCheckpointStatus("cat_PrepareArmy", statusTable.InProgress)
+	Rule_AddInterval(AutomatedTyre_Phase2_Monitor, 1)
+	
+	Rule_AddInterval(AutomatedTyre_MonitorBuildUp, 2)
+	
+	Rule_AddOneShot(AutomatedTyre_BuildHouseOfWisdom, 20)
+end
+
+function AutomatedTyre_BuildHouseOfWisdom()
+	
+	--build house of wisdom
+	local builder = SGroup_GetSquadAt(sg_p1_villagers, 1)
+	SGroup_Remove(sg_p1_villagers, builder)
+	SGroup_Clear(sg_temp)
+	SGroup_Add(sg_temp, builder)
+	Cmd_Construct(sg_temp, EBP.AYYUBID_CMP.BUILDING_HOUSE_OF_WISDOM_AYY, Util_GetPosition(mkr_p1_test_build))
+	
+	Rule_AddGlobalEvent(AutomatedTyre_OnConstructionComplete, GE_ConstructionComplete)
+end
+
+function AutomatedTyre_OnConstructionComplete(context)
+	
+	if Entity_GetBlueprint(context.entity) == EBP.AYYUBID_CMP.BUILDING_HOUSE_OF_WISDOM_AYY then
+		Rule_AddOneShot(AutomatedTyre_BuildWingDelayed, 15)
+	end
+end
+
+function AutomatedTyre_BuildWingDelayed()
+	if EGroup_CountSpawned(eg_house_of_wisdom) > 0 then
+		Cmd_Upgrade(eg_house_of_wisdom, UPG.ABBASID.UPGRADE_ADD_MILITARY_WING, 1, true)
+	end
+end
+
+function AutomatedTyre_MonitorBuildUp()
+	--Phase 2: Build and defend your base
+	
+	Player_AddResources(player1, {gold = 25, wood = 25, food = 25, stone = 10,})
+	
+	-- update total for resource harvest objective
+	player_resource_total = player_resource_total + 85
+	
+	if AutomatedTyre_VillagersAssigned == false then
+			
+		if sg_p1_villagers ~= nil then
+			AssignVillagersToBerries(sg_p1_villagers)
+			AutomatedTyre_VillagersAssigned = true
+		end
+	end
+	
+	if SGroup_CountSpawned(sg_p1_defenders) < AutomatedTyre_DefenderCount then
+		local units_def = { 
+			{ type = "scar_spearman", numSquads = 1 },
+			{ type = "scar_archer", numSquads = 1 },
+			{ type = "scar_horseman", numSquads = 1 },
+		}
+		local sg_tmp_defenders = SGroup_CreateIfNotFound("sg_tmp_defenders")
+		CreateUnits(player1, units_def, mkr_p1_init_army, sg_tmp_defenders)
+		
+		SGroup_AddGroup(sg_p1_defenders, sg_tmp_defenders)
+		Army_AddSGroup(p1_defender_army, sg_tmp_defenders)
+		
+		SGroup_Destroy(sg_tmp_defenders)
+	end
+	
+end
+
+
+function AutomatedTyre_InitDestroyRam()
+	
+	--attacker army
+	p1_attacker_army_params = {
+		name = "p1_attacker_army",
+		player = player1,
+		spawn = mkr_p1_init_army,
+		targetOrder = TARGET_ORDER_PATROL,
+		attackBuildings = BUILDINGS_THREATENING,
+		targets = AllMarkers_FromName("mkr_p1_test_target", ""),
+		units = {}
+	}
+	p1_attacker_army = Army_Init(p1_attacker_army_params)
+	
+	--get upgrades
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_UNIT_SPEARMAN_2)
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_DAMAGE_I)
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_ARMOR_I)
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_RANGED_DAMAGE_I)
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_RANGED_ARMOR_I)
+	
+	AutomatedTyre_AttackerCount = 60
+	AutomatedTyre_AttackerPrepInterval = 8
+	AutomatedTyre_AttackerPrepCounter = 0
+	
+	AutomatedTyre_SpawnAttackers(40, 20, 10)
+	
+	CampaignAutotest_SetCheckpointStatus("cat_DestroyBeast", statusTable.InProgress)
+	Rule_AddInterval(AutomatedTyre_MonitorDestroyRam, 2)
+	
+	Rule_AddOneShot(AutomatedTyre_RedirectBaseDefenders, 90)
+end
+
+function AutomatedTyre_RedirectBaseDefenders()
+	
+	if SGroup_CountSpawned(sg_p1_init_army) > 0 then
+		Army_AddSGroup(p1_defender_army, sg_p1_init_army)
+	end
+	
+	Army_AddTargets(p1_defender_army, AllMarkers_FromName("mkr_p1_test_target", ""))
+end
+
+function AutomatedTyre_MonitorDestroyRam()
+	--Phase 3: Defend Tyre, Destroy the Beast
+	
+	if SGroup_CountSpawned(sg_p1_attackers) < AutomatedTyre_AttackerCount then
+		
+		if AutomatedTyre_AttackerPrepCounter >= AutomatedTyre_AttackerPrepInterval then
+			AutomatedTyre_AttackerPrepCounter = 0
+			
+			AutomatedTyre_SpawnAttackers(10, 5, 5)
+		else
+			AutomatedTyre_AttackerPrepCounter = AutomatedTyre_AttackerPrepCounter + 1
+		end
+	end
+	
+end
+
+function AutomatedTyre_SpawnAttackers(numSpear, numArcher, numHorse)
+	
+	local units_att = { 
+		{ type = "scar_spearman", numSquads = numSpear },
+		{ type = "scar_archer", numSquads = numArcher },
+		{ type = "scar_horseman", numSquads = numHorse },
+	}
+	local sg_tmp_attackers = SGroup_CreateIfNotFound("sg_tmp_attackers")
+	CreateUnits(player1, units_att, mkr_p1_init_army, sg_tmp_attackers)
+			
+	Cmd_Move(sg_tmp_attackers, mkr_p1_test_rally)
+			
+	SGroup_AddGroup(sg_p1_attackers, sg_tmp_attackers)
+	Army_AddSGroup(p1_attacker_army, sg_tmp_attackers)
+			
+	SGroup_Destroy(sg_tmp_attackers)
+end
+
+
+function AutomatedTyre_Phase0_CheckPlayStart()
+    if Objective_IsStarted(OBJ_ClearCamps) then
+        CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable.Pass)
+        AutomatedTyre_Phase1_Setup()
+		print("Autotest Start Passed")
+		Rule_RemoveMe()
+    end
+end
+
+function AutomatedTyre_Phase1_Setup()
+	CampaignAutotest_SetCheckpointStatus("cat_RaidVillagers", statusTable.InProgress)
+	Rule_AddInterval(AutomatedTyre_Phase1_Monitor, 1)
+end
+
+function AutomatedTyre_Phase1_Monitor()
+	
+	if base_phase_started then
+		Rule_Remove(AutomatedTyre_MonitorRaiders)
+		
+		CampaignAutotest_SetCheckpointStatus("cat_RaidVillagers", statusTable.Pass)
+		AutomatedTyre_InitBuildUp()
+		
+		Rule_RemoveMe()
+	end
+end
+
+function AutomatedTyre_Phase2_Monitor()
+	
+	if Objective_IsComplete(OBJ_AssaultCountdown) then
+		
+		CampaignAutotest_SetCheckpointStatus("cat_PrepareArmy", statusTable.Pass)
+		AutomatedTyre_InitDestroyRam()
+		
+		Rule_RemoveMe()
+	end
+end
+
+function AutomatedTyre_Phase3_Monitor()
+	
+	if Objective_IsComplete(OBJ_DestroyRam) then
+		
+		CampaignAutotest_SetCheckpointStatus("cat_DestroyBeast", statusTable.Pass)
+		
+		Rule_RemoveMe()
+	end
+end

@@ -1,0 +1,219 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("obj_spearmen.scar")
+import("training_sal_chp1_rebellion.scar")
+
+function Investigate_InitObjectives()
+	
+	OBJ_InvestigateSurroundings = {
+		Title = "$999451", --Investigate the area
+		Type = ObjectiveType_Primary,
+		
+		IsComplete = function() 
+		    return Objective_AreSubObjectivesComplete(OBJ_InvestigateSurroundings, ALL)
+        end,
+	}
+	
+	SOBJ_MoveCameraToLumber = {
+        Title = "$999452", --Move the Camera to the Lumber Camp
+		Type = ObjectiveType_Primary,
+        Parent = OBJ_InvestigateSurroundings,
+        StartAlongsideParent = true,
+		SetupUI = MoveCameraToLumber_UI,
+		OnStart = MoveCameraToLumber_Start,
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_MoveCameraToRocks, false, true)
+		end,
+    }
+	
+	SOBJ_MoveCameraToRocks = {
+        Title = "$999454", --Move the Camera to the Large Rocks
+		Type = ObjectiveType_Primary,
+        Parent = OBJ_InvestigateSurroundings,
+        StartAlongsideParent = false,
+		SetupUI = MoveCameraToRocks_UI,
+		OnStart = MoveCameraToRocks_Start,
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_RotateCamera, false, true)
+		end,
+    }
+	
+	SOBJ_RotateCamera = {
+        Title = "$999456", --Rotate the Camera around the Rocks
+		Type = ObjectiveType_Primary,
+        Parent = OBJ_InvestigateSurroundings,
+        StartAlongsideParent = false,
+		SetupUI = RotateCamera_UI,
+		OnStart = RotateCamera_Start,
+		Intel_Start = EVENTS.RotatingStart,
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_ZoomCamera, false, true)
+		end,
+    }
+	
+	SOBJ_ZoomCamera = {
+        Title = "$999458", --Zoom in to look at the camp
+		Type = ObjectiveType_Primary,
+        Parent = OBJ_InvestigateSurroundings,
+        StartAlongsideParent = false,
+		SetupUI = ZoomCamera_UI,
+		OnStart = ZoomCamera_Start,
+		Intel_Start = EVENTS.ZoomingStart,
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_ResetCamera, false, true)
+		end,
+    }
+	
+	SOBJ_ResetCamera = {
+        Title = "$999460", --Reset the Camera
+		Type = ObjectiveType_Primary,
+        Parent = OBJ_InvestigateSurroundings,
+        StartAlongsideParent = false,
+		OnStart = ResetCamera_Start,
+		Intel_Start = EVENTS.ResetStart,
+		
+		OnComplete = function()
+			Objective_Start(OBJ_Spearmen, true, true)
+		end,
+    }
+	
+	-- Register all objectives
+	Objective_Register(OBJ_InvestigateSurroundings) 
+	Objective_Register(SOBJ_MoveCameraToLumber)
+	Objective_Register(SOBJ_MoveCameraToRocks)
+	Objective_Register(SOBJ_RotateCamera)
+	Objective_Register(SOBJ_ZoomCamera)
+	Objective_Register(SOBJ_ResetCamera)
+end
+
+-- ///// Move Camera To Lumber //////////////////////////////////////////////
+function MoveCameraToLumber_UI()
+	
+	--Objective_AddUIElements(SOBJ_MoveCameraToLumber, mkr_lumber_camp_obj_1a, false, LOC("Investigate"), true, 5)
+end
+
+function MoveCameraToLumber_Start()
+
+	Goals_PanCameraLumber()
+	Rule_Add(MoveCameraToLumber_Monitor)
+end
+
+function MoveCameraToLumber_Monitor()
+	
+	if Prox_AreEntitiesNearMarker(eg_lumberCamp, Camera_GetPivot(), true, 5) then
+		
+		Objective_Complete(SOBJ_MoveCameraToLumber, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// Move Camera To Rocks //////////////////////////////////////////////
+function MoveCameraToRocks_UI()
+	
+	--Objective_AddUIElements(SOBJ_MoveCameraToRocks, mkr_large_rocks_obj_1b, false, LOC("Investigate"), true, 5)
+end
+
+function MoveCameraToRocks_Start()
+	Goals_PanCameraRock()
+	Rule_Add(MoveCameraToRocks_Monitor)
+end
+
+function MoveCameraToRocks_Monitor()
+	
+	if IsOverRocks() then
+
+		Objective_Complete(SOBJ_MoveCameraToRocks, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+function IsOverRocks()
+	
+	return World_DistancePointToPoint(Util_GetPosition(mkr_large_rocks_obj_1b), Util_GetPosition(Camera_GetPivot())) < 7
+end
+
+-- ///// Rotate the Camera Around the Rocks //////////////////////////////////////////////
+function RotateCamera_UI()
+	
+	--Objective_AddUIElements(SOBJ_RotateCamera, mkr_large_rocks_obj_1b, false, LOC("Investigate"), true, 5)
+end
+
+function RotateCamera_Start()
+
+	Goals_RotateCamera()
+	Rule_Add(RotateCamera_Monitor)
+end
+
+function RotateCamera_Monitor()
+	
+	if IsOverRocks() and HasRotatedCamera() then
+		Objective_Complete(SOBJ_RotateCamera, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+function HasRotatedCamera()
+
+	local camera_orbit = math.floor(Camera_GetOrbit()) % 360
+	if camera_orbit <= 0 then
+		camera_orbit = camera_orbit + 360
+	end
+
+	if camera_orbit > 285 or camera_orbit < 130 then
+		return true
+	end
+	
+	return false
+end
+
+-- ///// Zoom Camera //////////////////////////////////////////////
+function ZoomCamera_UI()
+	
+	--Objective_AddUIElements(SOBJ_ZoomCamera, mkr_campfire, false, LOC("Investigate"), true, 2)
+end
+
+function ZoomCamera_Start()
+	
+	Goals_ZoomCamera()
+	Rule_Add(ZoomCamera_Monitor)
+end
+
+function ZoomCamera_Monitor()
+	
+	if IsOverRocks() and HasZoomedCamera() and HasRotatedCamera() then
+		Objective_Complete(SOBJ_ZoomCamera, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+function HasZoomedCamera()
+	
+	local camera_zoom = Camera_GetZoomDist()
+	
+	return camera_zoom > 0.8
+end
+
+-- ///// Reset Camera /////////////////////////////////
+function ResetCamera_Start()
+
+	Goals_ResetCamera()
+	Rule_Add(ResetCamera_Monitor)
+end
+
+function ResetCamera_Monitor()
+	
+	-- Allow for a small margin of error
+	has_reset_zoom = Camera_GetZoomDist() < 0.2
+	
+	if has_reset_zoom then
+		Objective_Complete(SOBJ_ResetCamera, false, true)
+		Rule_RemoveMe()
+	end
+end

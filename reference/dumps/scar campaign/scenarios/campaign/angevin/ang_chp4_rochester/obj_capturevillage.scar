@@ -1,0 +1,159 @@
+--
+-- Rochester 1215 - Capture Village
+--
+
+function CaptureVillage_InitObjectives()
+	local location = LOCATION("TheHamlet")
+	
+	OBJ_CaptureVillage = {
+		
+		Title = "$11174919", --Capture Chatham
+		Type = ObjectiveType_Capture,
+		--Icon = "icons/objectives/capture_objective",
+		Intel_Start = EVENTS.JohnArrives,
+		Intel_Complete = EVENTS.HamletCaptured,
+		PreStart = CaptureVillage_PreStart,
+		OnStart = CaptureVillage_Start,
+		--IsComplete = CaptureVillage_IsComplete,
+		PreComplete = CaptureVillage_PreComplete, 
+		OnComplete = CaptureVillage_OnComplete,
+		IsFailed = CaptureVillage_IsFailed,
+		OnFail = CaptureVillage_OnFail,
+	}
+	
+	SOBJ_DefeatHamletRebels = 
+	{
+		
+		Title = "$11174920", --"Defeat Chatham rebels"
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureVillage,
+		OnStart = DefeatHamletRebels_Start,
+		PreStart = DefeatHamletRebels_PreStart,
+	}
+	
+	SOBJ_LocationHamlet = 
+	{
+		Title = "$11175641", --Chatham
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureVillage,
+	}
+	
+	OBJ_DebugComplete = {
+		Title = LOC("Debug Complete"),
+		Type = OT_Primary,
+		showTitle = false,
+		Cheat = function()
+			EGroup_Kill(eg_outro_destroy)
+			Mission_Complete()
+		end,
+	}
+	
+	Objective_Register(OBJ_CaptureVillage)
+	Objective_Register(SOBJ_DefeatHamletRebels)
+	Objective_Register(SOBJ_LocationHamlet)
+	Objective_Register(OBJ_DebugComplete)
+	
+	location.objectivePrimary = OBJ_CaptureVillage
+	location.objectiveSecondary = SOBJ_DefeatHamletRebels
+	location.objectiveCapture = SOBJ_LocationHamlet
+	
+end
+
+function CaptureVillage_Start()
+	
+end
+
+function CaptureVillage_PreStart() --Pre-Objective Start
+	Location_SetCapturable(LOCATION("TheHamlet"), true)
+end
+
+function DefeatHamletRebels_PreStart()
+	
+	--Music_LockIntensity(MUSIC_COMBAT, 30)
+	
+end
+
+
+--function CaptureVillage_IsComplete() --Is the objective complete? Looping check.
+	--if SGroup_CountSpawned(sg_defend_neutral_village) <= 0 then --If there are no defenders left in Hamlet
+		----LOCATION("TheHamlet").data.villagerCount = 0	
+		--return true --Complete
+	--else
+		--return false --Keep Looping
+	--end
+--end
+
+function CaptureVillage_PreComplete() --Before ending the objective
+	--ConvertVillagers() --Convert village to player 1 control
+	Music_StopMedium() -- music stops for a bit then will restart properly
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_chatham_main, 50) 
+	Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+	Rule_AddInterval(CounterMonks, 480)
+	-- add a hintpoint on the TC to show town name
+	chatham_Hintpoint = HintPoint_Add(eg_chatham_tc, true, "$11175641", LOCATION_LABEL_HEIGHT) --"Chatham"	
+	VillageRepopulate()
+	
+		-- on console, restore the econ HUD at this point
+	if UI_IsXboxUI() then
+		Game_SetVisibility (VF_XboxUIResourceCard, true)
+		Game_SetVisibility (VF_XboxUIVillagerPriorities, true)
+	end				
+
+end
+
+function CaptureVillage_OnComplete() --When the objective completes
+
+	Rule_AddOneShot(Rochester_Tutorials_Init, 30)
+	-- No spontaneous attacks from the enemy on Story Mode
+	if Game_GetSPDifficulty() >= GD_NORMAL then
+		Init_AttackWaves()
+		Rule_AddOneShot(SendPoke, 60*t_difficulty.pokeTimer)
+	end
+	RochesterSupply_Init()
+	
+	Util_AutoSave()
+	
+	if Game_GetSPDifficulty() <= GD_NORMAL then
+		Objective_Start(OBJ_SiegeTut)
+	end	
+end
+
+function CaptureVillage_IsFailed() --Check if objective failed
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+	if SGroup_CountSpawned(sg_allsquads) <= 0 then --If the player has no units left
+		return true --Fail the objective
+	else
+		return false --Keep checking
+	end
+end
+
+function CaptureVillage_OnFail() --On Objective Fail
+	Mission_Fail() --Missions fails
+end
+
+function VillageRepopulate()
+	villager_RespawnLocation = villagerlife_chatham.mkr_flee
+	
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_chatham.roaming_count-4},villager_RespawnLocation)
+	Cmd_Move(sg_temp, villagerlife_chatham.location_mkr)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_chatham.food_count}, villager_RespawnLocation)
+	AssignVillagersToFarms(sg_temp)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_chatham.wood_count + Util_DifVar({ 6, 4, 4, 4 })}, villager_RespawnLocation)
+	AssignVillagersToWood(sg_temp)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_chatham.stone_count + Util_DifVar({ 1, 0, 0, 0 })}, villager_RespawnLocation)
+	AssignVillagersToStone(sg_temp)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_chatham.gold_count + Util_DifVar({ 1, 0, 0, 0 })}, villager_RespawnLocation)
+	AssignVillagersToGold(sg_temp)
+	
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_monk", numSquads = 2}, villager_RespawnLocation)
+	Cmd_Move(sg_temp, mkr_chatham_main)
+	
+	UI_SetPlayerDataContext(player1, { PopulationCapOn = true })
+end

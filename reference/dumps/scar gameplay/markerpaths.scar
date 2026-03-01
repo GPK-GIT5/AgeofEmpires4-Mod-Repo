@@ -1,0 +1,246 @@
+--
+-- Marker Paths
+--
+-- Contains functions associated with markers that are created via the instance component of splines.
+--
+
+g_minimapMarkerScale = 0.3
+
+--? @shortdesc Gives the sgroup a series of queued orders to go to each marker with the same markerName.
+--? @args SGroupID sgroup, String markerName, String opt_markerType, Num opt_startMarker, Num opt_endMarker
+function MarkerPaths_MoveSGroupAlongPath(sgroup, markerName, opt_markerType, opt_startMarker, opt_endMarker)
+	
+	--Generate a list of all the markers of the desired name
+	local _markerType = opt_markerType or ""
+	local _markerTable = AllMarkers_FromName(markerName, _markerType)
+	local startMarker = opt_startMarker or 1
+	local endMarker = opt_endMarker or #_markerTable
+	
+	--Generate the queued move order
+	for i, v in ipairs(_markerTable) do
+		if i >= startMarker and i <= endMarker then
+			Cmd_FormationMove(sgroup, v, true)
+		end
+	end
+	
+end
+
+--? @shortdesc Gives the sgroup a series of queued orders to go to each marker with the same markerName.
+--? @args SGroupID sgroup, String markerName, String opt_markerType
+function MarkerPaths_AttackMoveSGroupAlongPath(sgroup, markerName, opt_markerType)
+	
+	--Generate a list of all the markers of the desired name
+	local _markerType = opt_markerType or ""
+	local _markerTable = AllMarkers_FromName(markerName, _markerType)
+	
+	--Generate the queued move order
+	for i, v in ipairs(_markerTable) do
+		Cmd_FormationAttackMove(sgroup, v, true)
+	end
+	
+end
+
+--? @shortdesc Follow-up gate locking function, because you can't call two commands on an Entity in the same frame
+--? @args STRING pathName, TABLE pointList, STRING iconName, NIL/NUMBER spacing
+function MarkerPaths_GenerateIcons(pathName, pointList, iconName, spacing, iconScale)
+	
+	--[[
+	As of 11 Feb 2020, valid textures are found under:
+	/cardinal/ui/assets/cardinal/ui/icons/minimap/
+	
+	The most commonly-used ones will be as follows,
+	Where "military" means directional arrows, "trade" means directionless dots.
+	
+	military_route_ally
+	military_route_enemy
+	military_route_neutral
+	military_route_self
+	
+	trade_route_ally
+	trade_route_enemy
+	trade_route_neutral
+	trade_route_self
+	
+	There are also ones for individual player colours, among others.
+	]]
+	
+	-- Setup the full icon name
+	if scartype(iconName) ~= ST_STRING then
+		iconName = "military_route_enemy"
+	end
+	iconName = "icons\\minimap\\"..iconName
+	
+	-- Make sure scale is set
+	iconScale = iconScale or g_minimapMarkerScale
+	
+	-- Setup the spacing
+	local distCumulative = 0.0
+	if scartype(spacing) ~= ST_NUMBER then
+		spacing = -1.0
+	end
+	
+	-- Setup the path
+	g_minimapPaths = g_minimapPaths or {}
+	if scartype(g_minimapPaths[pathName]) ~= ST_TABLE then
+		g_minimapPaths[pathName] = {}
+	end
+	local thisPath = g_minimapPaths[pathName]
+	local lastIconPos = nil
+	
+	-- Remove any old UI
+	MarkerPaths_ClearIcons(pathName)
+	
+	-- Compile a list of final points
+	local finalPoints = {}
+	local excludeLast = 1
+	if spacing <= 0 then
+		excludeLast = 0
+	end
+	
+	-- Convert the input points to spaced output points
+	for index = 1, #pointList, 1 do
+		-- What's this position
+		local thisPosition = pointList[index]
+		if scartype(thisPosition) ~= ST_SCARPOS then
+			thisPosition = Util_GetPosition(thisPosition)
+		end
+		
+		if scartype(thisPosition) == ST_SCARPOS then
+			-- Checking the distances
+			if lastIconPos ~= nil then
+				local distFromLast = Util_GetDistance(lastIconPos, thisPosition)
+				distCumulative = distCumulative + distFromLast
+			end
+			-- If we've gotten far enough from the last icon, place an icon!
+			if spacing < 0 or distCumulative >= spacing then
+				table.insert(finalPoints, thisPosition)
+				distCumulative = 0.0
+			end
+			-- Now track the last icon position as this position
+			lastIconPos = pointList[index]
+		else
+			fatal(string.format("Can't make a path from %s objects", scartype_tostring(thisPosition)))
+		end
+	end
+	
+	-- In the case where there's only a single point, we don't have anything else to point it to!
+	if #finalPoints == 1 then
+		local mapicon = MapIcon_CreatePosition(finalPoints[1], iconName, iconScale, 255, 255, 255, 255)
+		-- Just make it point towards the last point in that list, wherever that is, even though we won't display it
+		MapIcon_SetFacingPosition(mapicon, pointList[#pointList - 1])
+		table.insert(thisPath, mapicon)
+	elseif #finalPoints > 1 then
+		-- Make icons for the final points. This is separate largely so that the facings make more sense
+		for index = 1, #finalPoints, 1 do
+			local mapicon = MapIcon_CreatePosition(finalPoints[index], iconName, iconScale, 255, 255, 255, 255)
+			if index < #finalPoints then
+				MapIcon_SetFacingPosition(mapicon, finalPoints[index + 1])
+			else
+				-- Extra work to calculate a facing for the last position
+				local stubPos = Util_GetPositionFromAtoB(finalPoints[index - 1], finalPoints[index], 100)
+				MapIcon_SetFacingPosition(mapicon, stubPos)
+			end
+			table.insert(thisPath, mapicon)
+		end
+	else
+		print(string.format("MINIMAP PATHS: No final points calculated; had %s to work with", #pointList))
+	end
+	
+end
+
+--? @shortdesc Clears the minimap path with the given pathName string, if there is one. If removePath, that path is entirely deleted; otherwise it persists and can be used again
+--? @args STRING pathName, BOOL removePath
+function MarkerPaths_ClearIcons(pathName, removePath)
+
+	-- No minimap paths to clear so return
+	if g_minimapPaths == nil then
+		return
+	end
+	
+	if removePath == nil then
+		removePath = false
+	end
+	local thisPath = g_minimapPaths[pathName]
+	
+	if scartype(thisPath) == ST_TABLE then
+		-- Remove any old UI
+		for index = #thisPath, 1, -1 do
+			MapIcon_Destroy(thisPath[index])
+			table.remove(thisPath, index)
+		end
+		-- We might want to remove the path, too
+		if removePath == true then
+			g_minimapPaths[pathName] = nil
+		end
+	end
+end
+
+--? @shortdesc Animates a path on the minimap repeatedly
+function MarkerPaths_RepeatAnimateArrowPath(path, iterations, interval)
+	iterations = iterations or 1
+	interval = interval or 1
+	Rule_AddInterval(_IterateArrowPath, {interval = interval, count = iterations}, {path = path})
+end
+
+function _IterateArrowPath(context, data)
+	MarkerPaths_AnimateArrowPath(data.path)
+end
+
+--? @shortdesc Animates a path on the minimap once
+function MarkerPaths_AnimateArrowPath(path)
+	local iconSpacing = 50
+	local iconSize = 0.25
+	local iconName = "icons\\minimap\\military_route_enemy"
+	local iconDuration = 0.75
+	local iconInterval = 0.125
+
+	local data = {
+		path = path,
+		iconSpacing = iconSpacing,
+		iconSize = iconSize,
+		iconName = iconName,
+		progress = {
+			distanceSoFar = 0,
+			pointIndex = 1,
+			distanceBetweenPoints = Util_GetDistance(path[1], path[2]),
+		},
+		blipIDs = {},
+	}
+	Rule_AddInterval(_MarkerPaths_AnimateArrowPath_AddBlip, {interval = iconInterval}, data)
+	Rule_AddInterval(_MarkerPaths_AnimateArrowPath_RemoveBlip, {delay = iconDuration, interval = iconInterval}, data)
+end
+
+function _MarkerPaths_AnimateArrowPath_AddBlip(context, data)
+	-- get the position between the current point and the next point
+	local pointA = Util_GetPosition(data.path[data.progress.pointIndex])
+	local pointB = Util_GetPosition(data.path[data.progress.pointIndex + 1])
+	local position = Util_GetPositionFromAtoB(pointA, pointB, math.max(data.progress.distanceSoFar, 1))		-- distances less than 1 are taken as percentages, so round up if we're under that threshold
+	
+	-- create the arrow at that position
+	local blipID = MapIcon_CreatePosition(position, data.iconName, data.iconSize, 255, 255, 255, 255)
+	MapIcon_SetFacingPosition(blipID, pointB)
+	table.insert(data.blipIDs, blipID)
+	
+	-- step forward the iconSpacing amount
+	data.progress.distanceSoFar = data.progress.distanceSoFar + data.iconSpacing
+	while data.progress.distanceSoFar > data.progress.distanceBetweenPoints do 	
+		data.progress.pointIndex = data.progress.pointIndex + 1
+		local newIndex = data.progress.pointIndex
+		if newIndex >= #data.path then 
+			Rule_RemoveMe()		-- we've reached the end of the path, so remove the rule and stop the while loop
+			break
+		else
+			data.progress.distanceSoFar = data.progress.distanceSoFar - data.progress.distanceBetweenPoints
+			data.progress.distanceBetweenPoints = Util_GetDistance(data.path[newIndex], data.path[newIndex + 1])
+		end
+	end	
+end
+
+function _MarkerPaths_AnimateArrowPath_RemoveBlip(context, data)
+	local blipID = data.blipIDs[1]
+	table.remove(data.blipIDs, 1)
+	MapIcon_Destroy(blipID)
+	if #data.blipIDs == 0 then 
+		Rule_RemoveMe()
+	end
+end

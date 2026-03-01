@@ -1,0 +1,303 @@
+
+---
+--- Mission 0 - Enemy archery encampment
+---
+---
+
+function IntroAttackArchery_InitObjectives()	
+
+	OBJ_AttackArchersEncampment = {
+		
+		Title = "$11192867", -- Attack the Enemy Archery Encampment
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.AttackArchersEncampment_IntelStart,
+		Intel_Complete = EVENTS.AttackArchersEncampment_IntelComplete,
+		
+		OnStart = function ()
+			Objective_Start(SOBJ_BuildStables)
+		end,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete (OBJ_AttackArchersEncampment, ALL)
+		end,
+
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_CombatVsArchery) then
+				Objective_Complete(OBJ_Tip_CombatVsArchery,false,false)
+			end
+		end,
+		
+		OnComplete = AttackArchersEncampment_OnComplete,
+		
+		Cheat = Cheat_AttackArchery,
+	}
+	
+	SOBJ_BuildStables = {
+		
+		Title = Loc_FormatText("$11193251",i_amount_stables), -- Build a Stables
+		Type = ObjectiveType_Build,
+		Parent = OBJ_AttackArchersEncampment,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.BuildStables_IntelStart,
+		
+		SetupUI = SOBJ_BuildStables_UI,
+		
+		OnStart = SOBJ_BuildStables_Start,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_BuildStables) then
+				Objective_Complete(OBJ_Tip_BuildStables,false,false)
+			end
+		end,
+		
+		OnComplete = SOBJ_BuildStables_OnComplete,
+	}
+	
+	SOBJ_ProduceHorsemen = {
+		
+		Title = Loc_FormatText("$11192870",i_amount_horsemen_produce), -- Produce 15 Horsemen
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_AttackArchersEncampment,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.ProduceHorsemen_IntelStart,
+		
+		SetupUI = ProduceHorsemen_UI,
+		
+		PreStart = function()
+			Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_horseman_2_eng"), ITEM_DEFAULT)
+		end,
+		
+		OnStart = ProduceHorsemen_Start,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_ProduceHorsemen) then
+				Objective_Complete(OBJ_Tip_ProduceHorsemen,false,false)
+			end
+		end,
+		
+		OnComplete = ProduceHorsemen_OnComplete,
+	}
+	
+	SOBJ_KillArchers = {
+		
+		Title = "$11192871", -- Kill the archers in the French Encampment.
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_AttackArchersEncampment,
+		StartAlongsideParent = false, 
+		
+		--Intel_Start = EVENTS.KillArchers_IntelStart,
+		Intel_Complete = EVENTS.KillArchers_IntelComplete,
+		
+		SetupUI = KillArchers_UI,
+		
+		PreStart = function()
+			FOW_RevealMarker(mkr_archer_village,-1)
+			KillArchers_Start()
+		end,
+		
+		--OnStart = KillArchers_Start,
+		
+		OnComplete = KillArchers_OnComplete,
+	}
+	
+	SOBJ_DestroyTheArcheryEncampment = {
+		
+		Title = "$11192872", -- Destroy the French Archery Encampment's buildings
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_AttackArchersEncampment,
+		StartAlongsideParent = false, 
+		
+
+		Intel_Complete = EVENTS.DestroyArcheryRange_IntelComplete,
+		
+		SetupUI = DestroyTheArcheryEncampment_UI,
+		
+		OnStart = DestroyTheArcheryEncampment_Start,
+		
+		OnComplete = DestroyTheArcheryEncampment_OnComplete,
+	}
+	
+	Objective_Register(OBJ_AttackArchersEncampment)
+	Objective_Register(SOBJ_BuildStables)
+	Objective_Register(SOBJ_ProduceHorsemen)
+	Objective_Register(SOBJ_KillArchers)
+	Objective_Register(SOBJ_DestroyTheArcheryEncampment)
+	
+	
+end
+
+function SOBJ_BuildStables_UI()
+	Objective_SetCounter(SOBJ_BuildStables, 0, i_amount_stables)
+	Objective_AddGroundReticule(SOBJ_BuildStables, mkr_stables_buildarea, Marker_GetProximityRadius(mkr_stables_buildarea), BP_GetReticuleBlueprint("campaign_capturelocation_self"))
+	Objective_AddUIElements(SOBJ_BuildStables, mkr_stables_buildarea, true, Loc_FormatText("$11192868",i_amount_stables), true)
+
+	--Allow stables to be built after the counter has been set. Fixes a crash caused by checking an unset counter when
+	--stables are built right away.
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_unit_cavalry_control_eng"), ITEM_DEFAULT)
+	Tutorials_MissionZero_HighlightStables()
+end
+
+function SOBJ_BuildStables_Start()
+	
+	Rule_AddOneShot(StablesHint,3)
+	Sound_Play2D("mus_stinger_campaign_positive")
+	Sound_Play2D("sfx_campaign_scripted_small_group_celebrate_villager")
+	EventCues_CallToAction("$11193255",CTA_CELEBRATE,EVENTS.Villagers_GivenFirst, PostCTAStables, sg_eng_villagers_stables,10) --"Villagers joining you
+	UnitEntry_DeploySquads(player1, sg_eng_villagers_stables, {{type = "scar_villager", numSquads = 3, destination = mkr_horseman_village }}, mkr_villager_joinplayer)	
+end
+
+function PostCTAStables()
+	clickedCTAStables = true
+end
+
+function StablesHint()
+
+	if not Objective_IsComplete(SOBJ_BuildStables) then
+		Objective_Start(OBJ_Tip_BuildStables, false, false)
+	end
+end
+
+function SOBJ_BuildStables_OnComplete()
+	Objective_Start(SOBJ_ProduceHorsemen)
+end
+
+function ProduceHorsemen_UI()
+	
+	Objective_SetCounter(SOBJ_ProduceHorsemen, 0, i_amount_horsemen_produce)
+
+end
+
+function ProduceHorsemen_Start()
+	
+	Tutorials_MissionZero_BuildCavalry()
+	Rule_Add(ProduceHorsemen_Monitor)	
+	Rule_AddOneShot(ProduceHorsementTip, 3)
+	
+
+end
+
+
+function ProduceHorsementTip()
+	if not Objective_IsComplete(SOBJ_ProduceHorsemen) then
+		Objective_Start(OBJ_Tip_ProduceHorsemen, false, false)
+	end
+end
+
+function ProduceHorsemen_Monitor()
+	
+	Player_GetAll(World_GetPlayerAt(1))
+	SGroup_Filter(sg_allsquads, "scar_horseman", FILTER_KEEP)
+	
+	local currentHorseman = SGroup_CountSpawned(sg_allsquads)
+
+	Objective_SetCounter(SOBJ_ProduceHorsemen, currentHorseman, i_amount_horsemen_produce)
+		
+	if currentHorseman >= i_amount_horsemen_produce then 
+		Objective_Complete(SOBJ_ProduceHorsemen)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function ProduceHorsemen_OnComplete()
+	Objective_Start(SOBJ_KillArchers)
+	Rule_AddOneShot(StartDelayedObjArcheryBuildings,2)
+	
+	World_SetInteractionStage(3)
+end
+
+function StartDelayedObjArcheryBuildings()
+	Objective_Start(SOBJ_DestroyTheArcheryEncampment,false,true)
+
+end
+
+function KillArchers_UI()
+	Objective_SetProgressBar(SOBJ_KillArchers, 0)
+	hpid_archerTown = Objective_AddUIElements(OBJ_AttackArchersEncampment, mkr_archer_village, true,"$11192885", true,3) --"French Archery encampment"
+
+end
+
+function KillArchers_Start()
+	i_maxArcheryKill = SGroup_CountSpawned(sg_archerVillage_archers)
+	Rule_AddGlobalEvent(EnemyKilledArcheryEncampment,GE_SquadKilled)
+	Sound_Play2D("mus_stinger_campaign_alert")
+	Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+	EventCues_CallToAction("$11194650" ,CTA_UNIQUE_STAKES, EVENTS.KillArchers_IntelStart, nil, mkr_archer_village_lookat, 20) --"Enemy Archers!"
+	Rule_AddOneShot(CombatArcheryTip, 3)
+end
+
+function CombatArcheryTip()
+	if not Objective_IsComplete(OBJ_AttackArchersEncampment) then
+		Objective_Start(OBJ_Tip_CombatVsArchery, false, false)
+	end
+end
+
+
+function EnemyKilledArcheryEncampment(context)
+	
+	local victim = context.victim	
+	if Objective_IsComplete(SOBJ_KillArchers) == true then
+		Rule_RemoveMe()
+	else
+		if MissionOMatic_SquadHasTag(victim, "ArcheryEncampment") then 
+		
+			i_deathArcheryEncampment = i_deathArcheryEncampment + 1
+			
+			if i_deathArcheryEncampment < i_maxArcheryKill then
+				
+				Objective_SetProgressBar(SOBJ_KillArchers, (i_deathArcheryEncampment / i_maxArcheryKill))
+			else
+				Objective_SetProgressBar(SOBJ_KillArchers, 1)
+				Objective_Complete(SOBJ_KillArchers)
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+function KillArchers_OnComplete()
+end
+
+function DestroyTheArcheryEncampment_UI()
+	
+--	i_amountArcheryBuildings = EGroup_CountSpawned(eg_archery_encampment)
+--	Objective_SetCounter(SOBJ_DestroyTheArcheryEncampment, 0, i_amountArcheryBuildings)
+end
+
+function DestroyTheArcheryEncampment_Start()
+	--Rule_AddEGroupEvent(DestroyArcheryRange_EntityKilled, eg_archery_encampment, GE_EntityKilled) --Start watching what gets killed
+	Rule_Add(DestroyTheArcheryRange_Monitor)
+end
+
+--function DestroyArcheryRange_EntityKilled(context)
+	
+	--local numberBuildingsDestroyed = Objective_GetCounter(SOBJ_DestroyTheArcheryEncampment) + 1
+	--if numberBuildingsDestroyed >= i_amountArcheryBuildings then
+		--Rule_RemoveMe()
+		--Objective_Complete(SOBJ_DestroyTheArcheryEncampment)
+	--else
+		--Objective_IncreaseCounter(SOBJ_DestroyTheArcheryEncampment, 1)
+	--end
+--end
+
+function DestroyTheArcheryRange_Monitor()
+
+	if EGroup_CountSpawned(eg_archery_encampment) == 0 then
+		Objective_Complete(SOBJ_DestroyTheArcheryEncampment)
+		Rule_RemoveMe()
+	end
+
+	
+end
+
+
+function DestroyTheArcheryEncampment_OnComplete()
+end
+
+
+function AttackArchersEncampment_OnComplete()
+	Objective_Start(OBJ_AttackInfantryEncampment)
+end

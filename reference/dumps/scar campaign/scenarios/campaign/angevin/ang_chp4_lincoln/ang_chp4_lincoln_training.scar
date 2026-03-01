@@ -1,0 +1,70 @@
+import("training/campaigntraininggoals.scar")
+--import("training/coretraininggoals.scar")
+
+local goal_keep_upgrades = "keep_upgrades"
+
+
+function Lincoln2_AddKeepUpgradesGoal()
+	
+	local keepUpgradesGoal = Training_Goal("Cursor", 
+		{Message = "$11191963", DataTemplate="GenericTrainingDataTemplate"},
+		UserHasViewedUpgradeTraining)
+	local keepUpgradesGoalSequence = Training_GoalSequence(goal_keep_upgrades, 
+		1, 0, --If these are both set to -1, it will keep repeating the training
+		ShouldPromptUpgradesHint, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		UserHasSelectedAKeep, 
+		false, 
+		{keepUpgradesGoal})
+	Training_AddGoalSequence(keepUpgradesGoalSequence)
+	
+end
+
+function ShouldPromptUpgradesHint(goalSequence)
+	
+	local keepBP = EBP.ENGLISH.BUILDING_DEFENSE_KEEP_ENG
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingShortInterval then
+
+		local entities = Player_GetEntities(Game_GetLocalPlayer())
+		
+		for i = 1, EGroup_Count(entities) do
+			local entity = EGroup_GetEntityAt(entities, i)
+			
+			if entity ~= nil then
+				
+				if Entity_GetBlueprint(entity) == keepBP then
+					goalSequence.goals[1].key = Entity_GetID(entity)
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+function UserHasViewedUpgradeTraining(goal)
+	
+	if UserHasSelectedAKeep() then
+		return true	
+	end
+	
+	if _g_UpgradesTimer == nil then
+		_g_UpgradesTimer = Training_GetNewTimerID()
+		Timer_Start(_g_UpgradesTimer, 25)
+	else
+		local currentTime = Timer_GetRemaining(_g_UpgradesTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_UpgradesTimer)
+			_g_UpgradesTimer = nil
+			return true	
+		end
+	end
+	return false
+end
+
+function UserHasSelectedAKeep()
+	Misc_GetSelectedEntities(eg_temp, false)
+	return EGroup_CountSpawned(eg_temp) >= 1 and EGroup_HasBlueprint(eg_temp, EBP.ENGLISH.BUILDING_DEFENSE_KEEP_ENG, ALL)
+end

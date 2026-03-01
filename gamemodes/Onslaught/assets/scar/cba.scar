@@ -1,0 +1,885 @@
+--[[ Castle Blood Automatic / Onslaught
+
+Edit by Comrad Ping 
+-----------------------------------------------------------------------
+Credits / Assets used
+
+Kzoacn       / Castle Blood Automatic for Age of Empires 4
+Woprock      / Advanced Game Settings
+Tommy        / Day & Night Cycle 
+Skirp & Hank / Automatic Population (gameplay\ags_population_auto.scar)
+]]
+--[[ NOTES
+
+#2
+- fix elephant armor
+- Replace Scuttle for squads > no enemies
+
+#1
+- ADD: Keep/Outpost upgrade limit
+SCAR ERROR / Reward list > Wonder
+
+Build Limit
+- Rus Monastery used as military production
+
+]]
+-----------------------------------------------------------------------
+-- Imported Scripts
+-----------------------------------------------------------------------
+-- Cheat support for dev mode.
+--import("gameplay/cheat.scar") 
+-- Import Utility Scripts
+import("cardinal.scar")							-- Contains sfx references, UI templates, and Civ/Age helper functions
+-----------------------------------------------------------------------
+-- Import Gameplay Systems
+-----------------------------------------------------------------------
+import("gameplay/diplomacy.scar")			    -- Manages Tribute	
+import("gameplay/score.scar")					-- Tracks player score
+import("gameplay/cheat.scar")
+--import("mydiplomacy.scar")				    -- Manages Tribute    
+-----------------------------------------------------------------------
+-- Import Win Conditions 
+-----------------------------------------------------------------------
+-- Advanced Game Script by Woprock
+import("helpers/ags_blueprints.scar") -- Edited
+import("helpers/ags_teams.scar")
+import("helpers/ags_starts.scar")
+-- AGS Scripts read settings from single configuration.
+import("ags_global_settings.scar") -- Edited
+-- Gameplay options are loaded as last. 
+import("gameplay/ags_handicaps.scar")
+import("gameplay/ags_game_rates.scar")
+import("gameplay/ags_gather_rates.scar")
+import("gameplay/ags_unit_rates.scar")
+import("gameplay/ags_starting_age.scar")
+import("gameplay/ags_tree_bombardment.scar")
+import("gameplay/ags_reveal_fow_on_elimination.scar")
+import("gameplay/ags_special_population_ui.scar")
+import("gameplay/ags_no_dock.scar") -- Edited
+import("gameplay/ags_population_capacity.scar") -- Edited
+-- Custom
+import("gameplay/ags_auto_resources.scar")
+import("gameplay/ags_auto_population.scar")
+import("gameplay/cba_auto_age.scar")
+import("gameplay/cba_options.scar")
+
+import("wonder.scar")                           -- Edited wonder.scar disabled Wonder Objective until construction completed
+import("myreligious.scar")                      -- Religious Win Condition / Advanced Game Settings - edited version
+-- Kzoacn Scripts                                                    
+import("rewards.scar")                          -- Kill Rewards
+import("myannihilation.scar")
+-- RELIC Scripts
+import("winconditions/surrender.scar")	        -- Support for player surrender (through pause menu)
+import("winconditions/elimination.scar")		-- Support for player quitting or dropping (through pause menu or disconnection)
+-- UI Support
+import("gameplay/chi/current_dynasty_ui.scar")	-- Displays Chinese Dynasty UI
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+
+-- Global data table that can be referenced in script functions (e.g. _mod.module = "Mod")
+_mod = {
+	module = "Mod",
+	is_diplomacy_enabled = false,
+	is_tribute_enabled = true,
+	debug = false,
+	objective_title = "$f5a005650ae44d2b8e05306aa891f90c:127",
+	objective_meet = 0 ,
+	objective_requirement = 0,
+	
+	options = {},
+	
+	
+	castles = {},
+	icons = {
+		objective = "icons\\races\\common\\buildings\\keep",
+		--objectivekills = "icons\\races\\common\\victory_conditions\\victory_condition_conquest",
+		
+	},
+	speed = {						-- modifier multipliers / AGS Game/Unit rates
+		setspeed = 1,
+		build = 1,
+		repair = 1,
+		gather = 1,		
+		upgrade = 1,
+		production = 1,
+		modifiers = {},
+	},
+	-- From CBA S/H
+	pop_cap = AGS_GLOBAL_SETTINGS.MaximumPopulation,
+	pop_cap_incease_on_interval = 25,
+	pop_start = AGS_GLOBAL_SETTINGS.MinimumPopulation,
+	pop_interval = 150,
+--	pop_interval_text = "150 seconds",	
+}
+
+-- Some functions can be prepended with "Mod_" to be called automatically as part of the scripting framework
+Core_RegisterModule(_mod.module)
+
+-----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+-- Called during load as part of the game setup sequence
+function Mod_OnGameSetup()
+	Setup_GetWinConditionOptions(_mod.options)
+	-- Lobby Options    
+	if _mod.options.economy_section then -- Economy Section
+		-- Resources per minute
+		if _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_1000 then
+			_mod.resource_amount = 1000
+		elseif _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_2500 then
+			_mod.resource_amount = 2500			
+		elseif _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_5000 then			
+			_mod.resource_amount = 5000
+		elseif _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_unlimited then			
+			_mod.resource_amount = "unlimited"
+		elseif _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_disabled then			
+			_mod.resource_amount = "disabled"
+		end
+		
+		-- Starting Resources
+		if _mod.options.economy_section.startingResources.enum_value == _mod.options.economy_section.startingResources.enum_items.startingResources_standard then
+			_mod.startingResources = "standard"
+		elseif _mod.options.economy_section.startingResources.enum_value == _mod.options.economy_section.startingResources.enum_items.startingResources_high then
+			_mod.startingResources = "high"
+		elseif _mod.options.economy_section.startingResources.enum_value == _mod.options.economy_section.startingResources.enum_items.startingResources_max then
+			_mod.startingResources = "max"
+		end
+	end
+	-- AGS
+	AGS_Print("AGS_Cardinal_OnGameSetup")
+	local options = { }
+	Setup_GetWinConditionOptions(options)
+	Core_CallDelegateFunctions("SetupSettings", options)
+	Core_CallDelegateFunctions("AdjustSettings")
+	AGS_Print(AGS_GLOBAL_SETTINGS)
+	Core_CallDelegateFunctions("UpdateModuleSettings")
+end
+
+-- Called before initialization, preceding other module OnInit functions
+function Mod_PreInit()
+	-- Diplomacy & Tribute / Disabled
+	Core_CallDelegateFunctions("DiplomacyEnabled", false)
+	Core_CallDelegateFunctions("TributeEnabled", false)
+	
+end
+
+-- Called on match initialization before handing control to the player
+function Mod_OnInit() 
+	-- Store the local player so we can reference them later
+	localPlayer = Core_GetPlayersTableEntry(Game_GetLocalPlayer())
+	-- Set player behaviour when eliminated
+	_allow_spectators = true
+	-- From Advanced Game Script
+	Core_CallDelegateFunctions("EarlyInitializations")
+	-- CALLING FUNCTIONS
+	Mod_FindKeep()
+	Mod_SetFOW()
+	Mod_setStartingResources()
+	Mod_RemoveGaia()
+	Religious_UpdateConditions(_mod)
+	
+	-- NOTE: Causes Error when no sacred site in map
+	egroup = EGroup_Create("sites")
+	World_GetAllNeutralEntities(egroup)
+	EGroup_Filter(egroup,"special_beacon",FILTER_KEEP)
+	local site =  EGroup_GetEntityAt(egroup, 1)
+	_CBA.center = Entity_GetPosition(site)
+	
+	-- Help Text @ Start of the match
+	local uiColour = Player_GetUIColour(localPlayer.id)
+	if AGS_GLOBAL_SETTINGS.Option_Reward_Age == true then 
+		UI_CreateEventCueClickable(-1, 60.0, 0, 20.0, "$f5a005650ae44d2b8e05306aa891f90c:131", "", "event_with_player_color", "", "", uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing)
+	end -- Message: "Age up by eliminating enemies"
+	UI_CreateEventCueClickable(-1, 45.0, 0, 20.0, "$f5a005650ae44d2b8e05306aa891f90c:132", Loc_Empty(), "event_with_player_color", "", "", uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing)
+	
+	-- GLOBAL EVENT RULES: 
+	Rule_AddGlobalEvent(Mod_OnEntityKilled, GE_EntityKilled)
+end
+
+-- OnInit invokes custom handle for AGS modules.
+function Mod_PostInit()
+	AGS_Print("AGS_Cardinal_PostInit")
+	Core_CallDelegateFunctions("LateInitializations")	
+end
+
+-- Preset is safe state for anything that should be done before start. Such as additional entities, vision etc.
+function Mod_Preset() 	
+	AGS_Print("AGS_Cardinal_Preset")
+	Core_CallDelegateFunctions("PresetInitialize")
+	Core_CallDelegateFunctions("PresetExecute")
+	Core_CallDelegateFunctions("PresetFinalize")
+end
+		
+-- PreStart is followed by 1 frame delay with normal Start.
+function Mod_PreStart()
+	AGS_Print("AGS_Cardinal_PreStart")
+	Core_CallDelegateFunctions("PrepareStart")
+end
+
+-- Called after initialization is done when game is fading up from black
+function Mod_Start()
+	
+	-- Default 'medic' population pool set in tuning pack. (MAX: 15)
+	local player_medic_pop = Player_GetMaxPopulationCap(localPlayer.id, CT_Medic)
+	-- Since this is not used in vanilla, we can disable with this check.
+	if player_medic_pop ~= 0 then
+		AGS_SpecialPopulationUI_OnPlay()
+	end
+	
+	-- Setup the player's objective UI by calling the below function directly
+	Mod_SetupObjective()
+	Core_CallDelegateFunctions("OnStarting")
+	Core_CallDelegateFunctions("OnPlay")
+	statechange()
+	Rule_AddInterval(statechange, 600)
+	
+end
+
+-----------------------------------------------------------------------
+-- Mod Functions
+-----------------------------------------------------------------------
+
+-- Score/Kills Tracker
+function Mod_OnEntityKilled(context)
+	for castle_id, castle in pairs(_mod.castles) do
+		
+		if castle_id == context.victim.EntityID then
+			local victim = context.victimOwner
+			
+			if victim==nil then		
+				return 
+			end
+			
+			if Core_IsPlayerEliminated(victim) and Player_ObserveRelationship(victim, localPlayer.id) ~= R_ALLY then
+				_mod.objective_meet = _mod.objective_meet + 1
+				Obj_SetCounterCount(_mod.objective, _mod.objective_meet)
+				Obj_SetProgress(_mod.objective, _mod.objective_meet / _mod.objective_requirement)
+				if _mod.objective_meet==_mod.objective_requirement then
+					Core_SetPlayerVictorious(localPlayer.id, Mod_WinnerPresentation, WR_CONQUEST)		
+					Core_OnGameOver()
+				end				
+				
+				return  
+			end
+			
+			if victim ~= localPlayer.id and Player_ObserveRelationship(victim, localPlayer.id) ~= R_ALLY then
+				_mod.objective_meet = _mod.objective_meet + 1
+				Obj_SetCounterCount(_mod.objective, _mod.objective_meet)
+				Obj_SetProgress(_mod.objective, _mod.objective_meet / _mod.objective_requirement)
+				if _mod.objective_meet==_mod.objective_requirement then
+					Core_SetPlayerVictorious(localPlayer.id, Mod_WinnerPresentation, WR_CONQUEST)		
+					Core_OnGameOver()
+				end
+			end
+			
+			--Set player to eliminated when keep is destroyed
+			if not AGS_GLOBAL_SETTINGS.EliminatedLoseKeep then
+				Core_SetPlayerDefeated(victim, Mod_LoserPresentation, WR_CONQUEST)
+				local entities = Player_GetEntities(victim)
+				EGroup_Destroy(entities)
+				World_KillPlayer(victim,KPR_Lost)
+				Surrender_CheckVictory(victim)
+			end
+
+			
+		end
+	end
+end
+
+-- Lobby Option - Remove Gaia
+function Mod_RemoveGaia()
+	if _mod.options.economy_section and
+		_mod.options.economy_section.nogaia then
+		local egroup = EGroup_CreateUnique()
+		World_GetAllNeutralEntities(egroup)
+		EGroup_Filter(egroup, "animal", FILTER_KEEP)
+		EGroup_DestroyAllEntities(egroup)    		
+		EGroup_Destroy(egroup)
+	end
+end
+
+-- Lobby Option: Setup Starting Resources
+function Mod_setStartingResources()
+	
+	for i, player in pairs(PLAYERS) do
+		-- Set player starting resources
+		-- RT stands for Resource Type
+		if _mod.startingResources == "standard" then
+			Player_SetResource(player.id, RT_Food, 10000)		
+			Player_SetResource(player.id, RT_Wood, 7500)
+			Player_SetResource(player.id, RT_Gold, 1000)
+			Player_SetResource(player.id, RT_Stone, 5000)
+		elseif _mod.startingResources == "high" then
+			Player_SetResource(player.id, RT_Food, 30000)		
+			Player_SetResource(player.id, RT_Wood, 25000)
+			Player_SetResource(player.id, RT_Gold, 10000)
+			Player_SetResource(player.id, RT_Stone, 10000)
+		elseif _mod.startingResources == "max" then
+			Player_SetResource(player.id, RT_Food, 100000)		
+			Player_SetResource(player.id, RT_Wood, 100000)
+			Player_SetResource(player.id, RT_Gold, 100000)
+			Player_SetResource(player.id, RT_Stone, 100000)
+
+		end
+	end
+end
+
+-- Lobby Option - Setup the Fog of War
+function Mod_SetFOW()
+	if (_mod.options.economy_section and _mod.options.economy_section.option_fow) then
+		if (_mod.options.economy_section.option_fow.enum_value == _mod.options.economy_section.option_fow.enum_items.option_fow_explore) then 
+			FOW_ExploreAll()
+		elseif (_mod.options.economy_section.option_fow.enum_value == _mod.options.economy_section.option_fow.enum_items.option_fow_reveal) then
+			FOW_ForceRevealAllUnblockedAreas()
+		end
+	end
+end
+
+-- This function creates the objective UI: Eliminate all Castles
+function Mod_SetupObjective()
+	
+	-- Objective: Eliminate Enemey Keeps
+	if _mod.objective == nil then        -- Check if an objective has not been created yet
+		
+		-- Create and store objective in the global table created at the start of this script
+		_mod.objective = Obj_Create(localPlayer.id, _mod.objective_title, Loc_Empty(), "icons\\races\\common\\victory_conditions\\victory_condition_conquest", "ConquestObjectiveTemplate", localPlayer.raceName, OT_Primary, 0, "conquestObj")		
+		
+		
+		
+		_mod.objective_requirement = 0	
+		_mod.objective_meet = 0	
+		
+		for _, player in pairs(PLAYERS) do
+			if Player_ObserveRelationship(player.id, localPlayer.id) == R_ALLY then
+				-- nothing 
+			else
+				_mod.objective_requirement = _mod.objective_requirement + 1 
+			end
+		end
+		
+		-- Sets the objective's state to incomplete
+		Obj_SetState(_mod.objective, OS_Incomplete)
+		-- Sets the objective to visible so players can see it
+		Obj_SetVisible(_mod.objective, true)
+		-- Sets the progress element of the objective to visible so players can see it
+		Obj_SetProgressVisible(_mod.objective, true)		
+		-- Sets the objective progress type to a counter
+		Obj_SetCounterType(_mod.objective, COUNTER_CountUpTo)
+		-- Set the starting objective progress to 1 because we spawn a House for the player in Mod_SpawnBuilding()
+		Obj_SetCounterCount(_mod.objective, 0)
+		-- Set the maximum objective progress
+		Obj_SetCounterMax(_mod.objective, _mod.objective_requirement)
+		-- Set the objective progress bar percentage value
+		Obj_SetProgress(_mod.objective, 0)
+		
+	end
+
+end
+
+-- This function finds the starting Keeps for all players in the match, reveals it to all other players
+function Mod_FindKeep()
+	
+	-- This is a for loop that does something for each player in the match.
+	-- PLAYERS is a table that contains all of the players in the match.
+	-- If there are two players it will run twice, if there are eight players it will run eight times, etc.
+	for i, player in pairs(PLAYERS) do
+		
+		-- Get the player's entities and place them into an ENTITY GROUP
+		local eg_player_entities = Player_GetEntities(player.id)
+		
+		-- Filter out everything in the ENTITY GROUP except for the Town Center
+		EGroup_Filter(eg_player_entities, "castle", FILTER_KEEP)
+		
+		-- Get the Town Center ENTITY by getting the first entry in the ENTITY GROUP we just filtered
+		local entity =  EGroup_GetEntityAt(eg_player_entities, 1)
+		
+		-- entity.init = true
+		
+		-- Get the Town Center's ENTITY ID
+		-- Some functions require the ENTITY ID to perform an action on the ENTITY
+		local entity_id = Entity_GetID(entity) 
+		-- Get the Town Center's position
+		local position = Entity_GetPosition(entity)
+		
+		_mod.castles[entity_id] = entity
+		
+		-- Store the player's Town Center information so it can be referenced later
+		player.keep = {
+			entity = entity,
+			entity_id = entity_id,
+			position = position,
+		}
+		
+		
+		-- Extra options
+		FOW_RevealArea(player.keep.position, 80, 5) -- Reveal all Starting Locations
+		Entity_RemoveAbility(entity, BP_GetAbilityBlueprint("core_building_scuttle")) -- Disable Scuttle for 'Castle'
+		
+		--Modifier_ApplyToEntity(Modifier_Create(MAT_Entity, "production_speed_modifier", MUT_Multiplication, false, 20, nil), player.keep.entity, 0.0)
+		
+	end
+end
+
+-----------------------------------------------------------------------
+-- Win/Lose Presentation Functions
+-----------------------------------------------------------------------
+
+function Mod_WinnerPresentation(playerID)
+	
+	-- If player is local
+	if playerID == localPlayer.id then
+		
+		-- Clear player's selection
+		Misc_ClearSelection()
+		-- Hide UI
+		Taskbar_SetVisibility(false)		
+		-- Set Win Condition Objective to complete
+		Obj_SetState(_mod.objective, OS_Complete)
+
+		-- Trigger objective complete pop up
+		Obj_CreatePopup(_mod.objective, _mod.objective_title)
+		-- Play Victory sfx
+		Music_PlayStinger(MUS_STING_PRIMARY_OBJ_COMPLETE)
+		-- Set objective to invisible
+		Obj_SetVisible(_mod.objective, false)
+		
+		-- Create Victory Stinger
+		Rule_AddOneShot(_gameOver_message, 
+			GAMEOVER_OBJECTIVE_TIME, { 
+			_playerID = playerID, 
+			_icon = _mod.icons.objective, 
+			_endType = Loc_GetString(11161277), 					-- "VICTORY"  
+			_message = Loc_Empty(),
+			_sound = "mus_stinger_landmark_objective_complete_success", 
+			_videoURI = "stinger_victory" 
+		})
+	end
+end
+
+function Mod_LoserPresentation(playerID)
+	
+	-- If player is local
+	if playerID == localPlayer.id then
+		
+		-- Clear player's selection
+		Misc_ClearSelection()
+		-- Hide UI
+		Taskbar_SetVisibility(false)		
+		-- Set Win Condition Objective to failed
+		Obj_SetState(_mod.objective, OS_Failed)
+
+		-- Trigger objective complete pop up
+		Obj_CreatePopup(_mod.objective, _mod.objective_title)
+		-- Play Victory sfx
+		Music_PlayStinger(MUS_STING_PRIMARY_OBJ_FAIL)
+		-- Set objective to invisible
+		Obj_SetVisible(_mod.objective, false)
+
+		-- Create Defeat Stinger
+		Rule_AddOneShot(_gameOver_message, 
+			GAMEOVER_OBJECTIVE_TIME, {
+			_playerID = playerID, 
+			_icon = _mod.icons.objective, 
+			_endType = Loc_GetString(11045235), 					-- "DEFEAT"  
+			_message = Loc_Empty(),
+			_sound = "mus_stinger_landmark_objective_complete_fail", 
+			_videoURI = "stinger_defeat"})
+	end
+end
+
+-----------------------------------------------------------------------
+-- Fix: Mongol 2x 
+-- Add: Restriction lobby section
+-- Add: Restriction lobby option: Maximum stone/palisade wall (team based)
+-- Add: Upgrade limit (outpost)
+-----------------------------------------------------------------------
+-- WIP: Siege Limit / Set restrictions 
+function CBA_Options_SiegeLimit_Disable(player_id, siege_limit, lock_type)
+	
+	local player_civ = Player_GetRaceName(player_id)
+	local player = Core_GetPlayersTableEntry(player_id)
+	
+	-- Filter: Siege Production Buildings
+	local player_buildings = Player_GetAllEntities(player.id)
+	EGroup_Filter(player_buildings, "scar_siegeworkshop", FILTER_REMOVE, player.eg_siegeproduction)
+	
+	-- Filter: Siege Production Buildings / Faction Specific
+	if player_civ == "english" then
+		EGroup_Filter(player_buildings, "scar_keep", FILTER_REMOVE, player.eg_siegeproduction)
+		
+	elseif player_civ == "chinese" then
+		EGroup_Filter(player_buildings, EBP.CHINESE.BUILDING_LANDMARK_AGE2_CLOCKTOWER_CONTROL_CHI, FILTER_REMOVE, player.eg_siegeproduction)
+		
+	elseif player_civ == "french" then
+		EGroup_Filter(player_buildings, EBP.FRENCH.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE, FILTER_REMOVE, player.eg_siegeproduction)
+		-- Expansion
+	elseif player_civ == "french_ha_01" then
+		EGroup_Filter(player_buildings, EBP.FRENCH_HA_01.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE_HA_01, FILTER_REMOVE, player.eg_siegeproduction)
+		
+	elseif player_civ == "ottoman" then
+		EGroup_Filter(player_buildings, EBP.OTTOMAN.BUILDING_LANDMARK_AGE2_TOPHANE_ARMORY_OTT, FILTER_REMOVE, player.eg_siegeproduction)
+	end
+	
+	-- Siege limit (1) - Springald
+	if (siege_limit == 1 and lock_type == ITEM_LOCKED) or (siege_limit >= 1 and lock_type == ITEM_UNLOCKED) then
+		-- Springald / Faction ALL
+		Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, BP_SIEGE_SPRINGALD), lock_type)
+		-- Springald / Faction unique
+		if player_civ == "mongol" then
+			Player_SetEntityProductionAvailability(player.id, EBP.MONGOL.UNIT_SPRINGALD_3_FIELD_CONSTRUCT_MON, lock_type)
+		elseif player_civ == "abbasid" then
+			Player_SetEntityProductionAvailability(player.id, EBP.ABBASID.UNIT_SPRINGALD_3_BUILDABLE_ABB, lock_type)
+		elseif player_civ == "abbasid_ha_01" then
+			Player_SetEntityProductionAvailability(player.id, EBP.ABBASID_HA_01.UNIT_SPRINGALD_3_BUILDABLE_ABB_HA_01, lock_type)
+		end
+		
+		-- Disable siege units / FACTION UNIQUE
+		if player_civ == "mongol" then
+			for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_mon) do
+				local unit_SBP = AGS_GetSiegeUnit(player.raceName, unit_blueprint)
+				-- Filter types
+				if not Squad_IsSBPOfType(unit_SBP, "springald") and not Squad_IsSBPOfType(unit_SBP, "culverin") and not Squad_IsSBPOfType(unit_SBP, "trebuchet_traction") then
+					Player_SetSquadProductionAvailability(player.id, unit_SBP, lock_type)
+				end
+			end
+			for id, entity_blueprint in pairs(CBA_SIEGE_UNITS.siege_buildable_mon) do
+				-- Filter types
+				if entity_blueprint ~= "unit_springald_3_field_construct_mon" or entity_blueprint ~= "unit_trebuchet_4_tr_field_construct_mon" then
+					Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprint(entity_blueprint), lock_type) -- Field Constructed = Entity
+				end
+			end
+--[[
+		elseif player_civ == "abbasid" then
+			Player_SetEntityProductionAvailability(player.id, EBP.ABBASID.UNIT_MANGONEL_3_BUILDABLE_ABB, lock_type) -- Field Constructed = Entity
+
+		elseif player_civ == "abbasid_ha_01" then
+			Player_SetEntityProductionAvailability(player.id, EBP.ABBASID_HA_01.UNIT_MANGONEL_3_BUILDABLE_ABB_HA_01, lock_type) -- Field Constructed = Entity
+]]
+		elseif player_civ == "french" then
+			for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_fre) do
+				local unit_SBP = AGS_GetSiegeUnit(player.raceName, unit_blueprint)
+				if not Squad_IsSBPOfType(unit_SBP, "culverin") then
+					Player_SetSquadProductionAvailability(player.id, unit_SBP, lock_type)
+				end
+			end
+			
+		elseif player_civ == "chinese" then
+			for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_chi) do
+				Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), lock_type)
+			end
+			
+		elseif player_civ == "chinese_ha_01" then
+			Player_SetSquadProductionAvailability(player.id, SBP.CHINESE_HA_01.UNIT_NEST_OF_BEES_4_CHI_HA_01, lock_type)
+		else
+			Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, BP_SIEGE_RIBAULDEQUIN), lock_type)
+		end
+		
+		-- Cancel Production 
+		if siege_limit == 1 and lock_type == ITEM_LOCKED then
+			CBA_Options_SiegeLimit_Cancel_filter(1, player)
+		end
+	end
+	
+	-- Siege limit (2) - Ram/Trebuchet TR/Culverin
+	if (siege_limit <= 2 and lock_type == ITEM_LOCKED) or (siege_limit >= 2 and lock_type == ITEM_UNLOCKED) then
+		
+		-- Disable Groups
+		for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_value_2) do
+			Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), lock_type)	
+		end
+		
+		-- Disable unit: Ram
+		Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, BP_SIEGE_WORKSHOP_RAM), lock_type)
+		Player_SetEntityProductionAvailability(player.id, AGS_GetSiegeEntity(player.raceName, BP_SIEGE_RAM), lock_type)
+		
+		-- Faction Unique / Ram
+		if player_civ == "chinese" then
+			-- Unique: Ram / Clocktower
+			Player_SetSquadProductionAvailability(player.id, SBP.CHINESE.UNIT_RAM_3_CLOCKTOWER_CHI, lock_type)
+			
+		elseif player_civ == "byzantine" then
+			-- Unique: Ram / Fire
+			Player_SetEntityProductionAvailability(player.id, EBP.BYZANTINE.UNIT_RAM_FIRE_3_BYZ, lock_type)
+			Player_SetSquadProductionAvailability(player.id, SBP.BYZANTINE.UNIT_WORKSHOP_FIRE_RAM_3_BYZ, lock_type)
+		end
+		
+		-- Disable unit: Trebuchet (Traction)
+		if player_civ == "mongol" then
+			Player_SetSquadProductionAvailability(player.id, SBP.MONGOL.UNIT_TREBUCHET_4_TR_MON, lock_type)
+			Player_SetSquadProductionAvailability(player.id, SBP.MONGOL.UNIT_SPRINGALD_3_DOUBLE_MON, lock_type)
+			Player_SetEntityProductionAvailability(player.id, EBP.MONGOL.UNIT_TREBUCHET_4_TR_FIELD_CONSTRUCT_MON, lock_type)
+		end
+		
+		-- Cancel Production 
+		if siege_limit == 2 and lock_type == ITEM_LOCKED then
+			CBA_Options_SiegeLimit_Cancel_filter(2, player)
+		end
+	end
+	
+	-- Siege limit (3) - Mangonel/Ribauldequin/Trebuchet CW/Bombard (Excl. Great Bombard)
+	if (siege_limit <= 3 and lock_type == ITEM_LOCKED) or (siege_limit >= 3 and lock_type == ITEM_UNLOCKED) then
+		
+		-- Disable siege units / ALL FACTIONS
+		for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_all) do
+			local unit_SBP = AGS_GetSiegeUnit(player.raceName, unit_blueprint)
+			-- Filter types
+			if not Squad_IsSBPOfType(unit_SBP, "springald") and not Squad_IsSBPOfType(unit_SBP, "culverin") and not Squad_IsSBPOfType(unit_SBP, "trebuchet_traction") and not Squad_IsSBPOfType(unit_SBP, "ram") 
+				and not (Squad_IsSBPOfType(unit_SBP, "bombard") and player_civ == "ottoman") then
+				Player_SetSquadProductionAvailability(player.id, unit_SBP, lock_type)
+			end
+		end
+		
+		-- Disable siege units / FACTION UNIQUE
+		if player_civ == "mongol" then
+			for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_mon) do
+				local unit_SBP = AGS_GetSiegeUnit(player.raceName, unit_blueprint)
+				-- Filter types
+				if not Squad_IsSBPOfType(unit_SBP, "springald") and not Squad_IsSBPOfType(unit_SBP, "culverin") and not Squad_IsSBPOfType(unit_SBP, "trebuchet_traction") then
+					Player_SetSquadProductionAvailability(player.id, unit_SBP, lock_type)
+				end
+			end
+			for id, entity_blueprint in pairs(CBA_SIEGE_UNITS.siege_buildable_mon) do
+				-- Filter types
+				if entity_blueprint ~= "unit_springald_3_field_construct_mon" or entity_blueprint ~= "unit_trebuchet_4_tr_field_construct_mon" then
+					Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprint(entity_blueprint), lock_type) -- Field Constructed = Entity
+				end
+			end
+			
+		elseif player_civ == "abbasid" then
+			Player_SetEntityProductionAvailability(player.id, EBP.ABBASID.UNIT_MANGONEL_3_BUILDABLE_ABB, lock_type) -- Field Constructed = Entity
+
+		elseif player_civ == "abbasid_ha_01" then
+			Player_SetEntityProductionAvailability(player.id, EBP.ABBASID_HA_01.UNIT_MANGONEL_3_BUILDABLE_ABB_HA_01, lock_type) -- Field Constructed = Entity
+			-- Unique: Ram / Tower
+			Player_SetEntityProductionAvailability(player.id, EBP.ABBASID_HA_01.UNIT_RAM_TOWER_3_ABB_HA_01, lock_type) 
+
+		elseif player_civ == "french" then
+			for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_fre) do
+				local unit_SBP = AGS_GetSiegeUnit(player.raceName, unit_blueprint)
+				if not Squad_IsSBPOfType(unit_SBP, "culverin") then
+					Player_SetSquadProductionAvailability(player.id, unit_SBP, lock_type)
+				end
+			end
+			
+		elseif player_civ == "chinese" then
+			for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_chi) do
+				Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), lock_type)
+			end
+			
+		elseif player_civ == "chinese_ha_01" then
+			Player_SetSquadProductionAvailability(player.id, SBP.CHINESE_HA_01.UNIT_NEST_OF_BEES_4_CHI_HA_01, lock_type)
+			
+		elseif player_civ ~= "chinese" then
+			Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, BP_SIEGE_RIBAULDEQUIN), lock_type)
+		end
+		
+		-- Cancel Production 
+		if siege_limit == 3 and lock_type == ITEM_LOCKED then
+			CBA_Options_SiegeLimit_Cancel_filter(3, player)
+		end
+	end
+	
+	-- Siege limit (4) - Great Bombard
+	if (siege_limit <= 4 and lock_type == ITEM_LOCKED) or (siege_limit == 4 and lock_type == ITEM_UNLOCKED) then
+		if player_civ == "ottoman" then
+			Player_SetSquadProductionAvailability(player.id, SBP.OTTOMAN.UNIT_GREAT_BOMBARD_4_OTT, lock_type)
+			if siege_limit == 4 and lock_type == ITEM_LOCKED then
+				CBA_Options_SiegeLimit_Cancel_filter(4, player) -- Only for ottoman faction
+			end
+		end
+	end		
+end
+
+function CBA_Options_SiegeLimit_Cancel_filter(siege_limit, player)
+	
+	local player_civ = Player_GetRaceName(player.id)
+	local eg_count = EGroup_Count(player.eg_siegeproduction)
+	
+	for indx2 = 1, eg_count do
+		local entity = EGroup_GetSpawnedEntityAt(player.eg_siegeproduction, indx2)
+		
+		if Entity_HasProductionQueue(entity) then
+			local queue_count = Entity_GetProductionQueueSize(entity)
+			
+		for index = 1, queue_count do
+			local bp_type = Entity_GetProductionQueueItemType(entity, queue_count - index)
+			
+				if bp_type == PITEM_Spawn then
+					local bp_queue = Entity_GetProductionQueueItem(entity, queue_count - index)
+					
+					-- Siege limit (1) - ALL
+					if siege_limit == 1 then
+						if Squad_IsSBPOfType(bp_queue, "siege") then
+							Entity_CancelProductionQueueItem(entity, queue_count - index)
+						end
+					-- Siege limit (2) - Skip siege with value 1
+					elseif siege_limit == 2 then
+						if not Squad_IsSBPOfType(bp_queue, "springald") then
+							Entity_CancelProductionQueueItem(entity, queue_count - index)
+						end
+					-- Siege limit (3) - Skip siege with value 2
+					elseif siege_limit == 3 then
+						if not (Squad_IsSBPOfType(bp_queue, "trebuchet_traction") or Squad_IsSBPOfType(bp_queue, "ram") or Squad_IsSBPOfType(bp_queue, "culverin") or Squad_IsSBPOfType(bp_queue, "springald")) then
+							Entity_CancelProductionQueueItem(entity, queue_count - index)
+						end
+					-- Siege limit (4) - Unique only
+					elseif siege_limit == 4 then
+						if Squad_IsSBPOfType(bp_queue, "bombard") and player_civ == "ottoman" then
+							Entity_CancelProductionQueueItem(entity, queue_count - index)
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+-- Siege Limit / Increase value / Siege Completed
+function CBA_Options_SiegeLimit_BuildItemComplete(context)
+	
+	-- Store the player who constructed the building
+	local player = Core_GetPlayersTableEntry(context.player)
+	local player_civ = Player_GetRaceName(player.id)
+	
+	-- Check to see if there was a player
+	if player ~= nil and not player.isEliminated then
+		
+		-- Siege Filter
+		if Squad_IsSBPOfType(context.pbg, "siege") then
+			-- Filter for value
+			if Squad_IsSBPOfType(context.pbg, "scar_springald") then
+				player.siegeLimit_count = player.siegeLimit_count + 1
+				
+			elseif Squad_IsSBPOfType(context.pbg, "scar_trebuchet_traction") or Squad_IsSBPOfType(context.pbg, "scar_culverin") or Squad_IsSBPOfType(context.pbg, "scar_ram") then
+				player.siegeLimit_count = player.siegeLimit_count + 2
+				
+			elseif Squad_IsSBPOfType(context.pbg, "scar_mangonel") or Squad_IsSBPOfType(context.pbg, "scar_trebuchet_cw") or Squad_IsSBPOfType(context.pbg, "scar_cannon") or 
+				Squad_IsSBPOfType(context.pbg, "scar_bombard") or Squad_IsSBPOfType(context.pbg, "nest_of_bees") or Squad_IsSBPOfType(context.pbg, "scar_ribauldequin") then
+				player.siegeLimit_count = player.siegeLimit_count + 3
+				
+			elseif Squad_IsSBPOfType(context.pbg, "bombard") and player_civ == "ottoman" then
+				player.siegeLimit_count = player.siegeLimit_count + 4
+			end
+		end
+		
+		-- Siege limit reached
+		if player.siegeLimit_count >= AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+			
+			CBA_Options_SiegeLimit_Disable(player.id, 1, ITEM_LOCKED)
+			
+		elseif player.siegeLimit_count + 1 >= AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+			
+			CBA_Options_SiegeLimit_Disable(player.id, 2, ITEM_LOCKED)
+			
+		elseif player.siegeLimit_count + 2 >= AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+			
+			CBA_Options_SiegeLimit_Disable(player.id, 3, ITEM_LOCKED)
+			
+		elseif player.siegeLimit_count + 3 >= AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+			
+			CBA_Options_SiegeLimit_Disable(player.id, 4, ITEM_LOCKED)
+
+		end
+	end
+end
+
+-- Siege Limit / Decrease value / Siege killed 
+function CBA_Options_SiegeLimit_SquadKilled(context)
+	
+	if context.killer==nil then
+		return 
+	end
+	
+	if context.victim == nil then
+		return
+	end
+	
+	local squad = Squad_FromID(context.victim.SquadID)
+	local player = Util_GetPlayerOwner(context.victim)
+	if player==nil then
+		return
+	end
+	player = PLAYERS[World_GetPlayerIndex(player)]
+	local player_civ = Player_GetRaceName(player.id)
+
+	-- Siege Filter
+	if Squad_IsOfType(squad, "siege") then
+		-- Filter for value
+			if Squad_IsOfType(squad, "scar_springald") then
+				player.siegeLimit_count = player.siegeLimit_count - 1
+				
+			elseif Squad_IsOfType(squad, "scar_trebuchet_traction") or Squad_IsOfType(squad, "scar_culverin") or Squad_IsOfType(squad, "scar_ram") then
+				player.siegeLimit_count = player.siegeLimit_count - 2
+				
+			elseif Squad_IsOfType(squad, "scar_mangonel") or Squad_IsOfType(squad, "scar_trebuchet_cw") or Squad_IsOfType(squad, "scar_cannon") or 
+			Squad_IsOfType(squad, "scar_bombard") or Squad_IsOfType(squad, "nest_of_bees") or Squad_IsOfType(squad, "scar_ribauldequin") then
+				player.siegeLimit_count = player.siegeLimit_count - 3
+				
+			elseif Squad_IsOfType(squad, "bombard") and player_civ == "ottoman" then
+				player.siegeLimit_count = player.siegeLimit_count - 4
+			end
+		end
+	
+	-- Siege limit reached
+	if player.siegeLimit_count == AGS_GLOBAL_SETTINGS.MaximumMedicPopulation - 1 then
+		
+		CBA_Options_SiegeLimit_Disable(player.id, 1, ITEM_UNLOCKED)
+		
+	elseif player.siegeLimit_count == AGS_GLOBAL_SETTINGS.MaximumMedicPopulation - 2 then
+		
+		CBA_Options_SiegeLimit_Disable(player.id, 2, ITEM_UNLOCKED)
+		
+	elseif player.siegeLimit_count == AGS_GLOBAL_SETTINGS.MaximumMedicPopulation - 3 then
+		
+		CBA_Options_SiegeLimit_Disable(player.id, 3, ITEM_UNLOCKED)
+		
+	elseif player.siegeLimit_count <= AGS_GLOBAL_SETTINGS.MaximumMedicPopulation - 4 then
+		
+		CBA_Options_SiegeLimit_Disable(player.id, 4, ITEM_UNLOCKED)
+	end
+	
+	--[[ Siege limit reached
+	if player.siegeLimit_count < AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+		
+		-- Enable siege units / ALL FACTIONS
+		for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_all) do
+			Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), ITEM_DEFAULT)	
+		end
+		-- Disable ram
+		Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, BP_SIEGE_WORKSHOP_RAM), ITEM_DEFAULT)
+		Player_SetEntityProductionAvailability(player.id, AGS_GetSiegeEntity(player.raceName, BP_SIEGE_RAM), ITEM_DEFAULT)
+		
+		-- Enable siege units / FACTION UNIQUE
+		if player_civ == "mongol" then
+			for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_mon) do
+				Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), ITEM_DEFAULT)
+			end
+			
+			for id, entity_blueprint in pairs(CBA_SIEGE_UNITS.siege_buildable_mon) do
+				Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprint(entity_blueprint), ITEM_DEFAULT) -- Field Constructed = Entity
+			end
+			
+		elseif player_civ == "abbasid" then
+			for id, entity_blueprint in pairs(CBA_SIEGE_UNITS.siege_buildable_abb) do
+				Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprint(entity_blueprint), ITEM_DEFAULT) -- Field Constructed = Entity
+			end
+			
+		elseif player_civ == "french" then
+			for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_fre) do
+				Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), ITEM_DEFAULT)
+			end
+			
+		elseif player_civ == "chinese" then
+			for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_chi) do
+				Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), ITEM_DEFAULT)
+			end
+			Player_SetSquadProductionAvailability(player.id, SBP.CHINESE.UNIT_RAM_3_CLOCKTOWER_CHI, ITEM_DEFAULT)
+		else
+			Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, BP_SIEGE_RIBAULDEQUIN), ITEM_DEFAULT)
+		end
+		
+	end]]
+end

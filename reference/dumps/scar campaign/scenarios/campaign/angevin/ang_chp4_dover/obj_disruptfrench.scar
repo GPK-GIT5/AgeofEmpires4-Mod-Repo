@@ -1,0 +1,854 @@
+--
+-- Dover - Disrupt French
+--
+
+function DisruptFrench_InitObjectives()
+	
+	OBJ_DisruptFrench = {
+		
+		Title = "$11180348", -- Disrupt French Forces with Willikin
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.Willikin_Start,
+		Cheat = function()
+		end,
+		PreStart = function()
+			
+			Dover_StartWillikinPhase()
+		end,
+		OnStart = function()
+			
+			Rule_AddOneShot(Dover_StartSupplyTrains, 120)
+			
+			Objective_Start(SOBJ_GatherArchersDoverTown)
+			Rule_AddInterval(Dover_CheckSouthAmbush, 2)
+			Rule_AddInterval(Dover_CheckForestCamp, 2)
+			
+			AssignTradecartsToTrade(sg_eng_traders, eg_dovermarket)
+			
+			EventCues_CallToAction("$11183871", CTA_CELEBRATE, EVENTS.Willikin_CTA, EVENTS.Willikin_CTA_OnClick, sg_local_willikin, 20) -- "Willikin has arrived in the south!"
+			Sound_Play2D(MUS_STING_TRIUMPHANT)
+			
+			Rule_AddOneShot(Dover_StartTraderObjective, 40)
+		end,
+		IsComplete = function()
+		end,
+		OnComplete = function()
+			Rule_Remove(Dover_SendSupplyTrain)
+			
+			if hasEdgePath == true then MarkerPaths_ClearIcons("path_edge_ui") end
+			if hasNorthPath == true then MarkerPaths_ClearIcons("path_north_ui") end
+			if hasSouthPath == true then MarkerPaths_ClearIcons("path_south_ui") end
+			
+			Dover_WillikinCheer()
+		end,
+	}
+	
+	SOBJ_GatherArchersDoverTown = {
+		
+		Title = "$11180351", -- Use Willikin to gather Longbowmen from Dover town
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DisruptFrench,
+		PreStart = function()
+			Util_AutoSave()
+		end,
+		OnStart = function()
+
+			hint_villageDover = Objective_AddUIElements(SOBJ_GatherArchersDoverTown, archers_spawn_dover, true, 11180352, true, nil, nil, nil, "icons/races/mongols/abilities/unpack" ) -- Archer Recruits
+			Rule_AddInterval(Dover_CheckArcherRecruitDover, 1)
+		end,
+		OnComplete = function()
+			Objective_Start(SOBJ_GatherArchersVillages)
+		end
+	}
+	
+	SOBJ_GatherArchersVillages = {
+		
+		counterGoal = 2, 
+		
+		Title = "$11195285", -- Use Willikin to gather Longbowmen from nearby villages
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DisruptFrench,
+		PreStart = function()
+			Objective_SetCounter(SOBJ_GatherArchersVillages, 0, 2)
+		end,
+		OnStart = function()
+			hint_villageNorth = Objective_AddUIElements(SOBJ_GatherArchersVillages, archers_spawn_north, true, 11180352, true, nil, nil, nil, "icons/races/mongols/abilities/unpack" ) -- Archer Recruits
+			hint_villageWest = Objective_AddUIElements(SOBJ_GatherArchersVillages, archers_spawn_west, true, 11180352, true, nil, nil, nil, "icons/races/mongols/abilities/unpack" ) -- Archer Recruits
+			Rule_AddInterval(Dover_CheckArcherRecruitWest, 1)
+			Rule_AddInterval(Dover_CheckArcherRecruitNorth, 1)
+			Util_StartIntel(EVENTS.Willikin_Start_Audio)
+			MissionTutorial_DoverTraders()
+		end,
+		IsComplete = function()
+			return Obj_GetCounterCount(SOBJ_GatherArchersVillages.ID) == Obj_GetCounterMax(SOBJ_GatherArchersVillages.ID)
+		end,
+		PreComplete = function()
+			Dover_StartSupplyTrains()
+		end,
+		OnComplete = function()
+			Objective_Stop(SOBJ_GatherArchersDoverTown)
+			Objective_Stop(SOBJ_GatherArchersVillages)
+			
+			Objective_Start(SOBJ_AmbushSiege)
+			MissionTutorial_DoverLeaderAura()
+		end
+	}
+	
+	SOBJ_AmbushSiege = {
+		
+		Title = "$11180358", -- Ambush French Siege Weapons to weaken attacks
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DisruptFrench,
+		Intel_Start = EVENTS.Destroy_Supply_Carts_Start,
+		OnStart = function()
+			
+			Rule_AddInterval(Dover_CheckEdgeReinforcement, 12)
+			
+			Objective_Start(OBJ_SiegeStrength, false)
+			Obj_SetProgressVisible(OBJ_SiegeStrength.ID, true)
+			Obj_SetProgress(OBJ_SiegeStrength.ID, 1)
+			-- Mark existing siege units
+			for i,v in ipairs(supply_entries) do
+				Dover_AddSiegeUI(v)
+			end
+		end,
+	}
+	
+	SOBJ_RecruitForestAllies = {
+		
+		Title = "$11201891", -- Optional: Use Willikin to gather additional allies
+		Type = ObjectiveType_Optional,
+		OnStart = function()
+			--hpid_forestcamp = HintPoint_Add(mkr_forestcamp, true, "$11096698", 2, nil, nil, nil, true, "PrimaryObjectiveTemplate")
+			Objective_AddUIElements(SOBJ_RecruitForestAllies, mkr_forestcamp, true, "$11096698", true) --Allies
+		end,
+		OnComplete = function()
+			--HintPoint_Remove(hpid_forestcamp)
+		end,
+	}
+	
+	SOBJ_ProduceTraders = {
+		
+		Title = "$11202564", -- Optional: Produce additional Traders (0/3)
+		Type = ObjectiveType_Optional,
+		PreStart = function()
+			Objective_SetCounter(SOBJ_ProduceTraders, 0, 3)
+			Rule_AddGlobalEvent(Dover_OnSquadBuilt, GE_BuildItemComplete)
+		end,
+		OnStart = function()
+			Objective_AddUIElements(SOBJ_ProduceTraders, Util_GetPosition(eg_south_market), true, "$11202646", true, 5)
+		end,
+	}
+	
+	OBJ_DestroySiegeCamp = {
+		
+		Title = "$11204441", -- Optional: Destroy the French siege camp
+		Type = ObjectiveType_Optional,
+		PreStart = function()
+			Objective_SetCounter(OBJ_DestroySiegeCamp, 0, 4)
+		end,
+		OnStart = function()
+			Rule_AddInterval(Dover_CheckSiegeCampReinforcement, 12)
+			Objective_AddUIElements(OBJ_DestroySiegeCamp, french_main, true, "$11181039", true)
+		end,
+		IsComplete = function()
+			if EGroup_IsEmpty(eg_frenchcamp_production) then
+				return true
+			end
+		end,
+		OnComplete = function()
+			Mission_Complete()
+		end,
+	}
+	
+	Objective_Register(OBJ_DisruptFrench)
+	Objective_Register(SOBJ_GatherArchersDoverTown)
+	Objective_Register(SOBJ_GatherArchersVillages)
+	Objective_Register(SOBJ_AmbushSiege)
+	Objective_Register(SOBJ_RecruitForestAllies)
+	Objective_Register(SOBJ_ProduceTraders)
+	Objective_Register(OBJ_DestroySiegeCamp)
+	
+end
+
+
+
+
+function Dover_StartTraderObjective()
+	Objective_Start(SOBJ_ProduceTraders)
+end
+
+function Dover_OnSquadBuilt(context)
+	
+	if context.spawnedSquad ~= nil then
+		
+		if Squad_IsOfType(context.spawnedSquad, "trade_cart") then
+			tradersBuilt = tradersBuilt + 1
+			Objective_SetCounter(SOBJ_ProduceTraders, tradersBuilt, 3)
+			
+			if tradersBuilt >= 3 then
+				Objective_Complete(SOBJ_ProduceTraders)
+				Rule_RemoveMe()
+			else
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+			end
+		end
+	end
+end
+
+function Dover_AssignWillikinVillagers()
+	AssignVillagersToFarms(sg_eng_willikin_villagers_farm)
+	AssignVillagersToWood(sg_eng_willikin_villagers_wood)
+end
+
+function Dover_SetPlayerOwner(sgroup, player)
+	
+	local function _setOwner (group, index, squad)
+		
+		if Player_GetTotalPopulation(player) < 200 then
+			SGroup_Clear(sg_single)
+			SGroup_Add(sg_single, squad)
+			SGroup_SetPlayerOwner(sg_single, player)
+		end
+	end
+	
+	SGroup_ForEach(sgroup, _setOwner)
+	
+	if Player_GetTotalPopulation(player) >= 200 then
+		Dover_DisplayPopcapCue()
+	end
+end
+
+function Dover_DisplayPopcapCue()
+	local cue = _events.popcap.cue
+	UI_CreateEventCueClickable(-1, cue.lifetime, 0, cue.repeatTime, cue.title, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, __DoNothing)
+end
+
+function Dover_CheckArcherRecruitDover()
+	
+	if Prox_AreSquadsNearMarker(g_leaderWillikin.sgroup,villages_dover, ANY) then
+		Util_StartIntel(EVENTS.Willikin_Archers01)
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sg_local_archer_dover)
+		Dover_SetPlayerOwner(sg_local_archer_dover, g_playerNorman)
+		Objective_RemoveUIElements(SOBJ_GatherArchersDoverTown, hint_villageDover)
+		Objective_Complete(SOBJ_GatherArchersDoverTown)
+		Rule_RemoveMe()
+	end
+end
+	
+function Dover_CheckArcherRecruitNorth()
+	
+	if Prox_AreSquadsNearMarker(g_leaderWillikin.sgroup,villages_north, ANY) then
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sg_local_archer_north)
+		Dover_SetPlayerOwner(sg_local_archer_north, g_playerNorman)
+		Objective_RemoveUIElements(SOBJ_GatherArchersVillages, hint_villageNorth)
+		
+		if Objective_IsCounterSet(SOBJ_GatherArchersVillages) == true then
+			Objective_IncreaseCounter(SOBJ_GatherArchersVillages)
+		end
+		
+		Rule_RemoveMe()
+	end
+end
+
+function Dover_CheckSiegeCampReinforcement()
+	
+	if SGroup_CountSpawned(sg_fre_defendcamp) <= 20 then
+		
+		local units = {
+			{ type = "scar_knight", numSquads = 5 }, 
+			{ type = "scar_archer", numSquads = 5 }
+		}
+		
+		SGroup_Clear(sg_temp)
+		local options = {dynamicSpawnType = DST_FURTHEST_HIDDEN, destination = french_main_defend}
+		UnitEntry_DeploySquads(g_playerFrench, sg_temp, units, mkr_french_reserve, nil, nil, options)
+		Prefab_DoAction(MissionOMatic_FindModule("DefendCamp"), "AddSGroup", sg_temp)
+	end
+end
+
+
+
+function Dover_CheckEdgeReinforcement()
+	
+	if SGroup_CountSpawned(sg_fre_rearguard3) < 20 then
+		
+		if Player_CanSeePosition(player1, Util_GetPosition(mkr_frenchtrader_fallbackspawn)) then
+			Rule_RemoveMe()
+		else
+			local units = {{ type = "scar_manatarms", numSquads = 10 }, { type = "scar_archer", numSquads = 10 }}
+		
+			SGroup_Clear(sg_temp)
+			local options = {dynamicSpawnType = DST_FURTHEST_HIDDEN, destination = french_rearguard_3}
+			UnitEntry_DeploySquads(g_playerFrench, sg_temp, units, mkr_frenchtrader_fallbackspawn, nil, nil, options)
+			Prefab_DoAction(MissionOMatic_FindModule("Rearguard3"), "AddSGroup", sg_temp)
+		end
+
+	end
+end
+
+function Dover_CheckArcherRecruitWest()
+	
+	if Prox_AreSquadsNearMarker(g_leaderWillikin.sgroup,villages_west, ANY) then
+		Util_StartIntel(EVENTS.Willikin_Archers02)
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sg_local_archer_west)
+		Dover_SetPlayerOwner(sg_local_archer_west, g_playerNorman)
+		Objective_RemoveUIElements(SOBJ_GatherArchersVillages, hint_villageWest)
+		
+		if Objective_IsCounterSet(SOBJ_GatherArchersVillages) == true then
+			Objective_IncreaseCounter(SOBJ_GatherArchersVillages)
+		end
+		
+		Rule_RemoveMe()
+	end
+end
+
+function Dover_OnSquadKilled(context)
+	local victim = context.victim
+	local victimPosition = Squad_GetPosition(victim)
+	
+	-- Supply Cart Death Logic
+	if Marker_InProximity(mkr_forestdefend, victimPosition) then
+		if Squad_GetPlayerOwner(victim) == g_playerFrench then
+			sendNextCartSouth = Marker_InProximity(mkr_forestdefendnw, victimPosition) or Marker_InProximity(mkr_forestdefendne, victimPosition)
+		end
+		if Squad_IsOfType(victim, "siege") then
+			Dover_IncrementCartKillCount()
+			Dover_EvaluateActivePaths()
+			
+			if firstCartDestroyed == false then
+				firstCartDestroyed = true
+				Util_StartIntel(EVENTS.Destroy_Reinforcements)
+			end
+			
+			--if cartKills == 4 or cartKills == 8 or cartKills == 12 then
+				--Dover_SpawnFromCart(true)
+			--end
+		end
+	end	
+end
+
+function Dover_EvaluateActivePaths()
+	-- Are there active siege units on the north or south path?
+	local north = false
+	local south = false
+	
+	local function _CheckProx(sgroup)
+		local position = SGroup_GetPosition(sgroup)
+		
+		if Marker_InProximity(mkr_forestdefendnw, position) or Marker_InProximity(mkr_forestdefendne, position) then
+			return "north"
+		elseif Marker_InProximity(mkr_forestdefendsw, position) or Marker_InProximity(mkr_forestdefendse, position) then
+			return "south"
+		else
+			return nil
+		end
+	end
+	if Objective_IsStarted(OBJ_DisruptFrench) then
+		for i,v in ipairs(supply_entries) do
+			if not SGroup_IsEmpty(v) then
+				if _CheckProx(v) == "north" then
+					north = true
+				elseif _CheckProx(v) == "south" then
+					south = true
+				end
+				if north and south then
+					break
+				end
+			end
+		end
+		if not north then
+			hasNorthPath = false
+			MarkerPaths_ClearIcons("path_north_ui")
+		end
+		if not south then
+			hasSouthPath = false
+			MarkerPaths_ClearIcons("path_south_ui")
+		end
+	end
+		
+end
+
+function Dover_AddSiegeUI(sgroup)
+	
+	if Objective_IsStarted(SOBJ_AmbushSiege) then 
+		Objective_AddUIElements(SOBJ_AmbushSiege, sgroup, false, 11180349, false, 2 )
+	end
+	
+end
+
+function Modify_SetUnitMaxSpeed(group, newSpeed, duration)
+
+	-- create the appropriate modifier
+	local modifier = Modifier_Create(MAT_Entity, "speed_maximum_modifier", MUT_Set, true, newSpeed, "")
+	local result = {}
+	
+	-- apply this to each squad in the group
+	local _ApplyModifier = function (gid, idx, sid)
+		if Squad_IsAlive(sid) and Squad_Count(sid) > 0 then
+			local modids = Modifier_ApplyToSquad(modifier, sid, duration or 0)
+			table.insert(result, modids)
+			Modifier_AddToSquadTable(sid, modids)
+		end
+	end
+	SGroup_ForEachEx(group, _ApplyModifier, true, true)
+	
+	return result
+	
+end
+
+function Dover_StartSupplyTrains()
+	
+	if supply_trains_started == false then
+		supply_trains_started = true
+		
+		Objective_Start(SOBJ_AmbushSiege)
+		Rule_AddOneShot(Dover_SendSupplyTrain, 3)
+		Rule_AddInterval(Dover_SendSupplyTrain, supplyLoopTimer)
+		Rule_AddInterval(Dover_MonitorEscortSGroups, 2)
+	end
+end
+
+function Dover_SendSupplyTrain()
+	
+	if t_supplyTrains_associatedSGroups == nil then 
+		t_supplyTrains_associatedSGroups = {}
+	end
+	
+	local siege1Active = Objective_IsStarted(SOBJ_RepelSiege1) and not Objective_IsComplete(SOBJ_RepelSiege1)
+	local siege2Active = Objective_IsStarted(SOBJ_RepelSiege2) and not Objective_IsComplete(SOBJ_RepelSiege2)
+	
+	if not Objective_IsStarted(SOBJ_RepelFrenchSiege) and cartSentCount < cartsPerStage and not siege1Active and not siege2Active then
+		
+		local num_base_escort = 0
+		
+		if EGroup_IsEmpty(eg_fre_traderspawn) or Player_CanSeePosition(player1, Util_GetPosition(french_retreat)) then 
+			traderSpawnLocation = mkr_frenchtrader_fallbackspawn
+		else
+			traderSpawnLocation = french_retreat
+		end
+		
+		if Player_CanSeePosition(player1, Util_GetPosition(french_retreat)) then 
+			num_base_escort = 5
+		end
+		
+		
+		local markerList = Dover_GenerateSupplyRoute()
+		
+		local num_melee = 0
+		local num_ranged = 0
+		local num_cav = 0
+		
+		if t_difficulty.supplyEscort_melee > 0 then
+			if t_difficulty.supplyEscort_escalates then
+				num_melee = num_base_escort + t_difficulty.supplyEscort_melee + siegeWave
+			else
+				num_melee = num_base_escort + t_difficulty.supplyEscort_melee
+			end
+		end
+		
+		if t_difficulty.supplyEscort_ranged > 0 then
+			num_ranged = num_base_escort + t_difficulty.supplyEscort_ranged + siegeWave
+		end
+		
+		if t_difficulty.supplyEscort_cav > 0 then
+			num_cav = num_base_escort + t_difficulty.supplyEscort_cav + siegeWave
+		end
+		
+		
+		supplyEscort = {
+			{
+				{ type = "scar_spearman", numSquads = num_melee },
+				{ type = "scar_crossbowman", numSquads = num_ranged }
+			},
+			{
+				{ type = "scar_spearman", numSquads = num_melee },
+				{ type = "scar_archer", numSquads = num_ranged }
+			},
+			{
+				{ type = "scar_manatarms", numSquads = num_melee },
+				{ type = "scar_archer", numSquads = num_ranged }
+			},
+			{
+				{ type = "scar_spearman", numSquads = num_melee },
+				{ type = "scar_horseman", numSquads = num_cav }
+			},
+			{
+				{ type = "scar_manatarms", numSquads = num_melee },
+				{ type = "scar_crossbowman", numSquads = num_ranged }
+			}
+		}
+		
+		local sgroup = SGroup_CreateUnique(tostring(g_playerFrench).." supply train")
+
+		UnitEntry_DeploySquads(g_playerFrench, sgroup, { type = "scar_ram", numSquads = 1 }, traderSpawnLocation)
+		
+		FOW_PlayerRevealSGroup(player1, sgroup, 7, -1)
+		
+		Objective_AddUIElements(SOBJ_AmbushSiege, sgroup, true, "$11180349", true)
+		
+		Modify_SetUnitMaxSpeed(sgroup, cartSpeed)
+		Modify_EntityMaxHealth(sgroup, t_difficulty.supply_healthMod)
+		
+		cartSentCount = cartSentCount + 1
+		cartTotalSentCount = cartTotalSentCount + 1
+
+		local moduleName = "Escort"..tostring(cartTotalSentCount)
+		t_supplyTrains_associatedSGroups[moduleName] = sgroup
+		
+		RovingArmy_Init(
+			{
+				type = "RovingArmy",
+				descriptor = moduleName,
+				player = g_playerFrench,
+				targetingType = ARMY_TARGETING_DISCARD,
+				targets = markerList,
+				spawnLocation = traderSpawnLocation,
+				units = supplyEscort[supply_escort_index],
+				withdrawThreshold = 0,
+				attackMove = attackMoveStyle_attackEverything,
+				onCompleteFunction = function (module)
+					local moduleName = module.descriptor
+					Dover_OnSupplyArrival(moduleName, t_supplyTrains_associatedSGroups[moduleName])
+					t_supplyTrains_associatedSGroups[moduleName] = nil
+				end,
+			}
+			)
+		
+		supply_escort_index = supply_escort_index + 1
+		if supply_escort_index > #supplyEscort then
+			supply_escort_index = 1
+		end
+		
+		local moduleSGroup = MissionOMatic_FindModule(moduleName).sgroup
+		
+		Modify_UnitSpeed(moduleSGroup, escortSpeed)
+		
+		table.insert(escort_entries, moduleSGroup)
+		table.insert(supply_entries, sgroup)	
+		Dover_AddSiegeUI(sgroup)
+		
+		Prefab_DoAction(MissionOMatic_FindModule(moduleName), "AddSGroup", sgroup)
+		
+		--road patrols
+		if cartSentCount == cartsPerStage and t_difficulty.road_patrol > 0 then
+			checkRoadPatrolsOn = true
+			Rule_AddInterval(Dover_CheckRoadPatrols, 30)
+		end
+		
+	end
+end
+
+function Dover_OnSupplyArrival(moduleName, siegeSgroup)
+	FOW_PlayerUnRevealSGroup(player1, siegeSgroup)
+	SGroup_DestroyAllSquads(siegeSgroup)
+	DissolveModuleIntoModule(moduleName, "FrenchReserve")
+	Rule_AddOneShot(Dover_TickSupplyCaravans, 0.25)
+end
+
+function Dover_TickSupplyCaravans()
+	if not Objective_IsStarted(SOBJ_RepelFrenchSiege) then
+		Dover_SpawnFromCart()
+	end
+end
+
+function Dover_GenerateSupplyRoute()
+	
+	local chosenOption = 2
+	if EGroup_IsEmpty(eg_fre_traderspawn) then
+		traderMarkerOptions = {
+			{
+				mkr_southpath0,
+				mkr_southpath1,
+				mkr_southpath2,
+				mkr_southpath3,
+				mkr_southpath4,
+				mkr_southpath5,
+				mkr_southpath6,
+				mkr_southpath7,
+				mkr_southpath8,
+				mkr_southpath9,	
+			},
+			{
+				mkr_southpath0,
+				mkr_northpath1,
+				mkr_northpath2,
+				mkr_northpath3,
+				mkr_northpath4,
+				mkr_northpath5,
+				mkr_northpath6,
+				mkr_northpath7,
+				mkr_northpath8,
+				mkr_northpath9,
+				mkr_northpath10,
+			},
+		}
+	else
+		traderMarkerOptions = {
+			{
+				mkr_southpath1,
+				mkr_southpath2,
+				mkr_southpath3,
+				mkr_southpath4,
+				mkr_southpath5,
+				mkr_southpath6,
+				mkr_southpath7,
+				mkr_southpath8,
+				mkr_southpath9,	
+			},
+			{
+				mkr_northpath1,
+				mkr_northpath2,
+				mkr_northpath3,
+				mkr_northpath4,
+				mkr_northpath5,
+				mkr_northpath6,
+				mkr_northpath7,
+				mkr_northpath8,
+				mkr_northpath9,
+				mkr_northpath10,
+			},
+		}
+	end
+	if sendNextCartSouth then
+		chosenOption = 1
+	end
+	
+	if chosenOption == 1 then
+		hasSouthPath = true
+		MarkerPaths_GenerateIcons("path_south_ui", AllMarkers_FromName("path_south_ui", ""), "military_route_enemy")
+	else
+		hasNorthPath = true
+		MarkerPaths_GenerateIcons("path_north_ui", AllMarkers_FromName("path_north_ui", ""), "military_route_enemy")
+	end
+	
+	return traderMarkerOptions[chosenOption]
+	
+end
+
+function Dover_SpawnRandomForestPatrol()
+	
+	local moduleList = {
+		 "DefendForest",
+		 "DefendForestNW",
+		 "DefendForestNE",
+		 "DefendForestSW",
+		 "DefendForestSE",
+	}
+	
+	local randomModule = moduleList[World_GetRand( 1, 5 )]
+	
+	--print(randomModule)
+	
+	Action_Do({
+		action = "SpawnUnitsToModule",
+		module = randomModule,
+		spawnLocation = french_retreat,
+		units = {
+			{ type = "scar_spearman", numSquads = 3, },
+			{ type = "scar_archer", numSquads = 2, },
+		},
+	})
+end
+
+function Dover_SpawnRoadPatrol()
+	
+	local moduleList = {
+		 "NorthRoadPatrol",
+		 "SouthRoadPatrol",
+	}
+	
+	local randomModule = moduleList[World_GetRand( 1, 2 )]
+	
+	--print(randomModule)
+	
+	Action_Do({
+		action = "SpawnUnitsToModule",
+		module = randomModule,
+		spawnLocation = french_retreat,
+		units = {
+			{ type = "scar_horseman", numSquads = 2, },
+		},
+	})
+end
+
+function Dover_CheckForestCamp()
+	if Player_AreSquadsNearMarker(g_playerNorman, mkr_forestcamp) then
+		Dover_SpawnForestCamp()
+		Rule_AddInterval(Dover_RecruitForestCamp, 2)
+		Rule_RemoveMe()
+	end
+end
+
+function Dover_CheckSouthAmbush()
+	if Player_AreSquadsNearMarker(g_playerNorman, mkr_southambush) then
+		
+		Dover_SpawnSouthAmbush()
+		Rule_AddInterval(Dover_RecruitSouthAmbush, 2)
+		
+		Rule_AddOneShot(Dover_RevealSouthAmbush, 2.5)
+		Util_StartIntel(EVENTS.Archers_Attack)
+		
+		Rule_RemoveMe()
+	end
+end
+
+function Dover_RevealSouthAmbush()
+	FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_southambush), 15, 30)
+end
+
+function Dover_RecruitForestCamp()
+	
+	if Prox_AreSquadsNearMarker(g_leaderWillikin.sgroup, mkr_forestcamp, ANY, 20) then
+		
+		if SGroup_CountSpawned(sg_forest_camp) > 0 then
+			
+			forestCampDiscovered = true
+			forestCampRecruited = true
+			
+			if Objective_IsStarted(SOBJ_RecruitForestAllies) then
+				Objective_Complete(SOBJ_RecruitForestAllies)
+			end
+			
+			Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+			Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sg_forest_camp)
+			Dover_SetPlayerOwner(sg_forest_camp, g_playerNorman)
+			Util_StartIntel(EVENTS.Archers_Woods)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function Dover_RecruitSouthAmbush()
+	
+	local englishsgroup = MissionOMatic_FindModule("SouthAmbushAlly").sgroup
+	local frenchsgroup = MissionOMatic_FindModule("SouthAmbushFrench").sgroup
+	
+	if Player_AreSquadsNearMarker(player1, mkr_southambush) then
+	
+		SGroup_SetInvulnerable(englishsgroup, false)
+		SGroup_SetInvulnerable(frenchsgroup, false)
+	
+	end
+	
+	if Prox_AreSquadsNearMarker(g_leaderWillikin.sgroup, mkr_southambush, ANY, 20) then
+		
+		local sgroup = MissionOMatic_FindModule("SouthAmbushAlly").sgroup
+		
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sgroup)
+		Dover_SetPlayerOwner(sgroup, g_playerNorman)
+		Rule_RemoveMe()
+	end
+end
+
+function Dover_SpawnSouthAmbush()
+	
+	SpawnUnitsToModule({ type = "scar_manatarms", numSquads = 6 }, "SouthAmbushAlly", mkr_southambush_inf)
+	SpawnUnitsToModule({ type = "scar_archer", numSquads = 2 }, "SouthAmbushAlly", mkr_southambush_arc)
+	SpawnUnitsToModule({{ type = "scar_spearman", numSquads = 4 }, { type = "scar_manatarms", numSquads = 1 }}, "SouthAmbushFrench", mkr_southambush_enemy)
+	
+	local englishsgroup = MissionOMatic_FindModule("SouthAmbushAlly").sgroup
+	local frenchsgroup = MissionOMatic_FindModule("SouthAmbushFrench").sgroup
+	
+	SGroup_SetInvulnerable(englishsgroup, 0.8)
+	SGroup_SetInvulnerable(frenchsgroup, 0.8)
+end
+
+function Dover_GroupWillikinArchers()
+	sg_willikinarchers = SGroup_CreateIfNotFound("sg_willikinarchers")
+	Player_GetAllSquadsNearMarker(g_playerNorman, sg_temp, castle_main, 120)
+	Player_GetAll(g_playerNorman, sg_willikinarchers)
+	SGroup_RemoveGroup(sg_willikinarchers, sg_temp)
+	SGroup_Filter(sg_willikinarchers, "scar_archer", FILTER_KEEP)
+end
+
+function Dover_WillikinCheer()
+	Dover_GroupWillikinArchers()
+	Sound_PlayWallaCelebrateOnSGroup(sg_willikinarchers)
+end
+
+function Dover_SpawnForestGroup(unitType, unitNum, marker)
+	
+	local units = {{type = unitType, numSquads = unitNum}}
+	SGroup_Clear(sg_temp)
+	local options = {dynamicSpawnType = DST_FURTHEST_HIDDEN, destination = marker}
+	UnitEntry_DeploySquads(g_playerForest, sg_temp, units, mkr_forest_spawn, nil, nil, options)
+	--Cmd_FormationMove(sg_temp, marker)
+	SGroup_AddGroup(sg_forest_camp, sg_temp)
+end
+
+function Dover_CheckForestAllyObjective()
+	
+	if forestCampDiscovered == false then
+		forestCampDiscovered = true
+		
+		Dover_SpawnForestCamp()
+		FOW_PlayerRevealSGroup(player1, sg_forest_camp, 15, -1)
+		
+		Rule_Remove(Dover_CheckForestCamp)
+		Rule_AddInterval(Dover_RecruitForestCamp, 2)
+		
+		Objective_Start(SOBJ_RecruitForestAllies)
+	end
+end
+
+function Dover_SpawnForestCamp()
+	Dover_SpawnForestGroup("scar_monk", 1, mkr_forestcamp_monk)
+	Dover_SpawnForestGroup("scar_manatarms", 1, mkr_forestcamp_maa1)
+	Dover_SpawnForestGroup("scar_manatarms", 1, mkr_forestcamp_maa2)
+	Dover_SpawnForestGroup("scar_manatarms", 1, mkr_forestcamp_maa3)
+	Dover_SpawnForestGroup("scar_archer", 1, mkr_forestcamp_arc1)
+	Dover_SpawnForestGroup("scar_archer", 1, mkr_forestcamp_arc2)
+	Dover_SpawnForestGroup("scar_archer", 1, mkr_forestcamp_arc3)
+end
+
+function Dover_SpawnWillikinExtras() 
+	
+	local extrasIndex = 1
+	local popSpace = 200 - Player_GetTotalPopulation(player1)
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_forestdefend, 200)
+	SGroup_Filter(sg_temp, "scar_villager", FILTER_REMOVE)
+	local popForest = SGroup_CountSpawned(sg_temp)
+	
+	if popForest < 25 and popSpace >= 5 then
+		
+		if popForest < 15 and popSpace >= 15 then
+			extrasIndex = 3
+		elseif popForest < 20 and popSpace >= 10 then
+			extrasIndex = 2
+		end
+		
+		UnitEntry_DeploySquads(player1, sg_willikin_extras, willikin_extras[extrasIndex], mkr_willikin_extras_spawn)
+		Cmd_FormationMove(sg_willikin_extras, mkr_willikin_extras_dest1, false)
+		Cmd_FormationMove(sg_willikin_extras, mkr_willikin_extras_dest2, true)
+		Cmd_FormationMove(sg_willikin_extras, mkr_willikin_extras_dest3, true)
+		
+		EventCues_CallToAction("$42813", CTA_CELEBRATE, nil, nil, sg_willikin_extras, 20) -- "Reinforcements have arrived!"
+		Sound_Play2D(MUS_STING_TRIUMPHANT)
+		
+	end
+	
+end
+
+function Dover_MonitorEscortSGroups()
+	
+	if EGroup_IsEmpty(eg_fre_traderspawn) and hasEdgePath == false then 
+		hasEdgePath = true
+		MarkerPaths_GenerateIcons("path_edge_ui", AllMarkers_FromName("path_edge_ui", ""), "military_route_enemy")
+	end
+	
+	for k,v in pairs(escort_entries) do
+		if SGroup_IsDoingAttack(v, false, 5) or SGroup_IsUnderAttack(v, false, 5) then
+			Modify_UnitSpeed(v, 2.5)
+			table.remove(escort_entries, k)
+		end
+	end
+	if Objective_IsComplete(OBJ_DisruptFrench) then
+		Rule_RemoveMe()
+	end
+end

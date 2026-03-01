@@ -1,0 +1,128 @@
+----------------------------------------------------------------------------------------------------------------
+-- Game specific single player scar helper functions
+-- Copyright 2016 SEGA Corporation, Developed by Relic Entertainment
+
+import("ScarUtil.scar")
+import("game_modifiers.scar")
+import("Core_Objectives.scar")
+import("DesignerLib.scar")
+import("UnitExit.scar")
+import("Network.scar")
+import("Mission.scar")
+import("markerpaths.scar")
+
+import("cardinal_narrative.scar")
+
+import("formation.scar")
+
+
+LIST = {
+	__scardoc_enum = true,
+	AIRCRAFT = {},
+	INFANTRY = {},
+}
+
+--? @shortdesc Find a position on a path hidden from view, as close to the destination as possible whilst still satisfying your hidden checktype. Checktype can be either CHECK_IN_FOW, CHECK_OFFCAMERA or CHECK_BOTH.
+--? @extdesc The path is always calculated as if it were plain infantry. This function returns nil if it can't find a suitable position, so you can do a backup plan. 
+--? @result Position
+--? @args PlayerID player, MarkerID/Pos origin, MarkerID/Pos destination, Integer checktype
+function World_GetHiddenPositionOnPath(playerid, origin, dest, checktype)
+
+	if scartype(origin) == ST_MARKER then
+		origin = Marker_GetPosition(origin)
+	end
+	if scartype(dest) == ST_MARKER then
+		dest = Marker_GetPosition(dest)
+	end
+
+	local ebp = EBP.CORE.UNIT_VILLAGER_1
+	local pos = Misc_GetHiddenPositionOnPath(checktype, dest, origin, ebp, 10, 10, playerid, false)
+
+	if (pos.x == 0) and (pos.y == 0) and (pos.x == 0) then
+		return nil
+	else
+		return pos
+	end
+
+end
+
+--? @shortdesc Build a structure in the center of a Hex properly
+--? @extdesc Pass in nil for Player to build a neutral object
+--? @result Entity
+--? @args PlayerID player, Blueprint blueprint, Hex/Pos spawn[, EGroupID egroup]
+function Entity_BuildStructureOnHex(player, blueprint, pos, egroup)
+	
+	local hex = nil
+	local hexCenter = nil
+	local ent = nil
+	
+	if scartype(pos) == ST_SCARPOS then
+		-- Convert the position to a hex center
+		hex = Territory_GetSectorContainingPoint(pos)
+	else
+		-- The position is likely a hex
+		hex = pos
+	end
+	
+	hexCen = Territory_GetSectorGeneratorPointOnTerrain(hex)
+	
+	if player == nil then
+		-- World Structure
+		ent = Entity_CreateENV(blueprint, hexCen, false)
+		Entity_Spawn(ent)
+		Entity_ForceConstruct(ent)
+	else
+		-- Player Structure
+		ent = Entity_Create(blueprint, player, hexCen, false)
+		Entity_Spawn(ent)
+		
+		if Entity_GetBlueprint(ent) == BP_GetEntityBlueprint("building_resource_farm_eng") then
+			Entity_DispatchConstructionStarted(ent)
+		end
+		
+		Entity_ForceConstruct(ent)
+	end
+	
+	if scartype(egroup) == ST_EGROUP then
+		EGroup_Add(egroup, ent)
+	end
+	
+	return ent
+
+end
+
+-- Returns true if our selected entities are just of unit_type
+function Game_HasOnlySelectedEntitiesOfType(unit_type)
+	eg_currentSelection = EGroup_CreateIfNotFound("eg_currentSelection")
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+	if (EGroup_Count(eg_currentSelection) < 1) then 
+		return false
+	end
+	
+	for i = 1, EGroup_Count(eg_currentSelection) do
+		local entity = EGroup_GetEntityAt(eg_currentSelection, i)
+		if entity == nil or (not Entity_IsOfType(entity, unit_type)) then
+			return false
+		end
+	end
+	
+	return true
+end
+
+-- Finds all entities with the "landmark" type belonging to the player and calls Entity_Kill on them.
+function KillAllLandmarks(player)
+	if player ~= nil then
+		local eg_player_landmarks = Player_GetAllEntities(player.id)
+		EGroup_Filter(eg_player_landmarks, "landmark", FILTER_KEEP)
+
+		for i = 1, EGroup_Count(eg_player_landmarks) do
+			local entity = EGroup_GetEntityAt(eg_player_landmarks, i)
+			if entity ~= nil then
+				-- Unload entities from the landmark. This would happen if they were destroyed in the usual way (ie attacked to 0 health).
+				-- This also makes sure the monarch is ejected in regicide/dominion mode. 
+				Entity_UnloadAllFromHold(entity)
+				Entity_Kill(entity)
+			end
+		end
+	end
+end

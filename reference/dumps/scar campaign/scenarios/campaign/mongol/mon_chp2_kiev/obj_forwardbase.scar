@@ -1,0 +1,116 @@
+--
+-- Siege of Kiev 1240
+--
+
+function ForwardBase_InitObjectives()
+	
+	OBJ_ForwardBase = {
+		Title = 11176024, -- Secure a place and unpack the Mongol structures
+		Type = ObjectiveType_Build,
+		
+		--Intel_Start = EVENTS.Packed_Buildings_Spawn,
+		Intel_Complete = EVENTS.ForwardBase_Complete,
+		
+		SetupUI = function()
+			UI_SetPlayerDataContext(player1, {PopulationCapOn = true})
+		end,
+		
+		IsComplete = function()
+			local _checkEntity = function(gid, idx, eid)
+				if Entity_IsPartOfSquad(eid) then
+					return false
+				else
+					return true
+				end
+			end
+			return EGroup_ForEachAllOrAny(eg_playerBuildings, ANY, _checkEntity)
+		end,
+		
+		OnComplete = function()
+			Kiev_InitializeTrainingHints()
+		end,
+		
+		--Fail
+		IsFailed = function()
+			Player_GetAll(player1, sg_temp)
+			SGroup_Filter(sg_temp, "gaia", FILTER_REMOVE)
+			
+			return SGroup_IsEmpty(sg_temp)
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	Objective_Register(OBJ_ForwardBase)
+end
+
+function ForwardBase_PreStart()
+	
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_main_gate, 15)
+
+	
+	if SGroup_CountSpawned(sg_temp) >= 0 then
+		
+		
+		ForwardBase_SpawnPlayerStructures()
+		--Action_SetResources_Do({player = player1, resources = {food = 1000, wood = 600, gold = 600, stone = 600}})
+		
+		SGroup_Clear(sg_temp)
+		UnitEntry_DeploySquads(player1, sg_temp, {sbp = SBP.MONGOL.UNIT_VILLAGER_1_MON, numSquads = Util_DifVar({16, 12, 12, 12}), spawn = mkr_player_villager_spawn, destination = mkr_player_villager_destination})
+		
+		EventCues_CallToAction("$11201496", CTA_CELEBRATE, EVENTS.Packed_Buildings_Spawn, nil, eg_playerBuildings, 20) -- Your mobile base has arrived!
+		Sound_Play2D("mus_stinger_campaign_triumph_short")
+		
+		Util_AutoSave()
+		
+		Objective_Start(OBJ_ForwardBase)
+		
+		Rule_AddOneShot(DestroyKiev_PreStart, 20)
+		
+		Rule_RemoveMe()
+	end
+end
+
+function ForwardBase_SpawnPlayerStructures()
+	
+	SGroup_Clear(sg_temp)
+	
+	-- spawn the packed up buildings
+	local units = {
+		{sbp = SBP.MONGOL.BUILDING_TOWN_CENTER_CAPITAL_MOVING_MON, spawn = mkr_player_structure_spawn, destination = mkr_player_structure_destination},
+		{sbp = SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON, spawn = mkr_player_structure_spawn, destination = mkr_player_structure_destination},
+		{sbp = SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON, spawn = mkr_player_structure_spawn, destination = mkr_player_structure_destination},
+		{sbp = SBP.MONGOL.BUILDING_HOUSE_MOVING_MON, spawn = mkr_player_structure_spawn, destination = mkr_player_structure_destination},
+		{sbp = SBP.MONGOL.BUILDING_WONDER_AGE1_DEER_STONES_MOVING_MON, spawn = mkr_player_structure_spawn, destination = mkr_player_structure_destination},
+	}
+	UnitEntry_DeploySquads(player1, sg_temp, units)
+	--Cmd_Move(sg_temp, Marker_GetPosition(mkr_player_rally_01))
+	
+	-- we need an egroup of the packed up building entities _inside_ these squads, so try to build that egroup
+	local desiredEntityBlueprints = {
+		EBP.MONGOL.BUILDING_TOWN_CENTER_CAPITAL_MOVING_MON,		-- we're interested in entities with these blueprints
+		EBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON,
+		EBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON,
+		EBP.MONGOL.BUILDING_HOUSE_MOVING_MON,
+		EBP.MONGOL.BUILDING_WONDER_AGE1_DEER_STONES_MOVING_MON,
+	}
+	local _findInternalEntity = function(gid, idx, sid) 
+		local count = Squad_Count(sid)
+		local entity = Squad_GetFirstEntity(sid)
+		if Table_Contains(desiredEntityBlueprints, Entity_GetBlueprint(entity)) then 
+			EGroup_Add(eg_playerBuildings, entity)	-- add this entity if it's one of the blueprints we're interested in
+		end
+	end
+	SGroup_ForEach(sg_temp, _findInternalEntity)		-- call this "find" function on all the squads we spawned above
+	
+end
+
+function ForwardBase_CheckForStructuresDropped(context, data)
+	if not Entity_IsPartOfSquad(EGroup_GetEntityAt(eg_playerBuildings, data.structure_int)) then
+		Objective_RemoveUIElements(OBJ_ForwardBase, data.hintpoint_id)
+		Rule_RemoveMe()
+	end
+end

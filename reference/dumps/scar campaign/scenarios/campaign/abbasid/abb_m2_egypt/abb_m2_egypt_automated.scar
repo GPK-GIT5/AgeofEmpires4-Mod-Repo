@@ -1,0 +1,270 @@
+-----------------------------------------------------------------------
+--
+-- Ayyubid Mission 2 - Egypt
+--
+-- Automated testing script
+--
+-----------------------------------------------------------------------
+
+import("GameScarUtil.scar")
+import("Prefabs.scar")
+import("standard.scar")
+import("scarutil.scar")
+import("team.scar")
+
+import("core.scar")
+
+-- We need to import this for anything to work. We don't need anything else
+import("MissionOMatic/MissionOMatic.scar")
+import("missionomatic/modules/module_rovingarmy.scar")
+
+--enumeration for objective status
+statusTable = {
+	NotRun = 0, 
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3
+}
+
+--Bool verifying if the Campaign Auto Test Agrument is present
+debug_IsCampaignAutoTest = false
+
+--Bool for checking if the intro event has started
+b_introStarted = false
+
+player1 = World_GetPlayerAt(1)
+
+-------------------------------------------------------------------------
+-- [[ ONINIT ]]
+-------------------------------------------------------------------------
+
+function AutoTest_OnInit()
+	
+	if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+		
+		
+		import("test/common.scar")
+		import("test/standard_test.scar")
+		import("test/test_framework.scar")
+		--import("test/test_framework_cardinal.scar")
+		
+		print("CampaignAutoTest parameter detected")
+		debug_IsCampaignAutoTest = true
+		
+		AutomatedEgypt_RegisterCheckpoints()	
+		
+		SALADIN_ABILITY = BP_GetAbilityBlueprintByPbgID(2144650)
+		SHIRKUH_ABILITY = BP_GetAbilityBlueprintByPbgID(2144649)
+		
+		Game_AIControlLocalPlayer()
+		AI_Enable(player1, true)
+		print("Assuming Direct Control. Player is now AI Driven: "..tostring(AI_IsEnabled(player1)))
+		
+		--Checks for the 'NoSwoopy' Arg, and disables the swoopy intro camera on true--
+		if Util_GetCommandLineArgument("NoSwoopy") then
+			Rule_AddInterval(AutoTest_SkipAndStart, 1)
+		else
+			Rule_AddInterval(AutoTest_PlayIntro, 1)
+		end
+				
+	end
+end
+
+--Compiles the list of checkpoints
+function AutomatedEgypt_RegisterCheckpoints()
+	---- All Checkpoints Should be preceeded with Campaign Auto Test 'cat_' --
+
+	--"cat_PlayStart", when play is handed over to the player
+	CampaignAutotest_RegisterCheckpoint("cat_PlayStart", 120)
+	CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["InProgress"])
+	
+	--"cat_ControlPointsCaptured", the player has captured all the control points
+	CampaignAutotest_RegisterCheckpoint("cat_ControlPointsCaptured", 3600)
+	CampaignAutotest_SetCheckpointStatus("cat_ControlPointsCaptured", statusTable["NotRun"])
+	
+	--"cat_CrusadersDefeated", the player has defeated the crusaders
+	CampaignAutotest_RegisterCheckpoint("cat_CrusadersDefeated", 3600)
+	CampaignAutotest_SetCheckpointStatus("cat_CrusadersDefeated", statusTable["NotRun"])
+	
+	--"cat_MissionComplete", the player has completed the mission
+	CampaignAutotest_RegisterCheckpoint("cat_MissionComplete", 120)
+	CampaignAutotest_SetCheckpointStatus("cat_MissionComplete", statusTable["NotRun"])
+		
+end
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+	if Event_IsAnyRunning() and World_GetGameTime() > 1 then
+		Rule_RemoveMe()
+		Game_SkipAllEvents(false)
+		AutomatedMission_Start() --Starts the autotest scar sequence
+	end
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+--If this is the first check since the intro event started, then starting checking for the end only after it starts
+	if b_introStarted == false then  
+		if Event_IsAnyRunning() then
+			b_introStarted = true
+		end
+	else
+		if Event_IsAnyRunning() == false then
+			Rule_RemoveMe()
+			AutomatedMission_Start() --Starts the autotest scar sequence
+		end
+	end
+end
+
+--Script for kicking off the uatomated testing flow
+function AutomatedMission_Start()
+	FOW_RevealAll()	
+	Rule_AddInterval(AutomatedEgypt_Phase0_CheckPlayStart, 1)
+end
+
+function AutomatedEgypt_Phase0_CheckPlayStart()
+	if OBJ_ControlPrimary ~= nil then
+		if Objective_IsStarted(OBJ_ControlPrimary) then
+			Rule_RemoveMe()
+			CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["Pass"])
+			CampaignAutotest_SetCheckpointStatus("cat_ControlPointsCaptured", statusTable["InProgress"])
+			CampaignAutotest_SetCheckpointStatus("cat_CrusadersDefeated", statusTable["InProgress"])			
+			AutomatedEgypt_Phase1_SetUpPhase1()
+		end
+	end
+	
+end
+
+function AutomatedEgypt_Phase1_SetUpPhase1()
+	Player_GetAll(player1)
+	sg_cat_playerarmy = SGroup_CreateIfNotFound("sg_cat_playerarmy")
+	SGroup_AddGroup(sg_cat_playerarmy, sg_allsquads)
+	playerArmies = {}
+	
+	local params = 
+	{
+		player = player1,
+		spawnLocation = mkr_player_base,
+		descriptor = "player_army1",
+		targets = {
+			{marker = mkr_player_base}
+		},
+	}
+	local cat_playerarmy = Army_Init(params)
+	table.insert(playerArmies, cat_playerarmy)
+	
+	Army_AddSGroup(cat_playerarmy, sg_cat_playerarmy)
+		
+	Rule_AddInterval(AutomatedEgypt_Phase1_QueryControlPoints, 1)
+	
+	Rule_AddInterval(AutomatedEgypt_ProtectHome, 15)
+	Rule_AddInterval(AutomatedEgypt_UseAbilities, 10)
+	
+	Rule_AddOneShot(AutomatedEgypt_Phase1_PlayerAttacks, 5)
+	rule_PlayerAttacks = Rule_AddInterval(AutomatedEgypt_Phase1_PlayerAttacks, 10)
+	
+	Rule_AddInterval(AutomatedEgypt_Phase3_QueryMissionComplete, 1)
+	
+end
+
+
+function AutomatedEgypt_Phase1_QueryControlPoints()
+	if Egypt_GetHeldPoints(player1) >= EGroup_CountSpawned(eg_villagecenters)+1 then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_ControlPointsCaptured", statusTable["Pass"])		
+		CampaignAutotest_SetCheckpointStatus("cat_MissionComplete", statusTable["InProgress"])
+
+	end
+end
+
+function AutomatedEgypt_Phase1_PlayerAttacks()
+	playerArmyID = playerArmyID or 1
+	SGroup_Clear(sg_temp)
+	SGroup_Clear(sg_blah)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_player_base, 60)
+	SGroup_RemoveGroup(sg_temp, sg_cat_playerarmy)
+	
+	if SGroup_CountSpawned(sg_temp) >= 1 then
+		local params = 
+			{
+				player = player1,
+				spawnLocation = mkr_player_base,
+				descriptor = "player_army"..playerArmyID,
+				targets = {
+					{marker = mkr_player_base}
+				},
+			}
+		local cat_playerarmy = Army_Init(params)
+		Army_AddSGroup(cat_playerarmy, sg_temp)
+		table.insert(playerArmies, cat_playerarmy)
+		playerArmyID = playerArmyID+1
+	end
+	
+	eg_enemyControlPoints = EGroup_CreateIfNotFound("eg_enemyControlPoints")
+	EGroup_Duplicate(eg_villagecenters, eg_enemyControlPoints)
+	
+	EGroup_ForEach(eg_enemyControlPoints, _GetEnemyControlPoints)
+	
+	for i, army in ipairs(playerArmies) do
+		if SGroup_IsEmpty(army.sgroup) == false and EGroup_CountSpawned(eg_enemyControlPoints) > 0 then
+			local attackPos = Util_GetPosition(EGroup_GetClosestEntity(eg_enemyControlPoints, Util_GetPosition(army.sgroup)))
+			Army_SetTarget(army, attackPos)
+		end
+	end
+end
+
+function _GetEnemyControlPoints(gid, index, eid)
+	if World_OwnsEntity(eid) ~= true then
+		if Entity_GetPlayerOwner(eid) == player1 then
+			EGroup_Remove(gid, eid)
+		end
+	end
+end
+
+function AutomatedEgypt_ProtectHome()
+	
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_player_base, 80)
+	SGroup_Clear(sg_blah)
+	Player_GetAllSquadsNearMarker(player2, sg_blah, mkr_player_base, 80)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 and SGroup_CountSpawned(sg_blah) > 0 then
+		Cmd_AttackMove(sg_temp, mkr_player_base)
+	end
+end
+
+function AutomatedEgypt_UseAbilities()
+		
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, SBP.AYYUBID_CMP.UNIT_LEADER_SHIRKUH_AYY, FILTER_KEEP)
+	if SGroup_CountSpawned(sg_allsquads) > 0 and SGroup_IsUnderAttack(sg_allsquads, ALL, 3) == false then
+		LocalCommand_SquadAbility(player1, sg_allsquads,SHIRKUH_ABILITY, false, false) --saladin_armor_activated_ayy
+	end
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, SBP.AYYUBID_CMP.UNIT_LEADER_SALADIN_MAA_AYY, FILTER_KEEP)
+	if SGroup_CountSpawned(sg_allsquads) > 0 and SGroup_IsUnderAttack(sg_allsquads, ANY, 10) then
+		LocalCommand_SquadAbility(player1, sg_allsquads, SALADIN_ABILITY, false, false) --shirkuh_move_speed
+	end
+	
+end
+
+function AutomatedEgypt_Phase2_QueryCrusaderDefeat()
+	
+	if Player_GetSquadCount(player2) <= 50 and Player_GetSquadCount(player1) >= 50 then
+		Rule_RemoveMe()
+		Rule_RemoveWithID(rule_attackCrusaders)
+		CampaignAutotest_SetCheckpointStatus("cat_CrusadersDefeated", statusTable["Pass"])		
+	end
+	
+end
+
+function AutomatedEgypt_Phase3_QueryMissionComplete()
+	
+	if Objective_IsComplete(OBJ_ControlPrimary) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_MissionComplete", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_ControlPointsCaptured", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_CrusadersDefeated", statusTable["Pass"])
+	end
+end

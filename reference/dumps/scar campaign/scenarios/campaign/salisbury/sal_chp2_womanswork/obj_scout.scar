@@ -1,0 +1,174 @@
+-- Copyright 2023 SEGA Corporation, Developed by Relic Entertainment
+
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+
+
+function Scout_InitObjectives()
+	
+	OBJ_Scout = {
+		Title = "$1000957", --Scout for sheep
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.Scout_IntelStart, -- Need event in here
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_Scout, ALL)
+		end,
+		OnComplete = function()
+			Objective_Start(OBJ_GrowTown, true, true)
+		end,
+
+		Cheat = Cheat_Scout,
+	}
+
+	SOBJ_FindSheep = {
+		Title = "$1000956", -- Find Sheep
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Scout,
+		StartAlongsideParent = true,
+		SetupUI = FindSheep_UI,
+		OnStart = FindSheep_Start,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_HerdSheep, false, true)
+		end
+	}
+	
+	SOBJ_HerdSheep = {
+		Title = "$1000953", -- Herd Sheep
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Scout,
+		StartAlongsideParent = false,
+		SetupUI = HerdSheep_UI,
+		PreStart = HerdSheep_PreStart,
+		Intel_Start = EVENTS.Scout_IntelUpdate,
+		OnStart = HerdSheep_Start,
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_HarvestSheep, false, true)
+		end
+	}
+	
+	SOBJ_HarvestSheep = {
+		Title = "$1000951", -- Harvest Sheep
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Scout,
+		StartAlongsideParent = false,
+		SetupUI = HarvestSheep_UI,
+		OnStart = HarvestSheep_Start,
+
+	}
+		
+		
+-- Register all objectives
+	Objective_Register(OBJ_Scout)
+	Objective_Register(SOBJ_FindSheep)
+	Objective_Register(SOBJ_HerdSheep)
+	Objective_Register(SOBJ_HarvestSheep)
+end
+
+-- ///// FindSheep //////////////////////////////////////////////
+function FindSheep_UI()
+	
+end
+
+function FindSheep_Start()
+
+	Goals_Scouting()
+
+	Rule_Add(FindSheep_Monitor)
+end
+
+function FindSheep_Monitor()
+	-- we can advance if the scout has got some sheep with him, if sheep are already near the TC, or if the player has already harvested some sheep
+	if Squad_HasEntityWithNInteractors(SGroup_GetSpawnedSquadAt(sg_intro_scout, 1), "food_generation", 1) or Prox_AreSquadsNearMarker(sg_sheep, mkr_player_start, false, 15) or (SGroup_Count(sg_sheep) < starting_sheep) then
+		
+		Objective_Complete(SOBJ_FindSheep, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// HerdSheep //////////////////////////////////////////////
+function HerdSheep_UI()
+	
+end
+
+function HerdSheep_PreStart()
+
+	Rule_Add(HerdSheep_Monitor)
+
+end
+function HerdSheep_Start()
+
+
+	Goals_ScoutingHerd()
+end
+
+function HerdSheep_Monitor()
+	
+	World_GetSquadsNearPoint(player1, sg_herded, Marker_GetPosition(mkr_player_start), 15, OT_Player)
+	SGroup_Filter(sg_herded, SBP.GAIA.GAIA_HERDABLE_SHEEP, FILTER_KEEP)
+	-- we proceed if the player has herded some sheep to the TC or has harvested 25% of the sheep already
+	if (SGroup_Count(sg_herded) > 0) or (SGroup_Count(sg_sheep) < (starting_sheep * 0.75))then
+		
+		Objective_Complete(SOBJ_HerdSheep, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// HarvestSheep //////////////////////////////////////////////
+function HarvestSheep_UI()
+	
+end
+
+function HarvestSheep_Start()
+	-- if the player has gotten to this point but not herded sheep to the TC (becasue they harvest sheep elsewhere)
+	-- we skip the teaching because the player has demonstrated they can do all this
+	if SGroup_Count(sg_herded) > 0 then
+		Goals_ScoutingSecond()
+	end
+	Rule_Add(HarvestSheep_Monitor)
+end
+
+function HarvestSheep_Monitor()
+	
+	-- Check if the player has killed a sheep
+	if Util_GetHealth(sg_sheep) < 1 then
+		
+		Objective_Complete(SOBJ_HarvestSheep, false, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+
+
+
+
+function Cheat_Scout()
+	Sound_Play2D(MIX_RETURN_TO_GAME)
+	
+	eg_mill = EGroup_CreateIfNotFound("eg_mill")
+	eg_lumber = EGroup_CreateIfNotFound("eg_lumber")
+	
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_VILLAGER_1_FRE, ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_ECON_FOOD_CONTROL_FRE, ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_ECON_WOOD_CONTROL_FRE, ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE, ITEM_UNLOCKED)
+	
+	Util_CreateEntities(player1, eg_mill, EBP.FRENCH.BUILDING_ECON_FOOD_CONTROL_FRE, mkr_place_mill, 1)
+	Util_CreateEntities(player1, eg_lumber, EBP.FRENCH.BUILDING_ECON_WOOD_CONTROL_FRE, mkr_place_lumber_camp, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE, mkr_house1, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE, mkr_house2, 1)
+	
+	
+	UnitEntry_DeploySquads(player1, sg_intro_scout, {{sbp = SBP.FRENCH.UNIT_SCOUT_1_FRE, numSquads = 1}}, mkr_scout_intro_dest_01)
+	SGroup_WarpToMarker(sg_starting_villagers, mkr_villager_intro_dest_01)
+	
+	UnitEntry_DeploySquads(player1, sg_temp, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 3}}, mkr_villager_intro_dest_02)
+	UnitEntry_DeploySquads(player1, sg_temp, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 4}}, mkr_villager_intro_dest_03)
+
+	
+	
+end

@@ -1,0 +1,276 @@
+
+----
+---- Mission Zero - Learn Spearman - Feudal
+----
+---
+
+
+function IntroLearnSpearman_InitObjectives()	
+
+	OBJ_LearnSpearman = {
+		
+		Title = 11192744, -- Learn to Use Spearmen
+		Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.LearnSpearmenBasics_StartIntel,
+		Intel_Complete = EVENTS.LearnSpearmenBasics_IntelComplete,
+		
+		OnStart = function ()
+			Objective_Start(SOBJ_BuildBarrack)
+		end,
+		
+		
+		OnComplete = IntroLearnSpearman_OnComplete,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete (OBJ_LearnSpearman, ALL)
+		end,
+		
+		Cheat = Cheat_FeudalMilitary,
+		
+	}
+	
+	SOBJ_BuildBarrack = {
+		
+		Title = 11192743, -- Build a Barrack
+		Type = ObjectiveType_Build,
+		Parent = OBJ_LearnSpearman,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.BuildBarracks_IntelStart,
+		Intel_Complete = EVENTS.BuildBarracks_IntelComplete,
+		
+		SetupUI = BuildBarrack_UI,
+		
+		PreStart = function()
+			Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_unit_infantry_control_eng"), ITEM_DEFAULT)
+			Tutorials_MissionZero_HighlightBarracks()
+			Rule_AddGlobalEvent(MilitaryFeudal_OnConstructionComplete, GE_ConstructionComplete)
+		end,
+		
+		OnStart = BuildBarrack_Start,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_BuildBarracks) then
+				Objective_Complete(OBJ_Tip_BuildBarracks,false,false)
+			end
+		end,
+		
+		OnComplete = BuildBarrack_OnComplete,
+	}
+	
+	SOBJ_ProduceSpearmen = {
+		
+		Title = Loc_FormatText("$11192751", i_desiredSpearmen), -- Produce 10 spearmen 
+		Type = ObjectiveType_Build,
+		Parent = OBJ_LearnSpearman,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.ProduceSpearmen_IntelStart,
+		Intel_Complete = EVENTS.ProduceSpearmen_IntelComplete,
+		
+		SetupUI = ProduceSpearmen_UI,
+		
+		PreStart = function()
+			Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_spearman_2_eng"), ITEM_DEFAULT)
+			Tutorials_MissionZero_HighlightSpearman()
+		end,
+		
+		OnStart = ProduceSpearmen_Start,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_ProduceSpearmen) then
+				Objective_Complete(OBJ_Tip_ProduceSpearmen,false,false)
+			end
+		end,
+		
+		OnComplete = ProduceSpearmen_OnComplete,
+	}
+	
+	SOBJ_DestroyThePallisade = {
+		
+		Title = 11192745, -- Destroy the Pallisade
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_LearnSpearman,
+		StartAlongsideParent = false, 
+		
+		--Intel_Start = EVENTS.DestroythePallisades_IntelStart,
+
+		
+		SetupUI = DestroyThePallisade_UI,
+		
+		PreStart = function()
+			FOW_RevealMarker(mkr_closeToGate,-1)
+			Rule_AddGlobalEvent(DestroyPallisade_EntityKill, GE_EntityKilled)	
+			EGroup_SetPlayerOwner( eg_allied_palisade, player2 )
+			Rule_AddOneShot(SeePalisade_Monitor,3)
+			--Sound_Play2D("mus_stinger_campaign_alert")
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+			EventCues_CallToAction(11194939,CTA_UNIQUE_STAKES, EVENTS.DestroythePallisades_IntelStart, nil, mkr_closeToGate, 20) --"Enemy Pallisade!"
+		end,
+		
+		OnStart = function()
+			Tutorials_MissionZero_ControlGroups()
+		end,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_doubleclickunits) then
+				Objective_Complete(OBJ_Tip_doubleclickunits,false,false)
+			end
+			if Objective_IsStarted(	OBJ_Tip_Attack) then
+				Objective_Complete(OBJ_Tip_Attack,false,false)
+			end
+		end,
+		
+		OnComplete = DestroyThePallisade_OnComplete,
+	}
+	
+	Objective_Register(OBJ_LearnSpearman)
+	Objective_Register(SOBJ_BuildBarrack)
+	Objective_Register(SOBJ_ProduceSpearmen)
+	Objective_Register(SOBJ_DestroyThePallisade)
+	
+	
+end
+
+function BuildBarrack_UI()
+	
+end
+
+function BuildBarrack_Start()
+	
+
+	Rule_AddOneShot(BarracksTip,3)
+	
+end
+
+function BarracksTip()
+
+	if not Objective_IsComplete(SOBJ_BuildBarrack) then
+		Objective_Start(OBJ_Tip_BuildBarracks, false, false)
+	end
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads,"scar_villager",FILTER_KEEP)
+	
+	if SGroup_CountSpawned(sg_allsquads) <= 12 then 
+		Objective_Start(OBJ_Tip_MakeMoreVillagers,false,false)
+		Rule_AddInterval(Monitor_AmountVillagers,1)
+	end
+
+end
+
+function Monitor_AmountVillagers()
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads,"scar_villager",FILTER_KEEP)
+	if SGroup_CountSpawned(sg_allsquads) >= 15 then
+		Objective_Complete(OBJ_Tip_MakeMoreVillagers,false,false)
+		Rule_RemoveMe()
+	end
+
+end
+
+function BuildBarrack_OnComplete()
+	Objective_Start(SOBJ_ProduceSpearmen)
+end
+
+function ProduceSpearmen_UI()
+	
+	Objective_SetCounter(SOBJ_ProduceSpearmen, 0, i_desiredSpearmen)
+	
+end
+
+function ProduceSpearmen_Start()
+	Rule_Add(ProduceSpearmen_Monitor)
+	Rule_AddOneShot(SpearmenTip,3)
+end
+
+function SpearmenTip()
+	if not Objective_IsComplete(SOBJ_ProduceSpearmen) then 
+		Objective_Start(OBJ_Tip_ProduceSpearmen, false, false)
+	end
+	
+end
+
+function ProduceSpearmen_Monitor()
+	
+	Player_GetAll(World_GetPlayerAt(1))
+	SGroup_Filter(sg_allsquads, "scar_spearman", FILTER_KEEP)
+	
+	currentSpearmen = SGroup_CountSpawned(sg_allsquads)
+	local newSpearmen = currentSpearmen - i_lastCheckedSpearmen	
+			
+	if newSpearmen >= 1 then 
+		
+		Objective_IncreaseCounter(SOBJ_ProduceSpearmen, newSpearmen)
+		
+		if Objective_GetCounter(SOBJ_ProduceSpearmen) >= i_desiredSpearmen then 
+			Objective_Complete(SOBJ_ProduceSpearmen)
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+	i_lastCheckedSpearmen = currentSpearmen
+end	
+
+function ProduceSpearmen_OnComplete()
+	
+	Player_GetAll(player1, sg_spearmenForTutorial)
+	SGroup_Filter(sg_spearmenForTutorial, "scar_spearman", FILTER_KEEP)
+	
+	Objective_Start(OBJ_Tip_doubleclickunits,false,false)
+	Objective_Start(SOBJ_DestroyThePallisade)
+	
+end
+
+function DestroyThePallisade_UI()
+	
+	hpid_DestroyPalisade = Objective_AddUIElements(SOBJ_DestroyThePallisade, mkr_closeToGate, true,11192759, true,5) --"Pallisade"
+
+end
+
+function DestroyPallisade_EntityKill(context)
+	
+	if context.victim ~= nil then
+		local victimBP = Entity_GetBlueprint(context.victim)
+		
+		if victimBP == EBP.FRENCH.BUILDING_DEFENSE_PALISADE_FRE then
+			
+			Objective_Complete(SOBJ_DestroyThePallisade)
+			Rule_RemoveMe()
+	
+		end
+	end
+end
+
+function SeePalisade_Monitor()
+	
+	Objective_Start(OBJ_Tip_Attack, false, false)
+
+	--Player_GetAll(player1,sg_allsquads)
+	--SGroup_Filter(sg_allsquads, "scar_spearman", FILTER_KEEP )
+	
+	--if Prox_AreSquadsNearMarker(sg_allsquads,mkr_closeToGate,ANY,30) then
+		--Objective_Start(OBJ_Tip_Attack, false, false)
+		--Rule_RemoveMe()
+		
+	--end
+end
+
+function DestroyThePallisade_OnComplete()
+		--EGroup_SetPlayerOwner( eg_allied_palisade, player3 )
+		World_SetInteractionStage(1)
+end
+
+
+function IntroLearnSpearman_OnComplete()
+	Objective_RemoveUIElements(SOBJ_DestroyThePallisade,hpid_DestroyPalisade)
+--	SpawnAnotherLonelyUnit()
+	Rule_AddOneShot(WaitBeforeStartNextAttackObj,1)
+	
+end
+
+function WaitBeforeStartNextAttackObj()
+	Objective_Start(OBJ_AttackCavalryEncampment)
+end

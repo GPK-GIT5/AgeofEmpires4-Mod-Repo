@@ -1,0 +1,276 @@
+import("training/campaigntraininggoals.scar")
+
+goal_sequence_build_boat = "build_boat"
+goal_sequence_build_wing = "build_wing"
+goal_sequence_produce_villagers = "produce_villagers"
+
+
+
+---- TRAINING: TUGHTEKIN ABILITY ----
+function Training_Tyre_GeneralAura()
+	
+	local general_aura = "general_aura"
+	
+	if SGroup_CountSpawned(sg_tughtekin) >= 1 then 
+		
+		local Goal_SelectTughtekin = Training_Goal(
+			SGroup_GetSpawnedSquadAt(sg_tughtekin, 1),
+			{
+				ID = "Your Leader, Tughtekin, has a unique ability. Make use of it in battle!",
+				Message = "$11256121",
+				DataTemplate = "LeftClickTrainingDataTemplate",
+			},
+			Predicate_UserHasSelectedTughtekin
+		)
+		local Goal_HoverOverAbility = Training_Goal(
+			BP_GetAbilityBlueprint("tughtekin_attack_speed_ayy"),
+			{
+				ID = "Tughtekin can improve the attack speed of nearby allies",
+				Message = "$11258018",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasLookedAtTughtekinAbility
+		)
+		
+		local GoalSequence_LeaderAbility = Training_GoalSequence(
+			general_aura, 												        -- id
+			1, 																	-- repeatMax
+			0, 																	-- remindMax
+			Predicate_TughtekinExists, 		        					        -- trigger
+			CampaignTraining_TimeoutIgnorePredicate, 							-- ignore
+			nil,														 		-- remind
+			Predicate_UserHasLookedAtTughtekinAbility, 		 					-- bypass
+			true, 																-- canRegress
+			{Goal_SelectTughtekin, Goal_HoverOverAbility}						-- goals
+		)
+		Training_AddGoalSequence(GoalSequence_LeaderAbility)
+		
+	end
+end
+
+function Predicate_UserHasSelectedTughtekin(goal)
+	
+	Misc_GetSelectedSquads(sg_temp, true)
+	return SGroup_CountSpawned(sg_tughtekin) >= 1 and SGroup_ContainsSGroup(sg_temp, sg_tughtekin, ALL)
+end
+
+function Predicate_UserHasLookedAtTughtekinAbility(goal)
+	
+	local abilityBP = BP_GetAbilityBlueprint("tughtekin_attack_speed_ayy")
+	return SGroup_CountSpawned(sg_tughtekin) >= 1 and (PredicateHelper_HasUserHoveredOverBP(goal, abilityBP) or training_previousAbilityBlueprint == abilityBP)
+end
+
+function Predicate_TughtekinExists(goalSequence)
+	
+	return SGroup_CountSpawned(sg_tughtekin) >= 1
+end
+
+
+
+---- TRAINING: LEADER TENT ----
+function Training_Tyre_LeaderTent()
+	
+	local goal_sequence_leader_tent = "goal_sequence_leader_tent"
+	
+	if EGroup_CountSpawned(eg_leader_tent) >= 1 then 
+		
+		local Goal_SelectLeaderTent = Training_Goal(
+			EGroup_GetSpawnedEntityAt(eg_leader_tent, 1),
+			{
+				ID = "Tughtekin has fallen in battle. He will return soon at the Leader Tent.",
+				Message = "$11258019",
+				DataTemplate = "LeftClickTrainingDataTemplate",
+			},
+			Predicate_UserHasSelectedLeaderTent
+		)
+		
+		local GoalSequence_LeaderTent = Training_GoalSequence(
+			goal_sequence_leader_tent, 											-- id
+			1, 																	-- repeatMax
+			0, 																	-- remindMax
+			Predicate_TughtekinHasDied, 		        					    -- trigger
+			CampaignTraining_TimeoutIgnorePredicate, 							-- ignore
+			nil,														 		-- remind
+			Predicate_UserHasSelectedLeaderTent, 		 						-- bypass
+			true, 																-- canRegress
+			{Goal_SelectLeaderTent}												-- goals
+		)
+		Training_AddGoalSequence(GoalSequence_LeaderTent)
+		
+	end
+end
+
+function Predicate_UserHasSelectedLeaderTent(goal)
+	
+	Misc_GetSelectedEntities(eg_temp, true)
+	return EGroup_CountSpawned(eg_leader_tent) >= 1 and EGroup_ContainsEGroup(eg_temp, eg_leader_tent, ALL)
+end
+
+function Predicate_TughtekinHasDied(goalSequence)
+	
+	return SGroup_CountSpawned(sg_tughtekin) < 1 and EGroup_CountSpawned(eg_leader_tent) >= 1
+end
+
+
+
+
+---- TRAINING: BUILD BOAT ----
+function Training_Tyre_BuildFishingBoat()
+	
+	local GoalSelectDock = Training_Goal(
+		"Position", {ID = "SelectDock", Message= "$11255299", DataTemplate="GenericTrainingDataTemplate",}, 
+		UserHasDockSelected
+	)
+	
+	local GoalSequenceBuildBoat = Training_GoalSequence(
+		goal_sequence_build_boat, --id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		UserHasDockOnScreen, 								-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		UserHasDockSelected, 				      			-- bypass
+		false, 												-- canRegress
+		{GoalSelectDock}									-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceBuildBoat)
+	Training_EnableGoalSequenceByID(goal_sequence_build_boat, true)
+end
+
+function UserHasDockSelected(goal)
+	return Misc_IsEGroupSelected(eg_p1_dock, ALL)
+end
+
+function UserHasDockOnScreen(goalSequence)
+	
+	if EGroup_CountSpawned(eg_p1_dock) > 0 then
+		if Misc_IsEGroupOnScreen(eg_p1_dock, 0.85, ALL) then
+			goalSequence.goals[1].key = Util_GetPosition(eg_p1_dock)
+			return true
+		end
+	end
+	return false
+end
+
+
+
+---- TRAINING: REMINDER TO PRODUCE VILLAGERS ----
+function Training_Tyre_ProduceVillagers()
+	
+	tc_idle_counter = 0
+	
+	local GoalSelectTC = Training_Goal(
+		"Position", {ID = "SelectTC", Message= "$11256482", DataTemplate="GenericTrainingDataTemplate",}, 
+		UserHasTCSelected
+	)
+	
+	local GoalSequenceProduceVillagers = Training_GoalSequence(
+		goal_sequence_produce_villagers, --id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		UserShouldProduceVillagers, 						-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		UserHasTCSelected, 				      				-- bypass
+		false, 												-- canRegress
+		{GoalSelectTC}										-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceProduceVillagers)
+	Training_EnableGoalSequenceByID(goal_sequence_produce_villagers, true)
+	
+	Rule_AddInterval(Tyre_MonitorVillagerProduction, 1)
+end
+
+function UserHasTCSelected(goal)
+	return Misc_IsEGroupSelected(eg_player_tc, ALL)
+end
+
+function Tyre_MonitorVillagerProduction()
+	
+	if EGroup_IsProducingSquads(eg_player_tc, ANY) == false then
+		tc_idle_counter = tc_idle_counter + 1
+	else
+		tc_idle_counter = 0
+	end
+end
+
+function UserShouldProduceVillagers(goalSequence)
+	
+	--has TC on screen, hasn't produced villagers in a while, has less than 20 villagers total
+	
+	local sg_villagers = SGroup_CreateIfNotFound("sg_villagers")
+	sg_villagers = Player_GetSquadsFromType(player1, "scar_villager")
+	
+	if tc_idle_counter >= 60 then
+		if SGroup_CountSpawned(sg_villagers) < 20 then
+			if EGroup_CountSpawned(eg_player_tc) > 0 then
+				if Misc_IsEGroupOnScreen(eg_player_tc, 0.85, ALL) then
+					goalSequence.goals[1].key = Util_GetPosition(eg_player_tc)
+					
+					if Rule_Exists(Tyre_MonitorVillagerProduction) then
+						Rule_Remove(Tyre_MonitorVillagerProduction)
+					end
+					
+					return true
+				end
+			end
+		end
+	end
+	
+	SGroup_Destroy(sg_villagers)
+	return false
+end
+
+
+---- TRAINING: BUILD WING ----
+function Training_Tyre_BuildWing()
+	
+	local GoalSelectHoW = Training_Goal(
+		"Position", {ID = "SelectHoW", Message= "$11255397", DataTemplate="LeftClickTrainingDataTemplate",}, 
+		UserHasHoWSelected
+	)
+	
+	local GoalStartWing = Training_Goal(
+		"PBG", {ID = "StartWing", Message= "$11255398", DataTemplate="LeftClickTrainingDataTemplate",}, 
+		UserHasStartedWing
+	)
+	
+	local GoalSequenceBuildWing = Training_GoalSequence(
+		goal_sequence_build_wing, --id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		UserCanBuildWing, 									-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		UserHasStartedWing, 				      			-- bypass
+		true, 												-- canRegress
+		{GoalSelectHoW, GoalStartWing}						-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceBuildWing)
+	Training_EnableGoalSequenceByID(goal_sequence_build_wing, true)
+end
+
+function UserHasHoWSelected(goal)
+	if EGroup_CountSpawned(eg_house_of_wisdom) > 0 then
+		return Misc_IsEGroupSelected(eg_house_of_wisdom, ALL)
+	end
+	return false
+end
+
+function UserHasStartedWing(goal)
+	return wing_started
+end
+
+function UserCanBuildWing(goalSequence)
+	
+	if EGroup_CountSpawned(eg_house_of_wisdom) > 0 then
+		
+		if Player_GetResource(player1, RT_Food) > 400 and Player_GetResource(player1, RT_Gold) > 200 then
+			
+			goalSequence.goals[1].key = Util_GetPosition(eg_house_of_wisdom)
+			goalSequence.goals[2].key = UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING
+			return true
+		end
+	end
+	return false
+end

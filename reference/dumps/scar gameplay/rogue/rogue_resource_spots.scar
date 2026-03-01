@@ -1,0 +1,253 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+-----------------------------------------------------------------
+--------- Generates randomized resource spots
+-----------------------------------------------------------------
+
+--? @shortdesc Sets the weighted distribution of resource spawns on the current map.
+--? Order of types follows: Sheep, Deer, Boar, Food (pickups), Wood, Gold, Stone
+--? @args table Weight Integers
+function ResourceSpots_InitData(resource_weights)
+	
+	t_spot_types = {
+		{
+			name = "sheep",
+			resource_class = "gaia",
+			sbp = SBP.GAIA.GAIA_HERDABLE_SHEEP,
+			count_min = 1,
+			count_max = 4,
+			weight = resource_weights[1]
+		},
+		{
+			name = "deer",
+			resource_class = "gaia",
+			sbp = SBP.GAIA.GAIA_HUNTABLE_DEER,
+			ebp_icon = BP_GetEntityBlueprint("gaia_deer_dummy_minimap_icon"),
+			count_min = 4,
+			count_max = 8,
+			weight = resource_weights[2]
+		},
+		{
+			name = "boar",
+			resource_class = "gaia",
+			sbp = SBP.GAIA.GAIA_HUNTABLE_BOAR,
+			ebp_icon = BP_GetEntityBlueprint("gaia_boar_dummy_minimap_icon"),
+			count_min = 1,
+			count_max = 1,
+			weight = resource_weights[3]
+		},
+		{
+			name = "food",
+			resource_class = "pickup",
+			ebp = BP_GetEntityBlueprint("resource_pickup_food_rogue"),
+			count_min = 1,
+			count_max = 1,
+			weight = resource_weights[4]
+		},
+		{
+			name = "wood",
+			resource_class = "pickup",
+			ebp = BP_GetEntityBlueprint("resource_pickup_wood_rogue"),
+			count_min = 1,
+			count_max = 1,
+			weight = resource_weights[5]
+		},
+		{
+			name = "gold",
+			resource_class = "pickup",
+			ebp = BP_GetEntityBlueprint("resource_pickup_gold_rogue"),
+			count_min = 1,
+			count_max = 1,
+			weight = resource_weights[6]
+		},
+		{
+			name = "stone",
+			resource_class = "pickup",
+			ebp = BP_GetEntityBlueprint("resource_pickup_stone_rogue"),
+			count_min = 1,
+			count_max = 1,
+			weight = resource_weights[7]
+		},
+		{
+			name = "food_naval",
+			resource_class = "pickup_naval",
+			ebp = BP_GetEntityBlueprint("resource_pickup_naval_food_rogue"),
+			count_min = 1,
+			count_max = 1,
+			weight = 50
+		},
+		{
+			name = "wood_naval",
+			resource_class = "pickup_naval",
+			ebp = BP_GetEntityBlueprint("resource_pickup_naval_wood_rogue"),
+			count_min = 1,
+			count_max = 1,
+			weight = 50
+		},
+		{
+			name = "gold_naval",
+			resource_class = "pickup_naval",
+			ebp = BP_GetEntityBlueprint("resource_pickup_naval_gold_rogue"),
+			count_min = 1,
+			count_max = 1,
+			weight = 50
+		},
+	}
+	
+end
+
+function ResourceSpots_SpawnWolves(marker_name, spawn_chance, max_wolves)
+	if spawn_chance > 0 then
+		local wolf_markers = AllMarkers_FromName(marker_name, "")
+		local sg_wolves_all = SGroup_CreateIfNotFound("sg_wolves_all")
+		Table_Shuffle(wolf_markers)
+		local spawned_wolf_count = 0
+		max_wolves = max_wolves or 1000
+		
+		for i, marker in ipairs(wolf_markers) do
+			
+			if spawned_wolf_count < max_wolves then
+				if World_GetRand(1,100) < spawn_chance then
+					UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_wolves_all, {{sbp = SBP.GAIA.GAIA_HUNTABLE_WOLF, numSquads = 1 }}, marker)
+				end
+
+				spawned_wolf_count = spawned_wolf_count + 1
+			end
+		end
+		
+		local _ChangeToGaia = function(gid, idx, sid)
+			Squad_SetWorldOwned(sid)
+		end
+		SGroup_ForEach(sg_wolves_all, _ChangeToGaia)
+	end
+end
+
+function ResourceSpots_Init(marker_name, resource_type, count_used)
+	
+	local resource_markers_tmp = AllMarkers_FromName(marker_name, "")
+	
+	if #resource_markers_tmp == 0 then
+		return
+	end
+	
+	if count_used == nil then count_used = #resource_markers_tmp end
+	local resource_markers = Table_GetRandomItem(resource_markers_tmp, count_used)
+	
+	local sg_gaia_all = SGroup_CreateIfNotFound("sg_gaia_all")
+	
+	for i, marker in ipairs(resource_markers) do
+		
+		local marker_pos = Util_GetPosition(marker)
+		local spot_type = ResourceSpots_GetType(resource_type)
+		
+		if spot_type.resource_class == "pickup" or spot_type.resource_class == "pickup_naval" then
+			
+			local spawn_pos = Util_GetRandomPosition(marker)
+			Util_CreateEntities(ROGUE_ENEMY_WAVE_PLAYER, nil, spot_type.ebp, spawn_pos, 1)
+			
+			print("Resource Spot Pickup: "..spot_type.name)
+			
+		elseif spot_type.resource_class == "gaia" then
+			
+			local count = World_GetRand(spot_type.count_min, spot_type.count_max)
+			
+			if Game_RogueModeConquerorEnabled() then
+				count = math.ceil(count * 0.5)	
+			end
+						
+			if count > 0 then
+				for a = 1, count do
+					local pos = Util_GetOffsetPosition(marker_pos, a, 4)
+					
+					if spot_type.name == "sheep" then
+						local randomizeSheep = World_GetRand(0, 200)
+						if randomizeSheep == 200 then
+							spot_type.sbp = SBP.GAIA.GAIA_HERDABLE_SHEEP_PINK
+						elseif randomizeSheep >= 149 and randomizeSheep <= 199 then
+							spot_type.sbp = SBP.GAIA.GAIA_HERDABLE_SHEEP_BLACK
+						elseif randomizeSheep >= 98 and randomizeSheep <= 148 then
+							spot_type.sbp = SBP.GAIA.GAIA_HERDABLE_SHEEP_BROWN
+						else
+							spot_type.sbp = SBP.GAIA.GAIA_HERDABLE_SHEEP
+						end
+					end
+										
+					UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_gaia_all, {{sbp = spot_type.sbp, numSquads = 1 }}, pos)
+				end
+				
+				if spot_type.ebp_icon ~= nil then
+					Util_CreateEntities(nil, eg_minimap, spot_type.ebp_icon, marker_pos, 1, nil, true, true)
+				end
+				
+				print("Resource Spot Gaia: "..spot_type.name.." "..tostring(count))
+			end
+		end
+	end
+	
+	local _ChangeToGaia = function(gid, idx, sid)
+		Squad_SetWorldOwned(sid)
+	end
+	SGroup_ForEach(sg_gaia_all, _ChangeToGaia)
+	
+end
+
+function ResourceSpots_GetType(target_class)
+	
+	local highest_score = -1000
+	local chosen_type = nil
+	
+	for i, spot_type in ipairs(t_spot_types) do
+		
+		if spot_type.resource_class == "none" or spot_type.resource_class == target_class or target_class == "any" then
+			
+			local score = spot_type.weight + World_GetRand(1,100)
+			
+			if spot_type.name == "boar" and ResourceSpots_CanPlayersHuntBoar(ROGUE_HUMAN_PLAYERS) == false then
+				score = -1000
+			end
+			
+			if score > highest_score then
+				highest_score = score
+				chosen_type = spot_type
+			end
+		end
+	end
+	
+	--reduce chance of choosing this option again
+	chosen_type.weight = chosen_type.weight - 15
+	
+	return chosen_type
+end
+
+function ResourceSpots_CanPlayersHuntBoar(players)
+	for _, player in ipairs(players) do
+		if ResourceSpots_CanPlayerHuntBoar(player) then
+			return true
+		end
+	end
+	return false
+end
+
+function ResourceSpots_CanPlayerHuntBoar(player)
+	
+	local raceName = Player_GetRaceName(player)
+	
+	if raceName == "abbasid" then
+		return false
+	elseif raceName == "abbasid_ha_01" then
+		return false
+	elseif raceName == "sultanate" then
+		return false
+	elseif raceName == "sultanate_ha_tug" then
+		return false
+	elseif raceName == "malian" then
+		return false
+	elseif raceName == "ottoman" then
+		return false
+	else
+		return true
+	end
+	
+end
+

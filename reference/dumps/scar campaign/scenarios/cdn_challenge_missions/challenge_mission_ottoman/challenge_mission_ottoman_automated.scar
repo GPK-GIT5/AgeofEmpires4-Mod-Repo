@@ -1,0 +1,196 @@
+import("GameScarUtil.scar")
+import("Prefabs.scar")
+import("standard.scar")
+import("scarutil.scar")
+import("team.scar")
+import("core.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("missionomatic/modules/module_rovingarmy.scar")
+
+statusTable = {
+	NotRun = 0,
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3 
+}
+b_introStarted = false
+
+function AutoTest_OnInit()
+    if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+        import("test/common.scar")
+        import("test/standard_test.scar")
+        import("test/test_framework.scar")
+        
+        print("CampaignAutoTest parameter detected")
+        debug_IsCampaignAutoTest = true
+        
+        AutomatedOttoman_RegisterCheckpoints()    
+        
+        Game_AIControlLocalPlayer()
+        AI_Enable(player1, true)
+        print("Assuming Direct Control. Player is now AI Driven: "..tostring(AI_IsEnabled(player1)))
+        
+        if Util_GetCommandLineArgument("NoSwoopy") then
+            Rule_AddInterval(AutoTest_SkipAndStart, 1)
+        else
+            Rule_AddInterval(AutoTest_PlayIntro, 1)
+        end          
+    end
+end
+
+function AutomatedOttoman_RegisterCheckpoints()
+    --when play is handed over to the player
+    CampaignAutotest_RegisterCheckpoint("cat_PlayStart", 120)
+    CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable.InProgress)
+    
+    CampaignAutotest_RegisterCheckpoint("cat_BronzeAchieved", 605)
+    CampaignAutotest_SetCheckpointStatus("cat_BronzeAchieved", statusTable.NotRun)
+    
+    CampaignAutotest_RegisterCheckpoint("cat_SilverAchieved", 305)
+    CampaignAutotest_SetCheckpointStatus("cat_SilverAchieved", statusTable.NotRun)
+	
+	CampaignAutotest_RegisterCheckpoint("cat_GoldAchieved", 305)
+    CampaignAutotest_SetCheckpointStatus("cat_GoldAchieved", statusTable.NotRun)
+        
+end
+
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+    if Event_IsAnyRunning() then
+        Rule_RemoveMe()
+        Game_SkipAllEvents(false)
+        AutomatedMission_Start()
+    end
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+--If this is the first check since the intro event started, then starting checking for the end only after it starts
+    if b_introStarted == false then  
+        if Event_IsAnyRunning() then
+            b_introStarted = true
+        end
+    else
+        if Event_IsAnyRunning() == false then
+            Rule_RemoveMe()
+            AutomatedMission_Start()
+        end
+    end
+end
+
+function AutomatedMission_Start()
+    FOW_RevealAll()    
+    Rule_AddInterval(AutomatedOttoman_Phase0_CheckPlayStart, 1)
+	local lane_module_data = {
+		{ target = mkr_test_defender_west, name = "west", spawn = mkr_test_spawn_west },
+		{ target = mkr_test_defender_north, name = "north", spawn = mkr_test_spawn_north },
+		{ target = mkr_test_defender_east, name = "east", spawn = mkr_test_spawn_east },
+	}
+	AutomatedOttoman_Defenders = {}
+	AutomatedOttoman_Reinforcers = {}
+	for i = 1, 3 do 
+		AutomatedOttoman_Defenders[i] = RovingArmy_Init({
+				type = "RovingArmy",
+				player = player1,
+				scanRangeEnRoute = 50,
+				combatRange = 50,
+				targets = { lane_module_data[i].target },
+				descriptor = "defender "..lane_module_data[i].name,
+				spawnLocation = lane_module_data[i].target,
+				useCustomDirection = true,
+				units = {{ type = "scar_knight", numSquads = 50 }},
+		})
+		AutomatedOttoman_Reinforcers[i] = RovingArmy_Init({
+				type = "RovingArmy",
+				player = player1,
+				scanRangeEnRoute = 50,
+				combatRange = 50,
+				targets = { AutomatedOttoman_Defenders[i].spawnLocation },
+				descriptor = "reinforcer "..lane_module_data[i].name,
+				spawnLocation = lane_module_data[i].spawn,
+				targetModule = AutomatedOttoman_Defenders[i],
+		})
+	end
+	Rule_AddInterval(AutomatedOttoman_MonitorDefenders, 1)
+	Rule_AddOneShot(AutomatedOttoman_AfterStart, 2)
+end
+
+function AutomatedOttoman_AfterStart()
+	EGroup_SetRallyPoint(eg_starting_military_schools, mkr_north_mid_1)
+	Player_SetResource(player1, 1, 0)
+end
+
+function AutomatedOttoman_MonitorDefenders()
+	for i, reinforcer in ipairs(AutomatedOttoman_Reinforcers) do
+		local missing_units = 50 - SGroup_CountSpawned(reinforcer.targetModule.sgroup)
+		if missing_units > 0 and SGroup_CountSpawned(reinforcer.sgroup) == 0 then
+			local sg_army = CreateUnits(player1, { type = "scar_knight", numSquads = missing_units }, reinforcer.spawnLocation, "")
+			RovingArmy_AddSGroup(reinforcer, sg_army)
+			SGroup_Destroy(sg_army)
+			Rule_Add(AutomatedOttoman_MonitorReinforcements, { reinforcer = reinforcer })
+		end
+	end
+end
+
+local distance_squared = 30 * 30
+
+function AutomatedOttoman_MonitorReinforcements(context, data)
+	local sgroup = data.reinforcer.sgroup
+	local target_pos = RovingArmy_GetTarget(data.reinforcer).position
+	if SGroup_CountSpawned(sgroup) == 0 or Util_GetDistanceSquared(sgroup, target_pos) < distance_squared then
+		TransferModuleIntoModule(data.reinforcer, data.reinforcer.targetModule)
+		RovingArmy_Reset(data.reinforcer)
+		Rule_RemoveMe()
+	end
+end
+
+function AutomatedOttoman_Phase0_CheckPlayStart()
+    if Objective_IsStarted(SOBJ_BronzeMedal) then
+        Rule_RemoveMe()
+        CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable.Pass)
+        AutomatedOttoman_Phase1_Setup()
+		print("Autotest Start Passed")
+    end
+end
+
+function AutomatedOttoman_Phase1_Setup()
+	CampaignAutotest_SetCheckpointStatus("cat_BronzeAchieved", statusTable.InProgress)
+	Rule_AddInterval(AutomatedOttoman_Phase1_Monitor, 1)
+end
+
+function AutomatedOttoman_Phase1_Monitor()
+    if Objective_IsComplete(SOBJ_BronzeMedal) then
+        Rule_RemoveMe()
+        CampaignAutotest_SetCheckpointStatus("cat_BronzeAchieved", statusTable.Pass)
+        AutomatedOttoman_Phase2_Setup()
+		print("Autotest Bronze Passed")
+    end
+end
+
+function AutomatedOttoman_Phase2_Setup()
+	CampaignAutotest_SetCheckpointStatus("cat_SilverAchieved", statusTable.InProgress)
+	Rule_AddInterval(AutomatedOttoman_Phase2_Monitor, 1)
+end
+
+function AutomatedOttoman_Phase2_Monitor()
+    if Objective_IsComplete(SOBJ_SilverMedal) then
+        Rule_RemoveMe()
+        CampaignAutotest_SetCheckpointStatus("cat_SilverAchieved", statusTable.Pass)
+        AutomatedOttoman_Phase3_Setup()
+		print("Autotest Silver Passed")
+    end
+end
+
+function AutomatedOttoman_Phase3_Setup()
+	CampaignAutotest_SetCheckpointStatus("cat_GoldAchieved", statusTable.InProgress)
+	Rule_AddInterval(AutomatedOttoman_Phase3_Monitor, 1)
+end
+
+function AutomatedOttoman_Phase3_Monitor()
+    if Objective_IsComplete(SOBJ_GoldMedal) then
+        Rule_RemoveMe()
+        CampaignAutotest_SetCheckpointStatus("cat_GoldAchieved", statusTable.Pass)
+		print("Autotest Gold Passed")
+    end
+end

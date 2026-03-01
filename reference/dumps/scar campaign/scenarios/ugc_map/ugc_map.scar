@@ -1,0 +1,252 @@
+--
+-- Mission Title and Date ()
+--
+-- Campaign, mission number ()
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+
+--import all objectives files here
+import("obj_capture_town.scar")
+import("obj_destroy_town.scar")
+
+function Mission_SetupPlayers()
+	
+	--
+	-- get player IDs for each player
+	-- 
+	
+	player1 = World_GetPlayerAt(1) -- English - player 1
+	player2 = World_GetPlayerAt(2) -- France enemies
+
+	
+	-- player 1 - Normans
+--	Setup_SetPlayerName(player1,  Loc_GetString(LOC("Normans")))  --"Normans") -- Bertrand du Guesclin
+	Player_SetCurrentAge(player1, AGE_DARK)
+	Player_SetMaximumAge(player1, AGE_FEUDAL)
+	
+
+	-- player 2 - Village Rebels	
+--	Setup_SetPlayerName(player2, Loc_GetString(LOC("French")))--Loc_GetString(LOC("French"))) -- 
+
+	Player_SetCurrentAge(player2, AGE_DARK)
+	Player_SetMaximumAge(player2, AGE_FEUDAL)
+	
+end
+
+
+function Mission_SetupVariables()	-- create any extra sgroups, egroups, and mission variables in here
+	
+	-- Defining sgroups, egroups for future reference 
+	eg_enemycity01 = EGroup_CreateIfNotFound("eg_enemycity01")
+	sg_Rovingarmy_enemyunits_city01 = SGroup_CreateIfNotFound("sg_Rovingarmy_enemyunits_city01")
+	eg_town_enemy03 = EGroup_CreateIfNotFound("eg_town_enemy03")
+	sg_Rovingarmy_enemyunits_city03 = SGroup_CreateIfNotFound("sg_Rovingarmy_enemyunits_city03")
+	
+	
+--	iVariableToSetHere = 0
+	i_desiredBuildingsDestroyed = 0 --variable for objective
+end
+
+
+function Mission_SetRestrictions()	-- set up any restrictions (i.e. locking out units, etc) in here
+	
+	--To remove/add player's abilities, constructions, ...
+--	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_wall_eng"), ITEM_REMOVED)
+	
+
+end
+
+function Mission_Preset()	-- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)
+	
+	PlayerColour_Enable()
+	Game_SetPlayerSlotColour(player1, 1) 		-- Player (1 = blue)
+	Game_SetPlayerUISlotColour(player1, 1) 
+	
+	Game_SetPlayerSlotColour(player2, 2) 		-- Enemy french (2 = red)    
+	Game_SetPlayerUISlotColour(player2, 2) 
+		
+	AI_SetPersonality( player2, "default_campaign" )
+	
+	--Initialize objectives here
+	Capture_EnemiesTownInit()
+	DestroyTown_InitObjectives()
+	
+end
+
+function Mission_Start()	-- this is triggered after the intro, just as control is passed to the player
+	
+	-- start the opening objectives (if you're using ObjectiveTable style objectives)
+	Objective_Start(OBJ_CaptureEnemiesTown,true, false)
+	
+end
+
+--The recipe can be used to create initial spawns, set up objectives or completion/failure states
+function GetRecipe()
+
+	local recipe = {
+		
+		introNIS = EVENTS.TEMPLATEMISSION_Intro,
+		
+		-- Defining Locations for reference in script
+		locations = {
+			{ 
+				descriptor = "EnglishTown", 
+				marker = mkr_player1_city, 
+				player = player1
+			},
+			
+			{ 
+				descriptor = "FrenchCity", 
+				marker = mkr_enemy01_city, 
+				player = player2, 
+				egroup = eg_enemycity01, 
+				sgroup_defenders = sg_Rovingarmy_enemyunits_city01, --when setting capture objectives
+ 			},
+			
+			{
+				descriptor = "FrenchCityBoss", 
+				marker = mkr_enemy03_city, 
+				player = player2, 
+				egroup = eg_town_enemy03, 
+				
+			},
+		},
+		
+		
+		-- Modules
+		modules = {
+
+			-- Player starting units spawner when the mission starts. 
+			-- Define the spawn location, unit type, number of units and can mention where to spawn them.
+			{
+				type = "UnitSpawner",
+				player = player1,
+				spawnLocation = mkr_player1_spawn01,
+				units = {
+					{type = "scar_spearman", numSquads = 3, spawn = mkr_player1_spawn01},
+					{type = "scar_archer", numSquads = 3, spawn = mkr_player1_spawn01},
+				},
+			},
+			
+			--spawn villager units to the player's town
+			{
+				--type of Ai behaviour we want from units we spawn here on mission start.
+				-- UnitSpawner, RovingArmy
+				
+				type = "UnitSpawner",
+				
+				--Name that can be refered later in script
+				descriptor = "EnglishVillagers",
+				player = player1,
+				spawnLocation = mkr_player1_VillagerSpawn01,
+				units = {
+					{type = "scar_villager", numSquads = 4 },
+				},
+			},
+			
+			--A Roving army is an Ai module used to defend an area and move the units between points
+			{
+				type = "RovingArmy",
+				player = player2,
+				descriptor = "RovingArmy_enemy01",
+				--Different Targeting types can be used here: ARMY_TARGETING_REVERSE, ARMY_TARGETING_DISCARD, ARMY_TARGETING_CYCLE,...
+				targetingType = ARMY_TARGETING_REVERSE,
+				--idle time at each point
+				idleTimeOverride = 10,
+				
+				--different attack style can be used: attackMoveStyle_attackEverything, attackMoveStyle_ignoreEverything, 
+				attackMove = attackMoveStyle_attackEverything,
+				sgroup = sg_Rovingarmy_enemyunits_city01,
+				
+				--units will move between those locations and attack enemies 
+				targets = {
+					mkr_spawn_enemy01,
+					mkr_dest_enemy02,
+					
+				},
+			--units will spawn at this location
+				spawnLocation = mkr_spawn_enemy01,
+				
+				--will come back to this location after attacking other units
+				idlePosition = mkr_spawn_enemy01,
+				useCustomDirection = true,
+
+				--units will attack in this range
+				combatRange = 20,
+				--units will follow and attack units within this range when combat started in combatRange
+				leashRange = 40,
+				
+				--units can be filled later with a function if module is only needed later in mission
+				units = {
+					{type = "scar_spearman", numSquads = 5, spawn = mkr_spawn_enemy01},
+					{type = "scar_archer", numSquads = 3, spawn = mkr_spawn_enemy02},
+				},
+			},
+			
+				--A Roving army is an Ai module used to defend an area and move the units between points
+			{
+				type = "RovingArmy",
+				player = player2,
+				descriptor = "RovingArmy_enemy03",
+				--Different Targeting types can be used here: ARMY_TARGETING_REVERSE, ARMY_TARGETING_DISCARD, ARMY_TARGETING_CYCLE,...
+				targetingType = ARMY_TARGETING_REVERSE,
+				--idle time at each point
+				idleTimeOverride = 10,
+				
+				--different attack style can be used: attackMoveStyle_attackEverything, attackMoveStyle_ignoreEverything, 
+				attackMove = attackMoveStyle_attackEverything,
+				sgroup = sg_Rovingarmy_enemyunits_city03,
+				
+				--units will move between those locations and attack enemies 
+				targets = {
+					mkr_spawn_enemy03,
+					mkr_dest_enemy03,
+					
+				},
+			--units will spawn at this location
+				spawnLocation = mkr_spawn_enemy03,
+				
+				--will come back to this location after attacking other units
+				idlePosition = mkr_spawn_enemy03,
+				useCustomDirection = true,
+
+				--units will attack in this range
+				combatRange = 20,
+				--units will follow and attack units within this range when combat started in combatRange
+				leashRange = 40,
+				
+				--units can be filled later with a function if module is only needed later in mission
+				units = {
+					{type = "scar_spearman", numSquads = 10, spawn = mkr_spawn_enemy04},
+					{type = "scar_archer", numSquads = 10, spawn = mkr_spawn_enemy03},
+				},
+			},
+			
+		},
+
+		
+		-- Playbill
+		playbill = {
+		},
+		
+		-- Presentation aspects for the start or end of a mission
+		onStart = {
+			intelEvent = "",
+			expositionCamera = {},
+			titleCard = {
+				title = "$a9c8269841ca40e8b2fea8b17a35e883:6",  
+				date = "$a9c8269841ca40e8b2fea8b17a35e883:5",   
+				icon = "icons/campaign/campaign_hundred_disorder"
+			},
+			actions = {
+			},
+		},
+	}
+
+		
+		
+	return recipe
+
+end
+

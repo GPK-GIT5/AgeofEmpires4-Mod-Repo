@@ -1,0 +1,317 @@
+
+--? @shortdesc This is the proper way to create a VillagerLife at runtime. Villagers can be assigned to 5 different jobs, and you can provide an sgroup for each job. villager_response can be "none", "flee", or "attack". "mkr_flee" is only required if villager_response is "flee". "mkr_flee_backup" is only required if villager_response is "flee" and b_require_garrison is true. SGroups can be nil if you don't want villagers in those roles. 
+--? @args Player player, String name, SGroup sg_roaming, SGroup sg_wood, SGroup sg_food, SGroup sg_stone, SGroup sg_gold, String villager_response, Marker mkr_home, Marker mkr_flee, Boolean b_require_garrison, Marker mkr_flee_backup 
+--? @result 
+function VillagerLife_Create(player, name, sg_roaming, sg_wood, sg_food, sg_stone, sg_gold, villager_response, mkr_home, mkr_flee, b_require_garrison, mkr_flee_backup)
+	--print("VillagerLife_Create")
+	
+	assert(scartype(villager_response) == ST_STRING and (villager_response == "none" or villager_response == "flee" or villager_response == "attack"), "invalid villager_response")
+	assert(scartype(name) == ST_STRING, "invalid name")
+	
+	local data = {}
+	data.created_at_runtime = true
+	
+	villger_life_created_at_runtime_count = villger_life_created_at_runtime_count or 1 
+	data.instanceName = "villager_life_"..villger_life_created_at_runtime_count
+	villger_life_created_at_runtime_count = villger_life_created_at_runtime_count + 1
+	
+	data.player = player
+	data.instanceName = name
+	
+	data.sg_roaming = SGroup_CreateIfNotFound(data.instanceName.."_roaming")
+	if scartype(sg_roaming) == ST_SGROUP then SGroup_Duplicate(sg_roaming, data.sg_roaming) end
+	data.sg_wood = SGroup_CreateIfNotFound(data.instanceName.."_wood")
+	if scartype(sg_wood) == ST_SGROUP then SGroup_Duplicate(sg_wood, data.sg_wood) end
+	data.sg_food = SGroup_CreateIfNotFound(data.instanceName.."_food")
+	if scartype(sg_food) == ST_SGROUP then SGroup_Duplicate(sg_food, data.sg_food) end
+	data.sg_stone = SGroup_CreateIfNotFound(data.instanceName.."_stone")
+	if scartype(sg_stone) == ST_SGROUP then SGroup_Duplicate(sg_stone, data.sg_stone) end
+	data.sg_gold = SGroup_CreateIfNotFound(data.instanceName.."_gold")
+	if scartype(sg_gold) == ST_SGROUP then SGroup_Duplicate(sg_gold, data.sg_gold) end
+	
+	data.sg_villagers = SGroup_CreateIfNotFound(data.instanceName.."_villagers")
+	SGroup_AddGroup(data.sg_villagers, data.sg_roaming)
+	SGroup_AddGroup(data.sg_villagers, data.sg_wood)
+	SGroup_AddGroup(data.sg_villagers, data.sg_food)
+	SGroup_AddGroup(data.sg_villagers, data.sg_stone)
+	SGroup_AddGroup(data.sg_villagers, data.sg_gold)
+	
+	data.eg_buildings = EGroup_CreateIfNotFound(data.instanceName.."_buildings")
+	
+	data.villager_response = villager_response
+	data.b_require_garrison = b_require_garrison
+	
+	data.mkr_home = mkr_home
+	data.mkr_flee = mkr_flee
+	data.mkr_flee_backup = mkr_flee_backup
+	
+	return villagerlife_Init(data)
+end
+
+--? @shortdesc Private function. Do not call this function in mission scripts, call VillagerLife_Create instead. VillagerLife_Create calls this, and the prefab system calls this when it creates a VillagerLife during startup.  
+function villagerlife_Init(data)
+	local instance = nil
+
+	if data.created_at_runtime == true then
+		instance = data
+	else
+		instance = Prefab_GetInstance(data)
+		instance.sg_roaming = SGroup_CreateIfNotFound(instance.instanceName.."_roaming")
+		instance.sg_wood = SGroup_CreateIfNotFound(instance.instanceName.."_wood")
+		instance.sg_food = SGroup_CreateIfNotFound(instance.instanceName.."_food")
+		instance.sg_stone = SGroup_CreateIfNotFound(instance.instanceName.."_stone")
+		instance.sg_gold = SGroup_CreateIfNotFound(instance.instanceName.."_gold")
+		instance.sg_villagers = SGroup_CreateIfNotFound(instance.instanceName.."_villagers")
+		instance.eg_buildings = EGroup_CreateIfNotFound(instance.instanceName.."_buildings")
+				
+		if instance.player ~= Game_GetLocalPlayer() then
+			if Player_HasUpgrade(instance.player, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1) then
+				Player_RemoveUpgrade(instance.player, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1)
+			end
+		end
+		
+		if instance.roaming_count ~= nil and instance.roaming_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_roaming, {type = "scar_villager", numSquads = instance.roaming_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_roaming)
+			Modify_UnitSpeed(instance.sg_roaming, 0.7)
+		end
+		
+		if instance.wood_count ~= nil and instance.wood_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_wood, {type = "scar_villager", numSquads = instance.wood_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_wood)
+		end
+		
+		if instance.food_count ~= nil and instance.food_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_food, {type = "scar_villager", numSquads = instance.food_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_food)
+		end
+		
+		if instance.stone_count ~= nil and instance.stone_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_stone, {type = "scar_villager", numSquads = instance.stone_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_stone)
+		end
+		
+		if instance.gold_count ~= nil and instance.gold_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_gold, {type = "scar_villager", numSquads = instance.gold_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_gold)
+		end
+	end
+	
+	instance.is_fleeing = false
+	instance.is_attacking = false
+	instance.is_monitoring = true
+	
+	instance.monitor_ruleID = nil
+	
+	assert(scartype(instance.mkr_home) == ST_MARKER, "mkr_home is invalid")
+	if instance.villager_response == "flee" then
+		assert(scartype(instance.mkr_flee) == ST_MARKER, "mkr_flee is invalid")
+		if instance.b_require_garrison == true then
+			assert(scartype(instance.mkr_flee_backup) == ST_MARKER, "mkr_flee_backup is invalid")
+		end
+	end
+	
+	Player_GetAllEntitiesNearMarker(instance.player, instance.eg_buildings, instance.mkr_home)
+	EGroup_Filter(instance.eg_buildings, "defensive_structure", FILTER_REMOVE)
+
+	VillagerLife_GoToWork(instance)
+	instance.monitor_ruleID = Rule_AddInterval(VillagerLife_Monitor, 1, {instance = instance})
+	
+	
+	--Querey Pre-Existing
+	local instanceExists = false
+	if #t_villagerLifePrefabs > 0 then
+		for index, entry in pairs(t_villagerLifePrefabs) do
+			if entry.instanceName == instance.instanceName then
+				instanceExists = true
+				t_villagerLifePrefabs[index] = instance
+			end
+		end
+	end
+	
+	if instanceExists == false then
+		table.insert(t_villagerLifePrefabs, instance)
+	end
+
+	return instance
+end
+
+--? @args String name
+function VillagerLife_Find(name)
+	for index, instance in pairs(t_villagerLifePrefabs) do
+		if instance.instanceName == name then
+			return instance
+		end
+	end
+end
+
+--? @shortdesc Add some new villagers to a VillagerLife. If job is left as nil, villagers will roam. Or you can specify "roaming", "wood", "food", "gold", or "stone".  
+--? @args VillagerLife instance, SGroup sgroup, String job
+function VillagerLife_AddSGroup(instance, sgroup, job)
+	if job == nil or job == "roaming" then
+		SGroup_AddGroup(instance.sg_roaming, sgroup)
+	elseif job == "wood" then
+		SGroup_AddGroup(instance.sg_wood, sgroup)
+	elseif job == "food" then
+		SGroup_AddGroup(instance.sg_food, sgroup)
+	elseif job == "stone" then
+		SGroup_AddGroup(instance.sg_stone, sgroup)
+	elseif job == "gold" then
+		SGroup_AddGroup(instance.sg_gold, sgroup)
+	end
+	SGroup_AddGroup(instance.sg_villagers, sgroup)
+	
+	VillagerLife_GoToWork(instance)
+	
+	if instance.is_monitoring == false and instance.is_attacking == false then
+		instance.is_monitoring = true
+		instance.monitor_ruleID = Rule_AddInterval(VillagerLife_Monitor, 1, {instance = instance})
+	end
+end
+
+--? @shortdesc Private function. Called when the attack encounter ends in failure.
+function VillagerLife_OnFail(encounterID)
+	--print("VillagerLife_OnFail")
+	local instance = G_encounter_villagerLife_table[encounterID]
+	instance.is_attacking = false
+end
+
+--? @shortdesc Private function. Called when the attack encounter ends in success.
+function VillagerLife_OnSuccess(encounterID)
+	--print("VillagerLife_OnSuccess")
+	local instance = G_encounter_villagerLife_table[encounterID]
+	instance.is_attacking = false
+	instance.is_monitoring = true
+	VillagerLife_GoToWork(instance)
+	Rule_AddInterval(VillagerLife_Monitor, 1, {instance = instance})
+end
+
+--? @shortdesc Private function. Orders the villagers to harvest resources. Any villagers who can't find something to harvest will end up roaming.
+function VillagerLife_GoToWork(instance)
+	AssignVillagersToWood(instance.sg_wood)
+	AssignVillagersToStone(instance.sg_stone)
+	AssignVillagersToGold(instance.sg_gold)
+	
+	if Player_GetRaceName(instance.player) == "mongol" then
+		AssignVillagersToSheep(instance.sg_food)
+	else
+		AssignVillagersToFarms(instance.sg_food)
+	end
+end
+
+--? @shortdesc Private function. This is the main loop that keeps villagers working. It only stops running when the villagers are attacking, or when they all die.
+function VillagerLife_Monitor(context, data)
+	local instance = data.instance
+	--print("VillagerLife_Monitor_"..instance.instanceName)
+	if SGroup_CountSpawned(instance.sg_villagers) > 0 then
+		if instance.is_fleeing == false and instance.is_attacking == false then
+			if instance.villager_response ~= "none" then
+				local localPlayer = Game_GetLocalPlayer()
+				World_GetSquadsNearMarker(instance.player, sg_temp, instance.mkr_home, OT_Enemy)
+				SGroup_Filter(sg_temp, "gaia", FILTER_REMOVE)					-- who's afraid of the big bad wolf? (ignore wolves and boars)
+				if SGroup_CanSeeSGroup(instance.sg_villagers, sg_temp, ANY) then
+					if instance.villager_response == "attack" then --this is where we could compare numbers
+						--transition to attack
+						VillagerLife_Attack(instance)
+						--print("Monitor removed because encounter created")
+						instance.is_monitoring = false
+						Rule_RemoveMe()
+					elseif instance.villager_response == "flee" then
+						--transition to flee
+						Modifier_RemoveAllFromSGroup(instance.sg_villagers)
+						Modify_UnitSpeed(instance.sg_villagers, 1.15)
+						instance.is_fleeing = true
+						Sound_PlayWallaFearOnSGroup(instance.sg_villagers)
+						if instance.b_require_garrison == false or VillagerLife_GarrisonIsNearby(instance) then
+							Cmd_Move(instance.sg_villagers, instance.mkr_flee)
+						else
+							Cmd_Move(instance.sg_villagers, instance.mkr_flee_backup)
+						end
+					end
+				end
+			end
+		elseif instance.is_fleeing == true then
+			--handle fleeing
+			if instance.b_require_garrison == false or VillagerLife_GarrisonIsNearby(instance) then
+				VillagerLife_DestroyIfNearPosition(instance.sg_villagers, Marker_GetPosition(instance.mkr_flee))
+				Cmd_Move(instance.sg_villagers, instance.mkr_flee)
+			else
+				VillagerLife_DestroyIfNearPosition(instance.sg_villagers, Marker_GetPosition(instance.mkr_flee_backup))
+				Cmd_Move(instance.sg_villagers, instance.mkr_flee_backup)
+			end
+		end
+		
+		if SGroup_CountSpawned(instance.sg_villagers) > 0 and instance.is_fleeing == false and instance.is_attacking == false then
+			if EGroup_CountSpawned(instance.eg_buildings) > 0 then
+				--handle wander
+				local _wander = function(sgroup, index, squad)	
+					if Squad_IsIdle(squad) == true and World_GetRand(1,2)~= 1 then
+						VillagerLife_Wander(instance, squad)
+					end
+				end
+				SGroup_ForEach(instance.sg_villagers, _wander)
+			end	
+		end
+	else
+		--print("VillagerLife Monitor removed because there are no villagers")
+		instance.is_monitoring = false
+		Rule_RemoveMe()
+	end
+end
+
+--? @shortdesc Private function. Orders the villagers to attack the player.
+function VillagerLife_Attack(instance)
+	--transition to attack
+	instance.is_attacking = true
+	local mkr_range = Marker_GetProximityRadiusOrDefault(instance.mkr_home, 40)
+	local goal = { 
+		plan = "Attack",
+		target = Marker_GetPosition(instance.mkr_home),
+		combatRange = mkr_range,
+		leashRange = mkr_range + 20,
+		attackMove = attackMoveStyle_attackEverything,
+		skipFormUp = true,
+		callbacks = {
+			fail = VillagerLife_OnFail,
+			success = VillagerLife_OnSuccess,
+		},
+	}	
+	local encounterID = Encounter_Create(instance.player, instance.sg_villagers, goal, "VillagerLife")
+	
+	if G_encounter_villagerLife_table == nil then
+		G_encounter_villagerLife_table = {}
+	end
+	G_encounter_villagerLife_table[encounterID] = instance
+end
+
+--? @shortdesc Private function. Orders a single villager to wander to a random building or random location. 
+function VillagerLife_Wander(instance, squad)
+	SGroup_Single(sg_single, squad)
+	local target = nil
+	if EGroup_CountSpawned(instance.eg_buildings) > 0 and World_GetRand(1,2)~= 1 then
+		target = EGroup_GetRandomSpawnedEntity(instance.eg_buildings) 
+	else
+		target = Util_GetRandomPosition(instance.mkr_home)	
+	end
+	Cmd_FormationMove(sg_single, target, false)
+end
+
+--? @shortdesc Private function. Checks if mkr_flee has a valid garrisonable building nearby.
+function VillagerLife_GarrisonIsNearby(instance)
+	Player_GetAllEntitiesNearMarker(instance.player, eg_temp, Marker_GetPosition(instance.mkr_flee), 6)
+	EGroup_Filter(eg_temp, {"town_center", "outpost", "castle"}, FILTER_KEEP)
+	if EGroup_CountSpawned(eg_temp) > 0 then
+		return true
+	end
+	return false
+end
+
+--? @shortdesc Private function. Despawns any villagers in the sgroup that have gotten close enough to the specified position.
+function VillagerLife_DestroyIfNearPosition(sgroup, position)
+	local DestroySquadIfNearPosition = function(group, squad_index, squad)
+		if World_DistanceSquaredPointToPoint(position, Squad_GetPosition(squad)) <= 9 or Squad_IsMoving(squad) == false then
+			Squad_Destroy(squad)
+		end
+	end
+	SGroup_ForEach(sgroup, DestroySquadIfNearPosition)
+end

@@ -1,0 +1,735 @@
+import("cardinal.scar")
+import("missionomatic/missionomatic.scar")
+
+function RedSea_RegisterObjectives()
+
+	--
+	-- TUTORIAL PHASE to let new players get used to naval
+	--
+	OBJ_TutNaval = {
+		Title = "$11255269",
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.BuildShips,
+		SetupUI = function()
+			if Game_GetSPDifficulty() >= GD_HARD then
+				Objective_StartTimer(OBJ_TutNaval, COUNT_DOWN, 300, 30)
+			end
+		end,
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_TutNaval, ALL)
+		end,
+		IsFailed = function()
+			return Objective_IsTimerSet(OBJ_TutNaval) == true and Objective_GetTimerSeconds(OBJ_TutNaval) <= 0
+		end,
+		OnComplete = function()
+			-- Start the next phase
+			World_SetInteractionStage(1)
+			Util_AutoSave()
+			Objective_Start(OBJ_AllyGold, true, true)
+			Objective_Start(OBJ_UnrestMeter, false, false)
+		end,
+		OnFail = function()
+			-- Fail the subobjectives so they don't keep running behind the scenes and trigger banners
+			Objective_Fail(SOBJ_TutFishingBoats, false, false)
+			Objective_Fail(SOBJ_TutFishing, false, false)
+			Objective_Fail(SOBJ_TutTradeShips, false, false)
+			Objective_Fail(SOBJ_TutTrading, false, false)
+			Objective_Fail(SOBJ_TutWarships, false, false)
+			Objective_Fail(SOBJ_TutNavalCombat, false, false)
+			
+			-- Start the next phase
+			World_SetInteractionStage(1)
+			Util_AutoSave()
+			Objective_Start(OBJ_AllyGold, true, true)
+		end,
+	}
+	
+	SOBJ_TutFishingBoats = {
+		Title = Loc_FormatText("$11255270", t_tutorial.countFishingShips),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_TutNaval,
+		StartAlongsideParent = true,
+		SetupUI = function()
+			g_playerFishingBoats = 0
+			Objective_SetCounter(SOBJ_TutFishingBoats, g_playerFishingBoats, t_tutorial.countFishingShips)
+		end,
+		OnStart = function()
+			
+		end,
+		IsComplete = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "scar_fishing_ship", FILTER_KEEP)
+			
+			local oldValue = g_playerFishingBoats
+			g_playerFishingBoats = SGroup_CountSpawned(sg_allsquads)
+			Objective_SetCounter(SOBJ_TutFishingBoats, g_playerFishingBoats, t_tutorial.countFishingShips)
+			
+			-- If there was a change, we may want to play a sound
+			if g_playerFishingBoats > oldValue then
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+			end
+			
+			return g_playerFishingBoats >= t_tutorial.countFishingShips
+		end,
+		OnComplete = function()
+			-- Hide this and start its sequel
+			Objective_Show(SOBJ_TutFishingBoats, false, false)
+			Objective_Start(SOBJ_TutFishing, true, true)
+		end,
+	}
+	SOBJ_TutFishing = {
+		Title = Loc_FormatText("$11255273", t_tutorial.countFishingShips),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_TutNaval,
+		StartAlongsideParent = false,
+		SetupUI = function()
+			Objective_SetCounter(SOBJ_TutFishing, 0, t_tutorial.countFishingShips)
+		end,
+		IsComplete = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "scar_fishing_ship", FILTER_KEEP)
+			-- Check if the player has enough traders and if all of them are trading
+			if SGroup_Count(sg_allsquads) > 0 then
+				local countFishing = 0
+				local _CheckFishing = function(gid, idx, sid)
+					-- If a trade ship has a trade partner, it's trading
+					--if Squad_IsIdle(sid) == false then
+					if Squad_IsGatheringResourceType(sid, RT_Food) == true then
+						countFishing = countFishing + 1
+					end
+				end
+				SGroup_ForEach(sg_allsquads, _CheckFishing)
+				Objective_SetCounter(SOBJ_TutFishing, countFishing, t_tutorial.countFishingShips)
+				return countFishing >= t_tutorial.countFishingShips
+			end
+			-- Otherwise, return false because we have no fishing boats
+			return false
+		end,
+		OnComplete = function()
+			
+		end,
+	}
+	SOBJ_TutTradeShips = {
+		Title = Loc_FormatText("$11255271", t_tutorial.countTradeShips),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_TutNaval,
+		StartAlongsideParent = true,
+		SetupUI = function()
+			g_playerTraders = 0
+			Objective_SetCounter(SOBJ_TutTradeShips, g_playerTraders, t_tutorial.countTradeShips)
+		end,
+		OnStart = function()
+			
+		end,
+		IsComplete = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "scar_trade_ship", FILTER_KEEP)
+			
+			local oldValue = g_playerTraders
+			g_playerTraders = SGroup_CountSpawned(sg_allsquads)
+			Objective_SetCounter(SOBJ_TutTradeShips, g_playerTraders, t_tutorial.countTradeShips)
+			
+			-- If there was a change, we may want to play a sound
+			if g_playerTraders > oldValue then
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+			end
+			
+			return g_playerTraders >= t_tutorial.countTradeShips
+		end,
+		OnComplete = function()
+			-- Hide this and start its sequel
+			Objective_Show(SOBJ_TutTradeShips, false, false)
+			Objective_Start(SOBJ_TutTrading, true, true)
+		end,
+	}
+	SOBJ_TutTrading = {
+		Title = Loc_FormatText("$11255274", t_tutorial.countTradeShips),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_TutNaval,
+		StartAlongsideParent = false,
+		Intel_Start = EVENTS.AccumulateGold,
+		Intel_Complete = EVENTS.ExplainTrade,
+		SetupUI = function()
+			g_playerActiveTraders = 0
+			Objective_AddUIElements(SOBJ_TutTrading, eg_dock_6_center, true, "$11252351")
+			MissionTutorial_TagDock()
+		end,
+		OnStart = function()
+			-- Don't show the counter until the Intel completes
+			Objective_SetCounter(SOBJ_TutTrading, g_playerActiveTraders, t_tutorial.countTradeShips)
+		end,
+		IsComplete = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "scar_trade_ship", FILTER_KEEP)
+			-- Check if the player has enough traders and if all of them are trading
+			if SGroup_Count(sg_allsquads) > 0 then
+				local oldCount = g_playerActiveTraders
+				g_playerActiveTraders = 0
+				local _CheckTrading = function(gid, idx, sid)
+					-- If a trade ship has a trade partner, it's trading
+					local entity = Squad_GetFirstEntity(sid)
+					if Entity_IsTrading(entity) == true then
+						g_playerActiveTraders = g_playerActiveTraders + 1
+					end
+				end
+				SGroup_ForEach(sg_allsquads, _CheckTrading)
+				
+				-- Audio to track added traders can go here
+				if g_playerActiveTraders > oldCount then
+					Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+				end
+				
+				if g_tradingHintActive == true and g_playerActiveTraders > 0 then
+					MissionTutorial_UntagDock()
+				end
+				
+				Objective_SetCounter(SOBJ_TutTrading, g_playerActiveTraders, t_tutorial.countTradeShips)
+				return g_playerActiveTraders >= t_tutorial.countTradeShips
+			end
+			-- Otherwise, return false because we have no traders
+			return false
+		end,
+		OnComplete = function()
+			if g_tradingHintActive == true then
+				MissionTutorial_UntagDock()
+			end
+		end,
+	}
+	SOBJ_TutWarships = {
+		Title = Loc_FormatText("$11255272", t_tutorial.countBaghlahs),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_TutNaval,
+		StartAlongsideParent = true,
+		SetupUI = function()
+			g_playerBaghlahs = 0
+			Objective_SetCounter(SOBJ_TutWarships, g_playerBaghlahs, t_tutorial.countBaghlahs)
+		end,
+		OnStart = function()
+			
+		end,
+		IsComplete = function()
+			Player_GetAll(player1)
+			SGroup_Clear(sg_temp)
+			SGroup_Filter(sg_allsquads, "scar_combat_ship", FILTER_KEEP)
+			
+			local oldBaghlahValue = g_playerBaghlahs
+			g_playerBaghlahs = math.min(SGroup_CountSpawned(sg_allsquads), t_tutorial.countBaghlahs)
+			-- If there was a change, we may want to play a sound
+			if g_playerBaghlahs > oldBaghlahValue then
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+			end
+			
+			Objective_SetCounter(SOBJ_TutWarships, g_playerBaghlahs, t_tutorial.countBaghlahs)
+			return g_playerBaghlahs >= t_tutorial.countBaghlahs
+		end,
+		OnComplete = function()
+			-- Hide this and start its sequel
+			Objective_Show(SOBJ_TutWarships, false, false)
+			-- Only start that objective if the player hasn't already destroyed the enemies
+			if scartype(sg_intro_crusader) == ST_SGROUP and SGroup_CountSpawned(sg_intro_crusader) > 0 then
+				Objective_Start(SOBJ_TutNavalCombat, true, true)
+			-- If the enemies are already destroyed, silently complete it instead
+			else
+				Objective_Show(SOBJ_TutNavalCombat, false, false)
+				Objective_Complete(SOBJ_TutNavalCombat, false, false)
+			end
+		end,
+	}
+	SOBJ_TutNavalCombat = {
+		Title = "$11255275",
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_TutNaval,
+		StartAlongsideParent = false,
+		SetupUI = function()
+			SGroup_Clear(sg_temp)
+			SGroup_AddGroup(sg_temp, sg_intro_crusader)
+			sg_intro_ship_marked = SGroup_CreateIfNotFound("sg_intro_ship_marked")
+			SGroup_Filter(sg_temp, "scar_combat_ship", FILTER_REMOVE, sg_intro_ship_marked)
+			Objective_AddUIElements(SOBJ_TutNavalCombat, sg_intro_ship_marked, true, "$11255275", true, 3)
+		end,
+		IsComplete = function()
+			if scartype(sg_intro_crusader) ~= ST_SGROUP then
+				return true
+			end
+			
+			if SGroup_CountSpawned(sg_intro_ship_marked) <= 0 and SGroup_CountSpawned(sg_intro_crusader) > 0 then
+				SGroup_Add(sg_intro_ship_marked, SGroup_GetSquadAt(sg_intro_crusader, 1))
+				Objective_AddUIElements(SOBJ_TutNavalCombat, sg_intro_ship_marked, true, "$11255275", true, 3)
+			end
+			
+			-- This objective completes when the player has defeated those intro Crusaders
+			return SGroup_CountSpawned(sg_intro_crusader) <= 0
+		end,
+		OnComplete = function()
+			
+		end,
+	}
+	
+	--
+	-- MAIN PHASE
+	--
+	OBJ_AllyGold = {
+		Title = "$11247641",
+		Type = ObjectiveType_Primary,
+		OnStart = function()
+			Objective_Start(OBJ_UnrestMeter, false, false)
+		end,
+		PreComplete = function()
+			-- Clear any incipient raids and demo objectives
+			if Objective_IsComplete(OBJ_RaidWaveIncoming) == false then
+				Objective_Complete(OBJ_RaidWaveIncoming, false, false)
+			end
+			if Objective_IsComplete(OBJ_DemoRaiders) == false then
+				Objective_Complete(OBJ_DemoRaiders, false, false)
+			end
+		end,
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_GoldCounter) and (Objective_IsStarted(SOBJ_ClearRaiders) == false or Objective_IsComplete(SOBJ_ClearRaiders) == true)
+		end,
+		OnComplete = function()
+			Objective_Complete(OBJ_UnrestMeter, false, false)
+			if Objective_IsComplete(SOBJ_PirateHunt) == false then
+				Objective_Complete(SOBJ_PirateHunt, false, false)
+			end
+			Objective_Start(OBJ_BufferFinalWave, true, true)
+		end,
+		-- This is Objective: 10
+		Cheat = function()
+			print("CHEAT: Cheating past tutorial")
+		end,
+	}
+	TOBJ_TradeTip = {
+		Title = "$11255892",
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_AllyGold,
+		StartAlongsideParent = t_difficulty.extraGuidance,
+		IsComplete = function()
+			return false
+		end,
+	}
+	SOBJ_GoldCounter = {
+		Title = "$11257300",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_AllyGold,
+		StartAlongsideParent = true,
+		showTitle = false,
+		Intel_Complete = EVENTS.GoldTargetReached,
+		SetupUI = function()
+			Rule_AddGlobalEvent(RedSea_TrackPlayerEarnedGold, GE_PlayerAddResource)
+			g_goldAtObjStart = TallyTeamGoldDuringObjective()
+			local displayGold = math.max(TallyTeamGoldDuringObjective(), 0)
+			Objective_SetCounter(SOBJ_GoldCounter, displayGold, t_difficulty.victoryGoldThreshold)
+		end,
+		IsComplete = function()
+			local displayGold = math.max(TallyTeamGoldDuringObjective(), 0)
+			if displayGold >= t_difficulty.victoryGoldThreshold then
+				g_goldThresholdReached = true
+				-- If there are still active raiders, encourage the player to clear them out
+				if g_waveActive == true and Objective_IsStarted(SOBJ_ClearRaiders) == false then
+					-- Kick off the other subobjective
+					Objective_Start(SOBJ_ClearRaiders, true, true)
+				end
+			end
+			return g_goldThresholdReached == true
+		end,
+		OnComplete = function()
+			-- Do this here in case it wasn't caught in IsComplete
+			-- If there are still active raiders, encourage the player to clear them out
+			if Objective_IsStarted(SOBJ_ClearRaiders) == false and g_waveActive == true then
+				-- Kick off the other subobjective
+				Objective_Start(SOBJ_ClearRaiders, true, true)
+			elseif Objective_IsStarted(SOBJ_ClearRaiders) == false then
+				Objective_IsComplete(SOBJ_ClearRaiders, false, false)
+			end
+		end,
+	}
+	SOBJ_ClearRaiders = {
+		Title = "$11254673",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_AllyGold,
+		StartAlongsideParent = false,
+		showTitle = true,
+		PreStart = function()
+			-- Also tell the raiders to flee, clearing the map and setting the stage
+			Raiders_TriggerPreFinaleRetreat()
+		end,
+		IsComplete = function()
+			Player_GetAll(player2)
+			return SGroup_CountSpawned(sg_allsquads) == 0
+		end,
+		OnComplete = function()
+			
+		end
+	}
+	OBJ_UnrestMeter = {
+		Title = "$11247640",
+		Type = ObjectiveType_Unrest,
+		SetupUI = function()
+			Objective_SetProgressBar(OBJ_UnrestMeter, t_civilUnrest.current, t_civilUnrest.current >= t_civilUnrest.warningThreshold)
+			Rule_Add(_RedSea_LogBatchedUnrest)
+		end,
+		OnStart = function()
+			-- Start the other mission systems that impact Unrect
+			Pirates_Start()
+			Raids_Init()
+			UI_SetPlayerDataContext(player1, { civil_unrest_delta = 0, civil_unrest_decreasing = 0, unrest_display_multiplier = 1000 })
+		end,
+		OnComplete = function()
+			Rule_Remove(_RedSea_LogBatchedUnrest)
+		end,
+	}
+	TOBJ_UnrestTip = {
+		Title = "$11251649",
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_UnrestMeter,
+		StartAlongsideParent = true,
+		IsComplete = function()
+			return false
+		end,
+	}
+	OBJ_RaidWaveIncoming = {
+		Title = "$11247643",
+		Type = ObjectiveType_Battle,
+		SetupUI = function()
+			Objective_StartTimer(OBJ_RaidWaveIncoming, COUNT_DOWN, t_difficulty.raiderWaveInterval, 15)
+		end,
+		IsComplete = function()
+			if g_waveActive == false and Objective_GetTimerSeconds(OBJ_RaidWaveIncoming) <= 0 then
+				-- This means the wave is starting - the player doens't need this big reminder hanging around
+				Objective_Show(OBJ_RaidWaveIncoming, false, false)
+				-- Launch the raid, unless the gold threshold has been surpassed - we don't ever want to do that!
+				if TallyTeamGoldDuringObjective() < t_difficulty.victoryGoldThreshold then
+					Raids_LaunchRaiderWave()
+					Sound_Play2D("mus_stinger_campaign_warning")
+				end
+			end
+			return false
+		end,
+	}
+	OBJ_DemoRaiders = {
+		Title = "$11247645",
+		Type = ObjectiveType_Information,
+		Intel_Start = EVENTS.StakesRaised,
+		SetupUI = function()
+			
+		end,
+	}
+	SOBJ_PirateHunt = {
+		Title = "$11247679",
+		Type = ObjectiveType_Optional,
+		Intel_Start = EVENTS.PirateIsland,
+		Intel_Complete = EVENTS.RazedPirateIsland,
+		SetupUI = function()
+			Objective_AddUIElements(SOBJ_PirateHunt, mkr_pirate_workers, true, "$11247679")
+		end,
+		IsComplete = function()
+			return EGroup_Count(eg_pirate_camp) == 0
+		end,
+		PreComplete = function()
+			-- In celebration, reset the Civil Unrest bar, i.e. remove the full amount of current unrest
+			ModifyCivilUnrest(-1 * t_civilUnrest.current)
+			Objective_SetProgressBar(OBJ_UnrestMeter, t_civilUnrest.current, true)
+		end,
+	}
+	TOBJ_PirateTip = {
+		Title = "$11257301",
+		Type = ObjectiveType_Tip,
+		Parent = SOBJ_PirateHunt,
+		StartAlongsideParent = true,
+	}
+	--
+	-- FINALE PHASE
+	--
+	OBJ_BufferFinalWave = {
+		Title = "$11253508",
+		Type = ObjectiveType_Information,
+		SetupUI = function()
+			Util_AutoSave()
+			Objective_StartTimer(OBJ_BufferFinalWave, COUNT_DOWN, t_difficulty.raiderFinalePrepTime, 15)
+			g_finaleStarted = true
+		end,
+		OnStart = function()
+			-- Prevent the complete banner from showing later
+			Music_LockIntensity(MUSIC_TENSE, 30)
+			OBJ_BufferFinalWave.showTitle = false
+			-- Also send the convoys home
+			TradeConvoys_SendHome()
+		end,
+		IsComplete = function()
+			-- Clean up any stuck trade ships
+			if scartype(sg_traders_evacuating) == ST_SGROUP and SGroup_Count(sg_traders_evacuating) > 0 then
+				local _DeleteIdlers = function(gid, idx, sid)
+					if Squad_IsIdle(sid) == true then
+						Squad_Destroy(sid)
+					end
+				end
+				SGroup_ForEach(sg_traders_evacuating, _DeleteIdlers)
+			end
+			
+			if Objective_IsTimerSet(OBJ_BufferFinalWave) ~= true then
+				return false
+			end
+			return Objective_GetTimerSeconds(OBJ_BufferFinalWave) <= 0
+		end,
+		OnComplete = function()
+			Objective_Start(OBJ_FinalWave, true, true)
+		end,
+	}
+	SOBJ_NavyConstruction = {
+		Title = "$11256023",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BufferFinalWave,
+		StartAlongsideParent = t_difficulty.extraGuidance,
+		PreStart = function()
+			-- Count whatever we have at start
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, {"scar_combat_ship", "scar_fire_ship", "scar_war_galley"}, FILTER_KEEP)
+			local countWarships = SGroup_CountSpawned(sg_allsquads)
+			Objective_SetCounter(SOBJ_NavyConstruction, countWarships, GUIDANCE_WARSHIP_COUNT)
+		end,
+		IsComplete = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, {"scar_combat_ship", "scar_fire_ship", "scar_war_galley"}, FILTER_KEEP)
+			local countWarships = SGroup_CountSpawned(sg_allsquads)
+			Objective_SetCounter(SOBJ_NavyConstruction, countWarships, GUIDANCE_WARSHIP_COUNT)
+			return countWarships >= GUIDANCE_WARSHIP_COUNT
+		end,
+	}
+	OBJ_FinalWave = {
+		Title = "$11251973",
+		Type = ObjectiveType_Information,
+		SetupUI = function()
+			OBJ_FinalWave.allyDock4 = Objective_AddUIElements(OBJ_FinalWave, eg_dock_4_center, true, "$11251973", true, 3, nil, nil, "icons/unit_stat_armour")
+			OBJ_FinalWave.allyDock5 = Objective_AddUIElements(OBJ_FinalWave, eg_dock_5_center, true, "$11251973", true, 3, nil, nil, "icons/unit_stat_armour")
+			OBJ_FinalWave.allyDock6 = Objective_AddUIElements(OBJ_FinalWave, eg_dock_6_center, true, "$11251973", true, 3, nil, nil, "icons/unit_stat_armour")
+		end,
+		PreStart = function()
+			-- Make the docks vulnerable now
+			EGroup_SetInvulnerable(eg_player4_docks, false)
+			EGroup_SetInvulnerable(eg_player5_docks, false)
+			EGroup_SetInvulnerable(eg_player6_docks, false)
+			EGroup_SetTargetingType(eg_player4_docks, Targeting_Automatic)
+			EGroup_SetTargetingType(eg_player5_docks, Targeting_Automatic)
+			EGroup_SetTargetingType(eg_player6_docks, Targeting_Automatic)
+			-- And launch Reynald's raid wave
+			Raids_LaunchFinalRaiderWave()
+		end,
+		OnStart = function()
+			Music_LockIntensity(MUSIC_COMBAT_RARE, 30, MUSIC_TENSE)
+			VOCue_EnemyFlagShip_CTA()
+		end,
+		IsComplete = function()
+			if OBJ_FinalWave.allyDock4 ~= nil and EGroup_CountSpawned(eg_dock_4_center) == 0 then
+				Objective_RemoveUIElements(OBJ_FinalWave, OBJ_FinalWave.allyDock4)
+				OBJ_FinalWave.allyDock4 = nil
+			end
+			if OBJ_FinalWave.allyDock5 ~= nil and EGroup_CountSpawned(eg_dock_5_center) == 0 then
+				Objective_RemoveUIElements(OBJ_FinalWave, OBJ_FinalWave.allyDock5)
+				OBJ_FinalWave.allyDock5 = nil
+			end
+			if OBJ_FinalWave.allyDock6 ~= nil and EGroup_CountSpawned(eg_dock_6_center) == 0 then
+				Objective_RemoveUIElements(OBJ_FinalWave, OBJ_FinalWave.allyDock6)
+				OBJ_FinalWave.allyDock6 = nil
+			end
+			
+			if scartype(sg_finalWaveUnits) ~= ST_SGROUP or g_finalWaveValid ~= true then
+				return false
+			end
+			return SGroup_CountSpawned(sg_finalWaveUnits) <= 0
+		end,
+		IsFailed = function()
+			local totalDocksRemaining = EGroup_CountSpawned(eg_player4_docks) + EGroup_CountSpawned(eg_player5_docks) + EGroup_CountSpawned(eg_player6_docks)
+			Objective_SetCounter(SOBJ_DockCounter, totalDocksRemaining, g_alliedDockCount)
+			return totalDocksRemaining == 0
+		end,
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+		-- This is Objective 20
+		Cheat = function()
+			print("RED SEA: Cheating into finale")
+		end,
+	}
+	SOBJ_DockCounter = {
+		Title = "$11257307",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_FinalWave,
+		StartAlongsideParent = true,
+		showTitle = false,
+		SetupUI = function()
+			g_alliedDockCount = EGroup_CountSpawned(eg_player4_docks) + EGroup_CountSpawned(eg_player5_docks) + EGroup_CountSpawned(eg_player6_docks)
+			Objective_SetCounter(SOBJ_DockCounter, g_alliedDockCount, g_alliedDockCount)
+		end,
+	}
+	
+	-- Tutorial phase
+	Objective_Register(OBJ_TutNaval)
+	Objective_Register(SOBJ_TutFishingBoats)
+	Objective_Register(SOBJ_TutFishing)
+	Objective_Register(SOBJ_TutTradeShips)
+	Objective_Register(SOBJ_TutTrading)
+	Objective_Register(SOBJ_TutWarships)
+	Objective_Register(SOBJ_TutNavalCombat)
+	
+	-- Primary phase
+	Objective_Register(OBJ_RaidWaveIncoming)
+	Objective_Register(OBJ_DemoRaiders)
+	Objective_Register(OBJ_AllyGold)
+	Objective_Register(TOBJ_TradeTip)
+	Objective_Register(SOBJ_GoldCounter)
+	Objective_Register(SOBJ_ClearRaiders)
+	Objective_Register(OBJ_UnrestMeter)
+	Objective_Register(TOBJ_UnrestTip)
+	Objective_Register(SOBJ_PirateHunt)
+	Objective_Register(TOBJ_PirateTip)
+	
+	-- Finale phase
+	Objective_Register(OBJ_BufferFinalWave)
+	Objective_Register(SOBJ_NavyConstruction)
+	Objective_Register(OBJ_FinalWave)
+	Objective_Register(SOBJ_DockCounter)
+end
+
+function Debug_ForceWave()
+	if g_finaleStarted ~= true then
+		Objective_StartTimer(OBJ_RaidWaveIncoming, COUNT_DOWN, 1, 1)
+	end
+end
+
+function Debug_BumpUnrest()
+	local bumpValue = 0.80 - t_civilUnrest.current
+	ModifyCivilUnrest(nil, {amount = bumpValue})
+end
+
+function MonitorTeamGold(context, data)
+	if Objective_IsStarted(SOBJ_ClearRaiders) == false then
+		local displayGold = math.max(TallyTeamGoldDuringObjective() , 0)
+		Objective_SetCounter(SOBJ_GoldCounter, displayGold, t_difficulty.victoryGoldThreshold)
+	end
+end
+
+--? @shortdesc Tallies all player and allied gold that was gathered during the gold-gathering objective
+function TallyTeamGoldDuringObjective(onlyAllies)
+	-- This includes both player gold and allied gold
+	teamGold = 0
+	for i, player in ipairs(ally_players) do
+		teamGold = teamGold + Player_GetResource(player, RT_Gold)
+	end
+	
+	-- Also add the player's earned gold
+	g_playerEarnedGold = g_playerEarnedGold or 0
+	teamGold = teamGold + g_playerEarnedGold
+	
+	-- It also subtracts the gold level the team had when the objective started, thus only counting what was gathered during the objective
+	g_goldAtObjStart = g_goldAtObjStart or 0
+	return math.max(teamGold - g_goldAtObjStart, 0)
+end
+
+function RedSea_TrackPlayerEarnedGold(context, data)
+	local amount = context.resources.gold
+	if amount <= 0 or context.player ~= player1 then
+		return
+	end
+	
+	print(string.format("Player earned %s gold", amount))
+	g_playerEarnedGold = g_playerEarnedGold or 0
+	g_playerEarnedGold = g_playerEarnedGold + amount
+end
+
+function ModifyCivilUnrest(amount, kickerPos)
+	-- Stop this if we've already finished the unrest portion of the mission
+	if Objective_IsComplete(OBJ_UnrestMeter) == true then
+		Rule_RemoveMe()
+		return
+	elseif Objective_IsStarted(OBJ_UnrestMeter) == false then
+		-- Don't end the rule, but also don't do any unrest stuff
+		return
+	end
+	
+	if scartype(amount) ~= ST_NUMBER then
+		fatal(string.format("Unrest must be modified by a number! amount = %s", amount))
+	elseif amount == 0 then
+		print("Unrest changed by 0, so no change")
+		return
+	end
+	
+	-- If this is tied to a specific position on the map, throw a kicker
+	if scartype(kickerPos) == ST_SCARPOS then
+		if amount > 0 then
+			UI_CreatePositionKickerMessage(kickerPos, "$11258696", "icons/objectives/unrest_negative", "", 5, 0, 5)
+		elseif amount < 0 then
+			UI_CreatePositionKickerMessage(kickerPos, "$11258696", "icons/objectives/unrest_positive", "", 5, 0, 5)
+		end
+	end
+	
+	local oldValue = t_civilUnrest.current
+	-- Clamp the value between 0.0 and 1.0
+	t_civilUnrest.current = math.min(1.0, math.max(0.0, t_civilUnrest.current + amount))
+	
+	-- Civil Unrest thresholds for events, music, stingers, warnings, etc.	
+	if oldValue < t_civilUnrest.stage25 and t_civilUnrest.current >= t_civilUnrest.stage25 then
+		Sound_Play2D("mus_stinger_campaign_warning")
+		Obj_CreatePopup(OBJ_RaidWaveIncoming.ID, "$11254059", "")
+		-- 25% Threshold		
+		print("CIVIL UNREST - 25% reached")
+	elseif oldValue < t_civilUnrest.stage50 and t_civilUnrest.current >= t_civilUnrest.stage50 then		
+		Sound_Play2D("mus_stinger_campaign_warning")
+		Music_LockIntensity (MUSIC_TENSE, 30)
+		Obj_CreatePopup(OBJ_RaidWaveIncoming.ID, "$11254060", "")
+		-- 50% Threshold		
+		print("CIVIL UNREST - 50% reached")
+	elseif oldValue < t_civilUnrest.stage75 and t_civilUnrest.current >= t_civilUnrest.stage75 then
+		Sound_Play2D("mus_stinger_campaign_warning")
+		Music_LockIntensity (MUSIC_TENSE_RARE, 30)
+		Obj_CreatePopup(OBJ_RaidWaveIncoming.ID, "$11254062", "")
+		-- 75% Threshold
+		print("CIVIL UNREST - 75% reached")
+		Util_StartIntel(EVENTS.UnrestCritical)
+	end
+	
+	-- Set the Unrest meter anew
+	Objective_SetProgressBar(OBJ_UnrestMeter, t_civilUnrest.current, t_civilUnrest.current >= t_civilUnrest.warningThreshold)
+	-- Trigger the arrow in the UI, multiplying the displayed value to make it more human-friendly
+	-- The delta should always be positive
+	if amount > 0 then
+		--UI_SetPlayerDataContext(player1, { civil_unrest_delta = math.abs(amount), civil_unrest_decreasing = -1, unrest_display_multiplier = 1000 })
+		g_batchedUnrest = g_batchedUnrest + amount
+	elseif amount < 0 then
+		--UI_SetPlayerDataContext(player1, { civil_unrest_delta = math.abs(amount), civil_unrest_decreasing = 1, unrest_display_multiplier = 1000 })
+		g_batchedUnrest = g_batchedUnrest + amount
+	end
+	
+	-- Restrict Unrest VO so it doesn't clash with the CTA for losing the first trade ship
+	if amount > 0 and RedSea_VOFlag_Allow_ExplainUnrest == true then
+		if g_unrestExplained ~= true then
+			-- VO for explaining unrest
+			print("CIVIL UNREST - First Increment")
+			Util_StartIntel(EVENTS.ExplainUnrest)
+			g_unrestExplained = true
+			RedSea_VOFlag_Allow_ExplainUnrest = false
+		end
+	end
+	
+	-- Fail the mission entirely if we crack the ceiling
+	if t_civilUnrest.current >= 1 then
+		Mission_Fail()
+	end
+end
+
+function _RedSea_LogBatchedUnrest(context, data)
+	if scartype(g_batchedUnrest) ~= ST_NUMBER or g_batchedUnrest == 0 then
+		return
+	end
+	
+	local isDecreasing = 1
+	if g_batchedUnrest > 0 then
+		isDecreasing = -1
+	end
+	-- Send whatever the aggregate unrest change for this frame is
+	UI_SetPlayerDataContext(player1, { civil_unrest_delta = math.abs(g_batchedUnrest), civil_unrest_decreasing = isDecreasing, unrest_display_multiplier = 1000 })
+	-- Reset to zero for the next frame
+	g_batchedUnrest = 0
+end

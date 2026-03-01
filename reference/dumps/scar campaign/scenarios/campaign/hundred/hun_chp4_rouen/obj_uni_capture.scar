@@ -1,0 +1,137 @@
+--
+-- Rouen - Uni Capture Location
+--
+
+function CaptureLocations_InitUniTown()
+	
+	OBJ_CaptureUniTown = {
+		
+		Title = "$11197662", -- Capture the University
+		Type = ObjectiveType_Capture,
+		Intel_Start = EVENTS.FirstObjective,
+		Intel_Complete = EVENTS.ObjComplete_UniTown,
+		OnStart = function()
+			local location = LOCATION("UniTown")
+			Location_SetCapturable(location, true)
+			--TrainingGoal_AddStopAttacking()
+		end,
+		PreComplete = function()
+			
+			Util_AutoSave()
+			--Music_StopMedium()
+			--Music_UnlockIntensity()
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+			
+			--Fixes an issue with Outposts not-populating their arrowslit art correctly:
+			EGroup_Clear(eg_temp)
+			Player_GetAll(player1)
+    		EGroup_Filter(eg_allentities, EBP.FRENCH.BUILDING_DEFENSE_OUTPOST_FRE, FILTER_KEEP)
+					
+			local _SwapOutpost = function(gid, index, item)
+				local t_thisOutpost = {
+					pos = Entity_GetPosition(item),
+					facing = Util_GetFacingFromDirection(Entity_GetPosition(item), Entity_GetHeading(item)),				
+				}
+				Entity_Destroy(item)
+				Util_CreateEntities(player1, eg_temp, EBP.FRENCH.BUILDING_DEFENSE_OUTPOST_FRE, t_thisOutpost.pos, 1, t_thisOutpost.facing)
+			end
+			
+			if EGroup_CountSpawned(eg_allentities) > 0 then
+				EGroup_ForEach(eg_allentities, _SwapOutpost)
+				Cmd_InstantUpgrade(eg_temp, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+			end
+			--End of arrowslit fix--
+			
+			Player_SetResource( player1, RT_Gold, t_difficulty.given_resources_gold) 
+			Player_SetResource( player1, RT_Wood, t_difficulty.given_resources_wood) 
+			Player_SetResource( player1, RT_Food, t_difficulty.given_resources_food) 
+			Player_SetResource( player1, RT_Stone,t_difficulty.given_resources_stone) 
+			
+			local bbplacement = Util_GetPosition(eg_bbworkshop)
+			EGroup_DestroyAllEntities(eg_bbworkshop)
+			Util_CreateEntities(player1, eg_bbworkshop, EBP.CAMPAIGN.BUILDING_UNIT_BBWORKSHOP_FRE, bbplacement, 1)
+			delayScuttleRemove = function() Entity_RemoveAbility(EGroup_GetEntityAt(eg_bbworkshop, 1), BP_GetAbilityBlueprint("core_building_scuttle")) end
+			Rule_AddOneShot(delayScuttleRemove, 1)
+			
+			Rule_AddInterval(Monitor_TC, 1)
+			Rule_AddInterval(Monitor_landmarks, 3)
+			Rule_AddInterval(Monitor_BBWorkshop, 3)
+			Rule_AddInterval(BuildLandmark_IsComplete, 2)
+			Rule_AddInterval(MonitorFirstAttackers, 2)
+			
+		end,
+		OnComplete = function()
+									
+			Objective_Start(OBJ_BBSurvive, false, false)
+			Objective_Start(OBJ_ResearchCannons, true, true)
+		
+			Rule_Remove(GameOver_EarlyDeath)
+			
+			villager_RespawnLocation = villagerlife_university.mkr_flee
+	
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_university.roaming_count},villager_RespawnLocation)
+			Cmd_Move(sg_temp, villagerlife_university.location_mkr)
+			
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_university.food_count}, villager_RespawnLocation)
+			AssignVillagersToFarms(sg_temp)
+			
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_university.wood_count + Util_DifVar({ 4, 0, 0, 0 })}, villager_RespawnLocation)
+			AssignVillagersToWood(sg_temp)
+			
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_university.stone_count}, villager_RespawnLocation)
+			AssignVillagersToStone(sg_temp)
+			
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerlife_university.gold_count}, villager_RespawnLocation)
+			AssignVillagersToGold(sg_temp)
+			
+			UI_SetPlayerDataContext(player1, { PopulationCapOn = true })
+			
+			if Game_GetSPDifficulty() > GD_EASY then --Disable waves for story mode
+				Rule_AddInterval(CounterMonks, 680)
+				
+				Manage_AttackWaves()
+				if Game_GetSPDifficulty() > GD_NORMAL then --Throw early pressure waves at different times on different difficulties over easy
+					Rule_AddOneShot(ApplyPressure_Wave1, Util_DifVar({0, 0, 300, 120})) 
+					Rule_AddOneShot(ApplyPressure_Wave2, Util_DifVar({0, 0, 900, 300}))
+					Rule_AddOneShot(ApplyPressure_Wave3, Util_DifVar({0, 0, 1200, 600}))
+				end
+			end
+			
+			--OptionalObjective_Data.minecapture.isCompleted = true
+			--Player_CompleteUpgrade(player1, BP_GetUpgradeBlueprint("upgrade_surplus_iron_fre"))
+			
+			--int_ProgressRate = int_ProgressRate+1
+			--StartProgress_IfNotStarted()
+			--t_reinforcementData[2].activated = true
+			--Objective_Stop(SOBJ_DefeatRouenMineRebels)
+			--Util_StartIntel(EVENTS.ResearchObj_Mine)
+		end,
+	}
+	SOBJ_DefeatUniDefenders = {
+		
+		Title = "$11196672", -- Clear the English defenders from the University
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureUniTown,
+	}
+	SOBJ_LocationUniTown = {
+		Title = "$11196580", -- University
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureUniTown,
+	}
+	
+	Objective_Register(OBJ_CaptureUniTown)
+	Objective_Register(SOBJ_DefeatUniDefenders)
+	Objective_Register(SOBJ_LocationUniTown)
+	
+	local location = LOCATION("UniTown")
+
+	location.objectivePrimary = OBJ_CaptureUniTown
+	location.objectiveSecondary = SOBJ_DefeatUniDefenders
+	location.objectiveCapture = SOBJ_LocationUniTown
+	
+end

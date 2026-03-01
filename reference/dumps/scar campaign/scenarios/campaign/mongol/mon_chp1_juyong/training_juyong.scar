@@ -1,0 +1,842 @@
+--
+-- The Great Wall - Training Goals
+--
+
+import("training/campaigntraininggoals.scar")
+
+----------------------------------
+-- Utility Functions
+----------------------------------
+
+function _DelayTimeElapsed(goal)
+	local currentTime = Timer_GetElapsed(goal.timerID)
+	
+	if currentTime >= __t_trainingModerateInterval then
+		return true
+	end
+end
+
+
+
+----------------------------------
+-- View Genghis Khan Leader Aura
+----------------------------------
+
+function MissionTutorial_JuyongLeaderAura_Xbox()
+	
+	local goal_sequence_leaderability = "goal_sequence_leaderability"
+	
+	if SGroup_CountSpawned(g_leaderGenghisKhan.sgroup) >= 1 and Player_OwnsSGroup(g_playerMongol, g_leaderGenghisKhan.sgroup, ALL) then 
+		
+		local Goal_SelectGenghis = Training_Goal(
+			SGroup_GetSpawnedSquadAt(g_leaderGenghisKhan.sgroup, 1),
+			{
+				ID = "Leaders have unique abilities they can activate at any time. Press D-Pad Right to Select Genghis Khan.",
+				Message = "$11248637",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasSelectedGenghis
+		)
+		
+		local GoalOnOpenRadial = Training_Goal(
+			SGroup_GetSpawnedSquadAt(g_leaderGenghisKhan.sgroup, 1),
+			{
+				ID = "Hold RT to see Genghis Khan's abilities.",
+				Message = "$11248638",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			UserHasOpenedContextualRadial
+		)
+		
+		local Goal_HoverOverAbility = Training_Goal(
+			BP_GetAbilityBlueprint("leader_improved_armor_maneuver_arrow"),
+			{
+				ID = "Genghis Khan can activate improved Signal Arrows that improve the units around him.",
+				Message = "$11187680",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasLookedAtGenghisAbility
+		)
+		
+		local GoalSequence_LeaderAbility = Training_GoalSequence(
+			goal_sequence_leaderability, 										-- id
+			1, 																	-- repeatMax
+			0, 																	-- remindMax
+			Predicate_UserHasNotActivatedGenghisLeaderAbilityRecently, 			-- trigger
+			CampaignTraining_TimeoutIgnorePredicate, 							-- ignore
+			nil,														 		-- remind
+			Predicate_UserHasLookedAtGenghisAbility, 							-- bypass
+			true, 																-- canRegress
+			{Goal_SelectGenghis, GoalOnOpenRadial, Goal_HoverOverAbility}							-- goals
+		)
+		Training_AddGoalSequence(GoalSequence_LeaderAbility)
+		
+		
+	end
+	
+end
+
+function MissionTutorial_JuyongLeaderAura()
+	
+	local goal_sequence_leaderability = "goal_sequence_leaderability"
+	
+	if SGroup_CountSpawned(g_leaderGenghisKhan.sgroup) >= 1 and Player_OwnsSGroup(g_playerMongol, g_leaderGenghisKhan.sgroup, ALL) then 
+		
+		local Goal_SelectGenghis = Training_Goal(
+			SGroup_GetSpawnedSquadAt(g_leaderGenghisKhan.sgroup, 1),
+			{
+				ID = "Leaders have unique abilities they can activate at any time. Select Genghis Khan to see his special ability.",
+				Message = "$11201592",
+				DataTemplate = "LeftClickTrainingDataTemplate",
+			},
+			Predicate_UserHasSelectedGenghis
+		)
+		local Goal_HoverOverAbility = Training_Goal(
+			BP_GetAbilityBlueprint("leader_improved_armor_maneuver_arrow"),
+			{
+				ID = "Genghis Khan can activate improved Signal Arrows that improve the units around him.",
+				Message = "$11187680",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasLookedAtGenghisAbility
+		)
+		
+		local GoalSequence_LeaderAbility = Training_GoalSequence(
+			goal_sequence_leaderability, 										-- id
+			1, 																	-- repeatMax
+			0, 																	-- remindMax
+			Predicate_UserHasNotActivatedGenghisLeaderAbilityRecently, 			-- trigger
+			CampaignTraining_TimeoutIgnorePredicate, 							-- ignore
+			nil,														 		-- remind
+			Predicate_UserHasLookedAtGenghisAbility, 							-- bypass
+			true, 																-- canRegress
+			{Goal_SelectGenghis, Goal_HoverOverAbility}							-- goals
+		)
+		Training_AddGoalSequence(GoalSequence_LeaderAbility)
+		
+		
+	end
+	
+end
+
+function Predicate_UserHasSelectedGenghis(goal)
+	
+	Misc_GetSelectedSquads(sg_temp, true)
+	return SGroup_CountSpawned(g_leaderGenghisKhan.sgroup) >= 1 and SGroup_ContainsSGroup(sg_temp, g_leaderGenghisKhan.sgroup, ALL)
+	
+end
+
+function Predicate_UserHasLookedAtGenghisAbility(goal)
+	
+	local abilityBP = BP_GetAbilityBlueprint("leader_improved_armor_maneuver_arrow")
+	return SGroup_CountSpawned(g_leaderGenghisKhan.sgroup) >= 1 and (PredicateHelper_HasUserHoveredOverBP(goal, abilityBP) or training_previousAbilityBlueprint == abilityBP)
+	
+end
+
+function Predicate_UserHasNotActivatedGenghisLeaderAbilityRecently(goalSequence)
+	
+	return SGroup_CountSpawned(g_leaderGenghisKhan.sgroup) >= 1 and Player_OwnsSGroup(g_playerMongol, g_leaderGenghisKhan.sgroup, ALL)
+	
+end
+
+
+----------------------------------
+-- Raiding for Resources
+----------------------------------
+
+function MissionTutorial_JuyongRaiding()
+	
+	local goal_deer_stones_raiding = "deer_stones_raiding"
+		
+	local attackBuilding = Training_Goal("Entity", 
+		{Message="$11187681", DataTemplate="GenericTrainingDataTemplate"},
+		_BuildingIsBurning)
+	JuyongRaiding_GoalSequence = Training_GoalSequence(goal_deer_stones_raiding, 
+		1, 0, --repeat max and remind max
+		_HasEnemyBuildingOnScreen, --trigger
+		CampaignTraining_TimeoutIgnorePredicate, --ignore
+		nil, --remind
+		nil, --bypass 
+		true, --can regress
+		{attackBuilding})
+	Training_AddGoalSequence(JuyongRaiding_GoalSequence)
+end
+
+function _HasEnemyBuildingOnScreen(goalSequence)
+	
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+		
+		Player_GetAll(g_playerJin)
+		
+		local potentialBuilding_eid = nil
+		
+		local _CheckEntityIsOnScreenAndNotOnFire = function(gid, idx, eid)			-- add anything that's on fire
+			if not Entity_IsBurning(eid) and Misc_IsEntityOnScreen(eid, 0.8) then
+				potentialBuilding_eid = eid
+				return true
+			end
+		end
+		EGroup_ForEach(eg_allentities, _CheckEntityIsOnScreenAndNotOnFire)
+		
+		if potentialBuilding_eid ~= nil then 
+			
+			goalSequence.goals[1].key = Entity_GetID(potentialBuilding_eid)
+
+			return true
+			
+		end
+		
+	end
+end
+
+function UserCannotSeeEntityKey(goalSequence)
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		local key = goalSequence.goals[goalSequence.currentGoalIndex].key
+		
+		if scartype(key) == ST_NUMBER then 
+			
+			if Entity_IsValid(key) == false then
+				return true
+			elseif Entity_IsAlive(Entity_FromID(key)) == false then
+				return true
+			elseif Misc_IsEntityOnScreen(Entity_FromID(key), 100) == false then
+				return true
+			end
+		end
+		
+		return false
+	end
+end
+
+function _BuildingIsBurning(goal)
+	
+	return Entity_IsBurning(Entity_FromID(goal.key))
+end
+
+
+----------------------------------
+-- Gers
+----------------------------------
+
+
+function MissionTutorial_JuyongGer()
+	
+	local goal_ger = "goal_ger"
+		
+	local viewSquad = Training_Goal("Entity", 
+		{Message="$11187682", DataTemplate="GenericTrainingDataTemplate"},
+		_DelayTimeElapsed)
+	JuyongGer_GoalSequence = Training_GoalSequence(goal_ger, 
+		1, 0, --repeat max and remind max
+		_HasGerOnScreen, --trigger
+		CampaignTraining_TimeoutIgnorePredicate, --ignore
+		nil, --remind
+		nil, --bypass 
+		false, --can regress
+		{viewSquad, viewSquad2})
+	
+	Training_AddGoalSequence(JuyongGer_GoalSequence)
+end
+
+function _HasGerOnScreen (goalSequence)
+		
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+		
+		Player_GetAll(g_playerMongol, sg_allsquads,eg_mon_gers)
+		EGroup_Filter(eg_mon_gers, EBP.MONGOL.BUILDING_HOUSE_MON, FILTER_KEEP)
+		
+		local potentialEntity_eid = nil
+		
+		local _CheckEntityIsOnScreen = function(gid, idx, eid)
+			if Misc_IsEntityOnScreen(eid, 0.8) then
+				potentialEntity_eid = eid
+				return true
+			end
+		end
+		EGroup_ForEach(eg_mon_gers, _CheckEntityIsOnScreen)
+		
+		if potentialEntity_eid ~= nil then 
+			
+			goalSequence.goals[1].key = Entity_GetID(potentialEntity_eid)
+
+			return true
+			
+		end
+		
+	end
+end
+
+----------------------------------
+-- Pastures
+----------------------------------
+
+function MissionTutorial_JuyongPasture_Entity()
+	
+	local goal_pasture = "goal_pasture_entity"
+		
+	local viewEntity = Training_Goal("Entity", 
+		{Message="$11187683", DataTemplate="GenericTrainingDataTemplate"},
+		_DelayTimeElapsed)
+	JuyongPastureEntity_GoalSequence = Training_GoalSequence(goal_pasture, 
+		1, 0, --repeat max and remind max
+		_HasPastureOnScreen_Entity, --trigger
+		CampaignTraining_TimeoutIgnorePredicate, --ignore
+		nil, --remind
+		_CancelIfSquad, --bypass 
+		false, --can regress
+		{viewEntity})
+	
+	Training_AddGoalSequence(JuyongPastureEntity_GoalSequence)
+end
+
+function _HasPastureOnScreen_Entity(goalSequence)
+		
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+		
+		local potentialEntity_eid = nil
+		local _CheckEntityIsOnScreen = function(gid, idx, eid)
+			if Misc_IsEntityOnScreen(eid, 0.8) then
+				potentialEntity_eid = eid
+				return true
+			end
+		end
+		
+		-- Look for entities
+		Player_GetAll(g_playerMongol, sg_temp, eg_mon_pastures)
+		EGroup_Filter(eg_mon_pastures, EBP.MONGOL.BUILDING_PASTURE_MON, FILTER_KEEP)
+		EGroup_ForEach(eg_mon_pastures, _CheckEntityIsOnScreen)
+		if potentialEntity_eid ~= nil then
+			goalSequence.goals[1].key = Entity_GetID(potentialEntity_eid)
+			g_entityPasture = true
+			return true
+		end
+		
+	end
+end
+
+function _CancelIfEntity()
+	return g_entityPasture == true
+end
+
+function MissionTutorial_JuyongPasture_Squad()
+	
+	local goal_pasture = "goal_pasture_squad"
+		
+	local viewSquad = Training_Goal("Squad", 
+		{Message="$11187683", DataTemplate="GenericTrainingDataTemplate"},
+		_DelayTimeElapsed)
+	JuyongPastureSquad_GoalSequence = Training_GoalSequence(goal_pasture, 
+		1, 0, --repeat max and remind max
+		_HasPastureOnScreen_Squad, --trigger
+		CampaignTraining_TimeoutIgnorePredicate, --ignore
+		nil, --remind
+		_CancelIfEntity, --bypass 
+		false, --can regress
+		{viewSquad})
+	
+	Training_AddGoalSequence(JuyongPastureSquad_GoalSequence)
+end
+
+function _HasPastureOnScreen_Squad(goalSequence)
+		
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+		
+		local potentialEntity_eid = nil
+		local _CheckEntityIsOnScreen = function(gid, idx, eid)
+			if Misc_IsEntityOnScreen(eid, 0.8) then
+				potentialEntity_eid = eid
+				return true
+			end
+		end
+		
+		-- Look for squads
+		Player_GetAllEntitiesNearMarker(g_playerMongol, eg_temp, Util_ScarPos(0, 0, 0), 750)
+		EGroup_Filter(eg_temp, EBP.MONGOL.BUILDING_PASTURE_MOVING_MON, FILTER_KEEP)
+		EGroup_ForEach(eg_temp, _CheckEntityIsOnScreen)
+		if potentialEntity_eid ~= nil then
+			goalSequence.goals[1].key = Squad_GetID(Entity_GetSquad(potentialEntity_eid))
+			g_squadPasture = true
+			return true
+		end
+		
+	end
+end
+
+function _CancelIfSquad()
+	return g_squadPasture == true
+end
+
+----------------------------------
+-- Moving Buildings
+----------------------------------
+
+function MissionTutorial_JuyongMovingBuildings()
+	
+	local goal_movingbuildings = "goal_movingbuildings"
+		
+	local viewSquad = Training_Goal("Entity", 
+		{Message="$11187684", DataTemplate="GenericTrainingDataTemplate"},
+		_HasPackedAnyBuilding)
+	
+	JuyongMoving_GoalSequence = Training_GoalSequence(goal_movingbuildings, 
+		1, 0, --repeat max and remind max
+		_HasUnpackedBuildingOnScreen, --trigger
+		_HasPackedAnyBuilding, --ignore
+		nil, --remind
+		nil, --bypass 
+		false, --can regress
+		{viewSquad})
+	
+	Training_AddGoalSequence(JuyongMoving_GoalSequence)
+end
+
+function _HasUnpackedBuildingOnScreen(goalSequence)
+		
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+		
+		Player_GetAll(g_playerMongol)
+		EGroup_Filter(eg_allentities, "packable_building", FILTER_KEEP)
+		EGroup_Filter(eg_allentities, "mobile_building", FILTER_REMOVE)
+		
+		local potentialBuilding_eid = nil
+		
+		local _CheckEntityIsOnScreen = function(gid, idx, eid)
+			if Misc_IsEntityOnScreen(eid, 0.8) then
+				potentialEntity_eid = eid
+				return true
+			end
+		end
+		EGroup_ForEach(eg_allentities, _CheckEntityIsOnScreen)
+		
+		if potentialEntity_eid ~= nil then 
+			
+			goalSequence.goals[1].key = Entity_GetID(potentialEntity_eid)
+
+			return true
+			
+		end
+		
+	end
+end
+
+function _HasPackedAnyBuilding(goalSequence)
+	
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, "mobile_building", FILTER_KEEP)
+	
+	-- Do it this way so it remembers it was already done
+	if EGroup_Count(eg_allentities) > 0 then
+		g_juyongBuildingsUnpacked = true
+	end
+	
+	return g_juyongBuildingsUnpacked or CampaignTraining_TimeoutIgnorePredicate(goalSequence)
+	
+end
+
+----------------------------------
+-- Unpack Buildings
+----------------------------------
+
+function MissionTutorial_JuyongUnpackBuildings()
+	
+	local goal_unpackbuildings = "goal_unpackbuildings"
+		
+	local GoalUnpack = Training_Goal("Position", 
+		{Message=11191884, DataTemplate="GenericTrainingDataTemplate"},
+		_DelayTimeElapsed)
+	JuyongUnpack_GoalSequence = Training_GoalSequence(goal_unpackbuildings, 
+		1, 0, --repeat max and remind max
+		_HasZhangOnScreen, --trigger
+		CampaignTraining_TimeoutIgnorePredicate, --ignore
+		nil, --remind
+		nil, --bypass 
+		false, --can regress
+		{GoalUnpack})
+	
+	Training_AddGoalSequence(JuyongUnpack_GoalSequence)
+end
+
+function _HasZhangOnScreen (goalSequence)
+
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+					
+		goalSequence.goals[1].key = Marker_GetPosition(mkr_zhangunpack)
+
+		return true
+			
+	end
+end
+
+----------------------------------
+-- Ovoo
+----------------------------------
+
+function MissionTutorial_JuyongOvoo()
+	
+	local goal_ovoo = "goal_ovoo"
+		
+	local GoalBuildOvoo = Training_Goal("Entity", 
+		{Message="$11191885", DataTemplate="GenericTrainingDataTemplate"},
+		_DelayTimeElapsed)
+	JuyongOvoo_GoalSequence = Training_GoalSequence(goal_ovoo, 
+		1, 0, --repeat max and remind max
+		Predicate_IsStoneOnscreen, --trigger
+		CampaignTraining_TimeoutIgnorePredicate, --ignore
+		nil, --remind
+		Predicate_UserHasOvoo, --bypass 
+		false, --can regress
+		{GoalBuildOvoo})
+	
+	Training_AddGoalSequence(JuyongOvoo_GoalSequence)
+end
+
+function Predicate_UserHasOvoo(goal)
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, EBP.MONGOL.BUILDING_STONE_DEPOSIT_OVOO_MON, FILTER_KEEP)
+	return EGroup_Count(eg_allentities) > 0
+end
+
+function Predicate_IsStoneOnscreen(goalSequence)
+	
+	eg_stone_onscreen = EGroup_CreateIfNotFound("eg_stone_onscreen")
+	EGroup_Clear(eg_stone_onscreen)
+	
+	local _CheckOnscreen = function(gid, idx, eid)
+		if Misc_IsEntityOnScreen(eid, 100) == true then
+			EGroup_Add(eg_stone_onscreen, eid)
+		end
+	end
+	EGroup_ForEach(eg_world_stone, _CheckOnscreen)
+	
+	if ABriefPeriodOfTimeHasPassed(goalSequence) and EGroup_Count(eg_stone_onscreen) > 0 then
+		local entity = EGroup_GetEntityAt(eg_stone_onscreen, 1)
+		goalSequence.goals[goalSequence.currentGoalIndex].key = entity
+		return true
+	end
+	
+	return false
+end
+
+------------------------------------------
+-- Improved Raiding Tutorial--
+------------------------------------------
+function MissionTutorial_ImprovedRaiding()
+	
+	local improvedRaiding = "improvedRaiding"
+
+	local selectOutpost = Training_Goal("Entity", {Message="$11201590", DataTemplate="LeftClickTrainingDataTemplate"}, ImprovedRaiding_OutpostIsSelected)
+	local highlightImprovedRaiding = Training_Goal("PBG", {Message="$11201591", DataTemplate="LeftClickTrainingDataTemplate"}, ImprovedRaiding_HasUpgrade)
+	
+	improvedRaidingSequence = Training_GoalSequence(improvedRaiding, 1, 0, ImprovedRaiding_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, ImprovedRaiding_BypassPredicate, true, {selectOutpost, highlightImprovedRaiding})
+	
+	Training_AddGoalSequence(improvedRaidingSequence)
+	Training_EnableGoalSequenceByID(improvedRaidingSequence, true)
+	
+end
+
+function ImprovedRaiding_TriggerPredicate(goalSequence)
+	local improvedRaidingBP = BP_GetUpgradeBlueprint("upgrade_raid_bounty_mon")
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, "outpost", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+
+	if EGroup_CountSpawned(eg_allentities) > 0 
+		and	improvedRaidingBP ~= nil then
+			local entity = EGroup_GetEntityAt(eg_allentities, 1)
+			goalSequence.goals[1].key = Entity_GetID(entity)
+			goalSequence.goals[2].key = improvedRaidingBP
+			return true
+	end
+end
+
+function ImprovedRaiding_OutpostIsSelected(goal)
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	EGroup_Filter(eg_currentSelection, "outpost", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function ImprovedRaiding_HasUpgrade(goal)
+	local improvedRaidingBP = BP_GetUpgradeBlueprint("upgrade_raid_bounty_mon")
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, "outpost", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	local _IsImprovedRaiding = function(gid, index, eid)
+		local queueSize = Entity_GetProductionQueueSize(eid)
+		if queueSize > 0 then
+			for i = 0, queueSize - 1 do
+				if Entity_GetProductionQueueItem(eid, i) == improvedRaidingBP then
+					return true
+				end
+			end
+		end
+	end
+	
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		return EGroup_ForEachAllOrAny(eg_allentities, ANY, _IsImprovedRaiding)
+	end
+end
+
+function ImprovedRaiding_BypassPredicate(goalSequence)
+	return Player_HasUpgrade(g_playerMongol, BP_GetUpgradeBlueprint("upgrade_raid_bounty_mon"))
+end
+
+------------------------------------------
+-- Blacksmith Tutorial--
+------------------------------------------
+function MissionTutorial_Blacksmith()
+
+	local blacksmith = "buildBlacksmith"
+	
+	local selectVillager = Training_Goal("Squad", {Message = "$11201972", DataTemplate="LeftClickTrainingDataTemplate"}, Blacksmith_VillagerIsSelected) --"Select a villager to build a Blacksmith."
+	local isGoingToBuildBlacksmith = Training_Goal("PBG", {Message = "$11201973", DataTemplate="LeftClickTrainingDataTemplate"}, Blacksmith_PlayerIsGoingToBuild) --"Select the Blacksmith."
+	
+	--This seems unsupported by UI right now
+	--local hasBuiltBlacksmith = Training_Goal("Cursor", {Message = "$11193897", DataTemplate="LeftClickDataTemplate"}, Blacksmith_IsBuilt) --"Place the Blacksmith in an open location"
+	
+	blacksmithSequence = Training_GoalSequence(blacksmith, 1, 0, Blacksmith_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, Blacksmith_BlacksmithExists, true, {selectVillager, isGoingToBuildBlacksmith})
+	
+	Training_AddGoalSequence(blacksmithSequence)
+	Training_EnableGoalSequenceByID(blacksmithSequence, true)
+	
+end
+
+function Blacksmith_TriggerPredicate(goalSequence)
+	local blacksmithBP = Cardinal_ConvertTypeToEntityBlueprint("blacksmith", g_playerMongol)
+	Player_GetAll(g_playerMongol)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+
+	if SGroup_CountSpawned(sg_allsquads) > 0 
+		and	blacksmithBP ~= nil 
+		and Player_CanConstruct(g_playerMongol, blacksmithBP) then
+			local squad = SGroup_GetSquadAt(sg_allsquads, 1)
+			goalSequence.goals[1].key = Squad_GetID(squad)
+			goalSequence.goals[2].key = blacksmithBP
+			return true
+	end
+end
+
+function Blacksmith_VillagerIsSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Filter(sg_currentSelection, "scar_villager", FILTER_KEEP)
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function Blacksmith_PlayerIsGoingToBuild(goal)
+	return UserIsGoingToBuildBuildingType("blacksmith")
+end
+
+function Blacksmith_IsBuilt(goal)
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, EBP.MONGOL.BUILDING_TECH_UNIT_INFANTRY_MON, FILTER_KEEP)
+	return EGroup_CountSpawned(eg_allentities) > 0	
+end
+
+function Blacksmith_BlacksmithExists(goalSequence)
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, EBP.MONGOL.BUILDING_TECH_UNIT_INFANTRY_MON, FILTER_KEEP)
+	return EGroup_CountSpawned(eg_allentities) > 0
+end
+
+------------------------------------------
+-- Siege Engineer Tutorial--
+------------------------------------------
+function MissionTutorial_SiegeEngineer_Xbox()
+
+	local siegeengineer = "learnSiegeEngineer"
+	
+	--Select the Blacksmith to purchase the siege engineer upgrade
+	local selectBlacksmith = Training_Goal(
+		"Entity", {
+			Message = "$11201974", 
+			DataTemplate="GenericTrainingDataTemplate"
+		}, 
+		SiegeEngineer_BlacksmithIsSelected
+	) 
+	
+	local GoalOnOpenRadial = Training_Goal(
+		"Entity",
+		{
+			ID = "Hold RT to see Blacsmith technologies.",
+			Message = "$11248536",
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		UserHasOpenedContextualRadial
+	)
+	
+	--"Select Siege Engineering."
+	local highlightSiegeEngineer = Training_Goal(
+		"PBG", {
+			Message = "$11201975", 
+			DataTemplate="GenericTrainingDataTemplate"
+		}, 
+		SiegeEngineer_HasUpgrade
+	) 
+	
+	siegeengineerSequence = Training_GoalSequence(
+		siegeengineer, 
+		1, 0, 
+		SiegeEngineer_TriggerPredicate_Xbox, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, SiegeEngineer_BypassPredicate, 
+		true, 
+		{selectBlacksmith, GoalOnOpenRadial, highlightSiegeEngineer}
+	)
+	
+	Training_AddGoalSequence(siegeengineerSequence)
+	Training_EnableGoalSequenceByID(siegeengineerSequence, true)
+	
+end
+
+function MissionTutorial_SiegeEngineer()
+
+	local siegeengineer = "learnSiegeEngineer"
+	
+	local selectBlacksmith = Training_Goal("Entity", {Message = "$11201974", DataTemplate="LeftClickTrainingDataTemplate"}, SiegeEngineer_BlacksmithIsSelected) --Select the Blacksmith to purchase the siege engineer upgrade
+	local highlightSiegeEngineer = Training_Goal("PBG", {Message = "$11201975", DataTemplate="LeftClickTrainingDataTemplate"}, SiegeEngineer_HasUpgrade) --"Select Siege Engineer."
+	
+	siegeengineerSequence = Training_GoalSequence(siegeengineer, 1, 0, SiegeEngineer_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, SiegeEngineer_BypassPredicate, true, {selectBlacksmith, highlightSiegeEngineer})
+	
+	Training_AddGoalSequence(siegeengineerSequence)
+	Training_EnableGoalSequenceByID(siegeengineerSequence, true)
+	
+end
+
+function SiegeEngineer_TriggerPredicate_Xbox(goalSequence)
+	local siegeengineerBP = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, "blacksmith", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+
+	if EGroup_CountSpawned(eg_allentities) > 0 
+		and	siegeengineerBP ~= nil then
+			local entity = EGroup_GetEntityAt(eg_allentities, 1)
+			goalSequence.goals[1].key = Entity_GetID(entity)
+			goalSequence.goals[2].key = Entity_GetID(entity)
+			goalSequence.goals[3].key = siegeengineerBP
+			return true
+	end
+end
+
+function SiegeEngineer_TriggerPredicate(goalSequence)
+	local siegeengineerBP = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, "blacksmith", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+
+	if EGroup_CountSpawned(eg_allentities) > 0 
+		and	siegeengineerBP ~= nil then
+			local entity = EGroup_GetEntityAt(eg_allentities, 1)
+			goalSequence.goals[1].key = Entity_GetID(entity)
+			goalSequence.goals[2].key = siegeengineerBP
+			return true
+	end
+end
+
+function SiegeEngineer_BlacksmithIsSelected(goal)
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	EGroup_Filter(eg_currentSelection, "blacksmith", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function SiegeEngineer_HasUpgrade(goal)
+	local siegeengineerBP = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, "blacksmith", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	local _IsSiegeEngineer = function(gid, index, eid)
+		local queueSize = Entity_GetProductionQueueSize(eid)
+		if queueSize > 0 then
+			for i = 0, queueSize - 1 do
+				if Entity_GetProductionQueueItem(eid, i) == siegeengineerBP then
+					return true
+				end
+			end
+		end
+	end
+	
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		return EGroup_ForEachAllOrAny(eg_allentities, ANY, _IsSiegeEngineer)
+	end
+	
+end
+
+function SiegeEngineer_BypassPredicate(goalSequence)
+	return Player_HasUpgrade(g_playerMongol, BP_GetUpgradeBlueprint("upgrade_siege_engineers"))
+end
+
+------------------------------------------
+-- Ram Tutorial--
+------------------------------------------
+function MissionTutorial_Ram()
+
+	local rams = "buildRams"
+	
+	local selectUnits = Training_Goal("Squad", {Message = "$11201976", DataTemplate="LeftClickTrainingDataTemplate"}, Rams_UnitsSelected) --Select infantry to build rams
+	local openMilitaryTabGoal = Training_Goal("MilitaryCommandCardTab", {Message = "$1001508", DataTemplate="LeftClickTrainingDataTemplate"}, UserHasMilitaryCommandCardTabOpen) --Open the Military tab
+	local ramsBuilt = Training_Goal("PBG", {Message = "$11201977", DataTemplate="LeftClickTrainingDataTemplate"}, Rams_RamsBuilt) --Build the Ram
+	
+	local goalSequence = {selectUnits, ramsBuilt}
+	if(UI_IsXboxKBMUI()) then
+		goalSequence = {selectUnits, openMilitaryTabGoal, ramsBuilt}
+	end
+	
+	ramSequence = Training_GoalSequence(rams, 1, 0, Rams_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, Rams_RamsBuilt, true, goalSequence)
+	
+	Training_AddGoalSequence(ramSequence)
+	Training_EnableGoalSequenceByID(ramSequence, true)
+	
+end
+
+function Rams_TriggerPredicate(goalSequence)
+	local siegeengineerBP = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	local ramsBP = EBP.MONGOL.UNIT_RAM_3_MON
+	Player_GetAll(g_playerMongol)
+	SGroup_Filter(sg_allsquads, "infantry", FILTER_KEEP)
+	
+	local goalOffset = 0
+	if(UI_IsXboxKBMUI()) then
+		goalOffset = 1
+	end
+	
+	if SGroup_CountSpawned(sg_allsquads) > 0 
+		and	Player_HasUpgrade(g_playerMongol, siegeengineerBP) then
+			local squad = SGroup_GetSquadAt(sg_allsquads, 1)
+			goalSequence.goals[1].key = squad
+			goalSequence.goals[2 + goalOffset].key = ramsBP
+			return true
+	end
+end
+
+function Rams_UnitsSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Filter(sg_currentSelection, "infantry", FILTER_KEEP)
+	
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+
+end
+
+function Rams_RamsBuilt(goal)
+	Player_GetAll(g_playerMongol)
+	SGroup_Filter(sg_allsquads, "scar_ram", FILTER_KEEP)
+	return SGroup_CountSpawned(sg_allsquads) > 0
+end

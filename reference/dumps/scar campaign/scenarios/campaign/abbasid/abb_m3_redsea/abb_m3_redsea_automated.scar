@@ -1,0 +1,352 @@
+-----------------------------------------------------------------------
+--
+-- Abbasid - Red Sea
+--
+-- Automated testing script
+--
+-----------------------------------------------------------------------
+
+import("GameScarUtil.scar")
+import("Prefabs.scar")
+import("standard.scar")
+import("scarutil.scar")
+import("team.scar")
+
+import("core.scar")
+
+-- We need to import this for anything to work. We don't need anything else
+import("MissionOMatic/MissionOMatic.scar")
+import("missionomatic/modules/module_rovingarmy.scar")
+
+-- Snumeration for objective status
+statusTable = {
+	NotRun = 0, 
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3
+}
+
+-- Bool verifying if the Campaign Auto Test Agrument is present
+debug_IsCampaignAutoTest = false
+
+player1 = World_GetPlayerAt(1)
+
+-------------------------------------------------------------------------
+-- Generic Functions
+-------------------------------------------------------------------------
+
+function AutoTest_OnInit()
+	
+	if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+		
+		import("test/common.scar")
+		import("test/standard_test.scar")
+		import("test/test_framework.scar")
+		--import("test/test_framework_cardinal.scar")
+
+		-- Tests using this file are driven by RPC and have no use for the on screen info of the legacy test system.
+		standard_test_on_screen_info.Hide()
+
+		print("CampaignAutoTest parameter detected")
+		debug_IsCampaignAutoTest = true
+		
+		--Checks for the 'NoSwoopy' Arg, and disables the swoopy intro camera on true--
+		if Util_GetCommandLineArgument("NoSwoopy") then
+			Rule_AddInterval(AutoTest_SkipAndStart, 1)
+		else
+			b_introStarted = false
+			Automated_RegisterCheckpoints()
+			Rule_AddInterval(AutoTest_PlayIntro, 1)
+		end
+				
+	end
+end
+
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+	if Event_IsAnyRunning() then
+		Rule_RemoveMe()
+		Game_SkipAllEvents(false)
+		AutomatedMission_Start() --Starts the autotest scar sequence
+	end
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+	if b_introStarted == false then
+		if Event_IsAnyRunning() then
+			b_introStarted = true
+		end
+	else
+		if Event_IsAnyRunning() == false then
+			Rule_RemoveMe()
+			FOW_RevealAll()
+			Rule_AddInterval(AutomatedRedSea_CheckTutorialStart, 1)	-- Delays the start of the player scripted control sequence
+		end
+	end
+end
+
+--Script for kicking off the uatomated testing flow
+function AutomatedMission_Start()
+	FOW_RevealAll()
+	Automated_RegisterCheckpoints() --Compiles the list of checkpoints
+	if Rule_Exists(AutomatedRedSea_CheckTutorialStart) == false then
+		Rule_AddInterval(AutomatedRedSea_CheckTutorialStart, 1)	-- Delays the start of the player scripted control sequence
+	end
+end
+
+-- Compiles the list of checkpoints
+function Automated_RegisterCheckpoints()
+	---- All Checkpoints Should be preceeded with Campaign Auto Test 'cat_' --
+
+	--"cat_TutorialStart", when play is handed over to the player and they must learn naval
+	CampaignAutotest_RegisterCheckpoint("cat_TutorialStart", 180)
+	CampaignAutotest_SetCheckpointStatus("cat_TutorialStart", statusTable["InProgress"])
+	
+	--"cat_PlayStart", when the rest of the mission begins
+	CampaignAutotest_RegisterCheckpoint("cat_PlayStart", 240)
+	CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["NotRun"])
+	
+	--"cat_PiratesDestroyed", the player has destroyed the pirate camp on the island
+	CampaignAutotest_RegisterCheckpoint("cat_PiratesDestroyed", 600)
+	CampaignAutotest_SetCheckpointStatus("cat_PiratesDestroyed", statusTable["NotRun"])
+	
+	--"cat_MissionVictory", the mission is complete with victory
+	CampaignAutotest_RegisterCheckpoint("cat_MissionVictory", 2400)
+	CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["NotRun"])
+	
+end
+
+-------------------------------------------------------------------------
+-- Mission-Specific Functions
+-------------------------------------------------------------------------
+
+--? @shortdesc Checks for the Intro completing and control being handed to the player
+function AutomatedRedSea_CheckTutorialStart(context, data)
+	if Objective_IsStarted(OBJ_TutNaval) == true then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_TutorialStart", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["InProgress"])
+		
+		Rule_AddOneShot(AutomatedRedSea_QueueStartingShips, 1)
+		
+		Rule_AddInterval(AutomatedRedSea_ManageTutorialShips, 1)
+		Rule_AddInterval(AutomatedRedSea_CheckPlayStart, 1)
+		
+		Player_GetAll(player1)
+		SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+		LocalCommand_SquadEntity(player1, sg_allsquads, SCMD_Gather, eg_gold_starter, false)
+	end
+end
+
+function AutomatedRedSea_QueueStartingShips(context, data)
+	local dockInner = EGroup_GetEntityAt(eg_dock_1_inner, 1)
+	local dockCenter = EGroup_GetEntityAt(eg_dock_1_center, 1)
+	local dockOuter = EGroup_GetEntityAt(eg_dock_1_outer, 1)
+	
+	Entity_QueueProductionItemByPBG(dockInner, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_FISHING_BOAT_AYY)
+	Entity_QueueProductionItemByPBG(dockInner, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_FISHING_BOAT_AYY)
+	Entity_QueueProductionItemByPBG(dockInner, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_FISHING_BOAT_AYY)
+	
+	Entity_QueueProductionItemByPBG(dockCenter, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_BAGHLAH_AYY)
+	Entity_QueueProductionItemByPBG(dockCenter, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_BAGHLAH_AYY)
+	Entity_QueueProductionItemByPBG(dockCenter, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_BAGHLAH_AYY)
+	
+	Entity_QueueProductionItemByPBG(dockOuter, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY)
+	Entity_QueueProductionItemByPBG(dockOuter, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY)
+	Entity_QueueProductionItemByPBG(dockOuter, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY)
+	Entity_QueueProductionItemByPBG(dockOuter, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY)
+	Entity_QueueProductionItemByPBG(dockOuter, PITEM_Spawn, SBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY)
+	
+end
+
+function AutomatedRedSea_ManageTutorialShips(context, data)
+	
+	if Objective_IsStarted(OBJ_AllyGold) == true then
+		Rule_RemoveMe()
+		return
+	end
+	
+	sg_cat_player_fishers = SGroup_CreateIfNotFound("sg_cat_player_fishers")
+	sg_cat_player_warships = SGroup_CreateIfNotFound("sg_cat_player_warships")
+	sg_cat_player_traders = SGroup_CreateIfNotFound("sg_cat_player_traders")
+	
+	Player_GetAll(player1)
+	
+	SGroup_Filter(sg_allsquads, SBP.AYYUBID_CMP.UNIT_NAVAL_FISHING_BOAT_AYY, FILTER_REMOVE, sg_cat_player_fishers)
+	SGroup_Filter(sg_allsquads, {SBP.AYYUBID_CMP.UNIT_NAVAL_DHOW_AYY, SBP.AYYUBID_CMP.UNIT_NAVAL_BAGHLAH_AYY}, FILTER_REMOVE, sg_cat_player_warships)
+	SGroup_Filter(sg_allsquads, SBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY, FILTER_REMOVE, sg_cat_player_traders)
+	
+	if SGroup_CountSpawned(sg_cat_player_fishers) >= 3 and SGroup_IsIdle(sg_cat_player_fishers, ANY) then
+		LocalCommand_SquadEntity(player1, sg_cat_player_fishers, SCMD_Gather, eg_cat_fish, false)
+	end
+	
+	if (SGroup_CountSpawned(sg_cat_player_warships) >= 6 or g_cat_tutorialHunting == true) and SGroup_CountSpawned(sg_intro_crusader) > 0 then
+		g_cat_tutorialHunting = true
+		Cmd_FormationAttackMove(sg_cat_player_warships, sg_intro_crusader, false)
+	end
+	
+	if SGroup_CountSpawned(sg_cat_player_traders) >= 5 and SGroup_IsIdle(sg_cat_player_traders, ANY) then
+		LocalCommand_SquadEntity(player1, sg_cat_player_traders, SCMD_Trade, eg_dock_6_center, false)
+	end
+	
+end
+
+--? @shortdesc Checks for the the main objective starting
+function AutomatedRedSea_CheckPlayStart(context, data)
+	if Objective_IsStarted(OBJ_AllyGold) == true then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["InProgress"])
+		
+		Rule_AddInterval(AutomatedRedSea_PlayerHuntFranks, 5, {suffix = "group1", referencePos = mkr_home})
+		Rule_AddInterval(AutomatedRedSea_PlayerHuntFranks, 5, {suffix = "group2", referencePos = mkr_raider_spawn_3})
+		
+		Rule_AddInterval(AutomatedRedSea_PlayerDefendBase, 5)
+		
+		Rule_AddInterval(AutomatedRedSea_CheckMissionComplete, 1)
+		Rule_AddInterval(AutomatedRedSea_StartPirateHunt, 1)
+	end
+end
+
+function AutomatedRedSea_StartPirateHunt(context, data)
+	
+	-- Make sure the pirate hunters are moving towards the island
+	sg_cat_player_piratehunters_fleet = SGroup_CreateIfNotFound("sg_cat_player_piratehunters_fleet")
+	if SGroup_CountSpawned(sg_cat_player_piratehunters_fleet) <= 0 then
+		UnitEntry_DeploySquads(player1, sg_cat_player_piratehunters_fleet, {{ type = "scar_combat_ship", numSquads = 20 }}, mkr_tradestop_player1)
+	elseif SGroup_IsIdle(sg_cat_player_piratehunters_fleet, ALL) == true then
+		Cmd_FormationAttackMove(sg_cat_player_piratehunters_fleet, mkr_pirate_dock, true)
+	end
+	
+	-- If the objective starts, "land" units and start fighting
+	if Objective_IsStarted(SOBJ_PirateHunt) == true then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_PiratesDestroyed", statusTable["InProgress"])
+		Rule_AddInterval(AutomatedRedSea_PlayerHuntPirates, 5)
+	end
+end
+
+function AutomatedRedSea_PlayerHuntFranks(context, data)
+	local sg_frankhunters = SGroup_CreateIfNotFound("sg_cat_player_frankhunters_"..data.suffix)
+	-- Make sure the pirate hunters are moving towards the island
+	if SGroup_CountSpawned(sg_frankhunters) < 8 then
+		UnitEntry_DeploySquads(player1, sg_frankhunters, {{ type = "scar_combat_ship", numSquads = 16 }}, mkr_tradestop_player1)
+	end
+	
+	if SGroup_CountSpawned(sg_frankhunters) > 0 then
+		-- Find the closest Frankish ship to the player's hunters
+		Player_GetAll(player2)
+		SGroup_Filter(sg_allsquads, "naval_unit", FILTER_KEEP)
+		if SGroup_CountSpawned(sg_allsquads) > 0 then
+			local target = SGroup_GetClosestSquad(sg_allsquads, data.referencePos)
+			local targetPos = Util_GetPosition(target)
+			Cmd_FormationAttackMove(sg_frankhunters, targetPos, false)
+		elseif SGroup_IsIdle(sg_frankhunters, ALL) == true then
+			Cmd_FormationAttackMove(sg_frankhunters, mkr_reynald_patrol_2, false)
+		end
+	end
+end
+
+function AutomatedRedSea_PlayerDefendBase(context, data)
+	sg_cat_player_harbour_defense = SGroup_CreateIfNotFound("sg_cat_player_harbour_defense")
+
+	-- SEA PATROL
+	if SGroup_CountSpawned(sg_cat_player_harbour_defense) < 5 then
+		UnitEntry_DeploySquads(
+			player1,
+			sg_cat_player_harbour_defense,
+			{
+				{ type = "scar_combat_ship", numSquads = 20 },
+			},
+			mkr_home)
+	end
+	
+	if SGroup_CountSpawned(sg_cat_player_harbour_defense) > 0 and SGroup_IsIdle(sg_cat_player_harbour_defense, ALL) == true then
+		Cmd_FormationAttackMove(sg_cat_player_harbour_defense, mkr_raider_route_3b, true)
+		Cmd_FormationAttackMove(sg_cat_player_harbour_defense, mkr_net_final_1, true)
+		Cmd_FormationAttackMove(sg_cat_player_harbour_defense, mkr_net_final_2, true)
+		Cmd_FormationAttackMove(sg_cat_player_harbour_defense, mkr_net_final_3, true)
+		Cmd_FormationAttackMove(sg_cat_player_harbour_defense, mkr_pirate_attack_1_pt_3, true)
+	end
+	
+	-- If the main phase is over, move these units over to the allied base
+	if Objective_IsComplete(OBJ_AllyGold) == true then
+		sg_cat_player_ally_defense = SGroup_CreateIfNotFound("sg_cat_player_ally_defense")
+		SGroup_AddGroup(sg_cat_player_ally_defense, sg_cat_player_harbour_defense)
+		Rule_AddInterval(AutomatedRedSea_PlayerDefendAlly, 3)
+		Rule_RemoveMe()
+	end
+end
+
+function AutomatedRedSea_PlayerDefendAlly(context, data)
+	sg_cat_player_ally_defense = SGroup_CreateIfNotFound("sg_cat_player_ally_defense")
+
+	-- SEA PATROL
+	if SGroup_CountSpawned(sg_cat_player_ally_defense) < 10 then
+		UnitEntry_DeploySquads(
+			player1,
+			sg_cat_player_ally_defense,
+			{
+				{ type = "scar_combat_ship", numSquads = 20 },
+			},
+			mkr_tradestop_player6)
+	end
+	
+	if SGroup_CountSpawned(sg_cat_player_ally_defense) > 0 and SGroup_IsIdle(sg_cat_player_ally_defense, ALL) == true then
+		Cmd_FormationAttackMove(sg_cat_player_ally_defense, mkr_raider_route_2b, true)
+		Cmd_FormationAttackMove(sg_cat_player_ally_defense, mkr_raider_route_5b, true)
+		Cmd_FormationAttackMove(sg_cat_player_ally_defense, mkr_raider_route_2b, true)
+		Cmd_FormationAttackMove(sg_cat_player_ally_defense, mkr_raider_route_5b, true)
+	end
+end
+
+
+function AutomatedRedSea_PlayerHuntPirates(context, data)
+	sg_cat_player_piratehunters_fleet = SGroup_CreateIfNotFound("sg_cat_player_piratehunters_fleet")
+	sg_cat_player_piratehunters_land = SGroup_CreateIfNotFound("sg_cat_player_piratehunters_land")
+	
+	-- Make sure the pirate hunters are moving towards the island
+	if SGroup_CountSpawned(sg_cat_player_piratehunters_fleet) <= 0 then
+		UnitEntry_DeploySquads(player1, sg_cat_player_piratehunters_fleet, {{ type = "scar_combat_ship", numSquads = 20 }}, mkr_tradestop_player1)
+	elseif SGroup_IsIdle(sg_cat_player_piratehunters_fleet, ALL) == true then
+		Cmd_FormationAttackMove(sg_cat_player_piratehunters_fleet, mkr_pirate_dock, true)
+	end
+	
+	-- Make sure the land hunters are ransacking the island
+	if SGroup_CountSpawned(sg_cat_player_piratehunters_land) <= 0 then
+		UnitEntry_DeploySquads(
+			player1,
+			sg_cat_player_piratehunters_land,
+			{
+				{ type = "scar_manatarms", numSquads = 30 },
+				{ type = "scar_handcannon", numSquads = 20 },
+			},
+			mkr_pirate_army_4_1)
+	elseif SGroup_IsIdle(sg_cat_player_piratehunters_land, ALL) == true then
+		Cmd_FormationAttackMove(sg_cat_player_piratehunters_land, mkr_pirate_army_2_1, true)
+		Cmd_FormationAttackMove(sg_cat_player_piratehunters_land, mkr_pirate_army_1_1, true)
+		Cmd_FormationAttackMove(sg_cat_player_piratehunters_land, mkr_pirate_dock, true)
+		Cmd_FormationAttackMove(sg_cat_player_piratehunters_land, mkr_pirate_army_2_1, true)
+		if scartype(eg_pirate_house) == ST_EGROUP and EGroup_CountSpawned(eg_pirate_house) > 0 then
+			Cmd_Attack(sg_cat_player_piratehunters_land, eg_pirate_house, true)
+		end
+	end
+	
+	-- Check for the end
+	if Objective_IsComplete(SOBJ_PirateHunt) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_PiratesDestroyed", statusTable["Pass"])
+		SGroup_DestroyAllSquads(sg_cat_player_piratehunters_fleet)
+		SGroup_DestroyAllSquads(sg_cat_player_piratehunters_land)
+	end
+end
+
+--? @shortdesc Checks for mission completion
+function AutomatedRedSea_CheckMissionComplete(context, data)
+	if Objective_IsComplete(OBJ_FinalWave) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["Pass"])
+	end
+end

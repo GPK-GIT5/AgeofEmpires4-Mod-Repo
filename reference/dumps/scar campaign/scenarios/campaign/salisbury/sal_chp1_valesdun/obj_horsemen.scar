@@ -1,0 +1,154 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("obj_locate.scar")
+
+function CommandHorsemen_InitObjectives()
+
+	OBJ_CommandHorsemen = {
+		Title = "$999499", --Command the Horsemen
+		Type = ObjectiveType_Primary,
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_CommandHorsemen, ALL)
+		end,
+		Cheat = Cheat_CommandHorsemen,
+	}
+
+	SOBJ_DefeatArchers = {
+		Title = "$999500", --Defeat the Enemy Archers
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_CommandHorsemen,
+		StartAlongsideParent = true,
+		PreStart = DefeatArchers_PreStart,
+		OnStart = DefeatArchers_Start,
+		OnComplete = DefeatArchers_Complete,
+	}
+
+	-- Register all objectives
+	Objective_Register(OBJ_CommandHorsemen)
+	Objective_Register(SOBJ_DefeatArchers)
+
+end
+
+-- ///// DefeatArchers //////////////////////////////////////////////
+function DefeatArchers_PreStart()
+	
+	max_archers = SGroup_CountSpawned(sg_enemy_archers)
+	Objective_SetCounter(SOBJ_DefeatArchers, 0, max_archers)
+	Rule_AddGlobalEvent(ArcherDefeatedTracker,GE_SquadKilled)
+end
+
+function DefeatArchers_Start()
+	Goals_CavalryVSArchers()
+	Rule_AddInterval(ArcherProx_Monitor,1)
+end
+
+function ArcherDefeatedTracker(context)
+	
+	local owner = Squad_GetPlayerOwner(context.victim)
+	
+	if owner == player2 then
+		local victim = context.victim	
+		if Objective_IsComplete(SOBJ_DefeatArchers) == true then
+			Rule_RemoveMe()
+		else
+			if SGroup_ContainsSquad(sg_enemy_archers, victim.SquadID, true) then 
+				
+				local amount_killed = Objective_GetCounter(SOBJ_DefeatArchers) + 1
+				
+				if amount_killed <= max_archers then
+					Objective_IncreaseCounter(SOBJ_DefeatArchers, 1)
+				end
+				
+				if amount_killed >= max_archers then
+					
+					Objective_Complete(SOBJ_DefeatArchers)
+					Rule_RemoveMe()
+				end
+			end
+		end
+		-- if the player is losing units in this window, make sure they still have enough horsemen to win
+		-- if they don't spawn some more and send them to attack the archers
+		-- this guards against the player doing silly things that somehow get all their horsemen killed and block mission progress
+	elseif owner == player1 then
+		if SGroup_CountSpawned(sg_horsemen) <= num_allied_horsemen_per_marker then
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player1, {sg_horsemen, sg_temp}, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_01)
+			UnitEntry_DeploySquads(player1, {sg_horsemen, sg_temp}, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_02)
+			UnitEntry_DeploySquads(player1, {sg_horsemen, sg_temp}, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_03)
+			Cmd_AttackMove(sg_temp, mkr_obj2e_enemy_archers_spawn_01)
+		end
+	end
+end
+
+function DefeatArchers_Complete()
+
+		EGroup_SetPlayerOwner(eg_cavalry_ambush_gate, player1)
+		EGroup_SetInvulnerable(eg_cavalry_ambush_gate, false)
+		EGroup_SetSelectable(eg_cavalry_ambush_gate, true)
+	
+		SGroup_SetPlayerOwner(sg_player_units, player1)
+		SGroup_SetSelectable(sg_player_units, true)
+		World_EnableSharedLineOfSight(player1, player4, false)
+		
+		RestoreControlGroups(sg_horsemen)
+		
+		Cmd_FormationMove(sg_william, mkr_gate_move_william)
+		Cmd_FormationMove(sg_starting_spearmen, mkr_gate_move_spearmen)
+	
+		Player_GetAll(player1, sg_player_units) -- refresh this sgroup that we use for proximity checks
+		FOW_UnRevealMarker(mkr_fow_reveal_obj2e) -- clean up the FOW reveal we did previously
+		
+		Objective_Start(OBJ_LocateArchers, true, true)
+		
+end
+
+function ArcherProx_Monitor()
+
+	if Prox_AreSquadsNearMarker(sg_horsemen, mkr_obj2e_enemy_archers_spawn_01, false, 5) then
+		
+		World_SetInteractionStage(4)
+		Util_StartIntel(EVENTS.DefeatArchersEnd)
+		Rule_RemoveMe()
+	end
+	
+end
+
+
+--- cheat function to allow skipping to this objective
+
+function Cheat_CommandHorsemen ()
+	-- misc
+	Sound_Play2D(MIX_RETURN_TO_GAME)
+	Game_SetVisibility(VF_XboxUIControlGroups, true)
+	Game_SetVisibility(VF_XboxUIQuickCommands, true)
+
+	-- open map
+	World_SetInteractionStage(1)
+	World_SetInteractionStage(2)
+	World_SetInteractionStage(3)
+	World_SetInteractionStage(9)	
+	FOW_RevealMarker(mkr_fow_reveal_obj2e,-1)
+	-- player units
+	SGroup_EnableLeaderCrown(sg_william, true)
+	SGroup_AddGroups(sg_player_units, {sg_william, sg_starting_spearmen})
+	
+	World_EnableSharedLineOfSight(player1, player4, true)
+	SGroup_SetPlayerOwner(sg_player_units, player4)
+	SGroup_SetSelectable(sg_player_units, false)
+	
+	SGroup_WarpToMarker(sg_player_units, mkr_obj2e_trigger)
+	sg_horsemen = SGroup_CreateIfNotFound("sg_horsemen") 
+	UnitEntry_DeploySquads(player1, sg_horsemen, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_01)
+	UnitEntry_DeploySquads(player1, sg_horsemen, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_02)
+	UnitEntry_DeploySquads(player1, sg_horsemen, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_03)
+	UnitEntry_DeploySquads(player1, sg_horsemen, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_04)
+	-- enemy units
+	sg_enemy_archers = SGroup_CreateIfNotFound("sg_enemy_archers") 
+	UnitEntry_DeploySquads(player2, sg_enemy_archers, {{type = "scar_archer", numSquads = num_archers_encounter }}, mkr_obj2e_enemy_archers_spawn_01)
+	-- start the objective
+	Objective_Start(OBJ_CommandHorsemen, true, true)	
+	-- move the camera
+	Camera_MoveTo(sg_william, false)	
+	
+end

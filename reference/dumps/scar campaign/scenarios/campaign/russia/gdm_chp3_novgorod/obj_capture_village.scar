@@ -1,0 +1,656 @@
+--
+-- Novgorod  - Objective Capture villages 
+--
+
+--PHASE 1 OF THE MISSION
+
+-----------------------------------------------------------------------------------------------------------------------------
+--													INITIALIZING OBJECTIVES
+-----------------------------------------------------------------------------------------------------------------------------
+
+function CaptureLocations_Initkuklino()		-- rename this function to use your prefix for this part of the mission
+
+	local location = LOCATION("kuklino")
+		
+	OBJ_SettleBase = {
+		Title = "$11172088", -- Conquer the outlying towns
+		Type = ObjectiveType_Capture,
+		
+		Intel_Start = EVENTS.CaptureBackNovTowns,
+		
+		OnStart = function()
+			Rule_AddInterval(CaptureVillage_KuklinoProximityStinger, 0.5)
+			Rule_AddInterval(CaptureVillage_SoltsyProximityVO, 0.5)
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_CaptureKuklino) and Objective_IsComplete(SOBJ_CaptureSoltsy)
+		end,
+		
+		OnComplete = function()
+			Modify_PlayerMaxPopCap(player1, 10, MUT_Addition)
+			if Game_GetSPDifficulty() > GD_EASY then --Disable Attack waves in Story Mode
+				Start_SkorinoWaves()
+			end
+			Rule_Add(MonitorPlayerGold)
+			Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+			World_SetInteractionStage(1)
+			
+			if Objective_IsStarted(OBJ_MiddleBattle) == false then
+				Rule_AddOneShot(CaptureVillage_DelayedMiddleBattleStart, 5)
+			end	
+		end,
+	}
+	
+	SOBJ_CaptureKuklino = {
+		Title = "$11172089", --Capture kuklino
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_SettleBase,
+		StartAlongsideParent = true,
+	 	
+		OnStart = function()
+			Location_SetCapturable(LOCATION("kuklino"), true)
+
+		end,
+		
+		OnComplete = function()
+			Rule_AddInterval(Monitor_HolySites, {delay = 15, interval = 5})
+			
+			if UI_IsXboxControllerUI() then
+				Rule_AddOneShot(Tutorials_novgorod_HintCabin_Xbox, 30)
+			else
+				Rule_AddOneShot(Tutorials_novgorod_HintCabin, 30)
+			end
+	
+			Player_AddResource(player1, RT_Wood, Util_DifVar({500, 500, 300, 200})) --was 300
+			Player_AddResource(player1, RT_Food, Util_DifVar({200, 200, 150, 100})) --was 100
+			UI_SetPlayerDataContext(player1, {PopulationCapOn = true}) --Giving the player a popcap again
+			
+			if not Objective_IsComplete(SOBJ_CaptureSoltsy) then
+				Util_StartIntel(EVENTS.Capturekuklino)
+				if Game_GetSPDifficulty() > GD_EASY then --Disable Attack waves in Story Mode
+					Rule_AddOneShot(PreparesoltsyWaveTokuklino, Util_DifVar({170, 170, 70, 10}))
+				end
+				
+				if UI_IsXboxControllerUI() then
+					MissionTutorial_IvanLeaderAura_XBox()
+					--restore the hidden VPS on console
+					Game_SetVisibility (VF_XboxUIVillagerPriorities, true)
+				else
+					MissionTutorial_IvanLeaderAura()
+				end
+				
+				if Game_GetSPDifficulty() <= GD_NORMAL then
+					Objective_Start(OBJ_OptionalHelp)
+				end
+				
+			end
+			
+			if SGroup_CountSpawned(sg_enemyTown01_cabin) > 0 then
+				SGroup_SetPlayerOwner(sg_enemyTown01_cabin, player1)
+			end
+			
+			local storyAdditionalVillagers = 0
+			if Game_GetSPDifficulty() == 0 then --If Diff is Story:
+				storyAdditionalVillagers = 2
+			end
+			
+			UnitEntry_DeploySquads(player1, sg_villagers_food, {type = "scar_villager", numSquads = 6}, mkr_kuklino_tc)
+			UnitEntry_DeploySquads(player1, sg_villagers_wood, {type = "scar_villager", numSquads = 4+storyAdditionalVillagers, destination = mkr_kuklino_lumber}, mkr_kuklino_tc)
+			UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = 2+storyAdditionalVillagers, destination = mkr_kuklino_idle}, mkr_kuklino_tc)
+			
+			AssignVillagersToFarms(sg_villagers_food)
+			Rule_AddOneShot(CaptureVillage_KuklinoWood, 10)
+			
+			Util_AutoSave()
+		end,
+    }
+	
+	SOBJ_DefeatkuklinoRebels = {
+         
+        Title = "$11172090",--Defeat kuklino rebels
+        Type = ObjectiveType_Capture,
+        Parent = OBJ_SettleBase,
+		
+		OnStart = function()
+			Rule_AddOneShot(Delayed_MilitiaAddition, 6)
+		end,
+    }
+	
+    SOBJ_Locationkuklino = {
+        Title = "$11172091",--"kuklino",
+        Type = ObjectiveType_Capture,
+        Parent = OBJ_SettleBase,
+    }
+    
+	Objective_Register(OBJ_SettleBase)
+    Objective_Register(SOBJ_CaptureKuklino)
+    Objective_Register(SOBJ_DefeatkuklinoRebels)
+    Objective_Register(SOBJ_Locationkuklino)
+    
+	location.objectiveMaster = OBJ_SettleBase
+    location.objectivePrimary = SOBJ_CaptureKuklino
+    location.objectiveSecondary = SOBJ_DefeatkuklinoRebels
+    location.objectiveCapture = SOBJ_Locationkuklino
+end
+
+function CaptureLocations_Initsoltsy()		
+	
+	local location = LOCATION("soltsy")
+	
+	SOBJ_CaptureSoltsy = {
+	
+		Title = "$11172093",-- Capture soltsy
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_SettleBase,
+		StartAlongsideParent = true,
+		
+		Intel_Complete = EVENTS.Show_Capturesoltsy,
+		
+		OnStart = function()
+			Location_SetCapturable(LOCATION("soltsy"), true)
+			
+			Player_GetAllEntitiesNearMarker(player4, eg_soltsywalls, mkr_enemy_town02)
+			EGroup_Filter(eg_soltsywalls, "wall", FILTER_KEEP)
+			Rule_AddEGroupEvent(Novgorod_SoltsyWallWalla, eg_soltsywalls, GE_EntityKilled)
+		end,
+		
+		OnComplete = function()
+			--Give resources to the player
+			Player_AddResource(player1, RT_Food,Util_DifVar({350, 350, 300, 250})) --was 300
+			Player_AddResource(player1, RT_Wood,Util_DifVar({150, 150, 100, 75})) --was 100
+			Player_AddResource(player1, RT_Gold,Util_DifVar({500, 300, 300, 200})) -- was 300
+			Player_AddResource(player1, RT_Stone,Util_DifVar({300, 300, 200, 150})) -- was 200
+			
+			--Run this section if the first village hasn't been captured yet
+			if not Objective_IsComplete(SOBJ_CaptureKuklino) then
+				if Game_GetSPDifficulty() > GD_EASY then --Disable Attack waves in Story Mode
+					PreparekuklinoWaveTosoltsy()
+				end
+				
+				if UI_IsXboxControllerUI() then
+					MissionTutorial_IvanLeaderAura_XBox()
+					--restore the hidden econ HUD on console
+					Game_SetVisibility (VF_XboxUIResourceCard, true)
+					Game_SetVisibility (VF_XboxUIVillagerPriorities, true)
+				else
+					MissionTutorial_IvanLeaderAura()
+				end
+				
+				if Game_GetSPDifficulty() <= GD_NORMAL then
+					Objective_Start(OBJ_OptionalHelp)
+				end
+		
+			end
+			
+			--Spawn villagers and start the hunting tip
+			Rule_AddOneShot(SendVillagers_Farm_soltsy,1)
+			Rule_AddOneShot(Tutorials_novgorod_HintHuntingBounty, 30)
+			
+			Util_AutoSave()
+		end,
+    }
+	
+	SOBJ_DefeatsoltsyRebels = {
+         
+        Title = "$11172094",--Defeat soltsy rebels
+        Type = ObjectiveType_Capture,
+        Parent = OBJ_SettleBase,
+    }
+	
+    SOBJ_Locationsoltsy = {
+        Title = "$11172092",--"soltsy",
+        Type = ObjectiveType_Capture,
+        Parent = OBJ_SettleBase,
+    }
+     
+    Objective_Register(SOBJ_CaptureSoltsy)
+    Objective_Register(SOBJ_DefeatsoltsyRebels)
+    Objective_Register(SOBJ_Locationsoltsy)
+    
+	location.objectiveMaster = OBJ_SettleBase
+    location.objectivePrimary = SOBJ_CaptureSoltsy
+    location.objectiveSecondary = SOBJ_DefeatsoltsyRebels
+    location.objectiveCapture = SOBJ_Locationsoltsy
+end
+
+function CaptureLocations_InitOptionalObjectives()
+	
+	OBJ_OptionalHelp = {
+		Title = "$11201837",
+		Type = ObjectiveType_Optional,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_OptionalHelp, ALL)
+		end,
+	}
+	
+	SOBJ_BuildCabins = {
+		Title = "$11201838",
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_OptionalHelp,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			Player_GetAll(player1, eg_temp)
+			EGroup_Filter(eg_temp, EBP.RUS.BUILDING_HUNTING_CABIN_RUS, FILTER_KEEP)
+			
+			count_cabins_current = EGroup_CountSpawned(eg_temp) - EGroup_CountSpawned(eg_huntingcab)
+			count_cabins_prev = count_cabins_current
+			
+			Objective_SetCounter(SOBJ_BuildCabins, count_cabins_current, 3)
+		end,
+		
+		IsComplete = function()
+			Player_GetAll(player1, eg_temp)
+			EGroup_Filter(eg_temp, EBP.RUS.BUILDING_HUNTING_CABIN_RUS, FILTER_KEEP)
+			EGroup_FilterUnderConstruction(eg_temp, FILTER_REMOVE)
+			EGroup_RemoveGroup(eg_temp, eg_huntingcab)
+			
+			count_cabins_current = 0
+			
+			local _IsMakingGold = function(gid, index, eid)
+				if Entity_GetStateModelFloat(eid, "hunting_cabin_generation_rate_rus") > 0 then
+					count_cabins_current = count_cabins_current + 1
+				end
+			end
+		
+			if EGroup_CountSpawned(eg_temp) > 0 then
+				EGroup_ForEach(eg_temp, _IsMakingGold)
+			end
+			
+			--has the count changed?
+			if count_cabins_current ~= count_cabins_prev then
+				count_cabins_prev = count_cabins_current
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+				Objective_SetCounter(SOBJ_BuildCabins, count_cabins_current, 3)
+			end
+			
+			return count_cabins_current >= 3
+		end,
+	}
+	
+	SOBJ_CaptureHolySites = {
+		Title = "$11201839",
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_OptionalHelp,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			Objective_SetCounter(SOBJ_CaptureHolySites, 0, 1)
+		end,
+		
+		IsComplete = function()
+			local _playerOwns = false
+			_checkPlayerOwner = function(gid, idx, eid)
+				if not World_OwnsEntity(eid) and Entity_GetPlayerOwner(eid) == player1 then
+					_playerOwns = true
+					Objective_SetCounter(SOBJ_CaptureHolySites, 1, 1)
+					return true
+				end
+			end
+			
+			EGroup_ForEach(eg_holy_site, _checkPlayerOwner)
+			return _playerOwns
+		end,
+	}
+	
+	SOBJ_HuntGaia = {
+		Title = "$11201840",
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_OptionalHelp,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			bounty_earned = Player_GetStateModelFloat(player1, "master_hunter_bounty_total_rus")
+			gaia_hunted = 0
+			Objective_SetCounter(SOBJ_HuntGaia, gaia_hunted, 5)
+		end,
+		
+		IsComplete = function()
+			if Player_GetStateModelFloat(player1, "master_hunter_bounty_total_rus") > bounty_earned then
+				gaia_hunted = gaia_hunted + 1
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+				bounty_earned = Player_GetStateModelFloat(player1, "master_hunter_bounty_total_rus")
+			end
+			
+			Objective_SetCounter(SOBJ_HuntGaia, gaia_hunted, 5)
+			return gaia_hunted >= 5
+		end,
+	}
+	
+	Objective_Register(OBJ_OptionalHelp)
+	Objective_Register(SOBJ_BuildCabins)
+	Objective_Register(SOBJ_CaptureHolySites)
+	Objective_Register(SOBJ_HuntGaia)
+	
+end
+
+-----------------------------------------------------------------------------------------------------------------------------
+--													UTILITY FUNCTIONS
+-----------------------------------------------------------------------------------------------------------------------------
+
+
+
+function CaptureVillage_DelayedMiddleBattleStart()
+	Objective_Start(OBJ_MiddleBattle, true, true)
+	Music_UnlockIntensity()
+end
+
+function Monitor_HolySites()
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "holy_site", FILTER_KEEP)
+	SGroup_Filter(sg_allsquads, "scar_monk", FILTER_KEEP)
+	
+	if EGroup_CountSpawned(eg_allentities) < 1 and SGroup_CountSpawned(sg_allsquads) > 0 then 
+		--play hint
+		Tutorials_novgorod_HintHolySite()
+		Rule_RemoveMe()
+		print("Holy_site")
+	end
+	
+	if EGroup_CountSpawned(eg_allentities) >= 1 then
+		Rule_RemoveMe()
+	end
+end
+
+function MonitorPlayerGold()	
+	local player_Gold = Player_GetResource(player1, RT_Gold)
+	local player_GoldRate = Player_GetResourceRate(player1, RT_Gold) * 60
+	
+	if b_NoMoreGold == false and (EGroup_CountSpawned(eg_goldmine) == 0 or Entity_GetRemainingResourceDepositAmount(EGroup_GetEntityAt(eg_goldmine,1)) <= 50 ) then
+		Util_StartIntel(EVENTS.Gold_Exhausted)
+		b_NoMoreGold = true
+	end
+	
+	if player_Gold < 200 and (EGroup_CountSpawned(eg_goldmine) == 0 or Entity_GetRemainingResourceDepositAmount(EGroup_GetEntityAt(eg_goldmine,1)) <= 50 ) then
+		if player_GoldRate < 70 then
+			Tutorials_novgorod_HintCabin()
+			print("GOLD HAS RUN OUT")
+			Rule_RemoveMe()
+		end
+	end
+end
+
+--PROXIMITY FUNCTIONS
+function CaptureVillage_KuklinoProximityStinger()
+	if Prox_ArePlayersNearMarker(player1, mkr_enemy_town, ANY, 60) == true then
+		Music_PlayStinger("mus_stinger_event_combat_threat")
+		Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+		Rule_RemoveMe()
+	end
+end
+
+function CaptureVillage_SoltsyProximityVO()
+	if Prox_ArePlayersNearMarker(player1, mkr_enemy_town02, ANY, 80) == true then
+		Rule_RemoveMe()
+	end
+end
+
+function CaptureVillage_KuklinoWood()
+
+	AssignVillagersToWood(sg_villagers_wood)
+	
+end
+
+function Mission_CheckTC()
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+
+	if EGroup_CountSpawned(eg_allentities) <= 0 then
+		Mission_Fail()
+		Rule_RemoveMe()
+	end
+end
+
+function SendVillagers_Farm_soltsy()
+	
+	--Spawn and assign the resource villagers
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = 8}, mkr_soltsy_villager_spawn)
+	
+	local splitSGroupsJobs = SGroup_Split(sg_temp,2)
+	
+	if scartype(splitSGroupsJobs[1]) == ST_SGROUP then
+		AssignVillagersToFarms(splitSGroupsJobs[1])
+	end
+	if scartype(splitSGroupsJobs[2]) == ST_SGROUP then
+		AssignVillagersToGold(splitSGroupsJobs[2])
+	end
+	
+	--Spawn 2 idle villagios
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = 2, destination = mkr_enemy_town02}, mkr_soltsy_villager_spawn)
+end
+	
+--WAVES
+function PreparekuklinoWaveTosoltsy()
+	print("PreparekuklinoWaveTosoltsy")
+	
+	if Objective_IsComplete(SOBJ_CaptureKuklino) == false then
+		local units = {}
+		i_kuklino_phase = i_kuklino_phase or 1
+		
+		if i_kuklino_phase <= 2 then
+			units = { 
+				{ type = "scar_archer", numSquads = Util_DifVar({3, 3, 5, 8}) }, 
+				{ type = "scar_spearman", numSquads = Util_DifVar({7, 7, 10, 14}) } 
+			}
+		elseif i_kuklino_phase <= 3 then
+			units = { 
+				{ type = "scar_horseman", numSquads = Util_DifVar({7, 7, 10, 14}) }, 
+				{ type = "scar_knight", numSquads = Util_DifVar({2, 2, 4, 7}) }  
+			}
+		elseif i_kuklino_phase <= 5 then
+			units = { 
+				{ type = "scar_archer", numSquads = Util_DifVar({7, 7, 10, 14}) }, 
+				{ type = "scar_spearman", numSquads = Util_DifVar({7, 7, 10, 14}) } 
+			}
+		elseif i_kuklino_phase <= 6 then
+			units = { 
+				{ type = "scar_horseman", numSquads = Util_DifVar({7, 7, 10, 14}) }, 
+				{ type = "scar_knight", numSquads = Util_DifVar({7, 7, 10, 14}) }  
+			}
+		else
+			units = { 
+				{ type = "scar_archer", numSquads = Util_DifVar({7, 7, 10, 14}) }, 
+				{ type = "scar_spearman", numSquads = Util_DifVar({7, 7, 10, 14}) },
+				{ type = "scar_manatarms", numSquads = Util_DifVar({3, 3, 5, 8}) } 
+			}
+		end
+		
+		if not Prox_ArePlayersNearMarker(player1, mkr_enemy_town, ANY) then
+			Wave_SetUnits(wave_1, units)
+			Wave_Prepare(wave_1)
+			
+			i_kuklino_phase = i_kuklino_phase + 1
+		end
+		Rule_AddOneShot(PreparekuklinoWaveTosoltsy, Util_DifVar({0, 150, 130, 110}))
+	end
+end
+
+-- function called when all towns have been captured
+function CaptureVillagesNov_OnComplete()
+	Objective_Complete(OBJ_SettleBase,true,true)
+	Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+end
+
+function PreparesoltsyWaveTokuklino()
+	print("PreparesoltsyWaveTokuklino")
+
+	if not Objective_IsComplete(SOBJ_CaptureSoltsy) then
+		i_soltsy_phase = i_soltsy_phase or 1
+		local units = {}
+		
+		if i_soltsy_phase <= 2 then
+			units = { 
+				{ type = "scar_archer", numSquads = Util_DifVar({3, 3, 5, 8}) }, 
+				{ type = "scar_spearman", numSquads = Util_DifVar({6, 6, 8, 12}) } 
+			}
+		elseif i_soltsy_phase <= 3 then
+			units = { 
+				{ type = "scar_horseman", numSquads = Util_DifVar({6, 6, 10, 14}) }, 
+				{ type = "scar_knight", numSquads = Util_DifVar({2, 2, 4, 8}) }  
+			}
+		elseif i_soltsy_phase <= 5 then
+			units = { 
+				{ type = "scar_archer", numSquads = Util_DifVar({6, 6, 10, 14}) }, 
+				{ type = "scar_spearman", numSquads = Util_DifVar({6, 6, 10, 16}) } 
+			}
+		elseif i_soltsy_phase <= 6 then
+			units = { 
+				{ type = "scar_horseman", numSquads = Util_DifVar({6, 6, 10, 16}) }, 
+				{ type = "scar_knight", numSquads = Util_DifVar({6, 6, 10, 14}) }  
+			}
+		else
+			units = { 
+				{ type = "scar_archer", numSquads = Util_DifVar({6, 6, 10, 14}) }, 
+				{ type = "scar_spearman", numSquads = Util_DifVar({6, 6, 10, 18}) },
+				{ type = "scar_manatarms", numSquads = Util_DifVar({2, 2, 4, 8}) } 
+			}
+		end
+		
+		if not Prox_ArePlayersNearMarker(player1, mkr_enemy_town02, ANY) then
+			Wave_SetUnits(wave_2, units)
+			Wave_Prepare(wave_2)
+			
+			i_soltsy_phase = i_soltsy_phase + 1
+		end
+		Rule_AddOneShot(PreparesoltsyWaveTokuklino, Util_DifVar({0, 170, 150, 70}))
+	end
+end
+
+
+function Start_SkorinoWaves() --Disabled in Story at func call
+	Rule_Add(SkorinoForcesApproachTown_Monitor)
+	--Wave_InitSpawns(wave_3)
+	PrepareSkirinoWave()
+end
+
+
+function SkorinoForcesApproachTown_Monitor()
+	local sg_enemyAtsoltsy = SGroup_CreateIfNotFound("sg_enemyAtsoltsy")
+	Player_GetAllSquadsNearMarker(player2, sg_enemyAtsoltsy, mkr_enemy_town02)
+	SGroup_Filter(sg_enemyAtsoltsy,"scar_villager",FILTER_REMOVE)
+	
+	if SGroup_CountSpawned(sg_enemyAtsoltsy) > 0  then
+		if b_skorino_units_approachTowns == false then
+			b_skorino_units_approachTowns = true
+			Util_StartIntel(EVENTS.SkorinoForcesApproachPlayerTown)
+			Rule_RemoveMe()
+		end
+	end	
+end
+
+function PrepareSkirinoWave()
+	print("PrepareSkirinoWave")
+	if Objective_IsComplete(OBJ_MiddleBattle) == false then
+		local units = {}
+	
+		i_skorino_phase = i_skorino_phase or 1
+
+		if i_skorino_phase <= 2 then
+			units = { 
+				{ type = "scar_spearman", numSquads = Util_DifVar({8, 8, 12, 15}), tag = "RusFort" },
+				{ type = "scar_archer", numSquads = Util_DifVar({3, 3, 4, 5}), tag = "RusFort" },
+			}
+		elseif i_skorino_phase <= 3 then
+			units = { 
+				{ type = "scar_horseman", numSquads = Util_DifVar({8, 8, 12, 16}), tag = "RusFort" },
+				{ type = "scar_horsearcher", numSquads = Util_DifVar({6, 6, 8, 12}), tag = "RusFort" },
+			}
+		elseif i_skorino_phase <= 5 then
+			units = { 
+				{ type = "scar_spearman", numSquads = Util_DifVar({10, 10, 14,20}), tag = "RusFort" },
+				{ type = "scar_archer", numSquads = Util_DifVar({5, 5, 8, 10}), tag = "RusFort" },
+			}
+		elseif i_skorino_phase <= 6 then
+			units = { 
+				{ type = "scar_horseman", numSquads = Util_DifVar({10, 10, 14, 20}), tag = "RusFort" },  
+				{ type = "scar_horsearcher", numSquads = Util_DifVar({8, 8, 12, 18}), tag = "RusFort" },
+			}
+		else
+			units = { 
+				{ type = "scar_spearman", numSquads = Util_DifVar({12, 12, 20, 30}), tag = "RusFort" }, 
+				{ type = "scar_archer", numSquads = Util_DifVar({8, 8, 12, 18}), tag = "RusFort" },
+			}
+		end
+		
+		if not Prox_ArePlayersNearMarker(player1, mkr_enemy_town03, ANY, 60) then
+			Wave_SetUnits(wave_3, units)
+			Wave_Prepare(wave_3)
+			
+			i_skorino_phase = i_skorino_phase + 1
+		end
+		Rule_AddOneShot(PrepareSkirinoWave, Util_DifVar({90, 90, 75, 60}))
+	end
+end
+
+
+function Start_NovgorodWaves()
+	--Wave_InitSpawns(wave_4)
+	PrepareNovgorodWave()
+end
+
+
+function PrepareNovgorodWave()
+	print("PrepareNovgorodWave")
+	local units = {}
+
+	i_novgorod_phase = i_novgorod_phase or 1
+
+	if i_novgorod_phase <= 2 then
+		units = { 
+			{ type = "scar_manatarms", numSquads = Util_DifVar({5, 5, 8, 12}) }, 
+			{ type = "scar_crossbowman", numSquads = Util_DifVar({4, 4, 6, 8}) } 
+		}
+	elseif i_novgorod_phase <= 3 then
+		units = { 
+			{ type = "scar_spearman", numSquads = Util_DifVar({6, 6, 11, 16}) }, 
+			{ type = "scar_archer", numSquads = Util_DifVar({5, 5, 7, 10}) }  
+		}
+	elseif i_novgorod_phase <= 5 then
+		units = { 
+			{ type = "scar_horseman", numSquads = Util_DifVar({8, 8, 14, 22}) }, 
+			{ type = "scar_knight", numSquads = Util_DifVar({4, 4, 6, 8}) }  
+		}
+	elseif i_novgorod_phase <= 6 then
+		units = { 
+			{ type = "scar_spearman", numSquads = Util_DifVar({8, 8, 18, 26}) }, 
+			{ type = "scar_archer", numSquads = Util_DifVar({6, 8, 8, 12}) } 
+		}
+	else
+		units = {
+			{ type = "scar_spearman", numSquads = Util_DifVar({8, 8, 14, 22}) },
+			{ type = "scar_manatarms", numSquads = Util_DifVar({2, 2, 4, 8}) }, 
+			{ type = "scar_archer", numSquads = Util_DifVar({6, 6, 10, 12}) },
+			{ type = "scar_crossbowman", numSquads = Util_DifVar({2, 2, 4, 8}) },
+		}
+	end
+	
+	local wave = nil
+	
+	if #(wave_4.spawns) >= 4 and not Prox_ArePlayersNearMarker(player1, mkr_enemy_novgorod_front, ANY) then 
+		Wave_SetUnits(wave_4, units)
+		Wave_Prepare(wave_4)
+		
+		i_novgorod_phase = i_novgorod_phase + 1
+	else 
+		Wave_SetUnits(wave_5, units)
+		Wave_Prepare(wave_5)
+		
+		i_novgorod_phase = i_novgorod_phase + 1
+	end
+	
+	Rule_AddOneShot(PrepareNovgorodWave, Util_DifVar({150, 150, 130, 110}))
+end
+
+function Delayed_MilitiaAddition()
+	SGroup_FormationWarpToMarker(sg_militia_01, mkr_kuklino_tc)
+	Cmd_Stop(sg_militia_01)
+	Cmd_AttackMove(sg_militia_01, mkr_player_spawn_king)
+	Rule_AddOneShot(Delayed_MilitiaAddition_DelayedAdd, 1)
+end
+
+function Delayed_MilitiaAddition_DelayedAdd()
+	Defend_AddSGroup(MissionOMatic_FindModule("enemytownDefend01"), sg_militia_01, true)
+end

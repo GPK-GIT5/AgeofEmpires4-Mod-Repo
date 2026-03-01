@@ -1,0 +1,2017 @@
+--
+-- Hattin 1187 - Crusaders objective
+--
+import("abb_m4_hattin.scar")
+import("abb_m4_hattin_data.scar")
+
+function Crusaders_InitObjectives()
+
+	OBJ_Crusaders = {
+		Title = "$11253253", 
+		Type = ObjectiveType_Primary,
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_Crusaders, mkr_ui_tiberias, true, "$11253269", false)
+		end,
+		OnStart = function()
+			-- Give the player resources
+			Player_SetResource(player1, RT_Food, t_difficulty.playerStartFood)
+			Player_SetResource(player1, RT_Wood, t_difficulty.playerStartWood)
+			Player_SetResource(player1, RT_Gold, t_difficulty.playerStartGold)
+			Player_SetResource(player1, RT_Stone, t_difficulty.playerStartStone)
+			-- Re-enable control
+			SGroup_SetPlayerOwner(sg_playerUnitsDisabled, player1)
+			EGroup_SetPlayerOwner(eg_playerBuildingsDisabled, player1)
+			VOCue_SaladinAvailable()
+			Rule_AddInterval(VOCue_EnemiesAtTheHorns, 3)
+			-- Set rally points for player production buildings
+			EGroup_SetRallyPoint(eg_production_infantry, mkr_playerRally_infantry)
+			EGroup_SetRallyPoint(eg_production_ranged, mkr_playerRally_ranged)
+			EGroup_SetRallyPoint(eg_production_cavalry, mkr_playerRally_cavalry)
+			
+			SGroup_AddAbility(sg_scuttle_removed, BP_GetAbilityBlueprint("core_unit_death"))
+		end,
+		IsFailed = function()
+			Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_tiberias_control, Marker_GetProximityRadius(mkr_tiberias_control))
+			return SGroup_CountSpawned(sg_temp) > 0
+		end,
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+		-- This is Objective: 8
+		Cheat = function()
+			print("CHEAT: Cheating past tutorial")
+			-- Unlock the rest of the map
+			World_SetInteractionStage(1)
+			-- Spawn the allies now that interactivity is enabled
+			Hattin_SpawnBarricadeAllies()
+			
+			-- Simulate perfect tutorial play
+			CreateUnits(player1, {type = "scar_spearman", numSquads = 4}, mkr_tutorial_player_spawn_1, sg_tutorial_infantry)
+			CreateUnits(player1, {type = "scar_crossbowman", numSquads = 16}, mkr_tutorial_player_spawn_1, sg_tutorial_infantry)
+			SGroup_FormationWarpToMarker(sg_tutorial_infantry, mkr_tutorial_skip)
+			
+			-- Make sure control groups are accessible
+			SGroup_SetPlayerOwner(sg_saladin_forces, player1)
+			local _AssignToGroup1 = function(gid, idx, sid)
+				Misc_SetSquadControlGroup(sid, 1)
+			end
+			SGroup_ForEach(sg_saladin_forces, _AssignToGroup1)
+			
+			local _AssignToGroup2 = function(gid, idx, sid)
+				Misc_SetSquadControlGroup(sid, 2)
+			end
+			SGroup_ForEach(sg_tutorial_infantry, _AssignToGroup2)
+			
+			-- Speed this up
+			t_difficulty.crusadePrepTime = 60
+		end,
+	}
+	TOBJ_BurnableFields = {
+		Title = "$11253252", 
+		Type = ObjectiveType_Tip,
+		showTitle = false,
+		Parent = OBJ_Crusaders,
+	}
+	SOBJ_WaveCounter = {
+		Title = "$11257167",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Crusaders,
+		StartAlongsideParent = true,
+		showTitle = false,
+		IsComplete = function()
+			-- Count the waves killed
+			for ii = 1, g_crusaderWaveTotal do
+				if scartype(t_waveSGroups[ii]) == ST_SGROUP and SGroup_CountSpawned(t_waveSGroups[ii]) == 0 then
+					t_waveSGroups[ii] = nil
+					g_crusaderWavesKilled = g_crusaderWavesKilled + 1
+				end
+			end
+			-- Update the counter
+			if g_crusaderWaveTotal ~= nil and g_crusaderWaveTotal > 0 then
+				Objective_SetCounter(SOBJ_WaveCounter, g_crusaderWavesKilled, g_crusaderWaveTotal)
+			end
+			
+			-- We can't win if we haven't defeated Reynal
+			if Objective_IsComplete(SOBJ_DefeatReynald) == false then
+				return false	
+			end
+			
+			-- The overall objective is complete not only if Reynald is defeated, but also if all enemies are defeated
+			-- This accounts for stragglers from other waves for any reason
+			-- (penultimate wave units getting slowed by fires and falling behind final wave units, for example)
+			Player_GetAll(player2)
+			return SGroup_CountSpawned(sg_allsquads) == 0
+		end,
+		OnComplete = function()
+			Objective_Complete(OBJ_Crusaders)
+		end,
+	}
+	SOBJ_DefeatReynald = {
+		Title = "$11253259",		
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Crusaders,
+		StartAlongsideParent = false,
+		SetupUI = function()
+			
+		end,
+		OnStart = function()
+			SOBJ_DefeatReynald.showTitle = false
+		end,
+		IsComplete = function()
+			-- True if Reynald has been neutralized
+			return SGroup_CountSpawned(sg_crusaders_reynald) == 0
+		end,
+	}
+	TOBJ_PrepareForCrusaders = {
+		Title = "$11253255", 
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_Crusaders,
+		StartAlongsideParent = true,
+		SetupUI = function()
+			Objective_StartTimer(TOBJ_PrepareForCrusaders, COUNT_DOWN, t_difficulty.crusadePrepTime)
+			-- Also queue up the warning UI
+			local firstCrusaderEntry = t_crusaderData[3]
+			if scartype(firstCrusaderEntry) == ST_TABLE then
+				firstCrusaderEntry.callbacks.onQueued()
+				local preSpawntime = t_difficulty.crusadePrepTime - CRUSADER_INCOMING_ANIMATION_TIME
+				Rule_AddOneShot(_Crusaters_PreSpawn, preSpawntime, {entry = firstCrusaderEntry})
+			end
+		end,
+		IsComplete = function()
+			if Objective_GetTimerSeconds(TOBJ_PrepareForCrusaders) <= 0 then
+				Crusaders_Start()
+			end
+			return false
+		end,
+		OnComplete = function()
+			-- Remove the objective telling players to look at the fields
+			if Objective_IsComplete(OBJ_FieldScoutingGuidance) == false then
+				Objective_Complete(OBJ_FieldScoutingGuidance, false, false)
+			end
+			-- Start the objective-tip telling players to burn the fields
+			if Objective_IsStarted(TOBJ_BurnableFields) == false then
+				Objective_Start(TOBJ_BurnableFields)
+			end
+			Objective_Start(OBJ_NextWaveTimer, false, false)
+			Objective_Show(TOBJ_PrepareForCrusaders, false, false)
+			Objective_Show(OBJ_NextWaveTimer, true, true)
+			
+			-- Also begin the assistive systems for lower difficulty levels
+			if t_difficulty.extraGuidance == true then
+				-- Activate the objective that nudges the player to build more units if they've not been building
+				-- The reinforcements are also controlled through that
+				Rule_AddInterval(Tutorial_CheckForQueueGuidanceStart, {delay = 30, interval = 5})
+			end
+			
+			if t_difficulty.emergencyReinforcements == true then
+				Rule_AddInterval(Hattin_ReinforceAsNeeded, 1)
+			end
+		end,
+	}
+	SOBJ_PlacementGuidance = {
+		Title = "$11256520", 
+		Type = ObjectiveType_Bonus,
+		showTitle = false,
+		Parent = OBJ_Crusaders,
+		StartAlongsideParent = t_difficulty.extraGuidance,
+		SetupUI = function()
+			Objective_SetCounter(SOBJ_PlacementGuidance, 0, PREP_UNIT_COUNT)
+			Objective_AddUIElements(SOBJ_PlacementGuidance, mkr_player_preparation, true, "$11256520", true)
+			Objective_AddGroundReticule(SOBJ_PlacementGuidance, Marker_GetPosition(mkr_player_preparation), Marker_GetProximityRadius(mkr_player_preparation), BP_GetReticuleBlueprint("aura_ring"))
+		end,
+		IsComplete = function()
+			Player_GetAllSquadsNearMarker(player1, sg_temp, Marker_GetPosition(mkr_player_preparation), Marker_GetProximityRadius(mkr_player_preparation))
+			SGroup_Filter(sg_temp, "military", FILTER_KEEP)
+			local unitsPresent = SGroup_CountSpawned(sg_temp)
+			Objective_SetCounter(SOBJ_PlacementGuidance, unitsPresent, PREP_UNIT_COUNT)
+			return unitsPresent >= 15
+		end,
+		OnComplete = function()
+			Objective_Show(SOBJ_PlacementGuidance, false, false)
+		end,
+		IsFailed = function()
+			return Objective_IsComplete(TOBJ_PrepareForCrusaders) == true and Objective_IsComplete(SOBJ_PlacementGuidance) == false
+		end,
+		OnFail = function()
+			Objective_Show(SOBJ_PlacementGuidance, false, false)
+		end,
+	}
+	OBJ_NextWaveTimer = {
+		Title = "$11253256", 
+		Type = ObjectiveType_Information,
+	}
+	SOBJ_BuildTroops = {
+		Title = "$11253258",		
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Crusaders,
+		StartAlongsideParent = false,
+		SetupUI = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "military", FILTER_KEEP)
+			local troopStart = SGroup_CountSpawned(sg_allsquads)
+			g_obj_troopGoal = troopStart + TROOP_TRAINING_TARGET
+			Objective_SetCounter(SOBJ_BuildTroops, 0, TROOP_TRAINING_TARGET)
+			--print(string.format("HATTIN - Training obj counter %s of %s", 0, TROOP_TRAINING_TARGET))
+		end,
+		OnStart = function()
+			
+		end,
+		IsComplete = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "military", FILTER_KEEP)
+			local troopTotal = SGroup_CountSpawned(sg_allsquads)
+			-- If we're aiming for 90 and we've got 85, that means we have (20-5)=15 trained so far
+			local trainedSoFar = TROOP_TRAINING_TARGET - (g_obj_troopGoal - troopTotal)
+			Objective_SetCounter(SOBJ_BuildTroops, trainedSoFar, TROOP_TRAINING_TARGET)
+			--print(string.format("HATTIN - Training obj counter %s of %s", trainedSoFar, TROOP_TRAINING_TARGET))
+			return troopTotal >= g_obj_troopGoal
+		end,
+		OnComplete = function()
+			Objective_Show(SOBJ_BuildTroops, false, false)
+		end,
+	}
+	OBJ_ProductionQueueGuidance = {
+		Title = "$11253276", 
+		Type = ObjectiveType_Information,
+		PreStart = function()
+			g_lastGoodProductionTime = World_GetGameTime()
+		end,
+		IsComplete = function()
+			-- We want to see how many units they're producing
+			local totalProductionQueueSize = Player_GetProductionQueueSize(player1)
+			-- Warn the player if they're not producing enough!
+			
+			if totalProductionQueueSize < PRODUCTION_QUEUE_TARGET and Player_GetCurrentPopulation(player1, CT_Personnel) < 200 then
+				local elapsedWithoutProduction = World_GetGameTime() - g_lastGoodProductionTime
+				if elapsedWithoutProduction >= PRODUCTION_QUEUE_WARNING_TIME and Objective_IsVisible(OBJ_ProductionQueueGuidance) == false then
+					Objective_Show(OBJ_ProductionQueueGuidance, true, true)
+				end
+			elseif totalProductionQueueSize >= PRODUCTION_QUEUE_TARGET then
+				g_lastGoodProductionTime = World_GetGameTime()
+				if Objective_IsVisible(OBJ_ProductionQueueGuidance) == true then
+					Objective_Show(OBJ_ProductionQueueGuidance, false, false)
+				end
+			end
+		end,
+	}
+	
+	-- Registered in order of their desired appearance in the on-screen list
+	Objective_Register(OBJ_NextWaveTimer)
+	Objective_Register(OBJ_ProductionQueueGuidance)
+	Objective_Register(OBJ_Crusaders)
+	Objective_Register(TOBJ_BurnableFields)
+	Objective_Register(TOBJ_PrepareForCrusaders)
+	Objective_Register(SOBJ_WaveCounter)
+	Objective_Register(SOBJ_DefeatReynald)
+	Objective_Register(SOBJ_BuildTroops)
+	Objective_Register(SOBJ_PlacementGuidance)
+	Objective_Register(OBJ_FieldScoutingGuidance)
+	
+	--[[
+		The following callbacks are available by including any of the following table entries: (callback recieves the crusader group entry as a parameter)
+		callbacks = {
+			onSpawned = MyFunc,
+			onSpotted = MyFunc,
+			onApproached = MyFunc,
+			onEngaged = MyFunc,
+			onKilled = MyFunc,
+		},
+	--]]
+	
+	-- These represent the individual groups that make up the crusaders
+	-- They are spawned in this order
+	t_crusaderData = {				
+		{
+			id = "scouts1", spawn = "tut1", rank = 1, tutorial = true,
+			army = {
+				name = "army_scouts1",
+				units = {
+					{type = "scar_horseman", numSquads = 8},									
+				},
+			},
+			callbacks = {
+				onKilled = Scouts1_Killed,
+				preSpawn = function()
+				end,
+				onSpawned = function()
+					UI_CreateMinimapBlip(mkr_tutorial_crusader_spawn, 8, "threat_group")
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_tutorial", ""), 5, 1)
+				end,
+			},
+		},
+		{
+			id = "scouts2", spawn = "tut2", rank = 1, tutorial = true,
+			army = {
+				name = "army_scouts2",
+				units = {
+					{type = "scar_horseman", numSquads = 18},
+					{type = "scar_knight", numSquads = 12},									
+				},
+				-- This is technically only required for the one part at mkr_crusaderpath_tutorial_3 where
+				-- the army needs to funnel through the narrow passage while the crossbowmen are shooting them
+				-- from the top. The AI needs to extra leash range to be able to determine a valid path up the hill
+				-- that doesn't leave its combat area.
+				-- Increasing the leash range to 100 makes sure that they can path towards the ramp on the south.
+				-- Without this the AI can get stuck stutter stepping because it keeps getting attacked but can't
+				-- figure out how to get to their opponent.
+				leashRange = 100,
+			},
+			callbacks = {
+				onKilled = Scouts2_Killed,
+				preSpawn = function()
+				end,
+				onSpawned = function()
+					UI_CreateMinimapBlip(mkr_tutorial_crusader_spawn, 8, "threat_group")
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_tutorial", ""), 5, 1)
+				end,
+			},
+		},
+		-- WAVE 1
+		{
+			id = "crusaders1a", spawn = "north", rank = 1,
+			army = {
+				units = {
+					{type = "scar_archer", numSquads = 6 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_militia", numSquads = 4 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_spearman", numSquads = 2 + t_difficulty.crusaderDifficultyTopUp},			
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.north = UI_CreateMinimapBlip(mkr_crusader_spawn_north, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.north)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_north", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					Util_StartIntel(EVENTS.CrusadersFirstArriveOnMap)
+					Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_hattin")
+				end,
+			},
+		},
+		{
+			id = "crusaders1b", spawn = "north", rank = 2,
+			army = {
+				units = {
+					{type = "scar_archer", numSquads = 6 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_militia", numSquads = 4 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_spearman", numSquads = 2 + t_difficulty.crusaderDifficultyTopUp},				
+				},
+			},
+		},
+		{
+			id = "crusaders1c", spawn = "north", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{type = "scar_archer", numSquads = 6 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_militia", numSquads = 4 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_spearman", numSquads = 2 + t_difficulty.crusaderDifficultyTopUp},			
+				},
+			},
+		},
+		-- WAVE 2 - TEMPLARS
+		{
+			id = "templarA", spawn = "south", rank = 1,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 6, sgroup = sg_crusaders_firsttemplars},
+					{type = "scar_horseman", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.south = UI_CreateMinimapBlip(mkr_crusader_spawn_south, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.south)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_south", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					Util_StartIntel(EVENTS.TemplarsArrive)
+					Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_hattin")
+				end,
+			},
+		},
+		{
+			id = "templarB", spawn = "south", rank = 2,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 6},
+					{type = "scar_horseman", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},		
+				},
+			},
+		},
+		{
+			id = "templarC", spawn = "south", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 6},
+					{type = "scar_horseman", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},					
+				},
+			},
+		},
+		-- WAVE 3
+		{
+			id = "crusaders3a", spawn = "mid", rank = 1,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU, sgroup = {sg_crusaders_templarGrandMaster}},
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads =  8 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_horseman", numSquads = 6 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_MANGONEL_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.mid = UI_CreateMinimapBlip(mkr_crusader_spawn_mid, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.mid)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_mid", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_hattin")
+					Rule_AddInterval(VOCue_TemplarGrandMaster, 1)
+				end,
+			},
+		},
+		{
+			id = "crusaders3b", spawn = "mid", rank = 2,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 6},
+					{type = "scar_spearman", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_archer", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_MANGONEL_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},	
+				},
+			},
+		},
+		{
+			id = "crusaders3c", spawn = "mid", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 6},
+					{type = "scar_manatarms", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},	
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 2},
+				},
+			},
+		},
+		-- WAVE 4
+		{
+			id = "crusaders4a", spawn = "north", rank = 1,
+			army = {
+				units = {
+					{type = "scar_archer", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_militia", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},	
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.north = UI_CreateMinimapBlip(mkr_crusader_spawn_north, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.north)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_north", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_hattin")
+				end,
+			},
+		},
+		{
+			id = "crusaders4b", spawn = "north", rank = 2,
+			army = {
+				units = {
+					{type = "scar_archer", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_militia", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},
+				},
+			},
+		},
+		{
+			id = "crusaders4c", spawn = "north", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{type = "scar_archer", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_militia", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},			
+				},
+			},
+		},
+		-- WAVE 5 - HOSPITALLERS
+		{
+			id = "hospitallerA", spawn = "south", rank = 1,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, numSquads = 6, sgroup = sg_crusaders_firsthospitallers},
+					{type = "scar_horseman", numSquads = 6 + t_difficulty.crusaderDifficultyTopUp},									
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.south = UI_CreateMinimapBlip(mkr_crusader_spawn_south, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.south)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_south", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_hattin")
+					Util_StartIntel(EVENTS.HospitallersArrive)
+				end,
+			},
+		},
+		{
+			id = "hospitallerB", spawn = "south", rank = 2,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, numSquads = 6},
+					{type = "scar_horseman", numSquads = 6 + t_difficulty.crusaderDifficultyTopUp},
+				},
+			},
+		},
+		{
+			id = "hospitallerC", spawn = "south", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, numSquads = 6},
+					{type = "scar_horseman", numSquads = 6 + t_difficulty.crusaderDifficultyTopUp},
+				},
+			},
+		},
+		-- WAVE 6
+		{
+			id = "crusaders6a", spawn = "mid", rank = 1,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_MASTER_CRU, sgroup = {sg_crusaders_hospitallerGrandMaster}},
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, numSquads = 16},
+					{type = "scar_knight", numSquads = 18 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_manatarms", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.mid = UI_CreateMinimapBlip(mkr_crusader_spawn_mid, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.mid)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_mid", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_hattin")
+					Rule_AddInterval(VOCue_HospitallerGrandMaster, 1)
+				end,
+			},
+		},
+		{
+			id = "crusaders6b", spawn = "mid", rank = 2,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, numSquads = 6},
+					{type = "scar_archer", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_crossbowman", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},
+				},
+			},
+		},
+		{
+			id = "crusaders6c", spawn = "mid", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, numSquads = 6},
+					{type = "scar_spearman", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU, numSquads = (2 * t_difficulty.crusaderHasSiege)},
+				},
+			},
+		},
+		-- WAVE 7
+		{
+			id = "crusaders7a", spawn = "south", rank = 1,
+			army = {
+				units = {
+					{type = "scar_militia", numSquads = 14 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_archer", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},	
+					{sbp = SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},	
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 1},								
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.south = UI_CreateMinimapBlip(mkr_crusader_spawn_south, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.south)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_south", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_hattin")
+				end,
+			},
+		},
+		{
+			id = "crusaders7b", spawn = "south", rank = 2,
+			army = {
+				units = {
+					{type = "scar_militia", numSquads = 14 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_archer", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},	
+					{sbp = SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 1},
+				},
+			},
+		},
+		{
+			id = "crusaders7c", spawn = "south", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{type = "scar_militia", numSquads = 14 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_archer", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},	
+					{sbp = SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 1},
+				},
+			},
+		},
+		-- WAVE 8 - REYNALD FINALE
+		{
+			id = "crusaders8northA", spawn = "north", rank = 1,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 10},
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, numSquads = 5},
+					{type = "scar_knight", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},		
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.north = UI_CreateMinimapBlip(mkr_crusader_spawn_north, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.north)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_north", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_hattin")
+				end,
+				onKilled = function()
+					g_finalCrusadersKilled = g_finalCrusadersKilled + 1
+				end,
+			},
+		},
+		{
+			id = "crusaders8midA", spawn = "mid", rank = 1, doNotResetWave = true,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 10},
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, numSquads = 5},
+					{type = "scar_knight", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},					
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.mid = UI_CreateMinimapBlip(mkr_crusader_spawn_mid, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.mid)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_mid", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					
+				end,
+				onKilled = function()
+					g_finalCrusadersKilled = g_finalCrusadersKilled + 1
+				end,
+			},
+		},
+		{
+			id = "crusaders8southA", spawn = "south", rank = 1, doNotResetWave = true,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 10},
+					{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, numSquads = 5},
+					{type = "scar_knight", numSquads = 8 + t_difficulty.crusaderDifficultyTopUp},						
+				},
+			},
+			callbacks = {
+				onQueued = function()
+					g_nextWaveBlips.south = UI_CreateMinimapBlip(mkr_crusader_spawn_south, -1, "threat_group")
+				end,
+				preSpawn = function()
+					UI_DeleteMinimapBlip(g_nextWaveBlips.south)
+					MarkerPaths_RepeatAnimateArrowPath(AllMarkers_FromName("mkr_crusaderpath_ui_south", ""), CRUSADER_INCOMING_ANIMATION_TIME, 1)
+				end,
+				onSpawned = function()
+					
+				end,
+				onKilled = function()
+					g_finalCrusadersKilled = g_finalCrusadersKilled + 1
+				end,
+			},
+		},
+		{
+			id = "crusaders8northB", spawn = "north", rank = 2,
+			army = {
+				units = {
+					{type = "scar_manatarms", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},	
+					{type = "scar_archer", numSquads = 12 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_crossbowman", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 1},
+				},
+			},
+			callbacks = {
+				onKilled = function()
+					g_finalCrusadersKilled = g_finalCrusadersKilled + 1
+				end,
+			},
+		},
+		{
+			id = "crusaders8midB", spawn = "mid", rank = 2,
+			army = {
+				units = {
+					{sbp = SBP.CRUSADER_CMP.UNIT_LEADER_REYNALD_CRU, numSquads = 1, sgroup = sg_crusaders_reynald},
+					{type = "scar_manatarms", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},	
+					{type = "scar_archer", numSquads = 14 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_crossbowman", numSquads = 12 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 1},
+				},
+			},
+			callbacks = {
+				onSpawned = function()
+					BurnableFields_UpdateHint(t_burnableFields.path_8_tiberias, "$11254291")
+					Rule_AddOneShot(VOCue_ReynaldArrives_CTA, 7)
+					if Objective_IsStarted(SOBJ_DefeatReynald) == false then
+						Objective_Show(OBJ_NextWaveTimer, false, false)
+						Objective_Start(SOBJ_DefeatReynald, true, true)
+					end
+				end,
+				onKilled = function()
+					g_finalCrusadersKilled = g_finalCrusadersKilled + 1
+				end,
+			},
+		},
+		{
+			id = "crusaders8southB", spawn = "south", rank = 2,
+			army = {
+				units = {
+					{type = "scar_manatarms", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},	
+					{type = "scar_archer", numSquads = 12 + t_difficulty.crusaderDifficultyTopUp},
+					{type = "scar_crossbowman", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 1},
+				},
+			},
+			callbacks = {
+				onKilled = function()
+					g_finalCrusadersKilled = g_finalCrusadersKilled + 1
+				end,
+			},
+		},
+		{
+			id = "crusaders8northC", spawn = "north", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{type = "scar_spearman", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_MANGONEL_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 2},
+				},
+			},
+			callbacks = {
+				onKilled = function()
+					g_finalCrusadersKilled = g_finalCrusadersKilled + 1
+				end,
+			},
+		},
+		{
+			id = "crusaders8midC", spawn = "mid", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{type = "scar_spearman", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_MANGONEL_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 2},
+				},
+			},
+			callbacks = {
+				onKilled = function()
+					g_finalCrusadersKilled = g_finalCrusadersKilled + 1
+				end,
+			},
+		},
+		{
+			id = "crusaders8southC", spawn = "south", rank = 3, minDifficulty = GD_NORMAL,
+			army = {
+				units = {
+					{type = "scar_spearman", numSquads = 10 + t_difficulty.crusaderDifficultyTopUp},
+					{sbp = SBP.CRUSADER_CMP.UNIT_MANGONEL_CRU, numSquads = (1 * t_difficulty.crusaderHasSiege)},
+					{sbp = SBP.CRUSADER_CMP.UNIT_TREBUCHET_CRU, numSquads = 2},
+				},
+			},
+			callbacks = {
+				onKilled = function()
+					g_finalCrusadersKilled = g_finalCrusadersKilled + 1
+				end,
+			},
+		},
+	}
+	t_crusaderLocations = {				-- these represent the various locations the crusaders make en route to Tiberias
+		tutLocation1 = {
+			id = "tut_entry",
+			marker = mkr_tut_1,
+			campsEGroup = eg_tutorial1_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtTutorialLocation1,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.FORCED,
+			nextLocations = {
+				{id = "tutLocation2", path = "mkr_crusaderpath_tutorial_2", fieldsOnPath = { "tutFields1" }},
+			},
+		},
+		tutLocation2 = {
+			id = "tut_muster",
+			marker = mkr_tut_2,
+			campsEGroup = eg_tutorial2_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtTutorialLocation2,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+				{id = "location5", path = "mkr_crusaderpath_tutorial_3", fieldsOnPath = { "tutFields2" }},
+			},
+		},
+		location1 = {
+			id = "saffuriyah",
+			displayName = "$11253262",
+			marker = mkr_location1,
+			campsEGroup = eg_location1_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtLocation1,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+				--{id = "location2", path = "mkr_crusaderpath_1_to_2", fieldsOnPath = {"path_1_2"}, priority = 3},
+				{id = "location4", path = "mkr_crusaderpath_1_to_4", fieldsOnPath = {"path_1_4"}, priority = 1},
+				--{id = "location3", path = "mkr_crusaderpath_1_to_3", fieldsOnPath = {"path_1_3"}, priority = 2},
+			},
+		},
+		location2 = {
+			id = "turan",
+			displayName = "$11253263",
+			marker = mkr_location2,
+			campsEGroup = eg_location2_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtLocation2,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+				{id = "location5", path = "mkr_crusaderpath_2_to_5", fieldsOnPath = {"path_2_5"}, priority = 2},
+				--{id = "location4", path = "mkr_crusaderpath_2_to_4", fieldsOnPath = {"path_2_4"}, priority = 1},
+			},
+		},
+		location3 = {
+			id = "cresson",
+			displayName = "$11253264",
+			marker = mkr_location3,
+			campsEGroup = eg_location3_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtLocation3,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+				--{id = "location4", path = "mkr_crusaderpath_3_to_4", fieldsOnPath = {"path_3_4"}, priority = 1},
+				{id = "location6", path = "mkr_crusaderpath_3_to_6", fieldsOnPath = {"path_3_6"}, priority = 2},
+			},
+		},
+		location4 = {
+			id = "meskana",
+			displayName = "$11253265",
+			marker = mkr_location4,
+			campsEGroup = eg_location4_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtLocation4,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+				--{id = "location5", path = "mkr_crusaderpath_4_to_5", fieldsOnPath = {"path_4_5"}, priority = 3},
+				{id = "location7", path = "mkr_crusaderpath_4_to_7", fieldsOnPath = {"path_4_7"}, priority = 1},
+				--{id = "location6", path = "mkr_crusaderpath_4_to_6", fieldsOnPath = {"path_4_6"}, priority = 2},
+			},
+		},
+		location5 = {
+			id = "hattin",
+			displayName = "$11253266",
+			marker = mkr_location5,
+			campsEGroup = eg_location5_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtLocation5,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+				{id = "location7", path = "mkr_crusaderpath_5_to_7", fieldsOnPath = {"path_5_7"}},
+			},
+		},
+		location6 = {
+			id = "kafr sabt",
+			displayName = "$11253267",
+			marker = mkr_location6,
+			campsEGroup = eg_location6_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtLocation6,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+				{id = "location7", path = "mkr_crusaderpath_6_to_7", fieldsOnPath = {"path_6_7"}},
+			},
+		},
+		location7 = {
+			id = "lubiya",
+			displayName = "$11251433",
+			marker = mkr_location7,
+			campsEGroup = eg_location7_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtLocation6,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+				--{id = "tiberias", path = "mkr_crusaderpath_7_to_tiberias", fieldsOnPath = {"path_7_tiberias"}, priority = 1},
+				{id = "location8", path = "mkr_crusaderpath_7_to_8", fieldsOnPath = {"path_7_8"}, priority = 2},
+			},
+		},
+		location8 = {
+			id = "horns",
+			displayName = "$11252241",
+			marker = mkr_location8,
+			campsEGroup = eg_location8_camp,
+			intelEvents = {
+				--onArrival = EVENTS.CrusadersArriveAtLocation8,
+			},
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+				{id = "tiberias", path = "mkr_crusaderpath_8_to_tiberias", fieldsOnPath = {"path_8_tiberias"}},
+			},
+		},
+		tiberias = {
+			id = "tiberias",
+			marker = mkr_tiberias,
+			camps = nil,
+			waitTime = CRUSADER_STOP_WAIT_TIME.NONE,
+			nextLocations = {
+			},
+		},
+	}
+	
+	-- First, we want to remove some of these on lower difficulties
+	-- Iterate back-to-front to remove these safely before processing the rest of the crusader data
+	for idx = #t_crusaderData, 1, -1 do
+		local entry = t_crusaderData[idx]
+		if entry.minDifficulty ~= nil and entry.minDifficulty > Game_GetSPDifficulty() then
+			table.remove(t_crusaderData, idx)
+		end
+	end
+	
+	-- Apply some constant stuff across all crusader groups, and count the number of real waves (i.e. 3 groups appearing at the same time are 1 wave)	
+	local currentWaveStartTime = 0
+	local currentRankStartTime = 0
+	for index, entry in pairs(t_crusaderData) do
+		entry.army.name = "army_"..entry.id
+		entry.spawned = false 
+		entry.phase = "MoveToLocation"
+		if entry.spawn == "tut1" or entry.spawn == "tut2" then
+			entry.currentLocation = t_crusaderLocations.tutLocation1
+		elseif entry.spawn == "mid" then
+			entry.firstLocation = t_crusaderLocations.location1
+		elseif entry.spawn == "north" then
+			entry.firstLocation = t_crusaderLocations.location2
+		elseif entry.spawn == "south" then
+			entry.firstLocation = t_crusaderLocations.location3
+		else
+			fatal(string.format("Crusaders %s have invalid spawn %s", entry.id, entry.spawn))
+		end
+		entry.phaseStartTime = World_GetGameTime()
+		entry.egroup_buildingsAtCurrentLocation = EGroup_CreateUnique("")
+		
+		-- Ignore tutorial waves entirely when counting wave number and setting their spawn times
+		if entry.tutorial ~= true then
+			-- Use "rank" as a proxy for wave starts
+			if entry.rank == 1 and entry.doNotResetWave ~= true then
+				-- Note that we have another wave
+				g_crusaderWaveTotal = g_crusaderWaveTotal + 1
+				-- Note the current start time
+				currentWaveStartTime = currentWaveStartTime + t_difficulty.crusaderWaveInterval
+				currentRankStartTime = currentWaveStartTime
+				print(string.format("Registering Crusader wave %s, id %s, spawns at %s seconds", g_crusaderWaveTotal, entry.id, currentWaveStartTime))
+			else
+				currentRankStartTime = currentWaveStartTime + ((entry.rank - 1) * 3)
+				print(string.format("Registering rank %s of id %s", entry.rank, entry.id))
+			end
+		end
+		
+		-- Apply the spawn time!
+		entry.spawnDelay = currentRankStartTime
+	end
+	
+	-- Apply some constant stuff across all crusater locations
+	for index, location in pairs(t_crusaderLocations) do 
+		
+		location.id = index
+		
+		location.entriesAtLocation = {
+			regular = {},
+			special = {},
+			combined = {},
+		}
+		
+		location.timeStamps = {
+			lastArrival = World_GetGameTime(),
+			lastDeparture = World_GetGameTime(),
+		}
+		
+		-- Make sure they all have a priority value
+		for idx, nextLocation in pairs(location.nextLocations) do 	
+			nextLocation.priority = nextLocation.priority or 1
+		end
+		
+		location.ranks = {}
+		local markerName = Marker_GetName(location.marker)
+		for i = 1, 10 do
+			local newName = markerName.."_rank"..i
+			if Marker_Exists(newName, "") then 
+				local newMarker = Marker_FromName(newName, "")
+				table.insert(location.ranks, newMarker)
+			else
+				break
+			end
+		end
+	end
+end
+
+function Debug_Crusaders(strID)
+	local entry = Crusaders_GetGroup(strID)
+	
+	if entry == nil then
+		print(string.format("CRUSADERS: nil found for ID %s", strID))
+		return
+	end
+	
+	print(string.format("CRUSADERS: Info for entry %s", strID))
+	print(string.format("phase: %s", entry.phase))
+	print(string.format("army.state: %s", entry.army.state.type))
+	print(string.format("currentLocation: %s", entry.currentLocation))
+	print(string.format("holdForWrapUp: %s", entry.holdForWrapUp))
+	print(string.format("newPhase: %s", entry.newPhase))
+	if scartype(currentLocation) == ST_TABLE then
+		print(string.format("lastArrival: %s", currentLocation.timeStamps.lastArrival))
+		print(string.format("lastDeparture: %s", currentLocation.timeStamps.lastDeparture))
+	end
+end
+
+function Crusaders_GetGroup(id)
+	for index, entry in pairs(t_crusaderData) do 	
+		if entry.id == id then 
+			return entry 
+		end
+	end
+end
+
+function Crusaders_GetLocation(id)
+	for index, entry in pairs(t_crusaderLocations) do 	
+		if entry.id == id then 
+			return entry 
+		end
+	end
+end
+
+--? @shortdesc Starts the intel event for crusaders, spawns the units, and starts their manager
+function Crusaders_Start()
+	Objective_Complete(TOBJ_PrepareForCrusaders, true, true)
+	-- Start spawning crusaders!
+	g_currentCrusaderIdx = 3
+	g_waveReferenceTimestamp = World_GetGameTime()
+	-- Do one wave now; it will trigger the following wave based on that wave's delay, etc
+	Crusaders_SpawnUnits(nil, {newWave = true})
+	-- Start the global manager function
+	if Rule_Exists(Crusaders_StartManager) == false then
+		Rule_AddOneShot(Crusaders_StartManager, 2)
+	end
+end
+
+function Debug_NextWave()
+	-- If the rule isn't running, we haven't started at all yet, so call start
+	if Rule_Exists(Crusaders_Manager) == false then
+		Crusaders_Start()
+		-- Remove the objective telling players to look at the fields
+		if Objective_IsComplete(OBJ_FieldScoutingGuidance) == false then
+			Objective_Complete(OBJ_FieldScoutingGuidance, false, false)
+		end
+		-- Start the tip telling players to burn the fields
+		if Objective_IsStarted(TOBJ_BurnableFields) == false then
+			Objective_Start(TOBJ_BurnableFields)
+		end
+	else
+		Crusaders_SpawnUnits()
+	end
+end
+
+function _Crusaters_PreSpawn(context, data)
+	local entry = data.entry
+	if scartype(entry) == ST_TABLE and scartype(entry.callbacks) == ST_TABLE and scartype(entry.callbacks.preSpawn) == ST_FUNCTION then
+		entry.callbacks.preSpawn()
+	end
+end
+
+--? @shortdesc Spawns a group of crusaders as one Army and assigns them to a path on the map
+function Crusaders_SpawnUnits(context, data)
+	
+	local entry = t_crusaderData[g_currentCrusaderIdx]
+	if entry == nil then
+		print(string.format("WARNING! Tried to spawn crusaders with idx %s", g_currentCrusaderIdx))
+		return
+	end
+
+	local startLocation = nil
+	local startSpawn = nil
+	local startPathName = nil
+	-- We can spawn to one of three locations, which affects some other variables
+	if entry.spawn == "mid" then
+		startLocation = t_crusaderLocations.location1
+		startSpawn = mkr_crusader_spawn_mid
+		startPathName = "mkr_crusaderpath_0_to_1"
+		fullPathName = "mkr_crusaderpath_ui_mid"
+	elseif entry.spawn == "north" then
+		startLocation = t_crusaderLocations.location2
+		startSpawn = mkr_crusader_spawn_north
+		startPathName = "mkr_crusaderpath_0_to_2"
+		fullPathName = "mkr_crusaderpath_ui_north"
+	elseif entry.spawn == "south" then
+		startLocation = t_crusaderLocations.location3
+		startSpawn = mkr_crusader_spawn_south
+		startPathName = "mkr_crusaderpath_0_to_3"
+		fullPathName = "mkr_crusaderpath_ui_south"
+	elseif entry.spawn == "tut1" then
+		startLocation = t_crusaderLocations.tutLocation1
+		startSpawn = mkr_tutorial_crusader_spawn
+		startPathName = "mkr_crusaderpath_tutorial_1"
+		fullPathName = "mkr_crusaderpath_ui_tutorial"
+	elseif entry.spawn == "tut2" then
+		startLocation = t_crusaderLocations.tutLocation1
+		startSpawn = mkr_tutorial_crusader_spawn
+		startPathName = "mkr_crusaderpath_tutorial_1"
+		fullPathName = "mkr_path_tutorial_half"
+	end
+	
+	if CRUSADERS_USE_AI == true then
+		-- create and initialize the army module for this entry	
+		entry.army.player = player2
+		entry.army.spawn = startSpawn
+		Army_Init(entry.army)
+		-- add the units spawned through this module into the global crusaders entry
+		entry.sgroup = entry.army.sgroup
+	else
+		entry.sgroup = SGroup_CreateIfNotFound(entry.army.name)
+		CreateUnits(player2, entry.army.units, startSpawn, entry.sgroup, Marker_GetDirection(startSpawn))
+		entry.fullPath = fullPathName
+		entry.hasNewPath = true
+		entry.focusStart = -1 * CRUSADER_PURSUIT_FOCUS
+		Rule_Add(Crusaders_ManageEntry, {entry = entry})
+	end
+	
+	SGroup_AddGroup(sg_crusaders, entry.sgroup)
+	
+	-- Add the group to the location itself
+	entry.firstLocation = startLocation
+	-- Mark group as spawned
+	entry.spawned = true
+	entry.firstFrame = true
+	-- Note the path name
+	entry.pathName = startPathName
+	
+	-- Set them to walk more slowly when not in combat
+	Modify_UnitSpeedWhenNotInCombat(entry.sgroup, NONCOMBAT_WALK_SPEED, MUT_Multiplication)
+	
+	print(string.format("Spawned crusaders: %s at %s to location %s", entry.id, Marker_GetName(startSpawn), startLocation.id))
+	
+	-- move the index to the next group (and exit if this was the final group)
+	g_currentCrusaderIdx = g_currentCrusaderIdx + 1
+	
+	-- Update the wave counter, if necessary
+	if scartype(data) == ST_TABLE and data.newWave == true then
+		g_crusaderCurrentWave = g_crusaderCurrentWave + 1
+		local sgroupName = "sg_wave_"..g_crusaderCurrentWave.."_full"
+		t_waveSGroups[g_crusaderCurrentWave] = SGroup_CreateIfNotFound(sgroupName)
+	end
+	
+	if g_crusaderCurrentWave >= 1 then
+		-- Whatever the current wave SGroup is, add these units to it
+		SGroup_AddGroup(t_waveSGroups[g_crusaderCurrentWave], entry.sgroup)
+	end
+	
+	-- trigger a callback if specified
+	if scartype(entry.callbacks) == ST_TABLE and scartype(entry.callbacks.onSpawned) == ST_FUNCTION then 
+		entry.callbacks.onSpawned(entry)
+		entry.callbacks.onSpawned = nil
+	end
+	
+	-- The AI groups can get stuck on spawn and need a kick in the rear to move
+	if CRUSADERS_USE_AI == true then
+		local spawnPos = SGroup_GetPosition(entry.sgroup)
+		Rule_AddOneShot(Crusaders_CatchStragglersOnSpawn, 1, {entry = entry, spawnPos = spawnPos})
+	end
+	
+	if g_currentCrusaderIdx > #t_crusaderData and context ~= nil then 
+		b_allCrusadersSpawned = true 
+		Rule_RemoveMe()
+		return
+	end
+	
+	-- If this is part of the main sequence and there are more crusaders to come, check for a preSpawn function
+	local nextWaveIdx = g_currentCrusaderIdx
+	local nextEntry = t_crusaderData[nextWaveIdx]
+	if entry.tutorial ~= true then
+		if scartype(nextEntry.callbacks) == ST_TABLE then
+			if scartype(nextEntry.callbacks.preSpawn) == ST_FUNCTION then
+				local delayFromNow = nextEntry.spawnDelay - entry.spawnDelay
+				Rule_AddOneShot(_Crusaters_PreSpawn, delayFromNow - CRUSADER_INCOMING_ANIMATION_TIME, {entry = nextEntry})
+			end
+		end
+	end
+	
+	-- If this isn't a new wave, don't do anything else, stop now
+	if scartype(data) ~= ST_TABLE or data.newWave ~= true then
+		return
+	end
+	
+	-- If this is a NEW WAVE, we need to spawn all proximate groups (within the wave buffer), and queue up the first group of the next wave
+	local timeElapsed = World_GetGameTime() - g_waveReferenceTimestamp
+	-- Spawn all other groups that are part of this wave, and then also queue the spawn of the first group of the next wave
+	local refSpawnDelay = entry.spawnDelay
+	while nextEntry ~= nil do
+		local delayFromPrior = nextEntry.spawnDelay - refSpawnDelay
+		local delayFromNow = nextEntry.spawnDelay - entry.spawnDelay
+		-- Two things are possible: Either the next entry is part of this wave, or it isn't
+		-- If it is part of this wave, its spawnDelay will be within WAVE_BUFFER of the spawnDelay that triggered this call of SpawnUnits()
+		if delayFromPrior >= 0 and delayFromPrior <= WAVE_BUFFER then
+			-- This means the next one is part of the same wave
+			Rule_AddOneShot(Crusaders_SpawnUnits, delayFromNow, {newWave = false})
+			print(string.format("Group %s (SAME WAVE) has delay %s, scheduled in %s seconds (elapsed: %s)", nextEntry.id, nextEntry.spawnDelay, delayFromNow, timeElapsed))
+		elseif delayFromPrior >= WAVE_BUFFER then
+			-- This means the next one is a new wave!
+			Objective_StartTimer(OBJ_NextWaveTimer, COUNT_DOWN, delayFromNow)
+			Rule_AddOneShot(Crusaders_SpawnUnits, delayFromNow, {newWave = true})
+			print(string.format("Group %s (NEW WAVE) has delay %s, scheduled in %s seconds (elapsed: %s)", nextEntry.id, nextEntry.spawnDelay, delayFromNow, timeElapsed))
+			-- Play onQueued for new waves
+			if scartype(nextEntry.callbacks) == ST_TABLE and scartype(nextEntry.callbacks.onQueued) == ST_FUNCTION then
+				nextEntry.callbacks.onQueued()
+			end
+			-- That's it, we're definitely done - this last entry will handle any of its proximates in its own wave
+			return
+		else
+			fatal(string.format("Crusader wave spawn delays should be in order in the table! Subsequent entry %s has delay %s, compared to prior entry with delay %s", nextEntry.id, nextEntry.spawnDelay, refSpawnDelay))
+		end
+		-- Update the reference
+		refSpawnDelay = nextEntry.spawnDelay
+		-- Get the next one if we haven't exited yet
+		nextWaveIdx = nextWaveIdx + 1
+		nextEntry = t_crusaderData[nextWaveIdx]
+	end
+end
+
+--? @shortdesc This function is for handling odd cases where the AI fails to start for some Crusader units, giving them a little kick to get moving if they didn't already
+function Crusaders_CatchStragglersOnSpawn(context, data)
+	local currentPos = SGroup_GetPosition(data.entry.sgroup)
+	local distanceTravelled = Util_GetDistance(data.spawnPos, currentPos)
+	if distanceTravelled < 5 then
+		print(string.format("Crusaders %s stalled, distance was %s, kicking along...", data.entry.id, distanceTravelled))
+		Crusaders_MoveToLocation_Start(data.entry, "Crusaders_CatchStragglersOnSpawn")
+	end
+end
+
+--? @shortdesc This function is for handling cases where the AI just gets stuck
+function Crusaders_CatchStragglersOngoing(context, data)
+	-- Stop if the entry is no longer valid
+	if data.entry == nil or data.entry.army == nil or Army_IsDead(data.entry.army) == true then
+		return
+	end
+	
+	local currentPos = SGroup_GetPosition(data.entry.army.sgroup)
+	-- Make sure this gets triggered again
+	Rule_AddOneShot(Crusaders_CatchStragglersOngoing, 5, {entry = data.entry, lastPos = currentPos, condition = data.condition})
+	
+	-- If there's a condition and it's not true, don't bother trying to kick the stragglers along
+	if data ~= nil and scartype(data.condition) == ST_FUNCTION and data.condition() ~= true then
+		return
+	end
+	
+	print(string.format("Straggler check between %s and %s (army.sgroup count? %s)", data.lastPos, currentPos, SGroup_Count(data.entry.army.sgroup)))
+	local distanceTravelled = Util_GetDistance(data.lastPos, currentPos)
+	
+	if distanceTravelled < 5 then
+		print(string.format("Crusaders %s stalled! Distance was %s, had target %s, kicking along...", data.entry.id, distanceTravelled, RovingArmy_GetTarget(data.entry.army)))
+		Crusaders_MoveToLocation_Start(data.entry, "Crusaders_CatchStragglersOngoing")
+	end
+end
+
+function Crusaders_GetLocation(locationID)
+	local targetLocation = nil
+	for index, location in pairs(t_crusaderLocations) do 
+		if location.id == locationID then
+			return location
+		end
+	end
+	fatal(string.format("Can't find location with ID %s", locationID))
+end
+
+--? @shortdesc Changes the waitTime of a location
+function Crusaders_UpdateLocationWaitTime(locationID, newWaitTime)
+	local targetLocation = Crusaders_GetLocation(locationID)
+	targetLocation.waitTime = newWaitTime
+end
+
+--? @shortdesc Forces the next entry at this location to march onward
+function Crusaders_ForceMarchNext(locationID)
+	local targetLocation = Crusaders_GetLocation(locationID)
+	local targetEntry = nil
+	if #targetLocation.entriesAtLocation.combined > 0 then
+		targetEntry = targetLocation.entriesAtLocation.combined[1]
+	end
+	
+	-- If there's somebody there...
+	if targetEntry ~= nil then
+		print("Switching due to: targetEntry ~= nil")
+		Crusaders_SwitchToPhase(targetEntry, "MoveToLocation")
+	else
+		print(string.format("No valid entries at ForceMarch location %s. Waiting...", targetLocation.id))
+		targetLocation.forceMarchNext = true
+	end
+end
+
+function Crusaders_AddGroupToLocation(group, location)
+	if Table_Contains(location.entriesAtLocation.regular, group) == false then 
+		table.insert(location.entriesAtLocation.regular, group)
+	end
+	if Table_Contains(location.entriesAtLocation.combined, group) == false then 
+		table.insert(location.entriesAtLocation.combined, group)
+	end
+	
+	-- If this location wants to force-march its next addition, though, we should do that now!
+	if location.forceMarchNext == true then
+		print("Switching due to: location.forceMarchNext == true")
+		Crusaders_SwitchToPhase(group, "MoveToLocation")
+		location.forceMarchNext = nil
+	end
+end
+
+function Crusaders_RemoveGroupFromLocation(group, location)
+	if location == nil then
+		return	
+	end
+	
+	local _RemoveFromList = function(list)
+		for index = #list, 1, -1 do 
+			if list[index] == group then 
+				table.remove(list, index)
+			end
+		end
+	end
+	
+	_RemoveFromList(location.entriesAtLocation.special)
+	_RemoveFromList(location.entriesAtLocation.regular)
+	_RemoveFromList(location.entriesAtLocation.combined)
+	
+end
+
+--? @shortdesc Get a target that includes a path/route from a group's current location to their new location, and the spot where they'll build a tent
+function Crusaders_GetTarget_Route(group, newLocation, oldLocation, pathName)
+
+	local targets = {} 
+	
+	-- If we already know the path, just grab that
+	if scartype(pathName) == ST_STRING then
+		local path = AllMarkers_FromName(pathName, "")
+		if scartype(path) == ST_TABLE then
+			for index, marker in ipairs(path) do 
+				table.insert(targets, marker)
+			end
+		else
+			fatal(string.format("No valid path table found for name %s", pathName))
+		end
+		
+	-- Otherwise, pick whatever path is available based on the old location
+	elseif oldLocation ~= nil then
+		for index, nextLocation in pairs(oldLocation.nextLocations) do
+			if nextLocation.id == newLocation.id then
+				if scartype(nextLocation.path) == ST_STRING then
+					local path = AllMarkers_FromName(nextLocation.path, "")
+					if scartype(path) == ST_TABLE then
+						for index, marker in ipairs(path) do 
+							table.insert(targets, marker)
+						end
+					end
+				end
+			end
+		end 
+	end
+	
+	local finalTarget = {
+		position = Marker_GetPosition(newLocation.marker),
+		direction = Marker_GetDirection(newLocation.marker),
+		combatRangeEnRoute = 25,
+		combatRangeAtTarget = Marker_GetProximityRadiusOrDefault(newLocation.marker, 35),
+		attackMove = true,
+	}
+	
+	if scartype(group.rank) == ST_NUMBER and scartype(newLocation.ranks) == ST_TABLE and group.rank <= #newLocation.ranks then
+		finalTarget.idlePosition = Marker_GetPosition(newLocation.ranks[group.rank])
+		finalTarget.useCustomDirection = true
+		finalTarget.direction = Marker_GetDirection(newLocation.ranks[group.rank])
+	end
+	
+	table.insert(targets, finalTarget)
+	print(string.format("%s nodes found for path %s", #targets, pathName))
+
+	return targets
+	
+end
+
+function Crusaders_GetPathName(oldLocation, newLocation)
+	if oldLocation ~= nil then
+		for index, nextLocation in pairs(oldLocation.nextLocations) do 
+			if nextLocation.id == newLocation.id then
+				return nextLocation.path
+			end
+		end 
+	end
+end
+
+--? @shortdesc Displays a path on the minimap for the given route, and stores the name so it can be cleared later when needed
+function Crusaders_AddMinimapPathIcons(pathName)
+	-- Make sure this is a proper table
+	if t_allMinimapPaths == nil then 
+		t_allMinimapPaths = {}
+	end
+	
+	-- Needs to be a string or something is wrong
+	if scartype(pathName) ~= ST_STRING then
+		fatal(string.format("Minimap path name isn't a string! It's a %s, value: %s", scartype_tostring(index), index))
+	end
+	
+	if t_allMinimapPaths[pathName] == nil then
+		table.insert(t_allMinimapPaths, pathName)
+		local markerList = AllMarkers_FromName(pathName, "")
+		MarkerPaths_GenerateIcons(pathName, markerList, "military_route_player_7", 22, 0.2)
+	else
+		-- Table already contains this path, all is well
+	end
+end
+
+--? @shortdesc Cleares away all minimap paths
+function Crusaders_ClearAllMinimapPaths()
+	-- If these don't exist yet, nothing to do
+	if t_allMinimapPaths == nil then 
+		return
+	end
+	
+	-- Clear all icons for path names currently in the table
+	for index, pathName in pairs(t_allMinimapPaths) do 
+		MarkerPaths_ClearIcons(pathName, true)
+	end
+	
+	-- Reset the table
+	t_allMinimapPaths = {}
+end
+
+--? @shortdesc Calculates the current path from whatever start point to Tiberias and displays it
+function Crusaders_ChartFullMinimapPath(startLocation)
+	
+	debug_timesCharted = debug_timesCharted or 0
+	debug_timesCharted = debug_timesCharted + 1
+	local startLocationDebug = "Nil"
+	if startLocation ~= nil then
+		startLocationDebug = startLocation.id
+	end
+	print(string.format("Charting minimap path. Iteration %s. startLocation: %s", debug_timesCharted, startLocationDebug))
+	
+	-- If we're passing something in, make sure that's the location we use
+	-- Otherwise take whatever was here previously
+	g_pathStartLocation = startLocation or g_pathStartLocation
+	if g_pathStartLocation == nil then
+		fatal(string.format("INVALID g_pathStartLocation is nil, startLocation: %s, g_pathStartLocation: %s", startLocationDebug, scartype_tostring(g_pathStartLocation)))	
+	end
+	
+	-- If that was valid, we can begin! Clear the old paths
+	Crusaders_ClearAllMinimapPaths()
+	
+	-- First, chart the entries, then chart the path to Tiberias from each one
+	local currentLocation = g_pathStartLocation
+	if g_pathStartLocation == t_crusaderLocations.tutLocation1 then
+		Crusaders_AddMinimapPathIcons("mkr_crusaderpath_tutorial_1")
+		while currentLocation ~= nil and currentLocation ~= t_crusaderLocations.tiberias do
+			local nextLocationChoice = Crusaders_ChooseNextLocation(currentLocation)
+			Crusaders_AddMinimapPathIcons(nextLocationChoice.path)
+			currentLocation = t_crusaderLocations[nextLocationChoice.id]
+		end
+	else
+		Crusaders_AddMinimapPathIcons("mkr_crusaderpath_0_to_1")
+		Crusaders_AddMinimapPathIcons("mkr_crusaderpath_0_to_2")
+		Crusaders_AddMinimapPathIcons("mkr_crusaderpath_0_to_3")
+		
+		local locationsAlreadyCharted = {}
+		
+		local chartFromEntry = function(entryLocation)
+			currentLocation = entryLocation
+			while currentLocation ~= nil and currentLocation ~= t_crusaderLocations.tiberias and Table_Contains(locationsAlreadyCharted, currentLocation) == false do
+				table.insert(locationsAlreadyCharted, currentLocation)
+				local nextLocationChoice = Crusaders_ChooseNextLocation(currentLocation)
+				Crusaders_AddMinimapPathIcons(nextLocationChoice.path)
+				currentLocation = t_crusaderLocations[nextLocationChoice.id]
+			end
+		end
+		
+		chartFromEntry(t_crusaderLocations.location1)
+		chartFromEntry(t_crusaderLocations.location2)
+		chartFromEntry(t_crusaderLocations.location3)
+	end
+end
+
+--? @shortdesc Kicks off a manager function run at regular intervals
+function Crusaders_StartManager()
+	if Rule_Exists(Crusaders_Manager) == false then
+		Rule_AddInterval(Crusaders_Manager, 3)
+	end
+end
+
+--? @shortdesc Removes the manager function
+function Crusaders_StopManager()
+	if Rule_Exists(Crusaders_Manager) then 
+		Rule_Remove(Crusaders_Manager)
+	end
+end
+
+--? @shortdesc Call in the _End function of a phase to denote which phase to switch to.
+function Crusaders_SwitchToPhase(entry, newPhase)
+	
+	entry.newPhase = newPhase
+
+	if entry.phase == "MoveToLocation" then 
+		Crusaders_MoveToLocation_End(entry)
+	elseif entry.phase == "WaitAtEncampment" then 
+		Crusaders_WaitAtEncampment_End(entry)
+	end
+	
+	local startLocation = entry.firstLocation.id
+	if entry.currentLocation ~= nil then
+		startLocation = entry.currentLocation.id
+	end
+	
+	print(string.format("HATTIN - crusaders %s at %s switched phase from %s to %s", entry.id, startLocation, entry.phase, newPhase))
+end
+
+--? @shortdesc Some phases, when they end, need a bit of time to complete wrapping up. Calling this function in the _End function of a phase will delay calling the _Start function of the next phase until the ReleaseHold function is called.
+function Crusaders_HoldForWrapUp(entry)
+	entry.holdForWrapUp = true 
+end
+
+--? @shortdesc Call this function when the wrapup is complete
+function Crusaders_ReleaseHold(entry)
+	entry.holdForWrapUp = nil
+end
+
+
+function Crusaders_StartNewPhase(entry)
+
+	entry.phase = entry.newPhase
+	entry.phaseStartTime = World_GetGameTime()
+	entry.phaseData = {}
+	
+	-- trigger the new phase's Start function
+	if entry.newPhase == "MoveToLocation" then 
+		Crusaders_MoveToLocation_Start(entry, "Crusaders_StartNewPhase")
+	elseif entry.newPhase == "WaitAtEncampment" then 
+		Crusaders_WaitAtEncampment_Start(entry)		
+	end
+	
+	-- delete the "new phase" flags, as we are in that phase now
+	entry.newPhase = nil
+	
+end
+
+--? @shortdesc Runs the different phases. Each has a _Start, _IsComplete and _End function to do the actual work in that phase, and are defined below
+function Crusaders_Manager()			-- 
+	
+	for index, entry in pairs(t_crusaderData) do 
+
+		if entry.spawned == true and entry.firstFrame ~= true then
+			if entry.killed ~= true then 
+				-- If the entry hasn't been flagged as killed yet, but has no units, flag it as killed
+				if SGroup_CountSpawned(entry.sgroup) == 0 then
+					entry.killed = true
+					print(string.format("Crusaders %s killed", entry.id))
+					-- remove from its current location
+					Crusaders_RemoveGroupFromLocation(entry, entry.currentLocation)
+					-- trigger onKilled callback
+					if scartype(entry.callbacks) == ST_TABLE and scartype(entry.callbacks.onKilled) == ST_FUNCTION then
+						entry.callbacks.onKilled(entry)
+						entry.callbacks.onKilled = nil 
+					end
+				else
+					-- trigger callbacks if necessary
+					if scartype(entry.callbacks) == ST_TABLE then
+						if scartype(entry.callbacks.onSpotted) == ST_FUNCTION and Player_CanSeeSGroup(player1, entry.sgroup, ANY) then 
+							entry.callbacks.onSpotted(entry)
+							entry.callbacks.onSpotted = nil 
+						elseif scartype(entry.callbacks.onApproached) == ST_FUNCTION and Prox_ArePlayersNearMarker(player1, Util_GetPosition(entry.sgroup), ANY, 60) then 
+							entry.callbacks.onApproached(entry)
+							entry.callbacks.onApproached = nil 
+						elseif scartype(entry.callbacks.onEngaged) == ST_FUNCTION and (SGroup_IsUnderAttack(entry.sgroup, ANY, 2) or SGroup_IsDoingAttack(entry.sgroup, ANY, 2)) then 
+							entry.callbacks.onEngaged(entry)
+							entry.callbacks.onEngaged = nil 
+						end
+					end
+					
+					-- Only do these if we're using the old AI system
+					if CRUSADERS_USE_AI == true then
+						if entry.holdForWrapUp == true then
+							-- do nothing, we are in a hold state for the time being
+							print(string.format("%s holding for wrapup", entry.id))
+						elseif entry.newPhase ~= nil then 
+							-- do the transition into the new phase if the entry has a newPhase set
+							print(string.format("%s starting new phase, will be %s", entry.id, entry.newPhase))
+							Crusaders_StartNewPhase(entry)
+						else
+							if entry.phase == "MoveToLocation" then 
+								Crusaders_MoveToLocation_Update(entry)
+							elseif entry.phase == "WaitAtEncampment" then 
+								Crusaders_WaitAtEncampment_Update(entry)
+							else
+								print(string.format("%s has no valid phase!", entry.id))
+							end
+						end
+					end
+				end
+			end
+		elseif entry.spawned == true and entry.firstFrame == true then
+			-- We do this to avoid a conflict between the Army being given an encounter twice in the same frame, once on spawn and once on MoveToLocation
+			entry.firstFrame = false
+		end
+	end
+end
+
+function Crusaders_ManageEntry(context, data)
+	
+	local entry = data.entry
+	-- Remove the rule if the SGroup is empty
+	if SGroup_CountSpawned(entry.sgroup) <= 0 then
+		Rule_RemoveMe()
+		return
+	end
+	
+	-- Whether the group is in combat is important
+	local isUnderAttack = SGroup_IsUnderAttack(entry.sgroup, ANY, CRUSADER_PURSUIT_TIME)
+	local isAttacking = SGroup_IsDoingAttack(entry.sgroup, ANY, CRUSADER_PURSUIT_TIME)
+	if isUnderAttack == true or isAttacking == true then
+		entry.lastCombat = World_GetGameTime()
+	end
+	
+	-- If we've just spawned or reset the full path, do this right away
+	if entry.hasNewPath == true then
+		entry.hasNewPath = nil
+		entry.onTrack = true
+		_Crusaders_IssuePathOrders(entry)
+	
+	-- If someone is under attack, and we're following our path still, everyone attack that attacker together
+	elseif entry.onTrack == true and (isUnderAttack or isAttacking) then
+		local timeSinceFocusStart = World_GetGameTime() - entry.focusStart
+		if timeSinceFocusStart > CRUSADER_PURSUIT_FOCUS then 
+			local retaliatePosition = nil
+			if isUnderAttack == true then
+				SGroup_Clear(sg_temp)
+				SGroup_GetLastAttacker(entry.sgroup, sg_temp, CRUSADER_PURSUIT_TIME)
+				if SGroup_Count(sg_temp) > 0 then
+					retaliatePosition = SGroup_GetPosition(sg_temp)
+				end
+			else
+				-- Find whoever we're attacking
+				local firstTarget = nil
+				local _GetAttackTarget = function(gid, idx, sid)
+					if firstTarget == nil then
+						Squad_GetAttackTargets(sid, sg_temp)
+						if SGroup_CountSpawned(sg_temp) > 0 then
+							firstTarget = SGroup_GetSquadAt(sg_temp, 1)
+						end
+					end
+				end
+				SGroup_ForEach(entry.sgroup, _GetAttackTarget)
+				if firstTarget ~= nil then
+					retaliatePosition = Util_GetPosition(firstTarget)
+				end
+			end
+			
+			if retaliatePosition ~= nil then
+				entry.onTrack = false
+				entry.deviationPos = SGroup_GetPosition(entry.sgroup)
+				SGroup_AttackMove(entry.sgroup, retaliatePosition, false)
+				print(string.format("Entry %s diverging from path to attack!", entry.id))
+			else
+				print(string.format("WARNING: CRUSADER entry %s provoked, but no valid retaliation target! Attacked? %s, Attacking? %s", entry.id, isUnderAttack, isAttacking))
+			end
+		else
+			print(string.format("CRUSADER entry %s provoked, but only %s seconds since focus regained", entry.id, timeSinceFocusStart))
+		end
+	-- If we're not on track but aren't fighting, get back on track
+	elseif entry.onTrack ~= true then
+		local finishedCombat = (World_GetGameTime() - entry.lastCombat) > 6
+		local deviationDist = Util_GetDistanceSquared(entry.deviationPos, entry.sgroup)
+		local farOffTrack = deviationDist > CRUSADER_PURSUIT_LEASH
+		if finishedCombat == true or farOffTrack == true then
+			entry.onTrack = true
+			entry.firstAttackTarget = nil
+			_Crusaders_IssuePathOrders(entry)
+			-- Finally, set a focus timer which will prevent the entry from running off-path again for a set time
+			entry.focusStart = World_GetGameTime()
+			print(string.format("CRUSADER entry %s leashing! Distance squared: %s, combat finished? %s", entry.id, deviationDist, finishedCombat))
+		end
+		
+	-- If we're on track but also at the end of the road, signal completion
+	elseif Util_GetDistanceSquared(entry.endPoint, entry.sgroup) < 25 and SGroup_IsIdle(entry.sgroup, ALL) then
+		print(string.format("CRUSADER entry %s has arrived at the end of its full path!", entry.id))
+	end
+	
+end
+
+--? @shortdesc Updates the path of a non-AI Crusader group
+function Crusaders_UpdateFullPath(entry, newPath)
+	if scartype(entry) ~= ST_TABLE and scartype(newPath) ~= ST_STRING then
+		fatal(string.format("Can't update full path of entry (entry type: %s, path type: %s", scartype_tostring(entry), scartype_tostring(newPath)))
+		return
+	end
+	
+	entry.hasNewPath = true
+	entry.fullPath = newPath
+	entry.endPoint = nil
+	print(string.format("Entry %s has had its full path updated to %s", entry.id, newPath))
+end
+
+function _Crusaders_IssuePathOrders(entry)
+	local targets = AllMarkers_FromName(entry.fullPath, "")
+	assert(#targets > 0, string.format("Entry %s has no targets along path: %s", entry.id, entry.fullPath))
+	
+	-- First figure out where on the path we're starting
+	local closestDist = nil
+	local closestStartIdx = nil
+	for idx, target in pairs(targets) do
+		local thisDist = Util_GetDistanceSquared(entry.sgroup, target)
+		if closestDist == nil or thisDist < closestDist then
+			closestDist = thisDist
+			closestStartIdx = idx
+		end
+	end
+	
+	-- Then issue further orders along the path from there
+	for idx = closestStartIdx, #targets, 1 do
+		-- For the first one, force-move onto the path
+		if idx == closestStartIdx then
+			SGroup_Move(entry.sgroup, targets[idx], false)
+		-- For subsequent markers on the path, attack-move
+		else
+			SGroup_AttackMove(entry.sgroup, targets[idx], true)
+		end
+		-- Update the endpoint in case this path is different from the past one
+		if idx == #targets then
+			entry.endPoint = targets[idx]
+		end
+	end
+	
+	print(string.format("Entry %s set on path with %s targets!", entry.id, (#targets - closestStartIdx + 1)))
+end
+
+-- 
+-- Move to location phase
+--
+
+function Crusaders_MoveToLocation_Start(entry, source)
+	
+	local nextLocation = nil
+	local oldLocation = nil
+	local pathName = nil
+	-- If there is a current location, choose the next one
+	if entry.currentLocation ~= nil then
+		local nextLocationChoice = Crusaders_ChooseNextLocation(entry.currentLocation)
+		if nextLocationChoice == nil then
+			local oldLocationString = "NIL"
+			if oldLocation ~= nil then
+				oldLocationString = oldLocation.id
+			end
+			print(string.format("WARNING: Crusaders %s moving (%s) from %s could not find a new location!", entry.id, source, oldLocationString))
+			nextLocation = entry.firstLocation
+			pathName = entry.pathName
+		else
+			nextLocation = t_crusaderLocations[nextLocationChoice.id]
+			oldLocation = entry.currentLocation
+			-- We need to take the path from the nextLocationChoice table, since we might have multiple paths to the next location
+			-- "nextLocationChoice" was calculated on a path level
+			pathName = nextLocationChoice.path
+			print(string.format("Crusaders %s moving (%s) from %s to %s along path %s", entry.id, source, oldLocation.id, nextLocation.id, pathName))
+		end
+	else
+		nextLocation = entry.firstLocation
+		pathName = entry.pathName
+		print(string.format("Crusaders %s moving (%s) from spawn %s to %s along path %s", entry.id, source, entry.spawn, nextLocation.id, pathName))
+	end
+	
+	-- set the target of the army module to the new location
+	local targets = Crusaders_GetTarget_Route(entry, nextLocation, oldLocation, pathName)
+	
+	if CRUSADERS_USE_AI == true then
+		Army_SetTargets(entry.army, targets)
+	else
+		for idx, target in pairs(targets) do
+			if Util_HasPosition(target) == true then
+				SGroup_AttackMove(entry.sgroup, Util_GetPosition(target), true)
+			elseif Util_HasPosition(target.position) == true then
+				SGroup_AttackMove(entry.sgroup, target.position, true)
+			else
+				fatal(string.format("Target %s for %s has no valid position!"), idx, entry.army.name)
+			end
+		end
+	end
+	
+	-- update target on the group
+	entry.currentLocation = nextLocation
+	entry.pathName = pathName
+	
+	Crusaders_RemoveGroupFromLocation(entry, oldLocation)
+	Crusaders_AddGroupToLocation(entry, nextLocation)
+	
+end
+
+function Crusaders_MoveToLocation_Update(entry)
+	
+	local hasArrived = SGroup_IsIdle(entry.sgroup, ALL)
+	if CRUSADERS_USE_AI == true then
+		hasArrived = Army_IsDefending(entry.army)
+	end
+	
+	if entry.currentLocation ~= nil and entry.currentLocation.id == "tiberias" then 
+		return
+	elseif hasArrived == true then
+		if entry.currentLocation == nil then
+			print(string.format("HATTIN - Crusaders %s don't have currentLocation", entry.id))
+		else
+			if scartype(entry.currentLocation.callbacks) == ST_TABLE and scartype(entry.currentLocation.callbacks.onArrival) == ST_FUNCTION then 
+			entry.currentLocation.callbacks.onArrival()
+			end
+			
+			-- trigger any speech as these units approach
+			if scartype(entry.currentLocation.intelEvents) == ST_TABLE and scartype(entry.currentLocation.intelEvents.onArrival) == ST_FUNCTION  then 
+				Util_StartIntel(entry.currentLocation.intelEvents.onArrival)
+				entry.currentLocation.intelEvents.onArrival = nil
+			end
+	
+			-- Updates the location so it knows when a group most recently arrived
+			entry.currentLocation.timeStamps.lastArrival = World_GetGameTime()
+		end
+		Crusaders_SwitchToPhase(entry, "WaitAtEncampment")
+	end
+end
+
+function Crusaders_MoveToLocation_End(entry)
+	entry.pathName = nil 
+end
+
+-- 
+-- Wait At Encampment phase
+--
+
+function Crusaders_WaitAtEncampment_Start(entry)
+	-- If waitTime is exactly 0, move along without waiting at all!
+	if entry.currentLocation == nil or entry.currentLocation.waitTime == 0 then
+		print("Switching in Start due to: entry.currentLocation.waitTime == 0")
+		Crusaders_SwitchToPhase(entry, "MoveToLocation")
+	end
+end
+
+--? @shortdesc Run regularly on a per-entry basis
+function Crusaders_WaitAtEncampment_Update(entry)
+
+	local currentLocation = entry.currentLocation
+	if currentLocation == nil then
+		return
+	end
+	
+	local gameTime = World_GetGameTime()
+	-- If wait time is more than 0, wait our turn
+	if entry.currentLocation.waitTime > 0 then
+		local enoughTimeSinceArrival = gameTime - currentLocation.timeStamps.lastArrival >= entry.currentLocation.waitTime
+		local enoughTimeSinceDeparture = gameTime - currentLocation.timeStamps.lastDeparture >= CRUSADER_LOCATION_DEPARTURE_STAGGER_TIME
+		if enoughTimeSinceArrival and enoughTimeSinceDeparture and currentLocation.entriesAtLocation.combined[1] == entry then
+			print("Switching due to: enoughTimeSinceArrival")
+			Crusaders_SwitchToPhase(entry, "MoveToLocation")
+		end
+	elseif entry.currentLocation.waitTime == 0 then
+		print("Switching in Update due to: entry.currentLocation.waitTime == 0")
+		Crusaders_SwitchToPhase(entry, "MoveToLocation")
+	-- If waitTime is LESS than 0, we're effectively saying that entry will never move unless forced to by the ForceMarch function
+	elseif entry.currentLocation.waitTime < 0 then
+		-- Don't do anything
+	end
+end
+
+--? @shortdesc
+function Crusaders_WaitAtEncampment_End(entry)
+	
+	local entry = entry
+	local currentLocation = entry.currentLocation
+	if currentLocation ~= nil then
+		currentLocation.timeStamps.lastDeparture = World_GetGameTime()
+		table.remove(currentLocation.entriesAtLocation, 1)
+	end
+end
+
+--
+-- logic for choosing which location to move to from the current location
+--
+
+function Crusaders_ChooseNextLocation(location)
+	
+	local choicesOpen = {}
+	local choicesBurning = {}
+	for index, nextLocation in pairs(location.nextLocations) do 
+		local choice = {
+			nextLocation = nextLocation,
+			scores = {},
+		}
+		
+		-- Fire is decisive - burning paths are second-class, regardless of whatever other scores are at play
+		local firesOnPath = Crusaders_ChooseNextLocation_ScoreFires(nextLocation)
+		-- These factors are weighting but not decisive
+		choice.scores.priority = nextLocation.priority
+		choice.scores.deaths = 0
+		
+		-- Sum the scores
+		local total = 0
+		for i, score in pairs(choice.scores) do
+			total = total + score
+		end
+		choice.finalScore = total
+		
+		-- Depending on whether or not it's burning, log the choice
+		-- The actual number of fires doesn't matter here
+		if firesOnPath > 0 then
+			table.insert(choicesBurning, choice)
+		else
+			table.insert(choicesOpen, choice)
+		end
+	end
+	
+	local finalChoice = nil
+	-- Sort from lowest to highest finalScore
+	if #choicesOpen > 0 then
+		table.sort(choicesOpen, function(a,b) return a.finalScore < b.finalScore end)
+		finalChoice = choicesOpen[1].nextLocation
+	elseif #choicesBurning > 0 then
+		table.sort(choicesBurning, function(a,b) return a.finalScore < b.finalScore end)
+		finalChoice = choicesBurning[1].nextLocation
+	else
+		if location == nil then
+			print(string.format("WARNING: Nil location, can't choose next location!"))
+		else
+			print(string.format("WARNING: No next location for %s", location.id))
+		end
+	end
+	-- Return whichever has the lowest score (i.e. hindrances), preferring open choices if at all possible
+	return finalChoice
+end
+
+--? @shortdesc Scores a path from 0-10 based on the ratio of fields on fire on the way. More fire yields a higher score.
+function Crusaders_ChooseNextLocation_ScoreFires(nextLocation)
+
+	local totalNumFields = 0
+	local totalNumOnFire = 0
+	for index, name in pairs(nextLocation.fieldsOnPath) do
+		local field = BurnableFields_GetField(name)
+		if field ~= nil then
+			-- Count the total number of entities in this field and add them to the path's overall count
+			totalNumFields = totalNumFields + field.numFields
+			-- Count how many of those entities are on fire and add them to the path's on fire count
+			totalNumOnFire = totalNumOnFire + BurnableFields_CountFieldsOnFire(field)
+		end
+	end
+	
+	if totalNumFields == 0 then 
+		-- If there are no fields, return 0 for no effect
+		return 0
+	else
+		-- If there are fields, return a score that is the ratio of entities on fire times 10
+		-- More fires will yield a higher score
+		return (totalNumOnFire / totalNumFields) * 10
+	end
+end
+
+--[[
+
+More options for scoring options to be implemented in the future:
+ - deaths on path from previous crusader groups
+ - whether that group has visited the destination before (if we conntect locations 2 to 3 and locations 4 to 5, this will ensure they can't zigzag endlessly)
+
+--]]

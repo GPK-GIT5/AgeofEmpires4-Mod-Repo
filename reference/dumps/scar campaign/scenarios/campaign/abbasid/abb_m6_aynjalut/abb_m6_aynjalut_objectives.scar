@@ -1,0 +1,153 @@
+import("cardinal.scar")
+
+function AynJalut_InitObjectives()
+	OBJ_Dummy = {
+		Title = "Dummy",
+		Type = ObjectiveType_Primary,
+	}
+	OBJ_DummyBattle = {
+		Title = "DummyBattle",
+		Type = ObjectiveType_Battle,
+	}
+	
+	
+	OBJ_DefendTheVanguard = {
+		Title = "$11253284", -- Keep the Mamluk Vanguard Alive
+		Type = ObjectiveType_Information,
+		PreStart = function()
+			Objective_SetCounter(OBJ_DefendTheVanguard, SGroup_CountSpawned(sg_vanguard))
+		end,
+		IsFailed = function()
+			Objective_SetCounter(OBJ_DefendTheVanguard, SGroup_CountSpawned(sg_vanguard))
+			if SGroup_CountSpawned(sg_vanguard) == 0 then
+				Objective_Fail(OBJ_DefendTheVanguard, false, false)
+				Mission_Fail()
+			end
+		end,
+		OnComplete = function()
+			SGroup_AddAbility(sg_vanguard, BP_GetAbilityBlueprint("core_unit_death"))
+		end,
+	}
+	OBJ_WeakenTheEnemy = {
+		Title = "$11253285", -- Weaken the Mongol Army
+		Type = ObjectiveType_Battle,
+	}
+	OBJ_UnitsKilled = {
+		Title = "$11253286", --Units eliminated
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_WeakenTheEnemy,
+		StartAlongsideParent = true,
+		PreStart = function()
+			Objective_SetCounter(OBJ_UnitsKilled, 0)
+		end,
+		IsComplete = function()
+			Objective_SetCounter(OBJ_UnitsKilled, enemies_killed)
+		end
+	}
+	OBJ_DefeatTheEnemy = {
+		Title = "$11253287", --Defeat the Mongols
+		Type = ObjectiveType_Battle,
+	}
+	OBJ_Waves = {
+		Title = "$11253288", --Waves defeated
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DefeatTheEnemy,
+		StartAlongsideParent = true,
+		PreStart = function()
+			Objective_SetCounter(OBJ_Waves, 0, #rounds)
+		end,
+		IsComplete = function()
+			local new_rounds_defeated = 0
+			for _, round in ipairs(rounds) do
+				if round.has_finished_spawning and SGroup_CountSpawned(round.sgroup) == 0 then
+					new_rounds_defeated = new_rounds_defeated + 1
+				end
+			end
+			Objective_SetCounter(OBJ_Waves, new_rounds_defeated, #rounds)
+			if new_rounds_defeated > rounds_defeated then
+				rounds_defeated = new_rounds_defeated
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+			end
+			if new_rounds_defeated == #rounds then
+				Objective_Complete(OBJ_DefeatTheEnemy, true, true)
+				Objective_Complete(OBJ_Waves, false, false)
+				Mission_Complete()		
+			end
+		end,
+	}
+	OBJ_DefendAfula = {
+		Title = "$11253289", --Protect the people of Afula
+		Type = ObjectiveType_Information,
+	}
+	OBJ_DefendTheVillagers = {
+		Title = "$11253290", --Villagers remaining
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DefendAfula,
+		StartAlongsideParent = true,
+		PreStart = function()
+			Objective_SetCounter(OBJ_DefendTheVillagers, SGroup_CountSpawned(sg_afula_villagers))
+		end,
+	}
+	OBJ_Reinforcements = {
+		Title = "$11253291", --Next Reinforcements in
+		Type = ObjectiveType_Primary,
+		PreStart = function()
+			local time_remaining = REINFORCE_TIME_1 - mission_seconds[1]
+			Objective_StartTimer(OBJ_Reinforcements, COUNT_DOWN, time_remaining)
+		end,
+		IsComplete = function()
+			if Objective_GetTimerSeconds(OBJ_Reinforcements) <= 0 then
+				Objective_StopTimer(OBJ_Reinforcements)
+				
+				local reinforcement = reinforcements[reinforcement_index]
+				Reinforcement_Queue(reinforcement)
+				
+				reinforcement_index = reinforcement_index + 1
+				if reinforcement_index > #reinforcements then
+					Objective_Complete(OBJ_Reinforcements, false, false)
+					return
+				end
+				reinforcement = reinforcements[reinforcement_index]
+				local time_remaining = reinforcement.reinforce_at - mission_seconds[1]
+				
+				Objective_StartTimer(OBJ_Reinforcements, COUNT_DOWN, time_remaining)
+			end
+		end,
+	}
+	
+	Objective_Register(OBJ_Dummy)
+	Objective_Register(OBJ_DummyBattle)
+	Objective_Register(OBJ_DefendTheVanguard)
+	Objective_Register(OBJ_WeakenTheEnemy)
+	Objective_Register(OBJ_UnitsKilled)
+	Objective_Register(OBJ_DefeatTheEnemy)
+	Objective_Register(OBJ_Waves)
+	Objective_Register(OBJ_DefendAfula)
+	Objective_Register(OBJ_DefendTheVillagers)
+	Objective_Register(OBJ_Reinforcements)
+end
+
+function UpdateAfulaVillagerCount()
+	if Objective_IsStarted(OBJ_DefendTheVillagers) then
+		Objective_SetCounter(OBJ_DefendTheVillagers, SGroup_CountSpawned(sg_afula_villagers))		
+		if SGroup_CountSpawned(sg_afula_villagers) == 0 then
+			Objective_Fail(OBJ_DefendTheVillagers, false, false)
+			Objective_Fail(OBJ_DefendAfula, false, false)
+			Mission_Fail()
+		end
+	end
+end
+
+function StartInitialObjectives()
+	Objective_Start(OBJ_DefendTheVanguard, true, true)
+	Objective_Start(OBJ_WeakenTheEnemy, true, true)
+	Objective_Start(OBJ_Reinforcements, false, false)
+end
+
+function StartMainObjective()
+	Objective_Complete(OBJ_WeakenTheEnemy, false, false)
+	Objective_Complete(OBJ_UnitsKilled, false, false)
+	Objective_Complete(OBJ_DefendTheVanguard, false, false)
+	Objective_Start(OBJ_DefeatTheEnemy, true, true)
+	Objective_Start(OBJ_DefendAfula, true, true)
+end

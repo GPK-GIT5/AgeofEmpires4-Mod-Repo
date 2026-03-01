@@ -1,0 +1,2493 @@
+-----------------------------------------------------------------------
+--
+-- Challenge Mission - Early Siege
+--
+-- The player must destroy the enemy Capital and Landmark to complete this Challenge Mission.
+-- Success is measured by the time elapsed when both the Capital and Landmark are destroyed.
+--
+-- (c) Relic Entertainment 2019
+--
+-----------------------------------------------------------------------
+
+import("Cardinal.scar")
+import("training/coretraininggoals.scar")
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("MissionOMatic/MissionOMatic_utility.scar")
+import("challenge_mission_earlysiege_training.scar")		-- this imports training tips specific to this mission
+import("challenge_mission_earlysiege_preintro.scar")		-- this imports the cinematic preintro script specific to this mission
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+
+
+_challenge = {
+	startingResources = {
+		food = 0.0,
+		wood =  1700.0,
+		gold =  800.0,
+		stone =   600.0,				
+	},
+	victory = {},
+	icons = {
+		victoryObjective = "icons\\races\\common\\victory_conditions\\victory_condition_settlements",
+		noMedalObjective = "icons\\fe\\medal_no.png",
+		bronzeMedalObjective = "icons\\fe\\medal_bronze.png",
+		silverMedalObjective = "icons\\fe\\medal_silver.png",
+		goldMedalObjective = "icons\\fe\\medal_gold.png",
+	},
+	timer = "ChallengeTimer",
+	benchmarks = {
+		unplaced = {
+			name = "$11202174",--"Time Elapsed"
+			goal = nil,
+			time = nil,
+			objective = {},
+		},
+		bronze = {
+			goal = 20, -- 20 minutes
+			time = 20*60, -- 20 minutes
+			objective = {},
+		},
+		silver = {
+			goal = 10, -- 10 minutes
+			time = 10*60, -- 10 minutes
+			objective = {},
+		},
+		gold = {
+			goal = 6, -- 6 minutes
+			time = 6*60, -- 6 minutes
+			objective = {},
+		},
+	},
+	annihilation = {
+		type_map = {	
+			town_center 	= "villager",
+			barracks		= "spearman",
+			archery_range 	= "archer",
+			stable 			= "horseman",
+			siege_workshop 	= "springald",
+			monastery 		= "monk", 
+		},
+		cue = {						-- event cue shown when player is eliminated 
+			title = Loc_Empty(),
+			desc = Loc_Empty(),
+			sfx = "sfx_ui_event_queue_high_priority_play",
+			icon = "icons\\event_queue_high_priority_large",
+			template = "high_priority", 
+			style = ECV_Queue | ECV_Title,
+		},
+	},
+}
+
+minimapBlips = {}
+
+hasDestroyedBuilding = false
+
+--keep track of whether the player has lost all of their units and been given replacements
+playerGotReinforcements = false
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+
+-- Called when Mission loads
+function Mission_OnInit()
+	
+	if UI_IsXboxUI() then
+		_challenge.benchmarks.bronze = {
+			goal = 20, -- 20 minutes
+			time = 20*60, -- 20 minutes
+			objective = {},
+		}
+		_challenge.benchmarks.silver = {
+			goal = 12, -- 12 minutes
+			time = 12*60, -- 12 minutes
+			objective = {},
+		}
+		_challenge.benchmarks.gold = {
+			goal = 7, -- 7 minutes
+			time = 7*60, -- 7 minutes
+			objective = {},
+		}
+	end
+	
+	-- Setup Victory Objectives
+	_challenge.victory.objectiveVictory = {
+		-- Set Objective Title
+		Title = "$11202404", -- "Defeat the Rus"
+		-- Set Objective Type
+		Type = OT_Primary,
+		OnComplete = function()
+			Mission_Complete()
+		end,
+	}
+	_challenge.victory.objectiveSub1 = {
+		-- Set Objective Title
+		Title = "$11202405", -- "Destroy the Rus Town Center"
+		-- Set Objective Type
+		Type = OT_Secondary,
+	}
+	_challenge.victory.objectiveSub2 = {
+		-- Set Objective Title
+		Title = "$11202406", -- "Destroy the Kremlin Landmark"
+		-- Set Objective Type
+		Type = OT_Secondary,
+	}
+	--set up minimap blips
+	-- Get Capital Town Center
+	enemyCapital = EGroup_GetEntityAt(enemy_capital, 1)
+	-- Get Landmark
+	enemyLandmark = EGroup_GetEntityAt(enemy_landmark, 1)
+	local entry = {
+		id = Entity_GetID(enemyCapital),
+		blip  = UI_CreateMinimapBlip(enemyCapital, -1, "objective_secondary")
+	}
+	table.insert(minimapBlips, entry)
+	entry = {
+		id = Entity_GetID(enemyLandmark),
+		blip  = UI_CreateMinimapBlip(enemyLandmark, -1, "objective_secondary")
+	}
+	table.insert(minimapBlips, entry)
+	
+	_challenge.victory.destroyRequirement = "landmark"
+	_challenge.victory.completionRequirement = 2
+	_challenge.victory.lastConquestLocation = nil
+	_challenge.victory.hasBreachedWall = false
+	
+	-- Setup Benchmark Objectives
+	_challenge.benchmarks.unplaced.objective = {
+		-- Set Objective Title
+		Title = "$11166938", -- "Time Elapsed"
+		-- Set Objective Type
+		Type = OT_Bonus,
+		-- Set Objective Icon
+		Icon = _challenge.icons.noMedalObjective,
+	}
+	_challenge.benchmarks.bronze.objective = {
+		-- Set Objective Title
+		Title = Loc_FormatText("$11202175", _challenge.benchmarks.bronze.goal, 0), -- "Bronze Medal (Goal %1TIME_REQUIREMENT%m) - "
+		TelemetryTitle = "TimeRequired_BronzeMedal",
+		-- Set Objective Type
+		Type = OT_Bonus,
+		-- Set Objective Icon
+		Icon = _challenge.icons.bronzeMedalObjective,
+	}
+	_challenge.benchmarks.silver.objective = {
+		-- Set Objective Title
+		Title = Loc_FormatText("$11202176", _challenge.benchmarks.silver.goal, 0), -- "Silver Medal (Goal %1TIME_REQUIREMENT%m) - "
+		TelemetryTitle = "TimeRequired_SilverMedal",
+		-- Set Objective Type
+		Type = OT_Bonus,
+		-- Set Objective Icon
+		Icon = _challenge.icons.silverMedalObjective,
+	}
+	_challenge.benchmarks.gold.objective = {
+		-- Set Objective Title
+		Title = Loc_FormatText("$11202177", _challenge.benchmarks.gold.goal, 0), -- "Gold Medal (Goal %1TIME_REQUIREMENT%m) - "
+		TelemetryTitle = "TimeRequired_GoldMedal",
+		-- Set Objective Type
+		Type = OT_Bonus,
+		-- Set Objective Icon
+		Icon = _challenge.icons.goldMedalObjective,
+	}
+	
+	_challenge.victory.failedMedals =
+	{
+		Title = "$11215025",
+		Type = ObjectiveType_Information,
+	}
+	
+	--Cache the cost of the cheapest unit that can be made from each type of building.
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- Setup table to store cheapest squad
+			player._annihilation = {cheapest_squad_cost = {}}
+			
+			
+			for entity_type, squad_type in pairs(_challenge.annihilation.type_map) do 
+				
+				local sbp = Cardinal_ConvertTypeToSquadBlueprint(squad_type, player.id)
+				
+				if sbp == nil then
+					
+					print(string.format("Annihilation_OnInit() - No squad blueprint found for %s %s", player.raceName, squad_type))
+					
+				else
+					
+					player._annihilation.cheapest_squad_cost[entity_type] = Player_GetSquadBPCost(player.id, sbp)
+					
+				end
+			end
+		end
+	end
+	
+end
+
+-- Setup functionality for mission
+function Mission_OnGameSetup()
+	
+	localPlayer = World_GetPlayerAt(1) --Player
+	enemyPlayer = World_GetPlayerAt(2) --Enemy
+	Player_SetStateModelBool(enemyPlayer, "disable_landmark_rebuild", true)
+	Player_SetStateModelBool(localPlayer, "disable_landmark_rebuild", true)
+	
+end
+
+-- Mission Preset
+function Mission_Preset()
+	
+	-- Setup Game and Players
+	ChallengeMission_SetupChallengePlayers()
+	-- Add unit and upgrade restrictions
+	ChallengeMission_SetRestrictions()
+	
+end
+
+-- Called before Mission Start
+function Mission_PreStart()
+	
+	-- Get map resources
+	ChallengeMission_FindAllResources()
+	-- Spawn Starting Units
+	ChallengeMission_InitStartingUnits()
+	-- Add Starting Upgrades
+	ChallengeMission_InitStartingUpgrades()
+	
+	Rule_AddInterval(MenAtArmsPatrolLeft, 1)
+	Rule_AddInterval(MenAtArmsPatrolCenter, 1)
+	Rule_AddInterval(MenAtArmsPatrolRight, 1)
+	
+	-- Check for end of Event
+	Rule_AddInterval(Mission_PreStart_IntroNISFinished, 0.125)
+	-- Hold off on starting the mission until cinematic finishes
+	StartMission_Hold()
+end
+
+-- Called at Mission Start
+function Mission_Start()
+
+	-- Setup Challenge Mission
+	ChallengeMission_SetupChallenge()
+	
+	-- Initialize Objectives
+	ChallengeMission_InitializeObjectives()
+	
+	-- Register callbacks for global events
+	Rule_AddGlobalEvent(ChallengeMission_OnDestruction, GE_EntityKilled)
+	
+	Rule_AddInterval(CheckEarlySiegeAnnihiliation, .5)
+	
+	Rule_AddInterval(EnemyPatrolDetectedPlayer, .5)
+	Rule_AddInterval(EnemyPatrolAttackPlayer, .5)
+	menAtArmsPatrolDirection = 1
+	
+	Rule_AddInterval(PositionEnemySpearmen, 1)
+	
+	SetVillagersToHunt()
+	
+	--reduce ram build time
+	local sbp_ram_mon = BP_GetSquadBlueprint("unit_ram_3_mon")
+	Modify_EntityBuildTime(localPlayer, sbp_ram_mon, .1)
+	
+	-- Update Objectives and check for Victory
+	Rule_AddInterval(ChallengeMission_Update, 0.125)
+	Rule_AddInterval(ChallengeMission_MusicCheck, 1)
+	
+	Rule_AddInterval(EarlySiegeTrainingHelper, .125)
+	
+	--play start dialogue
+    Util_StartIntel(EVENTS.NarrationAtStart)
+	
+    Util_StartIntel(EVENTS.NarrRamIntro)
+end
+cinematicFinished = false
+-- Checks if intro Event is running
+function Mission_PreStart_IntroNISFinished()
+	    if Event_IsAnyRunning() == false then
+		EarlySiege_PreIntro_CleanUpAll()
+        Rule_RemoveMe()
+        StartMission_ReleaseHold()
+    end
+end
+-----------------------------------------------------------------------
+-- Functions
+-----------------------------------------------------------------------
+
+function EarlySiegeTrainingHelper()
+	if(selectSiegeEngineersCount <= selectSiegeEngineersMax and placingRamPhaseActive == false) then
+		--if no infantry are selected, reset construction
+		local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+		if(SGroup_Count(sg_currentSelection) > 0) then
+			SGroup_Filter(sg_currentSelection, "infantry", FILTER_KEEP)
+			if(SGroup_Count(sg_currentSelection) == 0) then
+				OnConstructionPhaseChange(nil, TP_Issued, 0)
+			end
+		end
+	end
+end
+-- Configure Players
+function ChallengeMission_SetupChallengePlayers()
+	
+	Setup_SetPlayerName(localPlayer, "$11202432") -- Mongols
+	Player_SetCurrentAge(localPlayer, AGE_CASTLE)
+	Player_SetMaximumAge(localPlayer, AGE_CASTLE)
+	
+	Setup_SetPlayerName(enemyPlayer, "$11202433") -- Rus Fortress
+	Player_SetCurrentAge(enemyPlayer, AGE_CASTLE)
+	Player_SetMaximumAge(enemyPlayer, AGE_CASTLE)
+
+end
+
+-- Set up Mission-o-Matic recipes
+function GetRecipe()
+
+	local recipe = {
+		
+		introNIS = EVENTS.EarlySiege_PreIntro,
+		outroNIS = EVENTS.EarlySiege_Outro,
+	
+		-- Locations
+		locations = {
+			{ 
+				descriptor = "OuterZone",
+				marker = mkr_outer_zone,
+				player = enemyPlayer,
+			},
+			{ 
+				descriptor = "InnerZone",
+				marker = mkr_inner_zone,
+				player = enemyPlayer,
+			},
+			{ 
+				descriptor = "GateZone",
+				marker = mkr_gate_zone,
+				player = enemyPlayer,
+			},
+			{ 
+				descriptor = "FordZone",
+				marker = mkr_ford_zone,
+				player = enemyPlayer,
+			},
+			{ 
+				descriptor = "FarmingZone",
+				marker = mkr_farming_zone,
+				player = enemyPlayer,
+			},
+			{ 
+				descriptor = "ForestingZone",
+				marker = mkr_foresting_zone,
+				player = enemyPlayer,
+			},
+			{ 
+				descriptor = "FishingZone",
+				marker = mkr_fishing_zone,
+				player = enemyPlayer,
+			},
+			{ 
+				descriptor = "HuntingZone",
+				marker = mkr_hunting_zone,
+				player = enemyPlayer,
+			},
+		},
+		
+		
+		-- Modules
+		modules = {
+			{
+				type = "Defend",
+				descriptor = "DefendOuter",
+				location = "OuterZone",
+				player = enemyPlayer,
+				spawnLocation = mkr_enemy_menatarms_spawn,
+				--marker = mkr_outer_zone,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendInner",
+				location = "InnerZone",
+				player = enemyPlayer,
+				spawnLocation = mkr_enemy_spearmen_spawn,
+				--marker = mkr_inner_zone,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendGate",
+				location = "GateZone",
+				player = enemyPlayer,
+				spawnLocation = mkr_enemy_archers_spawn,
+				--marker = mkr_gate_zone,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendFord",
+				location = "FordZone",
+				player = enemyPlayer,
+				spawnLocation = mkr_enemy_mangonel_spawn,
+				--marker = mkr_ford_zone,
+			},
+			-- TOWN LIFE
+			{
+				descriptor = "RusFarmingEcon",
+				type = "TownLife",
+				location = "FarmingZone",
+				player = enemyPlayer,
+				canBuild = false,
+				maxVillagers = 0,
+				gatheringPreference = {
+			        food = 12,
+			        wood = 0,
+			        stone = 0,
+			        gold = 0,
+			    },
+				allowGatheringOutsideLeash = false,
+			},
+			{
+				descriptor = "RusWoodEcon",
+				type = "TownLife",
+				location = "ForestingZone",
+				player = enemyPlayer,
+				canBuild = false,
+				maxVillagers = 0,
+				gatheringPreference = {
+			        food = 0,
+			        wood = 4,
+			        stone = 0,
+			        gold = 0,
+			    },
+				allowGatheringOutsideLeash = false,
+			},
+			{
+				descriptor = "RusFishingEcon",
+				type = "TownLife",
+				location = "FishingZone",
+				player = enemyPlayer,
+				canBuild = false,
+				maxVillagers = 0,
+				gatheringPreference = {
+			        food = 2,
+			        wood = 0,
+			        stone = 0,
+			        gold = 0,
+			    },
+				allowGatheringOutsideLeash = false,
+			},
+			{
+				descriptor = "RusHuntingEcon",
+				type = "TownLife",
+				location = "HuntingZone",
+				player = enemyPlayer,
+				canBuild = false,
+				maxVillagers = 0,
+				gatheringPreference = {
+			        food = 2,
+			        wood = 0,
+			        stone = 0,
+			        gold = 0,
+			    },
+				allowGatheringOutsideLeash = false,
+			},
+		},
+	}
+
+	return recipe
+end
+
+-- Setup Challenge Mission
+function ChallengeMission_SetupChallenge()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- Add a challenge table to player table
+			player._challenge = {
+				-- Add victory objective variable
+				hasObjectiveVictory = false,
+
+				-- Add sub objective variable
+				hasObjectiveSub1 = false,
+				-- Add sub objective variable
+				hasObjectiveSub2 = false,
+				
+				-- Add KPI objective variable
+				hasKpiObjective = false,
+				-- Add current benchmark
+				currentBenchmark = nil,
+				-- Add timer variable
+				timer = string.format("challengeTimer_%d", player.index),
+				-- Store timer start time (relative to World_GetGameTime)
+				startTime = World_GetGameTime(),
+				-- Store completion time
+				completionTime = nil,
+				-- Stores number of key buildings destroyed
+				conquestProgress = 0,
+				-- Get Capital Town Center
+				enemyCapital = EGroup_GetEntityAt(enemy_capital, 1),
+				-- Get Landmark
+				enemyLandmark = EGroup_GetEntityAt(enemy_landmark, 1)
+			}
+			
+			-- Hide Building Scuttle
+			Player_SetAbilityAvailability(player.id, BP_GetAbilityBlueprint("core_building_scuttle"), ITEM_REMOVED)
+			
+			-- Grab player's Entities
+			local playerEntities = Player_GetEntities(player.id)
+			-- Filter 
+			EGroup_Filter(playerEntities, BP_GetEntityBlueprint("starting_position_no_town_center"), FILTER_REMOVE)
+			--filter out projectile_torch entities to prevent a crash
+			EGroup_Filter(playerEntities, BP_GetEntityBlueprint("projectile_torch"), FILTER_REMOVE)
+			-- Set Player Production Speed Modifier (2 = 2x as fast)
+			local productionSpeedFactor = 10
+			
+			-- Function that switches the owner an Entity given the parameters provided by EGroup_ForEach
+			local _SetProductionSpeed = function(gid, idx, eid)
+				
+				-- Modify Production/Research Speed
+				Modifier_ApplyToEntity(Modifier_Create(MAT_Entity, "production_speed_modifier", MUT_Multiplication, false, productionSpeedFactor, nil), eid, 0.0)
+			end
+				
+			-- For every Entity
+			EGroup_ForEach(playerEntities, _SetProductionSpeed) 
+			
+			-- Reveal Conquest buildings
+			FOW_PlayerRevealArea(player.id, Entity_GetPosition(player._challenge.enemyCapital), 30, -1)
+			FOW_PlayerRevealArea(player.id, Entity_GetPosition(player._challenge.enemyLandmark), 30, -1)
+			
+		end
+	end
+end
+
+-- Initialize Additional Starting Units
+function ChallengeMission_InitStartingUnits()
+	
+	-- Get unit blueprints
+	local sbp_spearman_mon = BP_GetSquadBlueprint("unit_spearman_3_mon")
+	local sbp_scout_mon = BP_GetSquadBlueprint("unit_scout_1_mon")
+	local sbp_archer_mon = BP_GetSquadBlueprint("unit_archer_3_mon")
+	
+	--[[ PLAYER UNITS ]]--
+	
+	-- Create SGroups
+	sg_player_spearmen1 = SGroup_CreateIfNotFound("sg_player_spearmen1")
+	sg_player_spearmen2 = SGroup_CreateIfNotFound("sg_player_spearmen2")
+	sg_player_scout = SGroup_CreateIfNotFound("sg_player_scout")
+	
+	-- Spawn units
+	UnitEntry_DeploySquads(localPlayer, sg_player_spearmen1, {{sbp = sbp_archer_mon, numSquads = 16 }}, mkr_player_spearmen1_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_spearmen2, {{sbp = sbp_spearman_mon, numSquads = 16 }}, mkr_player_spearmen2_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_scout, {{sbp = sbp_scout_mon, numSquads = 3 }}, mkr_player_scout_spawn)
+	
+	-- Face units
+	Cmd_FormationMove(sg_player_spearmen1, mkr_player_spearmen1_spawn, false, false, mkr_player_spearmen1_facing)
+	Cmd_FormationMove(sg_player_spearmen2, mkr_player_spearmen2_spawn, false, false, mkr_player_spearmen2_facing)
+	Cmd_FormationMove(sg_player_scout, mkr_player_scout_spawn, false, false, mkr_player_scout_facing)
+	
+	--[[ ENEMY UNITS ]]--
+
+	-- Get unit blueprints
+	local sbp_springald_rus = BP_GetSquadBlueprint("unit_springald_3_rus")
+	local sbp_mangonel_rus = BP_GetSquadBlueprint("unit_mangonel_3_rus")
+	local sbp_manatarms_rus = BP_GetSquadBlueprint("unit_manatarms_3_rus")
+	local sbp_archer_rus = BP_GetSquadBlueprint("unit_archer_3_rus")
+	local sbp_spearman_rus = BP_GetSquadBlueprint("unit_spearman_3_rus")
+	local sbp_villager_rus = BP_GetSquadBlueprint("unit_villager_1_rus")
+	
+	-- Create SGroups
+	sg_enemy_springalds = SGroup_CreateIfNotFound("sg_enemy_springalds")
+	sg_enemy_mangonels = SGroup_CreateIfNotFound("sg_enemy_mangonels")
+	sg_enemy_menatarms = SGroup_CreateIfNotFound("sg_enemy_menatarms")
+	sg_enemy_menatarms2 = SGroup_CreateIfNotFound("sg_enemy_menatarms2")
+	sg_enemy_archers = SGroup_CreateIfNotFound("sg_enemy_archers")
+	sg_enemy_spearmen = SGroup_CreateIfNotFound("sg_enemy_spearmen")
+	sg_enemy_fisherman0 = SGroup_CreateIfNotFound("sg_enemy_fisherman0")
+	sg_enemy_fisherman1 = SGroup_CreateIfNotFound("sg_enemy_fisherman1")
+	sg_enemy_hunter = SGroup_CreateIfNotFound("sg_enemy_hunter")
+	sg_enemy_wall_archers1 = SGroup_CreateIfNotFound("sg_enemy_wall_archers1")
+	sg_enemy_wall_archers2 = SGroup_CreateIfNotFound("sg_enemy_wall_archers2")
+	
+	--deploy squads
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_springalds, {{sbp = sbp_springald_rus, numSquads = 2}}, mkr_inner_springald_spawn)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_mangonels, {{sbp = sbp_mangonel_rus, numSquads = 1}}, mkr_enemy_mangonel_spawn)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_menatarms, {{sbp = sbp_manatarms_rus, numSquads = 6 }}, mkr_enemy_menatarms_spawn)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_menatarms2, {{sbp = sbp_manatarms_rus, numSquads = 5 }}, mkr_menatarms_patrol_right)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_archers, {{sbp = sbp_archer_rus, numSquads = 10 }}, mkr_enemy_archers_spawn)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_spearmen, {{sbp = sbp_spearman_rus, numSquads = 10 }}, mkr_enemy_spearmen_spawn)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_fisherman0, {{sbp = sbp_villager_rus, numSquads = 2 }}, mkr_enemy_fisherman0_spawn)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_fisherman1, {{sbp = sbp_villager_rus, numSquads = 1 }}, mkr_enemy_fisherman1_spawn)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_hunter, {{sbp = sbp_villager_rus, numSquads = 2 }}, mkr_enemy_hunter_spawn)
+	
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_wall_archers1, {{sbp = sbp_archer_rus, numSquads = 8 }}, mkr_enemy_wall_archers_spawn01)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemy_wall_archers2, {{sbp = sbp_archer_rus, numSquads = 7 }}, mkr_enemy_wall_archers_spawn01)
+	
+	wallArchers1Count = SGroup_Count(sg_enemy_wall_archers1)
+	wallArchers2Count = SGroup_Count(sg_enemy_wall_archers2)
+	
+	
+end
+
+wallArchers1Count = 0
+wallArchers2Count = 0
+
+--reset archers in their lines behind the walls after every 2 archers lost
+function WallArchersReset()
+	if(sg_enemy_wall_archers1 ~= nil) then
+		if (SGroup_Count(sg_enemy_wall_archers1) > 0 and SGroup_Count(sg_enemy_wall_archers1) <= wallArchers1Count - 2) then
+			wallArchers1Count = SGroup_Count(sg_enemy_wall_archers1)
+			--order wall archers to defend the walls
+			local leftArcPos = Util_GetPosition(mkr_wall_archers2)
+			local rightArcPos = Util_GetPosition(mkr_wall_archers1)
+			ArcFormation(leftArcPos, rightArcPos, sg_enemy_wall_archers1, 0, false, 0)
+		end
+	end
+	if(sg_enemy_wall_archers2 ~= nil) then
+		if (SGroup_Count(sg_enemy_wall_archers2) > 0 and SGroup_Count(sg_enemy_wall_archers2) <= wallArchers2Count - 2) then
+			wallArchers2Count = SGroup_Count(sg_enemy_wall_archers2)
+			--order wall archers to defend the walls
+			local leftArcPos = Util_GetPosition(mkr_wall_archers3)
+			local rightArcPos = Util_GetPosition(mkr_wall_archers2)
+			ArcFormation(leftArcPos, rightArcPos, sg_enemy_wall_archers2, 0, false, 0)
+		end
+	end
+end
+
+function WallArchersRetreat()
+	
+	if(enemy_capital ~= nil) then
+		local retreatPosition = Util_GetPosition(enemy_capital)
+		
+		if(sg_enemy_wall_archers1 ~= nil) then
+			if (SGroup_Count(sg_enemy_wall_archers1) > 0) then
+				--order wall archers to defend the walls
+				local leftArcPos = Util_GetPosition(mkr_wall_archers2)
+				leftArcPos["x"] = retreatPosition["x"] - 10
+				leftArcPos["z"] = retreatPosition["z"] + 10
+				local rightArcPos = Util_GetPosition(mkr_wall_archers1)
+				rightArcPos["x"] = retreatPosition["x"] + 10
+				rightArcPos["z"] = retreatPosition["z"] - 10
+				ArcFormation(leftArcPos, rightArcPos, sg_enemy_wall_archers1, 1.5, false, 0)
+			end
+		end
+		if(sg_enemy_wall_archers2 ~= nil) then
+			if (SGroup_Count(sg_enemy_wall_archers2) > 0) then
+				--order wall archers to defend the walls
+				local leftArcPos = Util_GetPosition(mkr_wall_archers2)
+				leftArcPos["x"] = retreatPosition["x"] - 11
+				leftArcPos["z"] = retreatPosition["z"] + 9
+				local rightArcPos = Util_GetPosition(mkr_wall_archers1)
+				rightArcPos["x"] = retreatPosition["x"] + 9
+				rightArcPos["z"] = retreatPosition["z"] - 11
+				ArcFormation(leftArcPos, rightArcPos, sg_enemy_wall_archers2, 1.5, false, 0)
+			end
+		end
+	end
+end
+
+-- Initialize starting upgrades
+function ChallengeMission_InitStartingUpgrades()
+	
+	-- Get upgrade blueprints
+	local upg_arrowSlits = UPG.RUS.UPGRADE_WOODEN_CASTLE_ARROWSLITS_RUS
+	
+	-- Adds Arrow Slits to Outposts
+	local function _AddArrowSlits(gid, idx, eid)
+		-- Add upgrades to enemy outposts
+		Entity_CompleteUpgrade(eid, upg_arrowSlits)
+	end
+	
+	
+	-- For every enemy Outpost
+	EGroup_ForEach(eg_enemy_outposts, _AddArrowSlits)
+	
+	-- Get Player Upgrades
+	local bp_siege_engineers = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	local bp_boiling_oil = BP_GetUpgradeBlueprint("upgrade_tech_university_murder_holes_4")
+	local bp_spearman_2 = BP_GetUpgradeBlueprint("upgrade_unit_spearman_2")
+	local bp_spearman_3 = BP_GetUpgradeBlueprint("upgrade_unit_spearman_3")
+	local bp_archer_3 = BP_GetUpgradeBlueprint("upgrade_unit_archer_3")
+	
+	-- Add Local Player Upgrades
+	Player_CompleteUpgrade(localPlayer, bp_siege_engineers)
+	-- Add Enemy Player Upgrades
+	Player_CompleteUpgrade(enemyPlayer, bp_boiling_oil)
+	Player_CompleteUpgrade(enemyPlayer, bp_spearman_2)
+	Player_CompleteUpgrade(enemyPlayer, bp_spearman_3)
+	Player_CompleteUpgrade(enemyPlayer, bp_archer_3)
+	
+	
+end
+
+-- Restrict upgrades and units
+function ChallengeMission_SetRestrictions()
+	
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.ENGLISH.UPGRADE_UNIT_MANATARMS_3_ENG, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.ENGLISH.UPGRADE_UNIT_ARCHER_3_ENG, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.ENGLISH.UPGRADE_UNIT_SPEARMAN_3_ENG, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_UNIT_HORSEMAN_3, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_UNIT_KNIGHT_4, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_UNIT_CROSSBOWMAN_4, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_MELEE_DAMAGE_I, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_MELEE_DAMAGE_II, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_MELEE_ARMOR_I, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_MELEE_ARMOR_II, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_SPEARMAN_ELITE_SPEAR_TACTICS, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_MANATARMS_ELITE_ARMY_TACTICS, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_OUTPOST_CANNON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_OUTPOST_STONE, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_ECON_RESOURCE_FOOD_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_ECON_RESOURCE_GOLD_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_ECON_RESOURCE_STONE_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(enemyPlayer, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1, ITEM_REMOVED)
+	
+	
+	Player_SetSquadProductionAvailability(enemyPlayer, SBP.RUS.UNIT_VILLAGER_1_RUS, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(enemyPlayer, SBP.RUS.UNIT_NAVAL_FISHING_BOAT_2_RUS, ITEM_REMOVED)
+
+	--remove age 4 units
+	Player_SetSquadProductionAvailability(localPlayer, SBP.MONGOL.UNIT_TREBUCHET_4_TR_MON, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(localPlayer, SBP.MONGOL.UNIT_TREBUCHET_4_TR_DOUBLE_MON, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(localPlayer, SBP.MONGOL.UNIT_BOMBARD_4_MON, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(localPlayer, SBP.MONGOL.UNIT_BOMBARD_4_DOUBLE_MON, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(localPlayer, SBP.MONGOL.UNIT_TRADE_CART_MON, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(localPlayer, SBP.MONGOL.UNIT_TRADE_CART_DOUBLE_MON, ITEM_REMOVED)
+	
+	--remove advanced field construct units
+	Player_SetEntityProductionAvailability(localPlayer, EBP.MONGOL.UNIT_SPRINGALD_3_FIELD_CONSTRUCT_MON, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.MONGOL.UNIT_MANGONEL_3_FIELD_CONSTRUCT_MON, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.MONGOL.UNIT_TREBUCHET_4_CW_FIELD_CONSTRUCT_MON, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.MONGOL.UNIT_TREBUCHET_4_TR_FIELD_CONSTRUCT_MON, ITEM_REMOVED)
+	
+	--remove age 4 techs
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_ADJUSTABLE_CROSSBAR_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_ROLLER_TRIGGER_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_WORKS_MON, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_ROLLER_TRIGGER_IMPROVED_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_ADJUSTABLE_CROSSBAR_IMPROVED_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_WORKS_IMPROVED_MON, ITEM_REMOVED)
+	
+	--remove Ovoo techs
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_KHAN_SIGNAL_ARROW_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_KHAN_SIGNAL_ARROW_IMPROVED_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_WEAPON_FIRE_DAMAGE_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_WEAPON_FIRE_DAMAGE_IMPROVED_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_UNIT_TOWN_CENTER_FASTER_PACKING_1_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.COMMON.UPGRADE_TECH_UNIVERSITY_ARCHITECTURE_4 , ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_OUTPOST_STONE_MON , ITEM_REMOVED)
+	
+	--remove pack building ability
+	Player_SetAbilityAvailability(localPlayer, BP_GetAbilityBlueprint("pack_building_mon"), ITEM_REMOVED)
+	
+	Player_CompleteUpgrade(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_WEAPON_SPEED_MON)
+	Player_CompleteUpgrade(localPlayer, UPG.MONGOL.UPGRADE_RAID_BOUNTY_MON)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_WEAPON_SPEED_IMPROVED_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_MATHEMATICS_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_SIEGE_MATHEMATICS_IMPROVED_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_RAID_BOUNTY_IMPROVED_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_RAID_STONE_BOUNTY_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_RAID_STONE_BOUNTY_IMPROVED_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_RAM_SCALING_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_RAM_SCALING_IMPROVED_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_TRADER_SILKROAD_STONE_MON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MONGOL.UPGRADE_TRADER_SILKROAD_STONE_IMPROVED_MON, ITEM_REMOVED)
+end
+
+-- Get all resources on map
+function ChallengeMission_FindAllResources()
+	
+	-- Create egroups
+	eg_allNeutral = EGroup_CreateIfNotFound("eg_allNeutral")
+	eg_allWoodResources = EGroup_CreateIfNotFound("eg_allWoodResources")
+	eg_allStoneResources = EGroup_CreateIfNotFound("eg_allStoneResources")
+	eg_allGoldResources = EGroup_CreateIfNotFound("eg_allGoldResources")
+	
+	-- Get all neutral entities
+	World_GetAllNeutralEntities(eg_allNeutral)
+	
+	-- Filter out resources
+	EGroup_Filter(eg_allNeutral, "tree", FILTER_REMOVE, eg_allWoodResources)
+	EGroup_Filter(eg_allNeutral, "stone", FILTER_REMOVE, eg_allStoneResources)
+	EGroup_Filter(eg_allNeutral, "gold", FILTER_REMOVE, eg_allGoldResources)
+	
+end
+
+-- Initialize Town Life
+function ChallengeMission_InitTownLifeModules()
+	
+	-- Assign enemy Villagers to TownLife Modules
+	Prefab_DoAction(MissionOMatic_FindModule("RusHuntingEcon"), "AddSGroup", sg_enemy_hunter)
+	
+	-- workaround for fisherman not working
+	Rule_AddOneShot(ChallengeMission_InitFisherman, 2)
+	
+end
+
+-- workaround for fisherman not working
+function ChallengeMission_InitFisherman()
+	
+	local function _AssignFisherman(gid, idx, sid)
+		SGroup_Single(sg_single, sid)
+		local e_closest_fish = EGroup_GetClosestEntity(eg_shore_fish, Util_GetPosition(sid))
+		if e_closest_fish ~= nil then
+			EGroup_Single(eg_single, e_closest_fish)
+			LocalCommand_SquadEntity(localPlayer, sg_single, SCMD_Gather, eg_single, false)
+			EGroup_Remove(eg_shore_fish, e_closest_fish)
+		else
+			print("Could not find fish to assign villager to")
+		end
+		
+	end
+	
+	SGroup_ForEach(sg_enemy_fisherman0, _AssignFisherman)
+	SGroup_ForEach(sg_enemy_fisherman1, _AssignFisherman)
+	
+end
+
+-- Initialize Combat Mission-o-Matic Modules
+function ChallengeMission_InitCombatModules()
+	
+	-- Assign enemy units to Defend Modules
+	Prefab_DoAction(MissionOMatic_FindModule("DefendFord"), "AddSGroup", sg_enemy_mangonels)
+	Prefab_DoAction(MissionOMatic_FindModule("DefendInner"), "AddSGroup", sg_enemy_spearmen)
+	Prefab_DoAction(MissionOMatic_FindModule("DefendInner"), "AddSGroup", sg_enemy_springalds)
+	Prefab_DoAction(MissionOMatic_FindModule("DefendOuter"), "AddSGroup", sg_enemy_menatarms)
+	Prefab_DoAction(MissionOMatic_FindModule("DefendGate"), "AddSGroup", sg_enemy_archers)
+	
+	-- Ensure military units move to their starting location
+	Rule_AddOneShot(ChallengeMission_RallyMilitary, 10)
+	
+end
+
+-- Set max speed for enemy units (used to enforce walking during cinematic)
+function ChallengeMission_SetSlowUnitSpeed()
+	
+	-- Set unit speed
+	Modify_UnitSpeed(sg_enemy_spearmen, 0.7, 0)
+	Modify_UnitSpeed(sg_enemy_menatarms, 0.7, 0)
+	Modify_UnitSpeed(sg_enemy_archers, 0.7, 0)
+	
+end
+
+-- Remove modifiers from enemy units (used to remove max speed modifiers)
+function ChallengeMission_SetStandardUnitSpeed()
+	
+	-- RemoveModifiers
+	Modifier_RemoveAllFromSGroup(sg_enemy_spearmen)
+	Modifier_RemoveAllFromSGroup(sg_enemy_menatarms)
+	Modifier_RemoveAllFromSGroup(sg_enemy_archers)
+	
+end
+
+-- Move Units to their Rally Points
+function ChallengeMission_RallySpearmen()
+	
+	-- Position enemy units
+	Cmd_FormationMove(sg_enemy_spearmen, mkr_enemy_spearmen_waypoint01, false, false)
+	Cmd_FormationMove(sg_enemy_spearmen, mkr_enemy_spearmen_rally, true, false, mkr_enemy_spearmen_facing)
+	
+	Cmd_Move(sg_enemy_springalds, mkr_inner_springald_rally, false)
+end
+
+-- Move Units to their Rally Points
+function ChallengeMission_RallyMenAtArms()
+	
+	-- Position enemy units
+	Cmd_FormationMove(sg_enemy_menatarms, mkr_enemy_menatarms_waypoint01, false, false)
+	Cmd_FormationMove(sg_enemy_menatarms, mkr_enemy_menatarms_rally, true, false,  mkr_enemy_menatarms_facing)
+
+end
+
+-- Move Units to their Rally Points
+function ChallengeMission_RallyWallArchers()
+	
+	Cmd_Move(sg_enemy_wall_archers1, mkr_enemy_farmer2_waypoint01, false)
+	Cmd_Move(sg_enemy_wall_archers2, mkr_enemy_farmer2_waypoint01, false)
+	
+	--order wall archers to defend the walls
+	local leftArcPos = Util_GetPosition(mkr_wall_archers2)
+	local rightArcPos = Util_GetPosition(mkr_wall_archers1)
+	ArcFormation(leftArcPos, rightArcPos, sg_enemy_wall_archers1, 0, true, 0)
+	local leftArcPos = Util_GetPosition(mkr_wall_archers3)
+	local rightArcPos = Util_GetPosition(mkr_wall_archers2)
+	ArcFormation(leftArcPos, rightArcPos, sg_enemy_wall_archers2, 0, true, 0)
+	
+	Rule_AddInterval(WallArchersReset, .5)
+end
+
+-- Move Units to their Rally Points
+function ChallengeMission_RallyArchers()
+	
+	-- Position enemy units
+	Cmd_FormationMove(sg_enemy_archers, mkr_enemy_archers_waypoint01, false, false)
+	Cmd_FormationMove(sg_enemy_archers, mkr_enemy_archers_rally, true, false,  mkr_enemy_archers_facing)
+
+end
+
+-- Move Units to their Rally Points
+function ChallengeMission_RallySpringalds()
+	
+	-- Position enemy units
+	Cmd_FormationMove(sg_enemy_mangonels, mkr_enemy_mangonel_waypoint01, false, false)
+	Cmd_FormationMove(sg_enemy_mangonels, mkr_enemy_mangonel_waypoint02, true, false)
+	Cmd_FormationMove(sg_enemy_mangonels, mkr_enemy_mangonel_waypoint03, true, false)
+	Cmd_FormationMove(sg_enemy_mangonels, mkr_enemy_mangonel_rally, true, false,  mkr_enemy_mangonel_facing)
+	
+end
+
+-- Moves military units directly to their rally positions
+function ChallengeMission_RallyMilitary()
+	
+	Cmd_FormationMove(sg_enemy_spearmen, mkr_enemy_spearmen_rally, false, false, mkr_enemy_spearmen_facing)
+	Cmd_FormationMove(sg_enemy_menatarms, mkr_enemy_menatarms_rally, false, false,  mkr_enemy_menatarms_facing)
+	Cmd_FormationMove(sg_enemy_archers, mkr_enemy_archers_rally, false, false,  mkr_enemy_archers_facing)
+	Cmd_FormationMove(sg_enemy_mangonels, mkr_enemy_mangonel_rally, false, false,  mkr_enemy_mangonel_facing)
+	Cmd_FormationMove(sg_enemy_springalds, mkr_inner_springald_rally, false, false,  mkr_spearmen_defend_inner)
+	
+end
+
+-- Add new objectives
+function ChallengeMission_InitializeObjectives()
+	
+	EarlySiegeTrainingGoals_OnInit()
+	TrainingGoal_EnableEarlySiegeGoals()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-----------------------------------------------------------------------
+			-- Victory Objective
+			
+			-- Register Primary objective
+			Objective_Register(_challenge.victory.objectiveVictory, player.id)
+			-- Start objective
+			Objective_Start(_challenge.victory.objectiveVictory, true, false)
+			-- Player has victory objective
+			player._challenge.hasObjectiveVictory = true;
+			
+			-----------------------------------------------------------------------
+			-- Secondary Objective(s)
+			
+			-- Assign Victory Objective as Parent
+			_challenge.victory.objectiveSub1.Parent = _challenge.victory.objectiveVictory
+			-- Register Construct objective
+			Objective_Register(_challenge.victory.objectiveSub1, player.id)
+			-- Start objective
+			Objective_Start(_challenge.victory.objectiveSub1, false, false)
+			-- Add UI Elements to Outpost
+			Objective_AddUIElements(_challenge.victory.objectiveSub1, enemy_capital, false, "$11202434", true, 10)
+			-- Player has objective
+			player._challenge.hasObjectiveSub1 = true;
+
+			-- Assign Victory Objective as Parent
+			_challenge.victory.objectiveSub2.Parent = _challenge.victory.objectiveVictory
+			-- Register Capital objective
+			Objective_Register(_challenge.victory.objectiveSub2, player.id)
+			-- Start objective
+			Objective_Start(_challenge.victory.objectiveSub2, false, false)
+			-- Add UI Elements to Outpost
+			Objective_AddUIElements(_challenge.victory.objectiveSub2, enemy_landmark, false, "$11202435", true, 10)
+			-- Player has objective
+			player._challenge.hasObjectiveSub2 = true;
+			
+			-----------------------------------------------------------------------
+			-- Medal Objective
+			
+			-- Get time elapsed since start time (end of cinematic)
+			local timeElapsed = World_GetGameTime() - player._challenge.startTime
+			
+			-- Register Medal objective
+			Objective_Register(_challenge.benchmarks.gold.objective, player.id)
+			-- Start objective
+			Objective_Start(_challenge.benchmarks.gold.objective, false, false)
+			-- Player has kpi objective
+			player._challenge.hasKpiObjective = true;
+			
+			-- If timer does not already exist
+			if not Timer_Exists(player._challenge.timer) then 
+				-- Start timer
+				Timer_Start(player._challenge.timer, _challenge.benchmarks.gold.time)
+			end
+			
+			-- Update timer display (incrementing)
+			Objective_StartTimer(_challenge.benchmarks.gold.objective, COUNT_UP, timeElapsed, 10)
+			
+			-- Set player's current benchmark as Gold
+			player.currentBenchmark = _challenge.benchmarks.gold
+			
+		end
+	end
+end
+
+
+-- Update Objectives - Called by a rule every simtic
+function ChallengeMission_Update()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-----------------------------------------------------------------------
+			-- Objective Logic
+			
+			-- If player has the Victory Objective
+			if (player._challenge.hasObjectiveVictory and not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+				-- Check for Victory
+				ChallengeMission_CheckVictory()
+			end
+			
+			--return if player has the victory objective to prevent medal changes during outro narration
+			if (Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+				return
+			end
+			
+			-----------------------------------------------------------------------
+			-- Medal Logic
+			
+			-- Get time elapsed since start time (end of cinematic)
+			--local timeElapsed = Timer_GetElapsed(player._challenge.timer)
+			local timeElapsed = World_GetGameTime() - player._challenge.startTime
+			
+			--if the player has lost all of their units and got replacements, disable medals
+			if(playerGotReinforcements == true) then
+				--fail the current objective
+				if(player.currentBenchmark == _challenge.benchmarks.gold) then
+					Objective_Fail(_challenge.benchmarks.gold.objective)
+					
+					-- Register Failed Medal objective
+					Objective_Register(_challenge.victory.failedMedals, player.id)
+					-- Start objective
+					Objective_Start(_challenge.victory.failedMedals, false, false)
+					
+				elseif(player.currentBenchmark == _challenge.benchmarks.silver) then
+					Objective_Fail(_challenge.benchmarks.silver.objective)
+					
+					-- Register Failed Medal objective
+					Objective_Register(_challenge.victory.failedMedals, player.id)
+					-- Start objective
+					Objective_Start(_challenge.victory.failedMedals, false, false)
+					
+				elseif(player.currentBenchmark == _challenge.benchmarks.bronze) then
+					Objective_Fail(_challenge.benchmarks.bronze.objective)
+					
+					-- Register Failed Medal objective
+					Objective_Register(_challenge.victory.failedMedals, player.id)
+					-- Start objective
+					Objective_Start(_challenge.victory.failedMedals, false, false)
+					
+				end
+				
+				--set benchmark to unplaced
+				player.currentBenchmark = _challenge.benchmarks.unplaced
+				
+				-- If objective timer already exists
+				if Timer_Exists(player._challenge.timer) then
+					-- End objective timer
+					Timer_End(player._challenge.timer)
+				end
+			else
+				
+				--print(timeElapsed)
+				
+				-- If time elapsed meets the time requirement for Gold
+				if timeElapsed < _challenge.benchmarks.gold.time then
+					
+					-- If player's current Benchmark is not set to Gold
+					if player.currentBenchmark ~= _challenge.benchmarks.gold then
+						
+						-- Register objective
+						Objective_Register(_challenge.benchmarks.gold.objective, player.id)
+						-- Start objective
+						Objective_Start(_challenge.benchmarks.gold.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(player._challenge.timer) then
+							-- End objective timer
+							Timer_End(player._challenge.timer)
+						end	
+						
+						-- Start timer
+						Timer_Start(player._challenge.timer, _challenge.benchmarks.gold.time)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(_challenge.benchmarks.gold.objective, COUNT_UP, timeElapsed, 10)
+						
+						-- Set player's current benchmark as Gold
+						player.currentBenchmark = _challenge.benchmarks.gold
+						
+					end
+					
+					-- If time elapsed meets the time requirement for Silver
+				elseif timeElapsed < _challenge.benchmarks.silver.time then
+					
+					-- If player's current Benchmark is not set to Silver
+					if player.currentBenchmark ~= _challenge.benchmarks.silver then
+						
+						-- Remove kpi objective
+						Objective_Fail(_challenge.benchmarks.gold.objective, false, false)
+						
+						-- Register objective
+						Objective_Register(_challenge.benchmarks.silver.objective, player.id)
+						-- Start objective
+						Objective_Start(_challenge.benchmarks.silver.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(player._challenge.timer) then
+							-- End objective timer
+							Timer_End(player._challenge.timer)
+						end
+						
+						-- Start timer
+						Timer_Start(player._challenge.timer, _challenge.benchmarks.silver.time)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(_challenge.benchmarks.silver.objective, COUNT_UP, timeElapsed, 10)
+						
+						--play failed gold dialogue
+						Rule_AddOneShot(ChallengeMission_MissedGold, 1.2)
+						
+						-- Set player's current benchmark as Silver
+						player.currentBenchmark = _challenge.benchmarks.silver
+						
+					end
+					
+					-- If time elapsed meets the time requirement for Bronze
+				elseif timeElapsed < _challenge.benchmarks.bronze.time then		
+					
+					-- If player's current Benchmark is not set to Bronze
+					if player.currentBenchmark ~= _challenge.benchmarks.bronze then
+						
+						-- Remove kpi objective
+						Objective_Fail(_challenge.benchmarks.silver.objective, false, false)
+						
+						-- Register objective
+						Objective_Register(_challenge.benchmarks.bronze.objective, player.id)
+						-- Start objective
+						Objective_Start(_challenge.benchmarks.bronze.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(player._challenge.timer) then
+							-- End objective timer
+							Timer_End(player._challenge.timer)
+						end
+						
+						-- Start timer
+						Timer_Start(player._challenge.timer, _challenge.benchmarks.bronze.time)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(_challenge.benchmarks.bronze.objective, COUNT_UP, timeElapsed, 10)
+						
+						--play failed silver dialogue
+						Rule_AddOneShot(ChallengeMission_MissedSilver, 1.2)
+						
+						-- Set player's current benchmark as Bronze
+						player.currentBenchmark = _challenge.benchmarks.bronze
+						
+					end
+					
+					-- If time elapsed exceeds the time requirement for Bronze
+				else
+					
+					-- If player's current Benchmark is not set to Unplaced
+					if player.currentBenchmark ~= _challenge.benchmarks.unplaced then
+						
+						-- Remove kpi objective
+						Objective_Fail(_challenge.benchmarks.bronze.objective, false, false)
+						
+						-- Register objective
+						Objective_Register(_challenge.benchmarks.unplaced.objective, player.id)
+						-- Start objective
+						Objective_Start(_challenge.benchmarks.unplaced.objective, false, false)
+						
+						-- If objective timer already exists
+						if Timer_Exists(player._challenge.timer) then
+							-- End objective timer
+							Timer_End(player._challenge.timer)
+						end	
+						
+						-- Start timer
+						Timer_Start(player._challenge.timer, timeElapsed)
+						
+						-- Update timer display (incrementing)
+						Objective_StartTimer(_challenge.benchmarks.unplaced.objective, COUNT_UP, timeElapsed)
+						
+						--play failed bronze dialogue
+						Rule_AddOneShot(ChallengeMission_MissedBronze, 1.2)
+						
+						-- Set player's current benchmark as Unplaced
+						player.currentBenchmark = _challenge.benchmarks.unplaced
+						
+					end
+				end
+			end
+		end
+	end
+end
+
+function ChallengeMission_MissedGold()
+	if(not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+		Util_StartIntel(EVENTS.NarrGoldFailed)
+	end
+end
+
+function ChallengeMission_MissedSilver()
+	if(not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+		Util_StartIntel(EVENTS.NarrSilverFailed)
+	end
+end
+
+function ChallengeMission_MissedBronze()
+	if(not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+		Util_StartIntel(EVENTS.NarrBronzeFailed)
+	end
+end
+
+-- Check where player units are to update music
+function ChallengeMission_MusicCheck()
+	
+	if Player_AreSquadsNearMarker(localPlayer, audio_area_trigger_upper) then
+		-- Lock Music Intensity
+		Music_LockIntensity(MUSIC_RARE)
+		print("Trigger MUSIC_RARE")
+	elseif Player_AreSquadsNearMarker(localPlayer, audio_area_trigger_lower) then
+		-- Lock Music Intensity
+		Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE)
+		print("Trigger MUSIC_TENSE_COMBAT_RARE")
+	end
+end
+
+-- Global event callback for destruction
+function ChallengeMission_OnDestruction(context)
+	
+	-- Check if player has destroyed a Conquest building
+	if Entity_IsOfType(context.victim, _challenge.victory.destroyRequirement) then
+		
+		-- For every player
+		for i, player in pairs(PLAYERS) do	
+			
+			-- If the player is local (not one of the AI players)
+			if player.isLocal then
+				
+				-- If player has not completed Capital Town Center subobjective
+				if (player._challenge.hasObjectiveSub1 and not Objective_IsComplete(_challenge.victory.objectiveSub1)) then
+					
+					-- If the destroyed building was the East
+					if (context.victim == player._challenge.enemyCapital) then
+						
+						-- Track as last destroyed entity marker
+						_challenge.victory.lastConquestLocation = Entity_GetPosition(player._challenge.enemyCapital)
+						
+						-- Mark Objective as Complete
+						Objective_Complete(_challenge.victory.objectiveSub1, true, false)
+						-- Increment Victory counter
+						player._challenge.conquestProgress = player._challenge.conquestProgress + 1
+						
+						-- Play Victory Stinger
+						Music_PlayStinger("mus_stinger_campaign_positive")
+						
+						-- Play dialogue
+       					Util_StartIntel(EVENTS.NarrDestroyTC)
+			
+						-- Create SGroups
+						local sg_attackers = SGroup_CreateIfNotFound("sg_attackers")
+						Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Entity_GetPosition(context.victim), 10)
+						SGroup_Filter(sg_attackers, "infantry", FILTER_KEEP)
+						
+						-- If there was more than one infantry attacker
+						if (SGroup_Count(sg_attackers) > 0) then
+							-- Trigger Walla
+							Sound_PlayWallaCelebrateOnSGroup(sg_attackers)
+						end
+	
+					end
+					
+					--remove minimap blip
+					for index, entry in pairs(minimapBlips) do 	
+						if entry.id == Entity_GetID(context.victim) then
+							UI_DeleteMinimapBlip(entry.blip)
+						end
+					end
+					
+				end
+				
+				-- If player has not completed Landmark subobjective
+				if (player._challenge.hasObjectiveSub2 and not Objective_IsComplete(_challenge.victory.objectiveSub2)) then
+					
+					-- If the destroyed building was the West
+					if (context.victim == player._challenge.enemyLandmark) then
+						
+						-- Track as last destroyed entity
+						_challenge.victory.lastConquestLocation = Entity_GetPosition(player._challenge.enemyLandmark)
+						
+						-- Mark Objective as Complete
+						Objective_Complete(_challenge.victory.objectiveSub2, true, false)
+						-- Increment Victory counter
+						player._challenge.conquestProgress = player._challenge.conquestProgress + 1
+						
+						-- Play Victory Stinger
+						Music_PlayStinger("mus_stinger_campaign_positive")
+						
+						-- Play dialogue
+						Util_StartIntel(EVENTS.NarrDestroyKremlin)
+						
+						-- Create SGroups
+						local sg_attackers = SGroup_CreateIfNotFound("sg_attackers")
+						Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Entity_GetPosition(context.victim), 10)
+						SGroup_Filter(sg_attackers, "infantry", FILTER_KEEP)
+						
+						-- If there was more than one infantry attacker
+						if (SGroup_Count(sg_attackers) > 0) then
+							-- Trigger Walla
+							Sound_PlayWallaCelebrateOnSGroup(sg_attackers)
+						end
+					end
+					
+					--remove minimap blip
+					for index, entry in pairs(minimapBlips) do 	
+						if entry.id == Entity_GetID(context.victim) then
+							UI_DeleteMinimapBlip(entry.blip)
+						end
+					end
+					
+				end
+			end
+		end
+	end
+	
+	-- If player has not breached the enemy walls
+	if (_challenge.victory.hasBreachedWall == false) then
+		
+		-- Check if destroyed entity was a wall
+		if Entity_IsOfType(context.victim, "wall") then
+			
+			-- Play Victory Stinger
+			Music_PlayStinger("mus_stinger_campaign_positive")
+
+			-- Play dialogue
+       		--Util_StartIntel(EVENTS.NarrEnteredWalls)
+			
+			-- Create SGroups
+			local sg_attackers = SGroup_CreateIfNotFound("sg_attackers")
+			Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Entity_GetPosition(context.victim), 10)
+			SGroup_Filter(sg_attackers, "infantry", FILTER_KEEP)
+			
+			-- If there was more than one infantry attacker
+			if (SGroup_Count(sg_attackers) > 0) then
+				-- Trigger Walla
+				Sound_PlayWallaCelebrateOnSGroup(sg_attackers)
+			end
+			
+			-- Play dialogue
+       		Util_StartIntel(EVENTS.NarrEnteredWalls)
+			
+			--retreat archers defending front gate
+			Rule_Remove(WallArchersReset)
+			Rule_AddOneShot(WallArchersRetreat, 0)
+			
+			--activate defend triggers
+			Rule_AddInterval(DefendWithArchers, 3.5)
+			Rule_AddInterval(DefendWithMenAtArms, 3.5)
+			Rule_AddInterval(DefendWithSpearmen, 3.5)
+			Rule_AddInterval(DefendWithSpringalds, 5)
+			
+			--remove outside gate trigger (this won't be hit if the player attacks from the north)
+			Rule_Remove(EnemyPatrolDetectedPlayer)
+			
+			-- Track that wall was breached
+			_challenge.victory.hasBreachedWall = true
+			
+		end
+	end
+	
+	-- If player has not destroyed a non-critical building
+	if (hasDestroyedBuilding == false) then
+		
+		-- Check if destroyed entity was a building that is not a defensive structure or the 2 objectives
+		if (Entity_IsOfType(context.victim, "building") and Entity_IsOfType(context.victim, "defensive_structure") == false and context.victim ~= enemyCapital and context.victim ~= enemyLandmark)then
+			
+			-- Play dialogue
+       		Util_StartIntel(EVENTS.NarrTargetPriority)
+			
+			-- Track that building was destroyed
+			hasDestroyedBuilding = true
+			
+		end
+	end
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			-- If player has the Victory Objective and it hasn't been completed
+			if (player._challenge.hasObjectiveVictory and not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+				
+				-- Check if local player is annihilated
+				ChallengeMission_CheckAnnihilation(context)
+				
+			end
+		end
+	end
+end
+
+hasStartedReinforcementTimer = false
+reinforcementTime = 0
+-- Evaluates whether the player whose unit/building was killed is eliminated.
+function ChallengeMission_CheckAnnihilation(context)		
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- If the victim is the local player
+			if context.victimOwner == player.id then
+				
+				-- If player has not been eliminated
+				if not player.isEliminated then	
+					
+					-- Get player squads
+					local squads = Player_GetSquads(player.id)
+					-- Filter out sheep
+					SGroup_Filter(squads, "gaia", FILTER_REMOVE)
+					-- Filter out scouts
+					SGroup_Filter(squads, "scout", FILTER_REMOVE)
+					-- Get number of squads
+					local num_squads = SGroup_CountSpawned(squads)
+					-- Remove sgroup that was just created
+					SGroup_Destroy(squads)
+					
+					-- Check for annihiliation when player has no squads left
+					if num_squads == 0 then
+						
+						isCheckingAnnihiliation = true
+						
+					end			
+				end
+			end
+		end
+	end
+end
+
+
+isCheckingAnnihiliation = false
+
+function CheckEarlySiegeAnnihiliation()
+	
+	if(isCheckingAnnihiliation == false) then
+		hasStartedReinforcementTimer = false
+		return
+	end
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- Get player squads
+			local squads = Player_GetSquads(player.id)
+			-- Filter out sheep
+			SGroup_Filter(squads, "gaia", FILTER_REMOVE)
+			-- Filter out scouts
+			SGroup_Filter(squads, "scout", FILTER_REMOVE)
+			-- Get number of squads
+			local num_squads = SGroup_CountSpawned(squads)
+			-- Remove sgroup that was just created
+			SGroup_Destroy(squads)
+			
+			-- Check for annihiliation when player has no squads left
+			if num_squads == 0 then
+				
+				-- Get player resources
+				local food = Player_GetResource(player.id, RT_Food)
+				local wood = Player_GetResource(player.id, RT_Wood)
+				local gold = Player_GetResource(player.id, RT_Gold)
+				
+				
+				local has_entity_with_queue = false
+				local has_squads_in_queue = false
+				local has_resources_remaining = false
+				local entities = Player_GetEntities(player.id)
+				
+				-- Check if player has a unit in production or sufficient resources to produce something. 
+				for i = 1, EGroup_CountSpawned(entities) do
+					local entity = EGroup_GetEntityAt(entities, i)					
+					if not Entity_IsBuilding(entity) or Entity_GetBuildingProgress(entity) >= 1.0 then		-- Accounts for both packed Mongol buildings and finished buildings of other civs 
+						if Entity_HasProductionQueue(entity) then
+							local num_items_in_queue = Entity_GetProductionQueueSize(entity)
+							for j = 0, (num_items_in_queue - 1) do
+								if Entity_GetProductionQueueItemType(entity, j) == PITEM_Spawn then
+									has_entity_with_queue = true
+									has_squads_in_queue = true
+									break
+								end
+							end
+							if has_squads_in_queue then
+								break
+							end
+						end
+						for entity_type, cost in pairs(player._annihilation.cheapest_squad_cost) do 
+							if Entity_IsOfType(entity, entity_type) then 									
+								has_entity_with_queue = true
+								if food >= cost.food and wood >= cost.wood and gold >= cost.gold then
+									has_resources_remaining = true
+									break
+								end
+							end
+						end
+						if has_entity_with_queue and has_resources_remaining then
+							break
+						end
+					end
+				end
+				EGroup_Destroy(entities)
+				
+				
+				if(has_squads_in_queue == true) then
+					hasStartedReinforcementTimer = false
+				else
+					if(hasStartedReinforcementTimer == false) then
+						reinforcementTime = World_GetGameTime()
+						hasStartedReinforcementTimer = true
+					end
+					
+				end
+				
+				--after enough time has passed, ignore remaining resources
+				local currentGameTime = World_GetGameTime()
+				if(hasStartedReinforcementTimer == true and currentGameTime > reinforcementTime + 10) then
+					has_resources_remaining = false
+				end
+				
+				
+				
+				-- Player is annihilated if they have no units alive and either: no buildings that can produce something or no units in production (and no resources to produce anything).
+				if not has_entity_with_queue or (not has_squads_in_queue and not has_resources_remaining) then
+					
+					if(not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+						--instead of losing the mission, the player will now get additional units
+						EarlySiegeReinforcements()
+					end
+				end
+			end	
+		end
+	end
+end
+
+
+function EarlySiegeReinforcements()
+	
+	playerGotReinforcements = true
+	hasStartedReinforcementTimer = false
+	
+	-- Set starting resources
+	Player_SetResource(localPlayer, RT_Food, _challenge.startingResources.food)
+	Player_SetResource(localPlayer, RT_Wood, _challenge.startingResources.wood)
+	Player_SetResource(localPlayer, RT_Gold, _challenge.startingResources.gold)
+	Player_SetResource(localPlayer, RT_Stone, _challenge.startingResources.stone)
+	
+	
+	-- Get unit blueprints
+	local sbp_spearman_mon = BP_GetSquadBlueprint("unit_spearman_3_mon")
+	local sbp_scout_mon = BP_GetSquadBlueprint("unit_scout_1_mon")
+	local sbp_archer_mon = BP_GetSquadBlueprint("unit_archer_3_mon")
+	
+	--[[ PLAYER UNITS ]]--
+	
+	-- Create SGroups
+	sg_player_spearmen1 = SGroup_CreateIfNotFound("sg_player_spearmen1")
+	sg_player_spearmen2 = SGroup_CreateIfNotFound("sg_player_spearmen2")
+	sg_player_scout = SGroup_CreateIfNotFound("sg_player_scout")
+	
+	-- Spawn units
+	UnitEntry_DeploySquads(localPlayer, sg_player_spearmen1, {{sbp = sbp_archer_mon, numSquads = 16 }}, mkr_player_spearmen1_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_spearmen2, {{sbp = sbp_spearman_mon, numSquads = 16 }}, mkr_player_spearmen2_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_scout, {{sbp = sbp_scout_mon, numSquads = 3 }}, mkr_player_scout_spawn)
+	
+	-- Face units
+	Cmd_FormationMove(sg_player_spearmen1, mkr_player_spearmen1_spawn, false, false, mkr_player_spearmen1_facing)
+	Cmd_FormationMove(sg_player_spearmen2, mkr_player_spearmen2_spawn, false, false, mkr_player_spearmen2_facing)
+	Cmd_FormationMove(sg_player_scout, mkr_player_scout_spawn, false, false, mkr_player_scout_facing)
+	
+	
+	--add call to action
+	EventCues_CallToAction("$11202439", CTA_CELEBRATE, nil, nil, Marker_GetPosition(mkr_intro_endpoint), 30, "icons/cta/illustrations/02_celebration", "mus_stinger_campaign_triumph_short")
+	
+end
+
+-- Gets number of entries in given Table
+function GetTableLength(T)
+	
+	-- Store count
+	local count = 0
+	
+	-- For every entry in Table
+	for _ in pairs(T) do
+			
+		-- Increment count
+		count = count + 1 
+			
+	end
+	
+	-- Return count
+	return count
+		
+end
+
+-- Check if player has completed the Challenge Mission
+function ChallengeMission_CheckVictory()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- Check if key buildings have been destroyed
+			if (player._challenge.conquestProgress >= _challenge.victory.completionRequirement) then
+				
+				--special case: fail objective if the player needed reinforcements
+				if(playerGotReinforcements) then
+					
+					Objective_Fail(_challenge.victory.objectiveVictory, false, true)
+					Mission_Complete()
+					
+				else
+					-- Store completion time
+					local completionSeconds = World_GetGameTime() - player._challenge.startTime
+					player._challenge.completionTime = completionSeconds / 60
+					
+					-- Package completion time for Data Store
+					local trialInformation = {kpi = completionSeconds}
+					
+					-- Provide completion time to Stats system via Data Store
+					Game_StoreTableData("trial", trialInformation)
+					
+					print(string.format("CHALLENGE COMPLETED IN %f MINUTES", player._challenge.completionTime))
+					
+					-- Set victory objective to complete
+					Objective_Complete(_challenge.victory.objectiveVictory, false, true)
+					
+					-- Pause objective timer
+					Objective_PauseTimer(player.currentBenchmark.objective)
+				end
+			end
+		end
+	end
+end
+
+-- Trigger unit walla and building fires
+function ChallengeMission_InitializeOutro()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- Get player's surviving units
+			local sg_playerUnits = Player_GetSquads(player.id)
+			
+			-- Set player's units to invulnerable
+			SGroup_SetInvulnerable(sg_playerUnits, true, 0)
+		end
+	end
+	
+	-- Check for last units standing
+	Rule_AddInterval(ChallengeMission_CheckCheer, 1)
+	-- Set enemy buildings on fire
+	ChallengeMission_SetBuildingsOnFire()
+	
+end
+
+-- Check for last team standing and initialize cheering
+function ChallengeMission_CheckCheer()
+	
+	-- Create SGroups
+	local sg_playerSurvivors = SGroup_CreateIfNotFound("sg_playerSurvivors")
+	local sg_enemySurvivors = SGroup_CreateIfNotFound("sg_enemySurvivors")
+	
+	-- Get player squads near 
+	Player_GetAllSquadsNearMarker(localPlayer, sg_playerSurvivors, _challenge.victory.lastConquestLocation, 40)
+	local playerUnitCount = SGroup_Count(sg_playerSurvivors)
+
+	-- Get player squads near 
+	Player_GetAllSquadsNearMarker(enemyPlayer, sg_enemySurvivors, _challenge.victory.lastConquestLocation, 40)
+	local enemyUnitCount = SGroup_Count(sg_enemySurvivors)
+
+	-- If the enemy does not have any units near the end position
+	if enemyUnitCount == 0 then
+		
+		-- Make units cheer
+		SGroup_EnableCheering(sg_playerSurvivors, true, -1, WALLA_CAMP_CELEBRATE_LARGE)
+		
+		-- End this rule
+		Rule_RemoveMe()
+		
+	end
+end
+
+-- Randomly sets enemy buildings on fire
+function ChallengeMission_SetBuildingsOnFire()
+	
+	-- Get units
+	local sg_enemy_units = Player_GetSquads(enemyPlayer)
+	-- Remove units
+	SGroup_DestroyAllSquads(sg_enemy_units)
+	
+	-- Create Egroup
+	local eg_enemy_buildings = EGroup_CreateIfNotFound("eg_enemy_buildings")
+	-- Get all enemy buildings
+	eg_enemy_buildings = Player_GetAllEntities(enemyPlayer)
+	
+	-- Set building on fire
+	local function _SetFire(gid, idx, eid)
+		
+		-- Gets random number for fire threshold
+		local randFire = World_GetRand(1, 100)
+		-- Gets random number for damage
+		local randDamage = World_GetRand(20, 80)/100
+		
+		-- If entity is a wall
+		if Entity_IsOfType(eid, "wall") then
+			
+			-- If number is greater than wall threshold
+			if (randFire > 80) then
+				
+				-- Damage
+				Entity_SetHealth(eid, randDamage)
+				-- Set on Fire
+				Entity_SetOnFire(eid)
+				
+			end
+		
+		-- If not a wall, it's a building
+		else
+			-- If number is greater than building threshold
+			if (randFire > 0) then
+				
+				-- Damage
+				Entity_SetHealth(eid, randDamage)
+				-- Set on Fire
+				Entity_SetOnFire(eid)
+				
+			end
+		end
+	end
+	
+	-- For every building
+	EGroup_ForEach(eg_enemy_buildings, _SetFire)
+	
+end
+
+-- End Challenge
+function ChallengeMission_EndChallenge()
+
+	-- Set player as victorious
+	Core_SetPlayerVictorious(localPlayer, nil, WR_OBJECTIVECOMPLETE)
+	-- Slowdown sim rate for post-match screen
+	Game_SetSimRate(0.5)
+	
+end
+
+-- Defeat Presentation Functions
+function ChallengeMission_DefeatPresentation(playerID)
+		
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+		
+		-- If player is local (not AI)
+		if player.isLocal then 
+			
+			-- Clear player selection
+			Misc_ClearSelection()
+			-- Set taskbar to invisible
+			Taskbar_SetVisibility(false)
+			
+			-- Set primary end message
+			local endMessage = "$11179828" -- "Challenge Failed"
+			-- Stores a victory message (default = nothing)
+			local defeatMessage = "$11166951"
+			
+			-- Add Victory presentation
+			Rule_AddOneShot(_gameOver_message, GAMEOVER_OBJECTIVE_TIME, {_playerID = playerID, _icon = _challenge.icons.victoryObjective, _endType = endMessage, _message = defeatMessage, _sound = "ConquestDefeatEvent", _videoURI = "stinger_defeat"})
+			
+		end
+	end
+end
+
+
+function SetVillagersToHunt()
+
+	
+	local function _AssignHunter(gid, idx, sid)
+		
+		-- There are no more than 2 deer (alive) within 15 Meters of the drop off
+		local eg_close_food_deposits = Misc_FindDepositsOfTypeCloseToPosition(RT_Food,
+			Cardinal_ConvertTypeToEntityBlueprint("villager", localPlayer), 
+			Squad_GetPosition(sid),
+			120)
+		
+		local genericDeerBp = BP_GetSquadBlueprint("gaia_huntable_deer")
+		local sg_deer = SGroup_CreateUnique("")
+		
+		
+		if EGroup_Count(eg_close_food_deposits) ~= 0 then
+			for i = 1, EGroup_Count(eg_close_food_deposits), 1 do
+				local deposit = EGroup_GetEntityAt(eg_close_food_deposits, i) 
+				local deposit_squad = Entity_GetSquad(deposit)
+				if deposit_squad ~= nil then
+					local squadBP = Squad_GetBlueprint(deposit_squad)
+					if squadBP == genericDeerBp then
+						SGroup_Add(sg_deer, deposit_squad)
+					end
+				end
+			end
+			EGroup_Clear(eg_close_food_deposits)
+		end
+		
+		-- Assign!
+		if SGroup_Count(sg_deer) > 0 then
+			local sg_targetDeer = SGroup_CreateUnique("")
+
+			SGroup_Single(sg_single, sid)
+			local sacrificialDeer = SGroup_GetClosestSquad(sg_deer, Util_GetPosition(sid))
+			if sacrificialDeer ~= nil then
+				SGroup_Single(sg_targetDeer, sacrificialDeer)
+				LocalCommand_SquadSquad(localPlayer, sg_single, SCMD_Gather, sg_targetDeer, false)
+			end
+		end
+		
+	end
+	
+	
+	
+	SGroup_ForEach(sg_enemy_hunter, _AssignHunter)
+	
+	
+	
+end
+
+function PutOutFires()
+	
+	--EGroup_IsBurning
+	--Entity_IsBurning
+	--Cmd_Ability
+	
+	
+end
+
+function MenAtArmsPatrolLeft()
+	
+	if Prox_AreSquadsNearMarker(sg_enemy_menatarms2, mkr_menatarms_patrol_right, ANY, 5) then
+		
+		menAtArmsPatrolDirection = -1
+		--move enemy men at arms to trigger location
+		Cmd_Move(sg_enemy_menatarms2, mkr_menatarms_patrol_center, false)
+		
+	end
+end
+
+function MenAtArmsPatrolCenter()
+	
+	if Prox_AreSquadsNearMarker(sg_enemy_menatarms2, mkr_menatarms_patrol_center, ANY, 5) then
+		
+		--move enemy men at arms to trigger location
+		if(menAtArmsPatrolDirection == 1) then 
+			Cmd_Move(sg_enemy_menatarms2, mkr_menatarms_patrol_right, false)
+		else
+			Cmd_Move(sg_enemy_menatarms2, mkr_menatarms_patrol_left, false)
+		end
+		
+	end
+end
+
+function MenAtArmsPatrolRight()
+	
+	if Prox_AreSquadsNearMarker(sg_enemy_menatarms2, mkr_menatarms_patrol_left, ANY, 5) then
+		
+		menAtArmsPatrolDirection = 1
+		--move enemy men at arms to trigger location
+		Cmd_Move(sg_enemy_menatarms2, mkr_menatarms_patrol_center, false)
+		
+	end
+end
+
+--play dialogue and reveal map when the player gets within a certain distance
+function EnemyPatrolDetectedPlayer()
+	
+	local sg_player_units = Player_GetSquads(localPlayer)
+		
+	local s_closest_attacker = SGroup_GetClosestSquad(sg_player_units, Util_GetPosition(sg_enemy_menatarms2))
+	if s_closest_attacker ~= nil then	
+		--only attack if the unit is close enough (prevents attacking across the map)
+		if(Util_GetDistance(s_closest_attacker, sg_enemy_menatarms2) < 70) then
+			
+			--reveal map at gate
+			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_ford_zone), 20, -1)
+			
+			-- Play dialogue
+       		Util_StartIntel(EVENTS.NarrEnemyPatrols)
+			Rule_RemoveMe()
+		end
+	end
+	
+end
+
+--end the patrols and attack when the player gets close
+function EnemyPatrolAttackPlayer()
+	
+	local sg_count = SGroup_Count(sg_enemy_menatarms2)
+	
+	-- If menatarms have been defeated
+	if SGroup_Count(sg_enemy_menatarms2) == 0 then
+		--remove rules
+		Rule_Remove(MenAtArmsPatrolLeft)
+		Rule_Remove(MenAtArmsPatrolCenter)
+		Rule_Remove(MenAtArmsPatrolRight)
+		Rule_RemoveMe()
+		return
+	end
+		
+	local sg_player_units = Player_GetSquads(localPlayer)
+	
+	local s_closest_attacker = SGroup_GetClosestSquad(sg_player_units, Util_GetPosition(sg_enemy_menatarms2))
+	if s_closest_attacker ~= nil then	
+		if(Util_GetDistance(s_closest_attacker, sg_enemy_menatarms2) < 40) then
+			Cmd_AttackMove(sg_enemy_menatarms2, Util_GetPosition(s_closest_attacker), false)
+			
+			EnemyGarrisonWoodFort()
+			
+			--remove rules
+			Rule_Remove(MenAtArmsPatrolLeft)
+			Rule_Remove(MenAtArmsPatrolCenter)
+			Rule_Remove(MenAtArmsPatrolRight)
+			Rule_RemoveMe()
+			
+		end
+	end
+end
+
+--garrison the wooden fort with nearby villagers
+function EnemyGarrisonWoodFort()
+	
+	-- Create SGroup
+	local sg_garrison_workers = SGroup_CreateIfNotFound("sg_garrison_workers")
+	Player_GetAllSquadsNearMarker(enemyPlayer, sg_garrison_workers, Util_GetPosition(mkr_enemy_fisherman0_spawn), 30)
+	SGroup_Filter(sg_garrison_workers, "villager", FILTER_KEEP)
+	
+	-- Create EGroup
+	local eg_garrison_fort = EGroup_CreateIfNotFound("eg_garrison_fort")
+	Player_GetAllEntitiesNearMarker(enemyPlayer, eg_garrison_fort, Util_GetPosition(mkr_enemy_fisherman0_spawn), 30)
+	EGroup_Filter(eg_garrison_fort, "wooden_fortress", FILTER_KEEP)
+	
+	if(SGroup_CountSpawned(sg_garrison_workers) > 0 and EGroup_CountSpawned(eg_garrison_fort) > 0) then
+		Cmd_Garrison(sg_garrison_workers, eg_garrison_fort, false, false, false)
+	end
+	
+end
+
+function Mission_SetupCheatMenu()
+
+	CheatMenu_RegisterCheatFunction(Mission_Cheat_ViewRecipe, "View Recipe", false)
+	CheatMenu_RegisterCheatFunction(Mission_Cheat_Win, "Mission-o-Matic Win", false)
+	CheatMenu_RegisterCheatFunction(Mission_Cheat_Lose, "Mission-o-Matic Lose", false)
+	CheatMenu_RegisterCheatFunction(Mission_Cheat_Complete_Obj, "Complete Active Objectives", false)
+	CheatMenu_RegisterCheatFunction(Mission_Cheat_Fail_Obj, "Fail Active Objectives", false)
+	
+	if scartype(EVENTS) == ST_TABLE then 
+		for index, event in pairs(EVENTS) do
+			if string.find(index, "ECAM") ~= nil then
+				CheatMenu_AddMenuItem_Event("Play E-Cam "..index, false, "playECAM", index)
+			else
+				CheatMenu_AddMenuItem_Event("Play Speech "..index, false, "playSpeechEvent", index)
+			end
+		end
+	end
+	
+end
+
+function Mission_ActivateMenuItem(mode, value)
+
+	if mode == "playECAM" and scartype(value) == ST_STRING then
+		PlayECAM(value)
+	elseif mode == "playSpeechEvent" and scartype(value) == ST_STRING then
+		PlaySpeech(value)
+	end	
+	
+end
+
+--? @shortdesc Used to view the mission recipe that this mission was generated from
+function Mission_Cheat_ViewRecipe()
+
+	view(MissionRecipe)
+	
+end
+
+--? @shortdesc Used to WIN the entire mission
+function Mission_Cheat_Win()
+	
+	-- kill everything that isn't the player's
+	for index, player in pairs(PLAYERS) do 
+		if player.index ~= 1 then
+			Player_GetAll(player.id)
+			SGroup_Kill(sg_allsquads)
+		end
+	end
+	
+	-- complete all objectives
+	for index, objective in pairs(g_missionObjectives) do 
+		Obj_SetState(objective.ID, OS_Complete)
+	end
+	
+	World_NotifyDebugEndSP(true)
+
+	CardinalMissionData = {
+		report = {
+			win = true,
+			gameLength = World_GetGameTime(),
+		},
+	}
+	
+	Game_RetrieveTableData("CardinalMissionData", true) -- clear out the old store
+	Game_StoreTableData("CardinalMissionData", CardinalMissionData)
+	
+	Game_EndSP(true, WR_OBJECTIVECOMPLETE)
+	
+end
+
+--? @shortdesc Used to FAIL the entire mission
+function Mission_Cheat_Lose()
+	
+	-- kill everything player-owned
+	local player = World_GetPlayerAt(1)
+	Player_GetAll(player)
+	SGroup_Kill(sg_allsquads)
+	
+	-- fail all objectives
+	for index, objective in pairs(g_missionObjectives) do 
+		Obj_SetState(objective.ID, OS_Failed)
+	end
+	
+	World_NotifyDebugEndSP(false)
+	
+	CardinalMissionData = {
+		report = {
+			win = false,
+			gameLength = World_GetGameTime(),
+		},
+	}
+	
+	Game_RetrieveTableData("CardinalMissionData", true) -- clear out the old store
+	Game_StoreTableData("CardinalMissionData", CardinalMissionData)
+	
+	Game_EndSP(false, WR_OBJECTIVEFAILED)
+
+end
+
+--? @shortdesc Used to successfully COMPLETE all currently-active objectives
+function Mission_Cheat_Complete_Obj()
+
+	-- Complete all objectives that have STARTED
+	for index, objective in pairs(__t_Objectives) do
+		if objective.Type ~= OT_Secondary and Objective_IsStarted(objective) == true and Objective_IsComplete(objective) == false and Objective_IsFailed(objective) == false then
+			
+			-- First, figure out subobjectives, if there are any
+			local subObjectives = Objective_GetSubObjectives(objective)
+			local countPendingSubobjectives = 0
+			
+			-- First we want to extract started subobjectives
+			local subobjsToComplete = {}
+			-- We have to complete them separately or one subobjective might start another on completion,
+			-- which could lead to that knock-on subobjective also getting completed before it becomes active
+			for index, subObjective in pairs(subObjectives) do
+				-- If an objective has any subobjectives that aren't yet resolved, we don't want to complete the objective itself yet
+				if Objective_IsComplete(subObjective) == false and Objective_IsFailed(subObjective) == false then
+					countPendingSubobjectives = countPendingSubobjectives + 1
+					-- If we have a pending objective that is started, we need to complete it
+					if Objective_IsStarted(subObjective) == true then
+						table.insert(subobjsToComplete, subObjective)
+					end
+				end
+			end
+			
+			-- Complete only the ones that were already started here
+			for index, subObjective in pairs(subobjsToComplete) do
+				print("CHEAT - Completing Sub: "..Loc_ToAnsi(subObjective.Title))
+				Objective_Complete(subObjective)
+			end
+			
+			-- If there weren't any subobjectives to resolve, we may have to resolve this directly
+			if countPendingSubobjectives <= 0 then
+				Objective_Complete(objective)
+				print("CHEAT - Completing Obj: "..Loc_ToAnsi(objective.Title))
+			end
+		end
+	end
+
+end
+
+--? @shortdesc Used to FAIL all currently-active objectives
+function Mission_Cheat_Fail_Obj()
+
+	-- Fail all objectives that have STARTED
+	for index, objective in pairs(__t_Objectives) do
+		if objective.Type ~= OT_Secondary and Objective_IsStarted(objective) == true and Objective_IsComplete(objective) == false and Objective_IsFailed(objective) == false then
+			
+			-- First, figure out subobjectives, if there are any
+			local subObjectives = Objective_GetSubObjectives(objective)
+			local countPendingSubobjectives = 0
+			
+			-- First we want to extract started subobjectives
+			local subobjsToFail = {}
+			-- We have to fail them separately or one subobjective might start another on failure,
+			-- which could lead to that knock-on subobjective also getting failed before it becomes active
+			for index, subObjective in pairs(subObjectives) do
+				-- If an objective has any subobjectives that aren't yet resolved, we don't want to fail the objective itself yet
+				if Objective_IsComplete(subObjective) == false and Objective_IsFailed(subObjective) == false then
+					countPendingSubobjectives = countPendingSubobjectives + 1
+					-- If we have a pending objective that is started, we need to fail it
+					if Objective_IsStarted(subObjective) == true then
+						table.insert(subobjsToFail, subObjective)
+					end
+				end
+			end
+			
+			-- Fail only the ones that were already started here
+			for index, subObjective in pairs(subobjsToFail) do
+				print("CHEAT - Failing Sub: "..Loc_ToAnsi(subObjective.Title))
+				Objective_Fail(subObjective)
+			end
+			
+			-- If there weren't any subobjectives to resolve, we may have to resolve this directly
+			if countPendingSubobjectives <= 0 then
+				Objective_Fail(objective)
+				print("CHEAT - Failing Obj: "..Loc_ToAnsi(objective.Title))
+			end
+		end
+	end
+end
+
+function Mission_SetupCheatForOutroCamera()
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Util_StartIntel(EVENTS.EarlySiege_Outro)
+			Mission_Complete()
+		end,
+	}
+
+    Objective_Register(OBJ_DebugComplete)
+	
+end
+function DefendWithArchers()
+	
+	if(sg_enemy_archers ~= nil and SGroup_Count(sg_enemy_archers) > 0) then
+		
+		--prefer to target ranged siege
+		-- Create SGroups
+		local sg_attackers = SGroup_CreateIfNotFound("sg_attackers")
+		Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Util_GetPosition(mkr_gate_zone), 65)
+		SGroup_Filter(sg_attackers, "siege_range", FILTER_KEEP)
+		
+		if (SGroup_Count(sg_attackers) > 0 and SGroup_Count(sg_enemy_archers) > 0) then
+			local s_closest_attacker = SGroup_GetClosestSquad(sg_attackers, Util_GetPosition(mkr_gate_zone))
+			if s_closest_attacker ~= nil then	
+				--only attack if the unit is close enough (prevents attacking across the map)
+				if(Util_GetDistance(s_closest_attacker, mkr_gate_zone) < 100) then
+					Cmd_AttackMove(sg_enemy_archers, sg_attackers, false)
+					return
+				end
+			end
+		end
+		
+		----
+		--attack anything if no ranged siege is in range
+		Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Util_GetPosition(mkr_gate_zone), 65)
+		
+		if (SGroup_Count(sg_attackers) > 0 and SGroup_Count(sg_enemy_archers) > 0) then
+			local s_closest_attacker = SGroup_GetClosestSquad(sg_attackers, Util_GetPosition(mkr_gate_zone))
+			if s_closest_attacker ~= nil then	
+				--only attack if the unit is close enough (prevents attacking across the map)
+				if(Util_GetDistance(s_closest_attacker, mkr_gate_zone) < 100) then
+					Cmd_AttackMove(sg_enemy_archers, Util_GetPosition(s_closest_attacker), false)
+				end
+			end
+		end
+	else
+		Rule_RemoveMe()
+		return
+	end
+end
+
+function DefendWithMenAtArms()
+	
+	if(sg_enemy_menatarms ~= nil and SGroup_Count(sg_enemy_menatarms) > 0) then
+		
+		--prefer to target battering rams
+		-- Create SGroups
+		local sg_attackers = SGroup_CreateIfNotFound("sg_attackers")
+		Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Util_GetPosition(mkr_outer_zone), 75)
+		SGroup_Filter(sg_attackers, "ram", FILTER_KEEP)
+		
+		if (SGroup_Count(sg_attackers) > 0 and SGroup_Count(sg_enemy_menatarms) > 0) then
+			local s_closest_attacker = SGroup_GetClosestSquad(sg_attackers, Util_GetPosition(mkr_outer_zone))
+			if s_closest_attacker ~= nil then	
+				--only attack if the unit is close enough (prevents attacking across the map)
+				if(Util_GetDistance(s_closest_attacker, mkr_outer_zone) < 100) then
+					Cmd_Attack(sg_enemy_menatarms, sg_attackers, false)
+					return
+				end
+			end
+		end
+		
+		----
+		--attack anything if no rams are in range
+		Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Util_GetPosition(mkr_outer_zone), 75)
+		
+		if (SGroup_Count(sg_attackers) > 0 and SGroup_Count(sg_enemy_menatarms) > 0) then
+			local s_closest_attacker = SGroup_GetClosestSquad(sg_attackers, Util_GetPosition(mkr_outer_zone))
+			if s_closest_attacker ~= nil then	
+				--only attack if the unit is close enough (prevents attacking across the map)
+				if(Util_GetDistance(s_closest_attacker, mkr_outer_zone) < 100) then
+					Cmd_AttackMove(sg_enemy_menatarms, Util_GetPosition(s_closest_attacker), false)
+				end
+			end
+		end
+	else
+		Rule_RemoveMe()
+		return
+	end
+	
+end
+
+--sends spearmen to block entrance to inner zone
+function PositionEnemySpearmen()
+	-- Create SGroups
+	local sg_attackers = SGroup_CreateIfNotFound("sg_attackers")
+	Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Util_GetPosition(mkr_spearmen_defend_inner), 40)
+
+	if (SGroup_Count(sg_attackers) > 0 and SGroup_Count(sg_enemy_spearmen) > 0) then
+		Cmd_Ability(sg_enemy_spearmen, BP_GetAbilityBlueprint("core_formation_line"))
+		
+		Cmd_FormationMove(sg_enemy_spearmen, mkr_spearmen_defend_inner, true, false, mkr_enemy_menatarms_spawn)
+		Rule_RemoveMe()
+	end
+end
+
+function DefendWithSpearmen()
+	
+	if(sg_enemy_spearmen ~= nil and SGroup_Count(sg_enemy_spearmen) > 0) then
+		
+		--prefer to target battering rams
+		-- Create SGroups
+		local sg_attackers = SGroup_CreateIfNotFound("sg_attackers")
+		Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Util_GetPosition(mkr_inner_zone), 50)
+		SGroup_Filter(sg_attackers, "ram", FILTER_KEEP)
+		
+		if (SGroup_Count(sg_attackers) > 0 and SGroup_Count(sg_enemy_spearmen) > 0) then
+			local s_closest_attacker = SGroup_GetClosestSquad(sg_attackers, Util_GetPosition(mkr_inner_zone))
+			if s_closest_attacker ~= nil then	
+				--only attack if the unit is close enough (prevents attacking across the map)
+				if(Util_GetDistance(s_closest_attacker, mkr_inner_zone) < 75) then
+					Cmd_Attack(sg_enemy_spearmen, sg_attackers, false)
+					return
+				end
+			end
+		end
+		
+		----
+		--attack anything if no rams are in range
+		Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Util_GetPosition(mkr_inner_zone), 50)
+		
+		if (SGroup_Count(sg_attackers) > 0 and SGroup_Count(sg_enemy_spearmen) > 0) then
+			local s_closest_attacker = SGroup_GetClosestSquad(sg_attackers, Util_GetPosition(mkr_inner_zone))
+			if s_closest_attacker ~= nil then	
+				--only attack if the unit is close enough (prevents attacking across the map)
+				if(Util_GetDistance(s_closest_attacker, mkr_inner_zone) < 75) then
+					Cmd_AttackMove(sg_enemy_spearmen, Util_GetPosition(s_closest_attacker), false)
+				end
+			end
+		end
+	else
+		Rule_RemoveMe()
+		return
+	end
+	
+end
+
+function DefendWithSpringalds()
+	
+	if(sg_enemy_springalds ~= nil and SGroup_Count(sg_enemy_springalds) > 0) then
+		
+		--prefer to target siege
+		local sg_attackers = SGroup_CreateIfNotFound("sg_attackers")
+		Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Util_GetPosition(mkr_inner_zone), 75)
+		SGroup_Filter(sg_attackers, "siege", FILTER_KEEP)
+		
+		if (SGroup_Count(sg_attackers) > 0 and SGroup_Count(sg_enemy_springalds) > 0) then
+			local s_closest_attacker = SGroup_GetClosestSquad(sg_attackers, Util_GetPosition(mkr_inner_zone))
+			if s_closest_attacker ~= nil then	
+				--only attack if the unit is close enough (prevents attacking across the map)
+				if(Util_GetDistance(s_closest_attacker, mkr_inner_zone) < 75) then
+					Cmd_Attack(sg_enemy_springalds, sg_attackers, false)
+					return
+				end
+			end
+		end
+		
+		----
+		--attack anything if no rams are in range
+		Player_GetAllSquadsNearMarker(localPlayer, sg_attackers, Util_GetPosition(mkr_inner_zone), 75)
+		
+		if (SGroup_Count(sg_attackers) > 0 and SGroup_Count(sg_enemy_springalds) > 0) then
+			local s_closest_attacker = SGroup_GetClosestSquad(sg_attackers, Util_GetPosition(mkr_inner_zone))
+			if s_closest_attacker ~= nil then	
+				--only attack if the unit is close enough (prevents attacking across the map)
+				if(Util_GetDistance(s_closest_attacker, mkr_inner_zone) < 75) then
+					Cmd_AttackMove(sg_enemy_springalds, Util_GetPosition(s_closest_attacker), false)
+				end
+			end
+		end
+	else
+		Rule_RemoveMe()
+		return
+	end
+	
+end
+
+--this function orders units to form a line form startPos to endPos with the curvature curveStrength
+function ArcFormation(startPos, endPos, inGroup, curveStrength, inQueued, inOffset)
+	if(SGroup_CountSpawned(inGroup) == 0) then
+		return
+	end
+	
+	local fLine = Util_GetPosition(startPos)
+	fLine["x"] = endPos["x"] - startPos["x"]
+	fLine["z"] = endPos["z"] - startPos["z"]
+	
+	local tLine = Util_GetPosition(startPos)
+	tLine["x"] = fLine["z"]
+	tLine["z"] = -fLine["x"]
+	
+	
+	for i = 1, SGroup_Count(inGroup) do
+		--offset should be from 0 to 1
+		local pointD = (i - inOffset) / SGroup_Count(inGroup)
+		
+		local unitDest = Util_GetPosition(startPos)
+		--calculate the destination for each unit
+		unitDest["x"] = startPos["x"] + (pointD * fLine["x"])
+		unitDest["z"] = startPos["z"] + (pointD * fLine["z"])
+		
+		local curveMultiplier = pointD - .5
+		
+		curveMultiplier = curveMultiplier * curveMultiplier
+		curveMultiplier = .25 - curveMultiplier
+		
+		unitDest["x"] = unitDest["x"] + (tLine["x"] * curveMultiplier * curveStrength)
+		unitDest["z"] = unitDest["z"] + (tLine["z"] * curveMultiplier * curveStrength)
+		
+		--isolate each unit and give it a move order
+		local squad = SGroup_GetSquadAt(inGroup, i)
+		SGroup_Single(sg_single, squad)
+		Cmd_Move(sg_single, unitDest, inQueued)
+	end
+	
+end
+
+--this function orders an SGroup to scatter inDistToMove away from its center
+function ScriptScatterUnits(inGroup, inDistToMove, inUseGroupCenter, inCenter, inFaceUnits, inFacingMarker, inQueued)
+	
+	if(inGroup == nil) then
+		return
+	end
+	
+	if(SGroup_Count(inGroup) == 0) then
+		return
+	end
+	
+	--find center point or use parameter
+	local centerPoint = Util_GetPosition(inGroup)
+	if(inUseGroupCenter == true) then
+		centerPoint["x"] = 0
+		centerPoint["z"] = 0
+		for i = 1, SGroup_Count(inGroup) do
+			
+			local squad = SGroup_GetSquadAt(inGroup, i)
+			local squadPos = Util_GetPosition(squad)
+			
+			centerPoint["x"] = centerPoint["x"] + squadPos["x"]
+			centerPoint["z"] = centerPoint["z"] + squadPos["z"]
+			
+		end
+		
+		if(SGroup_Count(inGroup) > 0) then
+			
+			centerPoint["x"] = centerPoint["x"] / SGroup_Count(inGroup)
+			centerPoint["z"] = centerPoint["z"] / SGroup_Count(inGroup)
+		end
+	else
+		centerPoint = Util_GetPosition(inCenter)
+	end
+	
+	
+	
+	for i = 1, SGroup_Count(inGroup) do
+		
+		local squad = SGroup_GetSquadAt(inGroup, i)
+		local unitPos = Util_GetPosition(squad)
+		local centerDir = Util_GetPosition(squad)
+		
+		--find vector from individual unit to center
+		centerDir["x"] = (unitPos["x"] - centerPoint["x"])
+		centerDir["z"] = (unitPos["z"] - centerPoint["z"])
+		
+		--normalize vector
+		local distToCenter = math.sqrt((centerDir["x"] * centerDir["x"]) + (centerDir["z"] * centerDir["z"]))
+		if(distToCenter > 0) then
+			centerDir["x"] = centerDir["x"] / distToCenter
+			centerDir["z"] = centerDir["z"] / distToCenter
+		end
+		
+		--calculate destination
+		local unitDest = Util_GetPosition(squad)
+		unitDest["x"] = unitPos["x"] + (centerDir["x"] * inDistToMove)
+		unitDest["z"] = unitPos["z"] + (centerDir["z"] * inDistToMove)
+		
+		SGroup_Single(sg_single, squad)
+		Cmd_Move(sg_single, unitDest, inQueued)
+		
+		--give extra facing order if applicable
+		if(inFaceUnits == true) then
+			if(inFacingMarker ~= nil) then
+				-- Face menatarms
+				Cmd_FormationMove(sg_single, unitDest, true, false, inFacingMarker)
+			else
+				--face center
+				Cmd_FormationMove(sg_single, unitDest, true, false, centerPoint)
+			end
+		end
+		
+	end
+	
+end

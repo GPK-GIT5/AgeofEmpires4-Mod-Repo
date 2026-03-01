@@ -1,0 +1,568 @@
+-- 
+-- Mission-O-Matic Module - Defend
+--
+-- Covers combat specifically related to defending a town (i.e. using walls, etc) 
+--
+--
+-- See: Behaviour Module - Defend (Combat)
+--      http://relicwiki/pages/viewpage.action?pageId=514949300		(in the EE, you can Control-click on this link to go there)
+--
+
+
+--? @shortdesc Initializes a new Defend module
+function Defend_Init(data)
+	
+	local module = Prefab_GetInstance(data)
+	module.prefabName = "Defend"	
+	assert(scartype(module.descriptor) == ST_STRING, "Defend module needs a descriptor")
+	
+	if module.range ~= nil then
+		module.combatRange = module.range
+		module.range = nil
+		assert(false, module.descriptor.." range has been deprecated in favor of combatRange")
+	end
+	
+	assert(module.combatRange == nil or (scartype(module.combatRange) == ST_NUMBER and module.combatRange > 0), module.descriptor.." has invalid combatRange")
+	assert(module.leashRange == nil or (scartype(module.leashRange) == ST_NUMBER and module.leashRange > 0), module.descriptor.." has invalid leashRange")
+	
+	if module.useCustomDirection == nil  	then module.useCustomDirection = false end
+	if module.cavalryCanBuildRams == nil 	then module.cavalryCanBuildRams = true end
+	if module.faceHumanPlayer == nil     	then module.faceHumanPlayer = false end
+	
+	if module.ramCount == nil				then module.ramCount = nil end
+	if module.ramPassengerCount == nil		then module.ramPassengerCount = nil end
+	if module.siegeTowerPassengerCount==nil	then module.siegeTowerPassengerCount = nil end
+	if module.openPathThreshold == nil 		then module.openPathThreshold = nil end
+	if module.brokenWallThreshold == nil 	then module.brokenWallThreshold = nil end
+	
+	table.insert(t_defendModules, module)
+	table.insert(t_allModules, module)
+	
+	if module.sgroup == nil then
+		module.sgroup = SGroup_CreateUnique("Defend")
+	end
+	
+	Defend_InitializeTarget(module)
+	
+	--catch the case where both types of attackMoveStyle are used
+	if module.attackMove ~= nil and module.attackMoveEnRoute ~= nil then
+		assert(false, module.descriptor.." cannot have both attackMove and attackMoveEnRoute")		
+	end
+	if module.attackMove ~= nil and module.attackMoveAtTarget~= nil then
+		assert(false, module.descriptor.." cannot have both attackMove and attackMoveAtTarget")		
+	end
+	--apply defaults if neither type is used
+	if module.attackMove == nil and module.attackMoveEnRoute == nil then
+		module.attackMoveEnRoute = attackMoveStyle_attackEverything
+	end
+	if module.attackMove == nil and module.attackMoveAtTarget == nil then
+		module.attackMoveAtTarget = attackMoveStyle_attackEverything
+	end
+	
+	if module.spawnLocation == nil then
+		
+		if scartype(module.marker) == ST_MARKER then 
+			module.spawnLocation = module.marker
+		else
+			module.spawnLocation = module.target.position
+		end
+	
+	end
+
+	-- spawn starting units
+	module.canReportDefeat = false
+	if scartype(module.units) == ST_TABLE then
+ 		UnitEntry_DeploySquads(module.player, module.sgroup, module.units, module.spawnLocation)
+		module.canReportDefeat = true
+	end
+	
+	-- set the module's ideal composition now that starting units have been spawned
+	module.idealComposition = {}
+	Reinforcement_UpdateIdealComposition(module)
+	module.highestUnitCount = SGroup_CountSpawned(module.sgroup)
+	
+	module.data = {
+		isUnderAttack = false,
+		underAttackCountdown = 2,
+		attackOverCountdown = 10,
+		encounterID = Encounter_Create(module.player, module.sgroup, "DoNothing", "DefendModule "..module.descriptor),	
+	}
+	
+	-- Define a case in which this module will flee and dissolve into another module
+	if scartype(module.withdrawData) == ST_TABLE and scartype(module.withdrawData.dissolveModule) ~= ST_NIL then
+		if scartype(module.withdrawData.onSightedPlayer) ~= ST_NIL then
+			module.withdrawData.onSightedPlayer = module.withdrawData.onSightedPlayer
+			module.withdrawData.withdrawDestination = module.withdrawData.withdrawDestination
+			module.withdrawData.dissolveModule = module.withdrawData.dissolveModule
+			module.withdrawData.onForceWithdrawFunc = module.withdrawData.onForceWithdrawFunc
+			module.withdrawData.fleeing = false
+			
+		elseif scartype(module.withdrawData.onUnitsLeft) == ST_NUMBER then
+			module.withdrawData.onUnitsLeft = module.withdrawData.onUnitsLeft
+			module.withdrawData.withdrawDestination = module.withdrawData.withdrawDestination
+			module.withdrawData.dissolveModule = module.withdrawData.dissolveModule
+			module.withdrawData.onForceWithdrawFunc = module.withdrawData.onForceWithdrawFunc
+			module.withdrawData.fleeing = false
+			
+		elseif scartype(module.withdrawData.onCustomCondition) == ST_FUNCTION then
+			module.withdrawData.onCustomCondition = module.withdrawData.onCustomCondition
+			module.withdrawData.withdrawDestination = module.withdrawData.withdrawDestination
+			module.withdrawData.dissolveModule = module.withdrawData.dissolveModule
+			module.withdrawData.onForceWithdrawFunc = module.withdrawData.onForceWithdrawFunc
+			module.withdrawData.fleeing = false
+			
+		else
+			module.withdrawData = nil
+		end
+	else
+		module.withdrawData = nil
+	end
+		
+	Defend_CreateEncounter(module)
+	module.data.monitorRuleID = Rule_AddInterval(Defend_Monitor, 1, {instance = module})
+	
+	return module
+end
+
+function Defend_InitializeTarget(module)
+	local targetTypes = 0
+	if scartype(module.position) == ST_SCARPOS then targetTypes = targetTypes + 1 end
+	if scartype(module.marker) == ST_MARKER 	then targetTypes = targetTypes + 1 end
+	if scartype(module.location) == ST_STRING 	then targetTypes = targetTypes + 1 end
+	if scartype(module.location) == ST_TABLE and module.location.prefabName =="Location" then targetTypes = targetTypes + 1 end
+	assert(targetTypes == 1, module.descriptor.." module must be initialized with exactly 1 of location/marker/position")
+	
+	if scartype(module.location) == ST_STRING then
+		module.target = AI_Module_ResolveCombatArea(module, module.location)	
+	elseif scartype(module.location) == ST_TABLE and module.location.prefabName == "Location" then
+		module.target = AI_Module_ResolveCombatArea(module, module.location)
+	elseif scartype(module.marker)	== ST_MARKER then
+		module.target = AI_Module_ResolveCombatArea(module, module.marker)
+	elseif scartype(module.position) == ST_SCARPOS then
+		module.target = AI_Module_ResolveCombatArea(module, module.position)
+	end
+	
+	if scartype(module.spawnLocation) == ST_TABLE then 
+		module.spawnLocation = ResolveSpawnLocation(module.spawnLocation)
+	end
+end
+
+
+function Defend_SetPlayerOwner(data, newPlayer)
+	local module = Prefab_GetInstance(data)
+	SGroup_SetPlayerOwner(module.sgroup, newPlayer)
+end
+
+function Defend_GetPosition(data)
+	local module = Prefab_GetInstance(data)
+	return module.target.position
+end
+
+
+--? @shortdesc Retrieves the units associated with this SGroup
+--? result SGROUP
+function Defend_GetSGroup(moduleData)
+	local instance = Prefab_GetInstance(moduleData)	
+	return instance.sgroup
+end
+
+
+--
+-- Reinforcement Stuff
+--
+
+--? @shortdesc Creates a new encounter
+function Defend_CreateEncounter(moduleData)
+	local module = Prefab_GetInstance(moduleData)
+	
+	local goalData = {
+		plan = "Defend",
+		target = module.target.position,
+		direction = module.target.direction,
+		useCustomDirection = module.useCustomDirection,
+		combatRange = module.target.combatRange,
+		leashRange = module.target.leashRange,
+		idlePosition = module.target.idlePosition,
+		attackMove = module.attackMove,
+		attackMoveEnRoute = module.attackMoveEnRoute,
+		attackMoveAtTarget = module.attackMoveAtTarget,
+		attackEngagementMove = module.attackEngagementMove,
+		cavalryCanBuildRams = module.cavalryCanBuildRams,
+		ramCount = module.ramCount,
+		ramPassengerCount = module.ramPassengerCount,
+		siegeTowerPassengerCount = module.siegeTowerPassengerCount,
+		shouldHoldWhileWaiting = module.shouldHoldWhileWaiting,
+		openPathThreshold = module.openPathThreshold,
+		brokenWallThreshold = module.brokenWallThreshold,
+		callbacks = {
+			success = Defend_OnSuccess, --defend encounters never resolve successfully. can be removed?
+			fail = Defend_OnFailure,
+		},
+		startIdle = module.startIdle,
+	}
+	
+	-- If we're dissolving on arrival, change some of these parameters
+	if scartype(module.withdrawData) == ST_TABLE and module.withdrawData.fleeing == true then
+		goalData.maxTime = 1
+		goalData.maxIdleTime = 1
+		goalData.target = Marker_GetPosition(module.withdrawData.withdrawDestination)
+		goalData.combatrange = module.withdrawData.withdrawDestination.range
+		-- A fleeing module should flee outright, not stopping to attack anything
+		goalData.attackMove = attackMoveStyle_ignoreEverything --TODO this should probably be attackMoveAtTarget
+		goalData.attackMoveEnRoute = attackMoveStyle_ignoreEverything
+	end
+	
+	Encounter_SetGoalData(module.data.encounterID, goalData)
+end
+
+-- Resolves what to do when the encounter is successful
+function Defend_OnSuccess(encounter)
+	local module = Defend_FindModuleByEncounterID(encounter)
+	
+	if scartype(module.withdrawData) == ST_TABLE and scartype(module.withdrawData.dissolveModule) == ST_STRING then
+		--print("Dissolving "..module.descriptor.." into module "..tostring(module.withdrawData.dissolveModule))
+		DissolveModuleIntoModule(module.descriptor, module.withdrawData.dissolveModule)
+	end
+end
+
+
+function Defend_OnFailure(encounter)
+	local module = Defend_FindModuleByEncounterID(encounter)	
+	--print("Defend_OnFailure "..Defend_GetModuleName(module))
+end
+
+
+function Defend_OnTransition(encounter)
+	local module = Defend_FindModuleByEncounterID(encounter)	
+	--print("Defend_OnTransition "..Defend_GetModuleName(module))	
+end
+
+
+--? @shortdesc Updates the Defend module based on mission context
+function Defend_Monitor(context, moduleData)
+
+	local module = Prefab_GetInstance(moduleData)
+
+	--
+	-- FLEEING
+	--
+	-- Check whether we've met withdrawal conditions
+	if scartype(module.withdrawData) == ST_TABLE then
+		if scartype(module.withdrawData.onSightedPlayer) ~= ST_NIL then
+			local spotted = Condition_UnitsSpotted_Check({ player = module.withdrawData.onSightedPlayer, module = module.descriptor, all = false, })
+			if spotted == true and module.withdrawData.fleeing == false then
+				print("DEFEND: Spotted!")
+				Encounter_Stop(module.data.encounterID)
+				module.withdrawData.fleeing = true
+				if scartype(module.withdrawData.onForceWithdrawFunc) == ST_FUNCTION then
+					module.withdrawData.onForceWithdrawFunc()
+				end
+				Defend_CreateEncounter(module)
+			end
+			
+		elseif scartype(module.withdrawData.onUnitsLeft) == ST_NUMBER then
+			if SGroup_Count(module.sgroup) <= module.withdrawData.onUnitsLeft and module.withdrawData.fleeing == false then
+				print("DEFEND: Routed!")
+				Encounter_Stop(module.data.encounterID)
+				module.withdrawData.fleeing = true
+				if scartype(module.withdrawData.onForceWithdrawFunc) == ST_FUNCTION then
+					module.withdrawData.onForceWithdrawFunc()
+				end
+				Defend_CreateEncounter(module)
+			end
+			
+		elseif scartype(module.withdrawData.onCustomCondition) == ST_FUNCTION then
+			if module.withdrawData.onCustomCondition() and module.withdrawData.fleeing == false then
+				print("DEFEND: Custom Withdrawal!")
+				Encounter_Stop(module.data.encounterID)
+				module.withdrawData.fleeing = true
+				if scartype(module.withdrawData.onForceWithdrawFunc) == ST_FUNCTION then
+					module.withdrawData.onForceWithdrawFunc()
+				end
+				Defend_CreateEncounter(module)
+			end
+		end
+	end
+	
+	--
+	-- REINFORCING
+	--
+	-- check to see if we need units
+	if Reinforcement_AreReinforcementsNeeded(module) then 
+		
+		-- make the request
+		local requestData = {
+			units = Reinforcement_GenerateReplacementUnitList(module, module.idealComposition),
+			where = module.target.position,
+		}
+		
+		if SGroup_IsUnderAttack(module.sgroup, ANY, 5) or module.reinforcements.alwaysMakeHighPriorityRequests then 	-- mark this request as high priority if the attack is still happening
+			requestData.priority = "high"
+		end
+		
+		local result = MissionOMatic_RequestUnits(module, requestData, module.reinforcements.unitSources)
+		
+		-- check to see if something replied that it would build the units
+		if result ~= nil then 
+			Reinforcement_RequestHasBeenTriggered(module, result)		-- this updates tracking in the module, adjusts thresholds, etc
+		end
+	end
+	
+	--
+	-- FACE PLAYER
+	--
+	if module.faceHumanPlayer == true and scartype(module.sgroup) == ST_SGROUP then
+		local humanPlayer = World_GetPlayerAt(1)
+		if SGroup_IsIdle(module.sgroup, true) and Player_CanSeeSGroup(humanPlayer, module.sgroup, false) then
+			Player_GetAllSquadsNearMarker(humanPlayer, sg_temp, SGroup_GetPosition(module.sgroup), 100)
+			local closestSquad = SGroup_GetClosestSquad(sg_temp, SGroup_GetPosition(module.sgroup))
+			if scartype(closestSquad) == ST_SQUAD then
+				Cmd_FormationMove(module.sgroup, SGroup_GetPosition(module.sgroup), false, false, Squad_GetPosition(closestSquad))
+			end
+		end
+	end
+	
+end
+
+--? @shortdesc Stops the Defend module's encounter
+function Defend_Stop(data, giveStopCommandToUnits)
+	local module = Prefab_GetInstance(data)
+	
+	if module.data.monitorRuleID ~= nil then
+		Rule_RemoveWithID(module.data.monitorRuleID)
+		module.data.monitorRuleID = nil 
+	end
+		
+	if module.data.encounterID ~= nil then
+		Encounter_Stop(module.data.encounterID, giveStopCommandToUnits)
+	end
+	
+	module.data.state = "Stopped"
+end
+
+
+
+--? @shortdesc Adds an SGroup of new units to this module's existing SGroup
+function Defend_AddSGroup(moduleData, newSGroup, updateComposition)
+	local module = Prefab_GetInstance(moduleData)
+
+	if updateComposition == nil then updateComposition = true end
+	
+	-- Add these useful units to the overall SGroup
+	SGroup_AddGroup(module.sgroup, newSGroup)
+	
+	-- Now add them to any active encounter, or create an encounter if necessary
+	if SGroup_CountSpawned(newSGroup) > 0 then
+		Encounter_AddSGroup(module.data.encounterID, newSGroup, true)
+		module.canReportDefeat = true
+	end
+	
+	module.highestUnitCount = math.max(module.highestUnitCount, SGroup_CountSpawned(module.sgroup))
+		
+	if updateComposition == true then
+		Reinforcement_UpdateIdealComposition(module)	
+	else
+		SGroup_AddGroup(sg_ignoreForUnitComposition, newSGroup)
+	end
+end
+
+--? @shortdesc Removes an SGroup from this module's existing SGroup
+--? @args Table moduleData, SGroup sgroup[, Boolean updateComposition]
+function Defend_RemoveSGroup(moduleData, sgroupToRemove, updateComposition)
+	local module = Prefab_GetInstance(moduleData)
+
+	if updateComposition == nil then updateComposition = true end
+	
+	if module.data.encounterID ~= nil then 
+		Encounter_RemoveSGroup(module.data.encounterID, sgroupToRemove)
+	end
+	
+	SGroup_RemoveGroup(module.sgroup, sgroupToRemove)
+
+	if updateComposition == true then
+		Reinforcement_SubtractSGroupFromIdealComposition(module, sgroupToRemove)
+	end
+	
+	SGroup_RemoveGroup(sg_ignoreForUnitComposition, sgroupToRemove)
+	
+end
+
+--? @shortdesc Stops the Defend module entirely, optionally returns the units it contained to an SGroup, which is NOT cleared
+--? @args Table moduleData[, SGroup returned_sgroup]
+function Defend_Disband(moduleData, returned_sgroup)
+	local module = Prefab_GetInstance(moduleData)
+	
+	if returned_sgroup ~= nil then
+		SGroup_AddGroup(returned_sgroup, module.sgroup)	
+	end
+	
+	--Encounter_Stop(module.data.encounterID, true)
+	
+	-- Stop all activity
+	Defend_Stop(module, true)
+	
+	SGroup_Clear(module.sgroup)
+
+	for index, m in pairs(t_defendModules) do
+		if m == module then
+			table.remove(t_defendModules, index)
+			break
+		end
+	end	
+	for i, m in pairs(t_allModules) do
+		if m == module then
+			table.remove(t_allModules, i)
+		end
+	end
+end
+
+--? @shortdesc Returns true if all the Defend module's units are dead
+function Defend_IsDefeated(moduleData)
+	local module = Prefab_GetInstance(moduleData)
+	return module.canReportDefeat == true and SGroup_CountSpawned(module.sgroup) == 0
+end
+
+--? @shortdesc Finds what Defend module is currently using a given encounter
+function Defend_FindModuleByEncounterID(encounter)
+	for index, module in pairs(t_defendModules) do 
+		if scartype(module.data) == ST_TABLE and module.data.encounterID == encounter then 
+			return module 
+		end 
+	end
+end
+
+function Defend_GetModuleName(module)
+	if scartype(module) == ST_TABLE and scartype(module.descriptor) == ST_STRING then 
+		return module.descriptor
+	else
+		return ""
+	end	
+end
+
+function Defend_UpdateRange(moduleData, combatRange, leashRange)
+	local module = Prefab_GetInstance(moduleData)
+	
+	local goalData = Encounter_GetGoalData(module.data.encounterID)
+		
+	module.target.combatRange = combatRange
+	module.target.leashRange = combatRange
+	goalData.combatRange = module.target.combatRange
+	goalData.leashRange = module.target.leashRange
+	
+	Encounter_SetGoalData(module.data.encounterID, goalData)
+end
+
+--? @shortdesc Returns how many units this module started with
+function Defend_GetHighestUnitCount(moduleData)
+	local module = Prefab_GetInstance(moduleData)
+	return module.highestUnitCount
+end
+
+--? @shortdesc Returns the units currently in the module as a percentage of the unit count the module started with
+function Defend_GetRemainingUnitRatio(moduleData)
+	local module = Prefab_GetInstance(moduleData)
+	local ratio = SGroup_CountSpawned(module.sgroup) / module.highestUnitCount
+	return ratio
+end
+
+--? @shortdesc Returns the difference between the current amound of units and the starting unit count
+function Defend_GetUnitChangeFromStart(moduleData)
+	local module = Prefab_GetInstance(moduleData)
+	return SGroup_CountSpawned(module.sgroup) - module.highestUnitCount
+end
+
+
+--? @shortdesc Updates the target of a Defend module. 
+--? @extdesc newTarget can be a Location (either as a String or a LocationTable), or a Marker or Position
+--? @args Table moduleData, String/Marker/Position newTarget
+function Defend_UpdateTargetLocation(moduleData, newTarget)
+	local module = Prefab_GetInstance(moduleData)
+
+	module.target = AI_Module_ResolveCombatArea(module, newTarget)
+
+	-- update goal	
+	if module.data.encounterID ~= nil then 				
+			
+		local goalData = Encounter_GetGoalData(module.data.encounterID)
+			
+		goalData.target = module.target.position
+		goalData.combatRange = module.target.combatRange
+		goalData.leashRange = module.target.leashRange
+		goalData.idlePosition = module.target.idlePosition
+		
+		Encounter_SetGoalData(module.data.encounterID, goalData)
+	end
+end
+
+
+--
+-- Reinforcement - Unit Provider (providing units to other modules)
+--
+
+
+-- get a time estimate for how long the units will take to produce
+function Defend_UnitRequest_ProvideEstimate(module, requestData)
+	--print("Defend_UnitRequest_ProvideEstimate by "..module.descriptor)
+	
+	local module = Prefab_GetInstance(module)
+
+	if UnitProvider_CanModuleProvideUnits(module, requestData) == true then 
+		return 0
+	end	
+end
+
+
+-- start processing a unit request
+function Defend_UnitRequest_Start(module, requestData)
+	--print("Defend_UnitRequest_Start by "..module.descriptor)
+	
+	local module = Prefab_GetInstance(module)
+	local returnSGroup = SGroup_CreateUnique()
+	
+	UnitProvider_SelectUnitsFromModule(module, requestData, returnSGroup)
+
+	Defend_RemoveSGroup(module, returnSGroup)						-- now remove all of these units from their current owner module
+	
+	MissionOMatic_RequestComplete(requestData, returnSGroup)			-- and return them to the request manager
+
+	
+	-- now turn around and request the same units at a normal priority to back-fill the units from a TownLife module
+	local replacementsRequestData = {
+		units = UnitTable_GenerateFromSGroup(returnSGroup),
+	}
+	
+	local result = MissionOMatic_RequestUnits(module, replacementsRequestData, module.reinforcements.unitSources)
+		
+	if result ~= nil then 
+		Reinforcement_RequestHasBeenTriggered(module, result, true)	-- update tracking, but skip adjustments (as this request is just a back-fill)
+	end	
+
+	SGroup_Destroy(returnSGroup)	-- clean up the temp group
+end 
+
+
+--? @shortdesc Manually orders the module to request units.
+function Defend_RequestUnits(moduleData, units, unitSources, priority)
+	
+	local module = Prefab_GetInstance(moduleData)
+	
+	-- make the request
+	local requestData = {
+		units = units,
+		priority = priority,
+	}
+	
+	if unitSources == nil and module.reinforcements ~= nil then
+		unitSources = module.reinforcements.unitSources
+	end
+	
+	local result = MissionOMatic_RequestUnits(module, requestData, unitSources)
+	
+	-- check to see if something replied that it would build the units
+	if result ~= nil then 
+		Reinforcement_RequestHasBeenTriggered(module, result)		-- this updates tracking in the module, adjusts thresholds, etc
+	end
+end
+
+
+

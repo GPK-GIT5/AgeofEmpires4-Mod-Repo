@@ -1,0 +1,1113 @@
+import("training.scar")
+import("cardinal.scar")
+import("sal_chp2_dinan.events")
+
+-- ///// VillagerPriorities //////////////////////////////////////////////
+function Goals_VillagerPriorities()
+
+	local goal_sequence_VillagerPriorities_id = "goal_sequence_VillagerPriorities"
+
+	local goal_OpenMenu = Training_Goal(
+		"VillagerPrioritiesHUDElement",
+		{
+			ID = "goal_OpenMenu",
+			Message = "$1000940", -- It would now be wise to focus on prioritising the resources needed for Military Production. Hold LT and Press RS.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenMenu_CompletePredicate
+	)
+
+	local goal_VillagerPriorities = Training_Goal(
+		UI_GetUICommandPBG("relic_radials_preset2_basic"),
+		{
+			ID = "goal_VillagerPriorities",
+			Message = "$1000939", -- Highlight the Basic preset
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		VillagerPriorities_CompletePredicate
+	)
+	
+	local goal_CloseVPS = Training_Goal(
+		"VillagerPrioritiesHUDElement",
+		{
+			ID = "goal_CloseVPS",
+			Message = "$1000938", -- Your Villagers will now focus on Military growth. Press B to close the Radial Menu
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		CloseVPS_CompletePredicate
+	)
+	
+	local goal_ShowMoreVillagers = Training_Goal(
+		EGroup_GetSpawnedEntityAt(eg_player_tc, 1),
+		{
+			ID = "goal_ShowMoreVillagers",
+			Message = "$1000937", -- Remember, you should keep producing Villagers in the Town Center to boost your settlement's growth
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ShowMoreVillagers_CompletePredicate
+	)
+
+	local goal_sequence_VillagerPriorities = Training_GoalSequence(
+		goal_sequence_VillagerPriorities_id,
+		-1,
+		1,
+		VillagerPriorities_Trigger,
+		VillagerPriorities_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_OpenMenu, goal_VillagerPriorities, goal_CloseVPS, goal_ShowMoreVillagers}
+	)
+
+	Training_AddGoalSequence(goal_sequence_VillagerPriorities)
+	Training_EnableGoalSequenceByID(goal_sequence_VillagerPriorities, true)
+end
+
+function OpenMenu_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_VillagerPrioritiesMenu or Objective_IsComplete(SOBJ_SetMilitaryPreset)
+end
+
+function VillagerPriorities_CompletePredicate(goal)
+
+	return Objective_IsComplete(SOBJ_SetMilitaryPreset)
+end
+
+function CloseVPS_CompletePredicate(goal)
+	
+	return UI_GetActiveRadialMenuType() ~= RMT_VillagerPrioritiesMenu
+end
+
+function ShowMoreVillagers_CompletePredicate(goal)
+	
+	training_showMoreVillagersTimer = Timer_GetElapsed(goal.timerID) > 10
+	return false
+end
+
+function VillagerPriorities_Trigger(goalSequence)
+
+	return true
+end
+
+function VillagerPriorities_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_SetMilitaryPreset) and training_showMoreVillagersTimer == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// Build2Houses //////////////////////////////////////////////
+function Goals_Build2Houses()
+
+	local goal_sequence_Build2Houses_id = "goal_sequence_Build2Houses"
+
+	local goal_HousesNoRadial = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_goldVillagers, 1),
+		{
+			ID = "goal_HousesNoRadial",
+			Message = "$999595", -- Make sure there is enough housing for your army by building 2 new houses
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		HousesNoRadial_CompletePredicate
+	)
+	
+	local goal_HousesRadial = Training_Goal(
+		EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE,
+		{
+			ID = "goal_HousesRadial",
+			Message = "$999595", -- Make sure there is enough housing for your army by building 2 new houses
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		HousesRadial_CompletePredicate
+	)
+	
+	local goal_Build2Houses = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_Build2Houses",
+			Message = "$999559", -- While holding LT, you can place more than one of the same building. Hold LT and press A twice.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		Build2Houses_CompletePredicate
+	)
+
+	local goal_sequence_Build2Houses = Training_GoalSequence(
+		goal_sequence_Build2Houses_id,
+		-1,
+		1,
+		Build2Houses_Trigger,
+		Build2Houses_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_HousesNoRadial, goal_HousesRadial, goal_Build2Houses}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Build2Houses)
+	Training_EnableGoalSequenceByID(goal_sequence_Build2Houses, true)
+end
+
+function HousesNoRadial_CompletePredicate(goal)
+	
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and training_placing_houses ~= true
+end
+
+function HousesRadial_CompletePredicate(goal)
+	
+	return training_placing_houses == true
+end
+
+function Build2Houses_CompletePredicate(goal)
+
+	return false
+end
+
+function Build2Houses_Trigger(goalSequence)
+
+	return true
+end
+
+function Build2Houses_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_Build2Houses) or training_houses_started == 2  then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// BuildBarracks //////////////////////////////////////////////
+function Goals_BuildBarracks()
+
+	local goal_sequence_BuildBarracks_id = "goal_sequence_BuildBarracks"
+
+	local goal_OpenVillagerRadial = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_startVillagers, 1),
+		{
+			ID = "goal_OpenVillagerRadial",
+			Message = "$999597", -- Use a Villager to build a Barracks
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenVillagerRadial_CompletePredicate
+	)
+
+	local goal_OpenMilitaryPage = Training_Goal(
+		"RadialDPadRight",
+		{
+			ID = "goal_OpenMilitaryPage",
+			Message = "$1000655", -- Press D-pad right to access Military building options.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		OpenMilitaryPage_CompletePredicate
+	)
+
+	local goal_HighlightBarracks = Training_Goal(
+		EBP.FRENCH.BUILDING_UNIT_INFANTRY_CONTROL_FRE,
+		{
+			ID = "goal_HighlightBarracks",
+			Message = "$1000656", -- Select and Construct the Barracks
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		HighlightBarracks_CompletePredicate
+	)
+
+	local goal_sequence_BuildBarracks = Training_GoalSequence(
+		goal_sequence_BuildBarracks_id,
+		-1,
+		1,
+		BuildBarracks_Trigger,
+		BuildBarracks_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_OpenVillagerRadial, goal_OpenMilitaryPage, goal_HighlightBarracks}
+	)
+
+	Training_AddGoalSequence(goal_sequence_BuildBarracks)
+	Training_EnableGoalSequenceByID(goal_sequence_BuildBarracks, true)
+end
+
+function OpenVillagerRadial_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu or training_placing_barracks == true
+end
+
+function OpenMilitaryPage_CompletePredicate(goal)
+
+	return (UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and UI_GetActiveRelicRadialMenuDirection() == RMD_Right) or training_placing_barracks == true
+end
+
+function HighlightBarracks_CompletePredicate(goal)
+
+	return false
+end
+
+function BuildBarracks_Trigger(goalSequence)
+
+	return true
+end
+
+function BuildBarracks_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_BuildBarracks) or training_placing_barracks == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// RallyPoint //////////////////////////////////////////////
+function Goals_RallyPoint()
+
+	local goal_sequence_RallyPoint_id = "goal_sequence_RallyPoint"
+
+	local goal_SelectBarracks = Training_Goal(
+		EGroup_GetEntityAt(eg_barracks, 1),
+		{
+			ID = "goal_SelectBarracks",
+			Message = "$999600", -- Highlight the Barracks using LS, then Select it with A
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectBarracks_CompletePredicate
+	)
+
+	local goal_SetRallyPoint = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_SetRallyPoint",
+			Message = "$999601", -- With the barracks selected, Press A on the ground to set a Rally Point. Units will move here when produced at this building
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SetRallyPoint_CompletePredicate
+	)
+
+	local goal_sequence_RallyPoint = Training_GoalSequence(
+		goal_sequence_RallyPoint_id,
+		-1,
+		1,
+		RallyPoint_Trigger,
+		RallyPoint_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectBarracks, goal_SetRallyPoint}
+	)
+
+	Training_AddGoalSequence(goal_sequence_RallyPoint)
+	Training_EnableGoalSequenceByID(goal_sequence_RallyPoint, true)
+end
+
+function SelectBarracks_CompletePredicate(goal)
+
+	return Misc_IsEGroupSelected(eg_barracks, false)
+end
+
+function SetRallyPoint_CompletePredicate(goal)
+
+	return false
+end
+
+function RallyPoint_Trigger(goalSequence)
+
+	return true
+end
+
+function RallyPoint_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_SetRally) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// Goals_Make10Spearmen //////////////////////////////////////////////
+function Goals_Make10Spearmen()
+
+	training_units_queued = false
+	
+	local goal_sequence_Goals_Make10Spearmen_id = "goal_sequence_Goals_Make10Spearmen"
+
+	local goal_OpenBarracksRadial = Training_Goal(
+		EGroup_GetEntityAt(eg_barracks, 1),
+		{
+			ID = "goal_OpenBarracksRadial",
+			Message = "$999606", -- With the barracks selected, Press RT to open the Radial Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenBarracksRadial_CompletePredicate
+	)
+
+	local goal_CreateSpearmen = Training_Goal(
+		SBP.FRENCH.UNIT_SPEARMAN_1_FRE,
+		{
+			ID = "goal_CreateSpearmen",
+			Message = "$999607", -- Use LS to highlight the Spearmen, then Press A 10 times
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		CreateSpearmen_CompletePredicate
+	)
+
+	local goal_sequence_Goals_Make10Spearmen = Training_GoalSequence(
+		goal_sequence_Goals_Make10Spearmen_id,
+		-1,
+		1,
+		Goals_Make10Spearmen_Trigger,
+		Goals_Make10Spearmen_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_OpenBarracksRadial, goal_CreateSpearmen}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Goals_Make10Spearmen)
+	Training_EnableGoalSequenceByID(goal_sequence_Goals_Make10Spearmen, true)
+end
+
+function OpenBarracksRadial_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and Misc_IsEGroupSelected(eg_barracks, false)
+end
+
+function CreateSpearmen_CompletePredicate(goal)
+
+	return false
+end
+
+function Goals_Make10Spearmen_Trigger(goalSequence)
+
+	return true
+end
+
+function Goals_Make10Spearmen_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_Make10Spearmen) or training_units_queued == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// BuildStables //////////////////////////////////////////////
+function Goals_BuildStables()
+
+	local goal_sequence_BuildStables_id = "goal_sequence_BuildStables"
+
+	local goal_OpenVillagerRadialStables = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_startVillagers, 1),
+		{
+			ID = "goal_OpenVillagerRadialStables",
+			Message = "$999613", -- Stables can be found in a Villager radial menu	
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenVillagerRadialStables_CompletePredicate
+	)
+
+	local goal_OpenMilitaryPageStables = Training_Goal(
+		"RadialDPadRight",
+		{
+			ID = "goal_OpenMilitaryPageStables",
+			Message = "$1000761", -- Use D-Pad Right to switch to the Military Buildings. 
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		OpenMilitaryPageStables_CompletePredicate
+	)
+
+	local goal_HighlightStables = Training_Goal(
+		EBP.FRENCH.BUILDING_UNIT_CAVALRY_CONTROL_FRE,
+		{
+			ID = "goal_HighlightStables",
+			Message = "$999614", -- Select the Stables
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		HighlightStables_CompletePredicate
+	)
+
+	local goal_sequence_BuildStables = Training_GoalSequence(
+		goal_sequence_BuildStables_id,
+		-1,
+		1,
+		BuildStables_Trigger,
+		BuildStables_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_OpenVillagerRadialStables, goal_OpenMilitaryPageStables, goal_HighlightStables}
+	)
+
+	Training_AddGoalSequence(goal_sequence_BuildStables)
+	Training_EnableGoalSequenceByID(goal_sequence_BuildStables, true)
+end
+
+function OpenVillagerRadialStables_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu or training_placing_stables == true
+end
+
+function OpenMilitaryPageStables_CompletePredicate(goal)
+
+	return (UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and UI_GetActiveRelicRadialMenuDirection() == RMD_Right) or training_placing_stables == true
+end
+
+function HighlightStables_CompletePredicate(goal)
+
+	return false
+end
+
+function BuildStables_Trigger(goalSequence)
+
+	return true
+end
+
+function BuildStables_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_BuildStables) or training_placing_stables == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// HorsemenRaid //////////////////////////////////////////////
+function Goals_HorsemenRaid()
+
+	local goal_sequence_HorsemenRaid_id = "goal_sequence_HorsemenRaid"
+
+	local goal_HoldLTSpearmen = Training_Goal(
+		"QueueLTIndicator",
+		{
+			ID = "goal_HoldLTSpearmen",
+			Message = "$999631", -- Conan has sent Horsemen to raid your town! Hold LT to change the Quick Select Options at the bottom of the screen
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		HoldLTSpearmen_CompletePredicate
+	)
+
+	local goal_SelectAllSpearmen = Training_Goal(
+		"DPadTop",
+		{
+			ID = "goal_SelectAllSpearmen",
+			Message = "$1000936", -- Hold Up on the D-Pad to select all Infantry Units
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectAllSpearmen_CompletePredicate
+	)
+
+	local goal_AttackMoveSpearmen = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_raid_horsemen, 1),
+		{
+			ID = "goal_AttackMoveSpearmen",
+			Message = "$1000934", -- Now order your Spearmen to attack the enemy using Attack Move X
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		AttackMoveSpearmen_CompletePredicate
+	)
+
+	local goal_SpearmenMatchup = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_spearmen, 1),
+		{
+			ID = "goal_SpearmenMatchup",
+			Message = "$1000933", -- Your Spearmen have a distinct advantage against the enemy Horsemen. These matchups are key in winning any fight.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SpearmenMatchup_CompletePredicate
+	)
+
+	local goal_sequence_HorsemenRaid = Training_GoalSequence(
+		goal_sequence_HorsemenRaid_id,
+		-1,
+		1,
+		HorsemenRaid_Trigger,
+		HorsemenRaid_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_HoldLTSpearmen, goal_SelectAllSpearmen, goal_AttackMoveSpearmen, goal_SpearmenMatchup}
+	)
+
+	Training_AddGoalSequence(goal_sequence_HorsemenRaid)
+	Training_EnableGoalSequenceByID(goal_sequence_HorsemenRaid, true)
+end
+
+function HoldLTSpearmen_CompletePredicate(goal)
+
+	return UI_IsQueueModifierDown() or training_spearmen_attacked == true
+end
+
+function SelectAllSpearmen_CompletePredicate(goal)
+
+	return Misc_IsSGroupSelected(sg_spearmen, true) or training_spearmen_attacked == true
+end
+
+function AttackMoveSpearmen_CompletePredicate(goal)
+
+	if SGroup_IsAttackMoving(sg_spearmen, false) then
+		training_spearmen_attacked = true
+	end
+	
+	return training_spearmen_attacked == true
+end
+
+function SpearmenMatchup_CompletePredicate(goal)
+
+	return false
+end
+
+function HorsemenRaid_Trigger(goalSequence)
+
+	return true
+end
+
+function HorsemenRaid_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_HorsemenRaid) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// ProduceMultipleSources //////////////////////////////////////////////
+function Goals_ProduceMultipleSources()
+
+	training_units_queued = false
+	
+	local goal_sequence_ProduceMultipleSources_id = "goal_sequence_ProduceMultipleSources"
+
+	local goal_SelectStables = Training_Goal(
+		EGroup_GetEntityAt(eg_stables, 1),
+		{
+			ID = "goal_SelectStables",
+			Message = "$999618", -- Selecting multiple buildings spreads their production. Highlight the Stables and Double Press A.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectStables_CompletePredicate
+	)
+
+	local goal_SpreadProduction = Training_Goal(
+		EGroup_GetEntityAt(eg_stables, 1),
+		{
+			ID = "goal_SpreadProduction",
+			Message = "$999620", -- Both the Stables and School of Landmark are now selected. Open the Stables Radial Menu with RT
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SpreadProduction_CompletePredicate
+	)
+
+	local goal_ProductionFaster = Training_Goal(
+		SBP.FRENCH.UNIT_HORSEMAN_2_FRE,
+		{
+			ID = "goal_ProductionFaster",
+			Message = "$1000760", -- Remember, can add stacks of 5 units to the build queue. Hold LT and select Horsemen twice
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		ProductionFaster_CompletePredicate
+	)
+
+	local goal_sequence_ProduceMultipleSources = Training_GoalSequence(
+		goal_sequence_ProduceMultipleSources_id,
+		-1,
+		1,
+		ProduceMultipleSources_Trigger,
+		ProduceMultipleSources_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectStables, goal_SpreadProduction, goal_ProductionFaster}
+	)
+
+	Training_AddGoalSequence(goal_sequence_ProduceMultipleSources)
+	Training_EnableGoalSequenceByID(goal_sequence_ProduceMultipleSources, true)
+end
+
+function SelectStables_CompletePredicate(goal)
+
+	return Misc_IsEGroupSelected(eg_stables, true)
+end
+
+function SpreadProduction_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu
+end
+
+function ProductionFaster_CompletePredicate(goal)
+
+	return false
+end
+
+function ProduceMultipleSources_Trigger(goalSequence)
+
+	return true
+end
+
+function ProduceMultipleSources_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_Make10Horsemen) or training_units_queued == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// BuildArchery //////////////////////////////////////////////
+function Goals_BuildArchery()
+
+	local goal_sequence_BuildArchery_id = "goal_sequence_BuildArchery"
+
+	local goal_BuildArchery = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_BuildArchery",
+			Message = "$999623", -- Using what you have learned, Build an Archery Range
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		BuildArchery_CompletePredicate
+	)
+	
+	local goal_BuildArcheryDPad = Training_Goal(
+		"RadialDPadRight",
+		{
+			ID = "goal_BuildArchery",
+			Message = "$999623", -- Using what you have learned, Build an Archery Range
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		BuildArcheryDPad_CompletePredicate
+	)
+	
+	local goal_BuildArcheryMenu = Training_Goal(
+		EBP.FRENCH.BUILDING_UNIT_RANGED_CONTROL_FRE,
+		{
+			ID = "goal_BuildArcheryMenu",
+			Message = "$999623", -- Using what you have learned, Build an Archery Range
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		BuildArcheryMenu_CompletePredicate
+	)
+
+	local goal_sequence_BuildArchery = Training_GoalSequence(
+		goal_sequence_BuildArchery_id,
+		-1,
+		1,
+		BuildArchery_Trigger,
+		BuildArchery_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_BuildArchery, goal_BuildArcheryDPad, goal_BuildArcheryMenu}
+	)
+
+	Training_AddGoalSequence(goal_sequence_BuildArchery)
+	Training_EnableGoalSequenceByID(goal_sequence_BuildArchery, true)
+end
+
+function BuildArchery_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu
+end
+
+function BuildArcheryDPad_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and UI_GetActiveRelicRadialMenuDirection() == RMD_Right
+end
+
+function BuildArcheryMenu_CompletePredicate(goal)
+
+	return false
+end
+
+function BuildArchery_Trigger(goalSequence)
+
+	return true
+end
+
+function BuildArchery_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_BuildArchery) or training_placing_archery then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// ArchersRaid //////////////////////////////////////////////
+function Goals_ArchersRaid()
+
+	local goal_sequence_ArchersRaid_id = "goal_sequence_ArchersRaid"
+
+	local goal_ArchersRaidHoldLT = Training_Goal(
+		"QueueLTIndicator",
+		{
+			ID = "goal_ArchersRaidHoldLT",
+			Message = "$999632", -- Conan is attacking again! His Archers are weak against your new Horsemen. Hold LT.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ArchersRaidHoldLT_CompletePredicate
+	)
+
+	local goal_SelectAllCavalry = Training_Goal(
+		"DPadBottom",
+		{
+			ID = "goal_SelectAllCavalry",
+			Message = "$1000932", -- Hold Right on the D-Pad to select all Cavalry Units
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectAllCavalry_CompletePredicate
+	)
+
+	local goal_AttackMoveArchersRaid = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_raid_archers, 1),
+		{
+			ID = "goal_AttackMoveArchersRaid",
+			Message = "$1000931", -- Now order your Horsemen to attack the enemy using Attack Move X
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		AttackMoveArchersRaid_CompletePredicate
+	)
+
+	local goal_sequence_ArchersRaid = Training_GoalSequence(
+		goal_sequence_ArchersRaid_id,
+		-1,
+		1,
+		ArchersRaid_Trigger,
+		ArchersRaid_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_ArchersRaidHoldLT, goal_SelectAllCavalry, goal_AttackMoveArchersRaid}
+	)
+
+	Training_AddGoalSequence(goal_sequence_ArchersRaid)
+	Training_EnableGoalSequenceByID(goal_sequence_ArchersRaid, true)
+end
+
+function ArchersRaidHoldLT_CompletePredicate(goal)
+
+	return UI_IsQueueModifierDown() == true
+end
+
+function SelectAllCavalry_CompletePredicate(goal)
+
+	return Misc_IsSGroupSelected(sg_horsemen, true)
+end
+
+function AttackMoveArchersRaid_CompletePredicate(goal)
+
+	return false
+end
+
+function ArchersRaid_Trigger(goalSequence)
+
+	return true
+end
+
+function ArchersRaid_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_ArchersRaid) or SGroup_IsAttackMoving(sg_horsemen, false) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// Make10Archers //////////////////////////////////////////////
+function Goals_Make10Archers()
+
+	training_units_queued = false
+	
+	local goal_sequence_Make10Archers_id = "goal_sequence_Make10Archers"
+
+	local goal_OpenFindMenu = Training_Goal(
+		"FindMenuHUDElement",
+		{
+			ID = "goal_OpenFindMenu",
+			Message = "$999625", -- It's time to recruit your own Archers. You can find your Archery Range using the Find Menu LB  
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenFindMenu_CompletePredicate
+	)
+
+	local goal_FindBuildingsPage = Training_Goal(
+		"RadialDPadRight",
+		{
+			ID = "goal_FindBuildingsPage",
+			Message = "$1000930", -- Press Up on the D-Pad to open the Find Buildings Page
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		FindBuildingsPage_CompletePredicate
+	)
+
+	local goal_FindArcheryRange = Training_Goal(
+		UI_GetUICommandPBG("find_all_archery"),
+		{
+			ID = "goal_FindArcheryRange",
+			Message = "$1000921", -- Highlight Archery Range with LS and Press A
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		FindArcheryRange_CompletePredicate
+	)
+
+	local goal_OpenArcheryRadial = Training_Goal(
+		EGroup_GetSpawnedEntityAt(eg_archeryranges, 1),
+		{
+			ID = "goal_OpenArcheryRadial",
+			Message = "$1000920", -- With the Archery Range selected, Open the Archery Range Radial Menu with RT
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenArcheryRadial_CompletePredicate
+	)
+
+	local goal_Make10Archers = Training_Goal(
+		SBP.FRENCH.UNIT_ARCHER_2_FRE,
+		{
+			ID = "goal_Make10Archers",
+			Message = "$1000929", -- Remember, you can add stacks of 5 units to the build queue. Press LT and select Archers twice
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		Make10Archers_CompletePredicate
+	)
+
+	local goal_sequence_Make10Archers = Training_GoalSequence(
+		goal_sequence_Make10Archers_id,
+		-1,
+		1,
+		Make10Archers_Trigger,
+		Make10Archers_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_OpenFindMenu, goal_FindBuildingsPage, goal_FindArcheryRange, goal_OpenArcheryRadial, goal_Make10Archers}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Make10Archers)
+	Training_EnableGoalSequenceByID(goal_sequence_Make10Archers, true)
+end
+
+function OpenFindMenu_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_FindMenu or training_ranges_selected == true
+end
+
+function FindBuildingsPage_CompletePredicate(goal)
+
+	return (UI_GetActiveRadialMenuType() == RMT_FindMenu and UI_GetActiveRelicRadialMenuDirection() == RMD_Right) or training_ranges_selected == true
+end
+
+function FindArcheryRange_CompletePredicate(goal)
+
+	training_ranges_selected = Misc_IsEGroupSelected(eg_archeryranges, false)
+	
+	return training_ranges_selected == true
+end
+
+function OpenArcheryRadial_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and training_ranges_selected == true
+end
+
+function Make10Archers_CompletePredicate(goal)
+
+	return false
+end
+
+function Make10Archers_Trigger(goalSequence)
+
+	return true
+end
+
+function Make10Archers_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_Make10Archers) or training_units_queued == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// SelectDPad //////////////////////////////////////////////
+function Goals_SelectDPad()
+
+	local goal_sequence_SelectDPad_id = "goal_sequence_SelectDPad"
+
+	local goal_SelectDPad = Training_Goal(
+		"DPadLeft",
+		{
+			ID = "goal_SelectDPad",
+			Message = "$999638", -- Hold Left on the D-pad to select your Entire Army. You can use the Find Menu LB to locate units you can't find
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectDPad_CompletePredicate
+	)
+	
+	local goal_AttackMoveArmy = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_AttackMoveArmy",
+			Message = "$999639", -- Move your army using the Attack Move Command X
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		AttackMoveArmy_CompletePredicate
+	)
+	
+	
+	local goal_sequence_SelectDPad = Training_GoalSequence(
+		goal_sequence_SelectDPad_id,
+		-1,
+		1,
+		SelectDPad_Trigger,
+		SelectDPad_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectDPad, goal_AttackMoveArmy}
+	)
+
+	Training_AddGoalSequence(goal_sequence_SelectDPad)
+	Training_EnableGoalSequenceByID(goal_sequence_SelectDPad, true)
+end
+
+function SelectDPad_CompletePredicate(goal)
+
+	if Misc_IsSGroupSelected(sg_army, true) and Misc_IsSGroupSelected(sg_scouts, true)then
+		return true
+	end
+	return false
+end
+
+function AttackMoveArmy_CompletePredicate(goal)
+    
+	if SGroup_IsAttackMoving(sg_army, false) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+function SelectDPad_Trigger(goalSequence)
+
+	return true
+end
+
+function SelectDPad_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_March) or  SGroup_IsAttackMoving(sg_army, false) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// HeroAbility //////////////////////////////////////////////
+function Goals_HeroAbility()
+
+	local goal_sequence_HeroAbility_id = "goal_sequence_HeroAbility"
+
+	local goal_HeroAbility = Training_Goal(
+		"DPadRight",
+		{
+			ID = "goal_HeroAbility",
+			Message = "$1001304", -- Remember to use Guillaume's Hero Ability in combat. Select him with dpad right
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		HeroAbility_CompletePredicate
+	)
+	
+	local goal_HeroAbilityActivate = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_william, 1),
+		{
+			ID = "goal_HeroAbilityActivate",
+			Message = "$999524", --Press Y to trigger
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		HeroAbilityActivate_CompletePredicate
+	)
+
+	local goal_sequence_HeroAbility = Training_GoalSequence(
+		goal_sequence_HeroAbility_id,
+		-1,
+		1,
+		HeroAbility_Trigger,
+		HeroAbility_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_HeroAbility, goal_HeroAbilityActivate}
+	)
+
+	Training_AddGoalSequence(goal_sequence_HeroAbility)
+	Training_EnableGoalSequenceByID(goal_sequence_HeroAbility, true)
+end
+
+function HeroAbility_CompletePredicate(goal)
+
+	return Misc_IsSGroupSelected(sg_william, true) 
+end
+
+function HeroAbilityActivate_CompletePredicate(goal)
+
+	return false
+end
+
+function HeroAbility_Trigger(goalSequence)
+
+	return true
+end
+
+function HeroAbility_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(OBJ_HeroAbility) or Objective_IsFailed(OBJ_HeroAbility) or Objective_IsComplete(SOBJ_March) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+-- ///// Destroy //////////////////////////////////////////////
+function Goals_Destroy()
+
+	local goal_sequence_Destroy_id = "goal_sequence_Destroy"
+
+	local goal_Destroy = Training_Goal(
+		Marker_GetPosition(mkr_dinan_keep_hint),
+		{
+			ID = "goal_Destroy",
+			Message = "$11172043", -- Destroy the keep
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		Destroy_CompletePredicate
+	)
+
+	local goal_sequence_Destroy = Training_GoalSequence(
+		goal_sequence_Destroy_id,
+		-1,
+		1,
+		Destroy_Trigger,
+		Destroy_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_Destroy}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Destroy)
+	Training_EnableGoalSequenceByID(goal_sequence_Destroy, true)
+end
+
+function Destroy_CompletePredicate(goal)
+
+	return false
+end
+
+function Destroy_Trigger(goalSequence)
+
+	return true
+end
+
+function Destroy_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_Destroy) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end

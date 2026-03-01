@@ -1,0 +1,1329 @@
+import("ai/army_encounter.scar")
+
+MOVE_UNLOAD_OPTION_AT_START = 0
+MOVE_UNLOAD_OPTION_AT_END = 1
+MOVE_UNLOAD_OPTION_NEVER = 2
+MOVE_UNLOAD_OPTION_COUNT = 3
+
+function army_fatal(msg)
+	if Game_IsRTM() then
+		print("WARNING:" .. msg)
+	else
+		fatal(msg)
+	end
+end
+
+--? @shortdesc This is called by missionomatic, and is only intended to be called once. Don't call from mission script.
+function Army_InitSystem()
+	BUILDINGS_NONE = {
+		name = "NONE",
+		clearBuildings = false,
+		excludedBuildings = {"building"},
+		formationCoordinatorEnRoute = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_ignoreeverything_enroute"),
+		formationCoordinatorAtTarget = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_ignoreeverything_attarget"),
+	}
+	BUILDINGS_ALL = {
+		name = "ALL",
+		clearBuildings = true,
+		excludedBuildings = {"settlement", "wall"},
+		formationCoordinatorEnRoute = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_attackeverything_enroute"),
+		formationCoordinatorAtTarget = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_attackeverything_attarget"),
+	}
+	BUILDINGS_ALL_BUT_TC = {
+		name = "ALL_BUT_TC",
+		clearBuildings = true,
+		excludedBuildings = {"settlement", "wall", "town_center"},
+		formationCoordinatorEnRoute = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_excludetc_enroute"),
+		formationCoordinatorAtTarget = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_excludetc_attarget"),
+	}
+	BUILDINGS_THREATENING = {
+		name = "THREATENING",
+		clearBuildings = true,
+		excludedBuildings = {"house", "tent", "farm", "settlement", "wall", "production_building", "economy_building", "research_building"},
+		formationCoordinatorEnRoute = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_ignorepassive_enroute"),
+		formationCoordinatorAtTarget = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_ignorepassive_attarget"),
+	}
+	BUILDINGS_IMPORTANT = {
+		name = "IMPORTANT",
+		clearBuildings = true,
+		excludedBuildings = {"house", "tent", "farm", "settlement", "wall"},
+		formationCoordinatorEnRoute = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_default_enroute"),
+		formationCoordinatorAtTarget = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_campaign_default_attarget"),
+	}
+	ENCOUNTER_TYPE_ATTACK = "attack"
+	ENCOUNTER_TYPE_DEFEND = "defend"
+	ENCOUNTER_TYPE_TRANSPORT = "transport" -- used when transporting/moving units without attacking anything
+	ENCOUNTER_TYPE_EMPTY = "empty"   --used when the army has no units
+	ENCOUNTER_TYPE_NONE = "none"	 --used when one encounter has ended, but the next has not started up yet
+	
+	COMBAT_AREA_TYPE_SPAWN = "spawn"
+	COMBAT_AREA_TYPE_TARGET = "target"
+	COMBAT_AREA_TYPE_CURRENT_POSITION = "current position"
+	
+	TARGET_ORDER_LINEAR = "linear"
+	TARGET_ORDER_LOOP = "loop"
+	TARGET_ORDER_PATROL = "patrol"
+	TARGET_ORDER_RANDOM = "random"
+	
+	-----------------------------------------------------------------------------------------
+	-- Army Parameters
+	-- these 4 tables define all army parameters. They come in 2 broad flavors
+	--    general parameters define the behavior of the army itself
+	--    combat arena parameters define the behavior of the encounters that the army creates
+	-----------------------------------------------------------------------------------------
+	
+	--these paremeters will be copied to the army if they are not provided as params during initialization
+	ARMY_GENERAL_PARAMETERS_WITH_DEFAULT = {
+		targets = {},
+		targetOrder = TARGET_ORDER_LINEAR,
+		onDeathReset = false,
+		onDeathDissolve = false,
+		naval = false,
+	}
+	--these paremeters will be nil if not provided
+	ARMY_GENERAL_PARAMETERS_WITHOUT_DEFAULT = {
+		"player",
+		"units",
+		"spawn",
+		"onVictoryFunction",
+		"onCompleteFunction",
+		"onDeathFunction",
+		"onBlockedFunction",
+		"postVictoryFunction",
+		"postCompleteFunction",
+	}
+	--these paremeters will be copied to the army if they are not provided as params during initialization
+	--they will also be stored in a sub-table called combatArenaParams
+	ARMY_COMBAT_ARENA_PARAMETERS_WITH_DEFAULT = {
+		attackMoveAtTarget = true,
+		attackMoveEnRoute = true,
+		attackUnitsEnRoute = true,
+		attackUnitsAtTarget = true,
+		attackBuildingsEnRoute = BUILDINGS_ALL,
+		attackBuildingsAtTarget = BUILDINGS_ALL,
+		combatRangeAtTarget = 35,
+		combatRangeEnRoute = 35,
+		leashBuffer = 10,		 
+		idleTime = 0,
+		holdPositionWhileWaiting = false,
+		useCustomDirection = false,
+		skipPreciseMoveToTarget = false,
+		ramsBuiltWhenBlocked = 1,
+		ramPassengerCount = 8,
+		siegeTowerPassengerCount = 8,
+		openPathThreshold = 120,
+		brokenWallThreshold = 30,
+	}
+	ARMY_COMBAT_ARENA_PARAMETERS_WITHOUT_DEFAULT = {
+		"leashRangeEnRoute", 	
+		"leashRangeAtTarget",	
+		"direction",			
+		"idlePosition",			
+	}
+	-- these 'parameters' are not real. They are just a shorthand way to set both enRoute and atTarget 
+	-- parameters at the same time
+	ARMY_COMBAT_ARENA_PARAMETERS_SHORTHAND = {
+		"attackMove",
+		"attackUnits", 
+		"attackBuildings", 
+		"combatRange", 
+		"leashRange"
+	}
+	t_allArmies = {}
+	
+	if Misc_IsCommandLineOptionSet("army_debug") then
+	    DEBUG_ARMY = true
+	end
+	if Misc_IsCommandLineOptionSet("army_encounter_debug") then
+		DEBUG_ARMY = true
+		DEBUG_ARMY_ENCOUNTER = true
+	end
+	
+	ArmyEncounter_InitSystem()
+end
+
+function Army_FindFromName(name)
+	for index, army in pairs(t_allArmies) do
+		if army.name == name then
+			return army 
+		end
+	end
+end
+
+function Army_FindArmyFromSquad(squad)
+	for _, army in ipairs(t_allArmies) do
+		
+		if army.sgroup ~= nil and SGroup_ContainsSquad(army.sgroup, Squad_GetID(squad), true) then
+			return army
+		end
+	end
+	
+	return nil
+end
+
+--? @shortdesc Call this for naval armies. 
+function NavalArmy_Init(army_params)
+	local army = army_params
+	army.naval = true
+	
+	army.attackBuildingsEnRoute = BUILDINGS_NONE
+	army.attackBuildingsAtTarget = BUILDINGS_THREATENING
+	
+	return Army_Init(army)
+end
+
+--? @shortdesc Initializes a new Army. An army consists of a group of units that are under AI control.
+--? @extdesc Parameters
+--? army_params is a table of parameters. There are 2 types:
+--? - General params define the behavior of the army itself
+--? - CombatArena params define the behavior of the encounters the army creates
+--? 
+--? Learn more about Armies and their parameters at http://relicwiki/display/CARD/Mission+Scripting+-+Armies
+--? 
+--? Parameters - General
+--? String name - Used for debug purposes. A name will be generated if not provided
+--? Player player - Must be an AI player
+--? UnitTable units - Defines what units should be spawned when the Army is initialized
+--? CombatArena spawn - Where units should spawn. This is mandatory if units are provided
+--? Table of CombatArenas targets - Defines where the army should fight
+--? Enum targetOrder - Defines what order the army should attack targets in
+--? Bool onDeathReset - Set to true if you want the Army to revert to its initial target after dying
+--? Bool onDeathDissolve - Set to true if you know the Army will never be used again after dying
+--? 
+--? Parameters - CombatArena
+--? Enum attackBuildings - Which buildings types to attack
+--? Enum attackBuildingsEnRoute - Same as above, but only for EnRoute phases
+--? Enum attackBuildingsAtTarget - Same as above, but only for AtTarget phases
+--? Bool holdPositionWhileWaiting - Set to true if you want the Army to hold positon while idle
+--? Bool useCustomDirection - Set to true if you want the Army to face a specific direction at each target
+--? Bool attackMove - Whether the army should use attack-move commands during travel phases
+--? Bool attackMoveAtTarget - Same as above, but only for EnRoute travel phases
+--? Bool attackMoveEnRoute - Same as above, but only for AtTarget travel phases
+--? Float combatRange - How far the army will look for enemies to attack
+--? Float combatRangeEnRoute - Same as above, but only for EnRoute phases
+--? Float combatRangeAtTarget - Same as above, but only for AtTarget phases
+--? Float leashRange - Once fighting starts, the army will clear all units in this range
+--? Float leashRangeEnRoute - Same as above, but only for EnRoute phases
+--? Float leashRangeAtTarget - Same as above, but only for AtTarget phases 
+--? Float leashBuffer - If this is provided and leash range is not, this will be added to combatRange to get leahRange
+--? Float openPathThreshold - How far of a detour the army will take rather that breaking through a wall
+--? Float brokenWallThreshold - How far the army will look for other wall holes instead of making a new one
+--? Float idleTime - after clearing  a target, how long the Army will wait before considering it complete
+--? Int ramsBuiltWhenBlocked - How many rams the Army will build when blocked by a stone wall
+--? Int ramPassengerCount - How many units to load into each ram when attacking a wall
+--? Int siegeTowerPassengerCount - How many units to load into each siege tower.
+--? @result Army
+function Army_Init(army_params)
+	local army = army_params
+	army.id = _Army_GenerateID()
+	if army.name == nil then
+		army.name = "army_autogenerated_"..army.id
+	end
+	assert(army.player, "Army "..army.name.." needs a player")
+	assert(army.targets == nil or army.target == nil, "Army "..army.name.." cannot be initialized with both a target and targets")
+	army.targets = army.targets or { army.target }
+	army.target = nil
+	assert(not(army.units and army.spawn == nil and #army.targets == 0), "Army "..army.name.." needs a spawn or target if starting units are provided")
+	
+	army.type = "Army"
+	
+	if army.sgroup == nil then
+		army.sgroup = SGroup_CreateUnique(army.name)
+	else
+		-- Make a copy to prevents side effect of killing/spawning units with the squad group that was provided.
+		local new_group = SGroup_CreateUnique(army.name)
+		SGroup_AddGroup(new_group, army.sgroup)
+		army.sgroup = new_group
+	end
+
+	if army.transport_ships ~= nil then
+		-- Make a copy to prevents side effect of killing/spawning units with the squad group that was provided.
+		local new_group = SGroup_CreateUnique(army.name.."_transport_ships")
+		SGroup_AddGroup(new_group, army.transport_ships)
+		army.transport_ships = new_group
+	end
+	
+	assert((army.units == nil and SGroup_CountSpawned(army.sgroup) == 0) or (army.spawn or #army.targets > 0), "Army "..army.name.." needs a spawn or target if starting units are provided")
+	assert(army.moveUnloadOption == nil or (scartype(army.moveUnloadOption) == ST_NUMBER and army.moveUnloadOption >= 0 and army.moveUnloadOption < MOVE_UNLOAD_OPTION_COUNT), "Army move unload option is wrong type or out of range")
+	
+	table.insert(t_allArmies, army)
+	table.insert(t_allModules, army)
+	
+	_Army_InitializeEnRouteAndAtTargetParams(army)
+	_Army_MoveCombatArenaParamsIntoSubTable(army)
+	_Army_GetDefaultValues(army)
+	
+	army.isBlocked = false
+	army.isDissolved = false
+	army.state = {}
+	army.encounterFamily = {}
+	army.stateWhenRevived = {}
+	army.teardown = {}
+	
+	if army.moveUnloadOption == nil then
+		army.moveUnloadOption = MOVE_UNLOAD_OPTION_AT_START
+	end
+	
+	local targetIndex = _Army_InitializeTargets(army)	
+	local target_converted_to_spawn = false
+	local units_previously_spawned = SGroup_CountSpawned(army.sgroup) > 0
+	
+	if army.spawn then
+		army.spawn = _Army_ResolveCombatArena(army, army.spawn)
+	elseif targetIndex ~= -1 then
+		army.spawn = army.targets[targetIndex]
+		target_converted_to_spawn = true
+	end
+	
+	if scartype(army.units) == ST_TABLE then
+		if scartype(army.units.sbp) == ST_PBG or scartype(army.units.type) == ST_STRING then
+			army.units = { army.units }
+		end
+		army.idealUnits = Clone(army.units)
+		if #army.units > 0 then
+			CreateUnits(army.player, army.units, army.spawn.idlePosition or army.spawn.position, army.sgroup, army.spawn.direction)
+			if DEBUG_ARMY then
+				print("Army "..army.name.." spawned "..SGroup_CountSpawned(army.sgroup).." units")	
+			end
+		end
+	else
+		army.idealUnits = {}
+	end
+	
+	army.units = nil
+	
+	local units_are_away_from_first_target = units_previously_spawned or (target_converted_to_spawn == false)
+
+	if army.transport_ships then
+		_Army_NavalTransport(army, targetIndex)
+	elseif SGroup_CountSpawned(army.sgroup) > 0 then
+		if targetIndex ~= -1 then
+			if #army.targets > 1 then
+				if units_are_away_from_first_target then	
+					_Army_AttackTarget(army, targetIndex)
+				else
+					targetIndex = _Army_GetNextTargetIndex(army, targetIndex)
+					_Army_AttackTarget(army, targetIndex)
+				end
+			else
+				if units_are_away_from_first_target then
+					_Army_AttackTarget(army, targetIndex)
+				else
+					_Army_DefendTarget(army, targetIndex)
+				end
+			end
+		else
+			_Army_DefendSpawn(army)
+		end
+	else
+		if targetIndex ~= -1 then
+			army.stateWhenRevived = { type = ENCOUNTER_TYPE_ATTACK, targetIndex = targetIndex }
+		else
+			army.stateWhenRevived = { type = ENCOUNTER_TYPE_DEFEND, defendType = COMBAT_AREA_TYPE_SPAWN }
+		end
+		army.state = { type = ENCOUNTER_TYPE_EMPTY }
+		_Army_UpdateStatus(army)
+	end
+	if _G[army.name] ~= nil then
+		army_fatal("army with name "..army.name.." already exists")
+	end
+	_G[army.name] = army
+	return army
+end
+
+--? @shortdesc Dissolves the army entirely, optionally returning the units in the passed SGroup (which is NOT cleared)
+--? @args Army army[, SGroup returned_sgroup]
+function Army_Dissolve(army, returned_sgroup)
+	if DEBUG_ARMY then
+		print("Army "..army.name.." dissolving")
+	end
+
+	if army.state.type == ENCOUNTER_TYPE_ATTACK
+		or army.state.type == ENCOUNTER_TYPE_DEFEND
+		or army.state.type == ENCOUNTER_TYPE_TRANSPORT then
+		army.encounterFamily:stop()
+		army.state = { type = ENCOUNTER_TYPE_EMPTY }
+	end
+	army.isDissolved = true
+	
+	if returned_sgroup ~= nil then
+		SGroup_AddGroup(returned_sgroup, army.sgroup)	
+	end
+	
+	-- Remove it from the master lists
+	for i, _army in pairs(t_allArmies) do
+		if _army == army then
+			table.remove(t_allArmies, i)
+			break
+		end
+	end
+	for i, _army in pairs(t_allModules) do
+		if _army == army then
+			table.remove(t_allModules, i)
+			break
+		end
+	end
+end
+
+--? @shortdesc Adds the sgroup to the army
+--? @args Army army, SGroup sgroup
+function Army_AddSGroup(army, sgroup)
+	_Army_CheckIfDead(army)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		SGroup_AddGroup(army.sgroup, sgroup)
+		if DEBUG_ARMY then
+			print("Army "..army.name.." added "..SGroup_CountSpawned(sgroup).." new units. Now has "..SGroup_CountSpawned(army.sgroup))	
+		end
+		if army.spawn == nil then
+			army.spawn = _Army_ResolveCombatArena(army, SGroup_GetPosition(sgroup))	
+		end
+		if army.state.type == ENCOUNTER_TYPE_ATTACK or army.state.type == ENCOUNTER_TYPE_DEFEND then
+			_Army_RestartEncounterFamily(army)
+		elseif army.state.type == ENCOUNTER_TYPE_EMPTY then
+			_Army_Revive(army)
+		else
+			army_fatal("cannot add units to a dissolved army")
+		end
+	end
+end
+
+--? @shortdesc Removes an SGroup from the army, and lets you set a callback that will be called when the squads have been released by the
+--? underlying AI. It will take ~1 second for the AI to release the squads. Similar to Scar Rules, your callback will be called with 2 parameters,
+--? context and data. context is a table that contains army and sgroup. data is your own custom data if you wish to provide one. Be aware that
+--? the sgroup you provide here will be the same sgroup that is used in the callback, so it's the caller's responsibility to ensure it still exists.
+--? @args Army army, SGroup sgroup, Function callback, Table data
+function Army_RemoveSGroup(army, sgroup, callback, data)
+	assert(scartype(sgroup) == ST_SGROUP, "Argument 2 is not a valid SGroup")
+	assert(scartype(army) == ST_TABLE and army.type == "Army", "Argument 1 is not a valid Army")
+	local initial_unit_count = SGroup_CountSpawned(army.sgroup)
+	if SGroup_CountSpawned(army.sgroup) > 0 and SGroup_CountSpawned(sgroup) > 0 then
+		SGroup_RemoveGroup(army.sgroup, sgroup)
+		if DEBUG_ARMY then
+			local units_lost = initial_unit_count - SGroup_CountSpawned(army.sgroup)
+			print("Army "..army.name.." has had "..units_lost.." units removed, now has "..SGroup_CountSpawned(army.sgroup))	
+		end
+		army.teardown = { callback = callback, sgroup = sgroup, data = data }
+		if SGroup_CountSpawned(army.sgroup) == 0 then
+			_Army_Death(army)
+		else
+			SGroup_RemoveGroup(army.sgroup, sgroup)
+			_Army_RestartEncounterFamily(army)
+		end
+	else
+		if DEBUG_ARMY then
+			print("Army "..army.name.." has no units to remove")
+		end
+		if callback then
+			callback({ army = army, sgroup = sgroup }, data)
+		end
+	end
+	
+end
+
+function Army_GetMissingUnits(army)
+	assert(army.idealUnits ~= nil, "army must have an idealUnits table to calculate missing units")
+	local missing_units = Clone(army.idealUnits)
+	local current_units = UnitTable_GenerateFromSGroup(army.sgroup)
+	UnitTable_RemoveUnits(missing_units, current_units)
+	return missing_units
+end
+	
+--? @shortdesc Get the SGroup the army uses to hold its squads
+--? @args Army army
+function Army_GetSGroup(army)
+	assert(scartype(army) == ST_TABLE and army.type == "Army")
+	return army.sgroup
+end
+
+--? @shortdesc Get the squads used by an army and add them to the provided SGroup. Note: The SGroup is cleared beforehand
+--? If sgroup is a string, an sgroup will be created with that name and used
+--? @args Army army, SGroup sgroup
+function Army_GetSquads(army, sgroup)
+	assert(scartype(army) == ST_TABLE and army.type == "Army")
+	if scartype(sgroup) == ST_STRING then
+		sgroup = SGroup_CreateUniqueWithPrefix(sgroup)
+	else
+		SGroup_Clear(sgroup)
+	end
+	SGroup_AddGroup(sgroup, army.sgroup)
+	return sgroup
+end
+
+function Army_GetTargetIndex(army)
+	return army.state.targetIndex
+end
+
+function Army_GetTarget(army)
+	return army.targets[army.state.targetIndex]
+end
+
+--? @shortdesc Sets the army target, removing any previous targets in the process. 
+--? @args Army army, Marker/Pos/Table target
+function Army_SetTarget(army, target)
+	_Army_CheckIfDead(army)
+	
+	target = _Army_ResolveCombatArena(army, target)
+	
+	if DEBUG_ARMY then
+		print("Army "..army.name.." set target to 1 ".._Army_GetCombatArenaString(target))	
+	end
+	
+	army.targets = {}
+	army.isBlocked = false
+	table.insert(army.targets, target)
+	
+	if army.state.type == ENCOUNTER_TYPE_DEFEND or army.state.type == ENCOUNTER_TYPE_ATTACK then
+		army.encounterFamily:stop()
+		_Army_AttackTarget(army, 1)
+	elseif army.state.type == ENCOUNTER_TYPE_NONE then
+		_Army_AttackTarget(army, 1)
+	elseif army.state.type == ENCOUNTER_TYPE_EMPTY then
+		army.stateWhenRevived = { type = ENCOUNTER_TYPE_ATTACK, targetIndex = 1 }
+	end
+end
+
+--? @shortdesc Clears any previous targets away, and sets new ones
+--? @args Army army, Table targets
+function Army_SetTargets(army, targets)
+	assert(scartype(targets) == ST_TABLE, "targets must be a table")
+	
+	if targets[1] ~= nil then
+		Army_SetTarget(army, targets[1])
+	end
+	if #targets > 1 then
+		for i=2, #targets, 1 do
+			Army_AddTarget(army, targets[i])
+		end
+	end
+end
+
+--? @shortdesc Adds a target to the target list. 
+--? @args Army army, Marker/Pos/Table target
+function Army_AddTarget(army, target)
+	_Army_CheckIfDead(army)
+	
+	target = _Army_ResolveCombatArena(army, target)
+	
+	table.insert(army.targets, target)
+	
+	if DEBUG_ARMY then
+		print("Army "..army.name.." added target "..#army.targets.." ".._Army_GetCombatArenaString(target))	
+	end
+
+	if army.state.type == ENCOUNTER_TYPE_DEFEND then
+		army.isBlocked = false
+		army.encounterFamily:stop()
+		_Army_AttackTarget(army, #army.targets)
+	elseif army.state.type == ENCOUNTER_TYPE_NONE then
+		army.isBlocked = false
+		_Army_AttackTarget(army, #army.targets)
+	elseif army.state.type == ENCOUNTER_TYPE_EMPTY and army.stateWhenRevived.type == ENCOUNTER_TYPE_DEFEND then
+		army.isBlocked = false
+		army.stateWhenRevived = { type = ENCOUNTER_TYPE_ATTACK, targetIndex = #army.targets }
+	end
+end
+
+--? @shortdesc Adds the targets to the target list
+--? @args Army army, Table targets
+function Army_AddTargets(army, targets)
+	assert(scartype(targets) == ST_TABLE, "targets must be a table")
+	
+	for i, target in ipairs(targets) do
+		Army_AddTarget(army, target)
+	end
+end
+
+--? @shortdesc Returns true if the army has completed all targets and is defending its final target
+--? @result Bool
+function Army_IsComplete(army)
+	return (army.state.type == ENCOUNTER_TYPE_DEFEND and army.state.defendType == COMBAT_AREA_TYPE_TARGET)
+end
+
+--? @shortdesc Returns true if the army has lost all units and died
+--? @result Bool
+function Army_IsDead(army)
+	return _Army_CheckIfDead(army)
+end
+
+--? @shortdesc Returns true if the army is currently attacking a target
+--? @result Bool
+function Army_IsAttacking(army)
+	return army.state.type == ENCOUNTER_TYPE_ATTACK
+end
+
+--? @shortdesc Returns true if the army is currently defending
+--? @result Bool
+function Army_IsDefending(army)
+	return army.state.type == ENCOUNTER_TYPE_DEFEND
+end
+
+--? @shortdesc Returns true if the army has become blocked by walls
+--? @result Bool
+function Army_IsBlocked(army)
+	return army.isBlocked
+end
+
+--------------------------------------------------------------------
+--------------------- Initialization Functions ---------------------
+--------------------------------------------------------------------
+
+function _Army_GenerateID()
+	g_army_id_index = g_army_id_index or 0
+	g_army_id_index = g_army_id_index + 1
+	return g_army_id_index
+end
+
+function _Army_InitializeEnRouteAndAtTargetParams(army_or_combat_arena)
+	for i, param in ipairs(ARMY_COMBAT_ARENA_PARAMETERS_SHORTHAND) do
+		if army_or_combat_arena[param.."AtTarget"] == nil then
+			army_or_combat_arena[param.."AtTarget"] = army_or_combat_arena[param]
+		end
+		if army_or_combat_arena[param.."EnRoute"] == nil then
+			army_or_combat_arena[param.."EnRoute"] = army_or_combat_arena[param]
+		end
+		army_or_combat_arena[param] = nil
+	end
+end
+
+function _Army_MoveCombatArenaParamsIntoSubTable(army)
+	army.combatArenaParams = {}
+	for parameter, default_value in pairs(ARMY_COMBAT_ARENA_PARAMETERS_WITH_DEFAULT) do
+		if army[parameter] ~= nil then
+			army.combatArenaParams[parameter] = army[parameter]
+			army[parameter] = nil
+		end
+	end
+	for index, parameter in pairs(ARMY_COMBAT_ARENA_PARAMETERS_WITHOUT_DEFAULT) do
+		if army[parameter] ~= nil then
+			army.combatArenaParams[parameter] = army[parameter]
+			army[parameter] = nil
+		end
+	end
+	setmetatable(army, { __newindex = _Army_NewVariableAssignment })
+end
+
+function _Army_GetDefaultValues(army)
+	for parameter, default_value in pairs(ARMY_GENERAL_PARAMETERS_WITH_DEFAULT) do
+		if army[parameter] == nil then
+			army[parameter] = default_value
+		end
+	end
+	
+	for parameter, default_value in pairs(ARMY_COMBAT_ARENA_PARAMETERS_WITH_DEFAULT) do
+		if army.combatArenaParams[parameter] == nil then
+			army.combatArenaParams[parameter] = default_value
+		end
+	end
+end
+
+--? @shortdesc Ensure that all targets are converted to the proper format
+function _Army_InitializeTargets(army)
+	local targets_copy = {}
+	for i, t in pairs(army.targets) do
+		targets_copy[i] = _Army_ResolveCombatArena(army, t)
+	end	
+	army.targets = targets_copy
+	
+	army.targetDelta = 1
+	local targetIndex = -1
+	if #army.targets > 0 then
+		if army.targetOrder == TARGET_ORDER_RANDOM then
+			targetIndex = _Army_GetRandomTargetIndex(army)
+		else
+			targetIndex = 1
+		end		
+	end
+	return targetIndex
+end
+
+--------------------------------------------------------------------
+----------------------- CombatArena Functions ----------------------
+--------------------------------------------------------------------
+
+--the army accepts 3 different formats for combatArena. This function takes any of the 3 and converts them to a standard
+function _Army_ResolveCombatArena(army, combat_arena)
+	if scartype(combat_arena) == ST_SCARPOS then
+		combat_arena = { position = combat_arena }
+	elseif scartype(combat_arena) == ST_MARKER then
+		combat_arena = { marker = combat_arena }
+		combat_arena.position = Marker_GetPosition(combat_arena.marker)
+		if Marker_GetProximityRadiusOrDefault(combat_arena.marker, 0) > 0 then 
+			combat_arena.combatRangeAtTarget = Marker_GetProximityRadiusOrDefault(combat_arena.marker, 0) 
+		end
+		combat_arena.direction = Marker_GetDirection(combat_arena.marker)
+	elseif scartype(combat_arena) == ST_TABLE then
+		assert(combat_arena.marker or combat_arena.position, "combat_arena must have a marker or a position")
+		combat_arena = Clone(combat_arena, false)
+		_Army_InitializeEnRouteAndAtTargetParams(combat_arena)
+		local infered_direction = nil
+		if scartype(combat_arena.marker) == ST_MARKER then
+			combat_arena.position = Marker_GetPosition(combat_arena.marker)
+			local markerRange = nil
+			if Marker_GetProximityRadiusOrDefault(combat_arena.marker, 0) > 0 then 
+				markerRange = Marker_GetProximityRadiusOrDefault(combat_arena.marker, 0) 
+			end
+			combat_arena.combatRangeAtTarget = combat_arena.combatRangeAtTarget or markerRange
+			infered_direction = Marker_GetDirection(combat_arena.marker)
+		end
+		if scartype(combat_arena.idlePosition) == ST_MARKER then
+			infered_direction = Marker_GetDirection(combat_arena.idlePosition)
+			combat_arena.idlePosition = Marker_GetPosition(combat_arena.idlePosition)
+		end
+		combat_arena.direction = combat_arena.direction or infered_direction 
+	else
+		assert(false, army.name.." has an invalid combat_arena of type "..scartype_tostring(combat_arena))
+	end
+	setmetatable(combat_arena, {__index = army.combatArenaParams})
+	return combat_arena
+end
+
+function _Army_ValidateCombatArena(army, combatArena)
+	assert(scartype(combatArena) == ST_TABLE, string.format("%s combatArena needs to be a table, is %s", army.name, scartype_tostring(combatArena)))
+	assert(scartype(combatArena.position) == ST_SCARPOS, army.name.." combatArena needs a valid position")
+end
+
+function _Army_GetCombatArenaString(combatArena)
+	local x_rounded = math.floor(combatArena.position.x + 0.5)
+	local z_rounded = math.floor(combatArena.position.z + 0.5)
+	return "("..x_rounded..","..z_rounded..")"
+end
+
+--------------------------------------------------------------------
+----------------------- Transition Functions -----------------------
+--------------------------------------------------------------------
+
+--? @shortdesc This checks to see if the Army has died, and updates its state if it has.
+--? This is called at the beginning of several other functions to guard against a race condition
+--? that occurs if the army has lost all units, but hasn't recieved the StateTree notification yet
+function _Army_CheckIfDead(army)
+	if army.state.type ~= ENCOUNTER_TYPE_EMPTY and SGroup_CountSpawned(army.sgroup) == 0 then
+		_Army_Death(army)
+	end
+	return army.state.type == ENCOUNTER_TYPE_EMPTY
+end
+
+--? @shortdesc Called when all units in the army have died
+function _Army_Death(army)
+	local status_string = "died "..army.status
+	if DEBUG_ARMY then
+		print("Army "..army.name.." lost all units")
+	end
+	if army.onDeathFunction then
+		army.onDeathFunction(army)
+	end
+	if SGroup_CountSpawned(army.sgroup) == 0 then --need to check that we're still dead. onDeathFunction could have added units
+		if army.onDeathReset then
+			army.stateWhenRevived = { type = ENCOUNTER_TYPE_ATTACK, targetIndex = 1 }
+			army.targetDelta = 1
+		else
+			assert(army.state.type)
+			army.stateWhenRevived = { type = army.state.type, defendType = army.state.defendType, targetIndex = army.state.targetIndex }
+		end
+		
+		if army.onDeathDissolve then
+			Army_Dissolve(army)
+		else
+			if army.state.type == ENCOUNTER_TYPE_ATTACK or army.state.type == ENCOUNTER_TYPE_DEFEND then	
+				army.encounterFamily:stop()
+				army.state = { type = ENCOUNTER_TYPE_EMPTY }
+			end
+		end
+		army.status = status_string
+		army.state = { type = ENCOUNTER_TYPE_EMPTY }
+		if DEBUG_ARMY then
+			print("Army "..army.name.." "..status_string)
+		end
+	end
+end
+
+--? @shortdesc Called when an army has died and then been given more units. It figures out what the army should be doing now.
+--? the table army.stateWhenRevived is used when the army is dead to track what the army should do upon revival.
+function _Army_Revive(army)
+	if army.stateWhenRevived.type == ENCOUNTER_TYPE_ATTACK then
+		local targetIndex = army.stateWhenRevived.targetIndex
+		_Army_AttackTarget(army, targetIndex)
+	elseif army.stateWhenRevived.type == ENCOUNTER_TYPE_DEFEND then
+		if army.stateWhenRevived.defendType == COMBAT_AREA_TYPE_SPAWN then
+			_Army_DefendSpawn(army)
+		elseif army.stateWhenRevived.defendType == COMBAT_AREA_TYPE_CURRENT_POSITION then
+			_Army_DefendCurrentPosition(army)
+		elseif army.stateWhenRevived.defendType == COMBAT_AREA_TYPE_TARGET then
+			local targetIndex = army.stateWhenRevived.targetIndex
+			_Army_DefendTarget(army, targetIndex)
+		else
+			army_fatal("army was revived with stateWhenRevived.type == defend but defendType was invalid")
+		end
+	else
+		army_fatal("army was revived with stateWhenRevived.type="..army.stateWhenRevived.type)
+	end	
+end
+
+--? @shortdesc Called when the army can't get to its target
+function _Army_Blocked(army)
+	if DEBUG_ARMY then
+		print("Army "..army.name.." blocked")	
+	end
+	if _Army_CheckIfDead(army) == false then
+		army.isBlocked = true
+		_Army_DefendCurrentPosition(army)	
+	end
+	if army.onBlockedFunction then
+		army.onBlockedFunction(army)
+	end
+end
+
+--? @shortdesc Called when a target has been cleared successfuly
+function _Army_Victory(army)
+	if _Army_CheckIfDead(army) == false then
+		if DEBUG_ARMY then
+			print("Army "..army.name.." victory at target "..army.state.targetIndex)	
+		end
+		
+		if army.onVictoryFunction then
+			army.onVictoryFunction(army)
+		end
+		local targetIndex = _Army_GetNextTargetIndex(army, army.state.targetIndex)
+		if targetIndex ~= -1 and targetIndex ~= army.state.targetIndex then
+			if army.transport_ships then
+				_Army_NavalTransport(army, targetIndex)
+			else
+				_Army_AttackTarget(army, targetIndex)
+			end
+		else
+			_Army_Complete(army)
+		end
+		
+		if army.postVictoryFunction then
+			army.postVictoryFunction(army)
+		end
+	end
+end
+
+--? @shortdesc Called when the army completes its last target and there are none left
+function _Army_Complete(army)
+	local targetIndex = army.state.targetIndex
+	if DEBUG_ARMY then
+		print("Army "..army.name.." complete")	
+	end
+	army.state = { type = ENCOUNTER_TYPE_NONE }
+	if army.onCompleteFunction then
+		army.onCompleteFunction(army) -- this callback could change the encounter type by assigning new targets
+	end
+	
+	if army.state.type == ENCOUNTER_TYPE_NONE then
+		if army.transport_ships then
+			if DEBUG_ARMY then
+				print("Army "..army.name.." didn't receive a followup task. Use onCompleteFunction or "..
+					"postCompleteFunction to indicate what the army is supposed to do after the naval transport "..
+					"complets.")
+			end
+			-- If we end on water the army can't defend itself because it is still stuck in a transport ship.
+			-- The current setup expects the designer to do something meaningful in the onCompleteFunction or
+			-- postCompleteFunction callback.
+			Army_Dissolve(army)
+		else
+			_Army_DefendTarget(army, targetIndex)
+		end
+	end
+	
+	if army.postCompleteFunction then
+		army.postCompleteFunction(army)	
+	end
+end
+	
+--? @shortdesc Gets the index of the next valid target, according to the targetOrder. Returns -1 if no valid target exists 
+function _Army_GetNextTargetIndex(army, currentTargetIndex)
+	local nextTargetIndex = -1
+	if #army.targets > 0 then
+		-- The rest depends on specific target type
+		if army.targetOrder == TARGET_ORDER_LINEAR then
+			nextTargetIndex = currentTargetIndex + 1 
+			if nextTargetIndex > #army.targets then
+				nextTargetIndex = -1
+			end
+		elseif army.targetOrder == TARGET_ORDER_LOOP then
+			nextTargetIndex = currentTargetIndex + 1
+			if nextTargetIndex > #army.targets then
+				nextTargetIndex = 1
+			end
+		elseif army.targetOrder == TARGET_ORDER_PATROL then
+			nextTargetIndex = currentTargetIndex + army.targetDelta
+			if nextTargetIndex > #army.targets then
+                nextTargetIndex = math.max(#army.targets - 1, 1)
+                army.targetDelta = army.targetDelta * -1
+            elseif nextTargetIndex < 1 then
+                nextTargetIndex = math.min(2, #army.targets)
+                army.targetDelta = army.targetDelta * -1
+            end
+		elseif army.targetOrder == TARGET_ORDER_RANDOM then
+			nextTargetIndex = _Army_GetRandomTargetIndex(army, currentTargetIndex)
+		else
+			assert(army.targetOrder, "Army "..tostring(army.name).." has no targeting type") 
+		end	
+	end
+	return nextTargetIndex
+end
+
+--? @shortdesc returns a random index to a target other than the current one. Returns -1 if no valid targets exist
+function _Army_GetRandomTargetIndex(army, currentTargetIndex)
+	-- Get the full range of indices and remove the current one
+	local validTargetIndexes = {}
+	for index, target in pairs(army.targets) do
+		if index ~= currentTargetIndex then
+			table.insert(validTargetIndexes, index)
+		end
+	end
+	
+	if #validTargetIndexes > 0 then
+		local i = World_GetRand(1, #validTargetIndexes)
+		return validTargetIndexes[i]	
+	else
+		return -1
+	end
+end
+
+function _Army_UpdateStatus(army)
+	if army.isDissolved then
+		army.status = "dissolved"
+	elseif army.state.type == ENCOUNTER_TYPE_NONE then
+		army.status = "none"
+	elseif army.state.type == ENCOUNTER_TYPE_EMPTY then
+		army.status = "empty"
+	elseif army.state.type == ENCOUNTER_TYPE_ATTACK then
+		army.status = "attacking target "..army.state.targetIndex
+	elseif army.state.type == ENCOUNTER_TYPE_DEFEND then
+		if army.state.defendType == COMBAT_AREA_TYPE_SPAWN then
+			army.status = "defending spawn"
+		elseif army.state.defendType == COMBAT_AREA_TYPE_CURRENT_POSITION then
+			army.status = "defending current position"
+		elseif army.state.defendType == COMBAT_AREA_TYPE_TARGET then
+			army.status = "defending target "..army.state.targetIndex
+		else
+			army_fatal("army has invalid state.defendType")
+		end
+	elseif army.state.type == ENCOUNTER_TYPE_TRANSPORT then
+		army.status = "transporting units to target " .. army.state.targetIndex
+	else
+		army_fatal("army has invalid state.type")
+	end
+end
+
+--------------------------------------------------------------------
+--------------- Encounter And StateModel Handling ------------------
+--------------------------------------------------------------------
+
+function _Army_DefendSpawn(army)
+	assert(scartype(army.spawn == ST_TABLE) and scartype(army.spawn.position) == ST_SCARPOS)
+	_Army_DefendCombatArena(army, army.spawn)
+	army.state.defendType = COMBAT_AREA_TYPE_SPAWN
+	_Army_UpdateStatus(army)
+	if DEBUG_ARMY then
+		if DEBUG_ARMY_ENCOUNTER then
+			print("Army "..army.name.." created EF "..army.encounterFamily.id.." to defend spawn")	
+		else
+			print("Army "..army.name.." defending spawn")	
+		end
+	end
+	army.encounterFamily:start()
+end
+
+function _Army_DefendTarget(army, targetIndex)
+	assert(scartype(army.targets[targetIndex]) == ST_TABLE and scartype(army.targets[targetIndex].position) == ST_SCARPOS)
+	_Army_DefendCombatArena(army, army.targets[targetIndex])
+	army.state.defendType = COMBAT_AREA_TYPE_TARGET
+	army.state.targetIndex = targetIndex
+	_Army_UpdateStatus(army)
+	if DEBUG_ARMY then
+		if DEBUG_ARMY_ENCOUNTER then
+			print("Army "..army.name.." created EF "..army.encounterFamily.id.." to defend target "..targetIndex)	
+		else
+			print("Army "..army.name.." defending target "..targetIndex)	
+		end
+	end
+	army.encounterFamily:start()
+end
+
+function _Army_DefendCurrentPosition(army)
+	local currentPos = SGroup_GetPosition(army.sgroup)
+	local combatArena = _Army_ResolveCombatArena(army, currentPos)
+	_Army_DefendCombatArena(army, combatArena)
+	army.state.defendType = COMBAT_AREA_TYPE_CURRENT_POSITION
+	_Army_UpdateStatus(army)
+	if DEBUG_ARMY then
+		if DEBUG_ARMY_ENCOUNTER then
+			print("Army "..army.name.." created EF "..army.encounterFamily.id.." to defend current position")	
+		else
+			print("Army "..army.name.." defending current position")	
+		end
+	end
+	army.encounterFamily:start()
+end
+
+function _Army_NavalTransport(army, targetIndex)
+	assert((#army.targets > 0), "Army "..army.name.." must have targets before encounter can be created")
+	assert(targetIndex ~= -1, "Army "..army.name.." needs a valid target for naval transport encounter.")
+	assert(SGroup_CountSpawned(army.sgroup) > 0, "Army "..army.name.." must have units for naval transport encounter.")
+	assert(SGroup_CountSpawned(army.transport_ships) > 0, "Army "..army.name.." must have transport ships for naval transport encounter.")
+	local target = army.targets[targetIndex]
+	_Army_ValidateCombatArena(army, target)
+
+	setmetatable(army, { __index = _Army_VariableLookupFailed,  __newindex = _Army_NewVariableAssignment })
+	setmetatable(army.combatArenaParams, { __index = _Army_CombatArenaParamLookupFailed })
+
+	local stateModels = _Army_CreateCommonStateModels(army, target, "campaign_encounters\\scar_encounters\\NavalTransport")
+
+	-- There is no transport default blueprint. All tunings from defend should be good for this encounter though.
+	stateModels.tuningsBP = BP_GetAIStateModelTuningsBlueprint("campaign_naval_defend_default")
+	stateModels.sgroupTunings.ai_transports = army.transport_ships
+
+	setmetatable(army, { __newindex = _Army_NewVariableAssignment })
+	setmetatable(army.combatArenaParams, {})
+
+	army.encounterFamily = ArmyEncounterFamily:new(nil, army, stateModels)
+	if DEBUG_ARMY then
+		if DEBUG_ARMY_ENCOUNTER then
+			print("Army "..army.name.." created EF "..army.encounterFamily.id.." to transport units to target "..targetIndex)
+		else
+			print("Army "..army.name.." transporting units to target "..targetIndex)
+		end
+	end
+	army.encounterFamily:start()
+
+	army.state.type = ENCOUNTER_TYPE_TRANSPORT
+	army.state.targetIndex = targetIndex
+	_Army_UpdateStatus(army)
+end
+
+
+function _Army_DefendCombatArena(army, combatArena)
+	assert(SGroup_CountSpawned(army.sgroup) > 0, army.name.." must have units before Defend encounter can be created")
+	_Army_ValidateCombatArena(army, combatArena)
+	
+	setmetatable(army, 					{ __index = _Army_VariableLookupFailed,  __newindex = _Army_NewVariableAssignment })
+	setmetatable(army.combatArenaParams, { __index = _Army_CombatArenaParamLookupFailed })
+
+	local statetreeBranch = "campaign_encounters\\scar_encounters\\DefendDefault"
+	local tuningsBP = "campaign_defend_default"
+
+	-- different statetree branch for naval encounters
+	if (army.naval == true) then
+		statetreeBranch = "campaign_encounters\\scar_encounters\\NavalDefendDefault"
+		tuningsBP = "campaign_naval_defend_default"
+	end
+	
+	local stateModels = _Army_CreateCommonStateModels(army, combatArena, statetreeBranch)
+	stateModels.tuningsBP = BP_GetAIStateModelTuningsBlueprint(tuningsBP)
+
+	setmetatable(army, { __newindex = _Army_NewVariableAssignment })
+	setmetatable(army.combatArenaParams, {})
+	
+	army.encounterFamily = ArmyEncounterFamily:new(nil, army, stateModels)
+	if DEBUG_ARMY then
+		if DEBUG_ARMY_ENCOUNTER then
+			print("Army "..army.name.." created EF "..army.encounterFamily.id.." to defend target")
+			if (combatArena ~= nil) then
+				print(Util_PrintTable(combatArena))
+			else 
+				print("Target is nil")
+			end
+		end
+	end
+
+	army.state.type = ENCOUNTER_TYPE_DEFEND
+end
+	
+function _Army_AttackTarget(army, targetIndex) 
+	assert((#army.targets > 0), "Army "..army.name.." must have targets before encounter can be created")
+	assert(SGroup_CountSpawned(army.sgroup) > 0, "Army "..army.name.." must have units before Attack encounter can be created")
+	local target = army.targets[targetIndex]
+	_Army_ValidateCombatArena(army, target)
+	 
+	setmetatable(army, { __index = _Army_VariableLookupFailed,  __newindex = _Army_NewVariableAssignment })
+	setmetatable(army.combatArenaParams, { __index = _Army_CombatArenaParamLookupFailed })
+	
+	local statetreeBranch = "campaign_encounters\\scar_encounters\\AttackDefault"
+	local tuningsBP = "campaign_attack_default"
+	
+	-- different statetree branch for naval encounters
+	if (army.naval == true) then 
+		statetreeBranch = "campaign_encounters\\scar_encounters\\NavalAttackDefault"
+		tuningsBP = "campaign_naval_attack_default"
+	end
+	
+	local stateModels = _Army_CreateCommonStateModels(army, target, statetreeBranch)
+	stateModels.tuningsBP = BP_GetAIStateModelTuningsBlueprint(tuningsBP)
+	stateModels.floatTunings.ai_phase_encounter_idle_at_end_seconds = target.idleTime
+	
+	setmetatable(army, { __newindex = _Army_NewVariableAssignment })
+	setmetatable(army.combatArenaParams, {})
+	
+	army.encounterFamily = ArmyEncounterFamily:new(nil, army, stateModels)
+	if DEBUG_ARMY then
+		if DEBUG_ARMY_ENCOUNTER then
+			print("Army "..army.name.." created EF "..army.encounterFamily.id.." to attack target "..targetIndex)
+			if (target ~= nil) then
+				print(Util_PrintTable(target))
+			else 
+				print("Target is nil")
+			end
+		else
+			print("Army "..army.name.." attacking target "..targetIndex)	
+		end
+	end
+	army.encounterFamily:start()
+	
+	army.state.type = ENCOUNTER_TYPE_ATTACK
+	army.state.targetIndex = targetIndex
+	_Army_UpdateStatus(army)
+end
+
+
+-- creates and configures all the stateModels that will be passed into the EncounterFamily
+-- only creates the stateModels that are common to attack and defend encounters
+function _Army_CreateCommonStateModels(army, target, branchName)
+	assert(scartype(army.sgroup) == ST_SGROUP)
+	assert(scartype(target) == ST_TABLE)			
+	local stateModels = {
+		player = army.player,
+		branchName = branchName,
+		keepAlive = false,
+		sgroupTunings = {},
+		egroupTunings = {},
+		positionTunings = {},
+		markerTunings = {},
+		entityTypeTunings = {},
+		coordinatorPbgTunings = {},
+		booleanTunings = {},
+		floatTunings = {},
+		booleanTunings = {},
+		integerTunings = {},
+	}
+	
+	----- sgroupTunings -----
+	stateModels.sgroupTunings.ai_best_available_squads = army.sgroup
+	stateModels.sgroupTunings.ai_best_military_targets = nil --for giving explicit squad targets
+	----- egroupTunings -----
+	local egroupTunings = {}
+	stateModels.egroupTunings.ai_best_military_targets = nil
+	----- positionTunings -----
+	stateModels.positionTunings.ai_best_military_targets = { target.position }
+	local skipFormUp = true
+	if SGroup_CountSpawned(army.sgroup) > 1 then
+		local clusterSeparation = SGroup_CalculateClusterSeparation(army.sgroup, true, 2)
+		if clusterSeparation >= 20 and skipFormUp ~= true then 
+			local formUpPosition = Util_GetPosition(army.sgroup)
+			if SGroup_CountSpawned(army.sgroup) >= 1 then 								
+				local squad = SGroup_GetSpawnedSquadAt(army.sgroup, 1)
+				if Squad_Count(squad) >= 1 then 
+					local entity = Squad_GetFirstEntity(squad)
+					formUpPosition = World_GetSpawnablePosition(formUpPosition, entity)
+				end
+			end	
+			stateModels.positionTunings.ai_best_formup_targets = {formUpPosition}
+		end
+	end
+	stateModels.positionTunings.ai_idle_at_end_targets = { target.idlePosition }
+	stateModels.positionTunings.ai_best_face_targets = {}
+	local useCustomDirection = target.useCustomDirection
+	if useCustomDirection and target.direction then
+		local direction = target.direction
+		local source = target.idlePosition or target.position
+		table.insert(stateModels.positionTunings.ai_best_face_targets, World_GetOffsetPosition(source, direction, OFFSET_FRONT, 100))
+	end
+	----- entityTypeTunings -----	
+	stateModels.entityTypeTunings.ai_phase_encounter_exclude_unit_types = target.attackBuildingsAtTarget.excludedBuildings
+	stateModels.entityTypeTunings.ai_phase_encounter_exclude_unit_types_enroute = target.attackBuildingsEnRoute.excludedBuildings
+	----- coordinatorPbgTunings -----
+	stateModels.coordinatorPbgTunings.ai_phase_encounter_coordinator_bag = target.attackBuildingsAtTarget.formationCoordinatorAtTarget
+	stateModels.coordinatorPbgTunings.ai_phase_encounter_coordinator_bag_enroute = target.attackBuildingsEnRoute.formationCoordinatorEnRoute
+	----- booleanTunings -----
+	stateModels.booleanTunings.ai_phase_encounter_convert_squad_target_to_position = false
+	stateModels.booleanTunings.ai_phase_encounter_allow_attack_move = target.attackMoveAtTarget
+	stateModels.booleanTunings.ai_phase_encounter_allow_attack_move_enroute = target.attackMoveEnRoute
+	stateModels.booleanTunings.ai_phase_encounter_attack_final_target = false	
+	stateModels.booleanTunings.ai_phase_encounter_can_help_nearby = false
+	stateModels.booleanTunings.ai_phase_encounter_check_for_open_path_to_enemy_structure = false
+	stateModels.booleanTunings.ai_phase_encounter_clear_enemy_buildings = target.attackBuildingsAtTarget.clearBuildings
+	stateModels.booleanTunings.ai_phase_encounter_clear_enemy_buildings_enroute = target.attackBuildingsEnRoute.clearBuildings
+	stateModels.booleanTunings.ai_phase_encounter_clear_enemy_squads = target.attackUnitsAtTarget
+	stateModels.booleanTunings.ai_phase_encounter_clear_enemy_squads_enroute = target.attackUnitsEnRoute
+	stateModels.booleanTunings.ai_phase_encounter_defend_destination = false
+	stateModels.booleanTunings.ai_phase_encounter_disable_cavalry_build_rams = target.ramsBuiltWhenBlocked == 0
+	stateModels.booleanTunings.ai_phase_encounter_exit_on_path_blocker_detected = true
+	stateModels.booleanTunings.ai_phase_encounter_exit_test_include_unreachable = false
+	stateModels.booleanTunings.ai_phase_encounter_should_hold_position = target.holdPositionWhileWaiting
+	stateModels.booleanTunings.ai_phase_encounter_target_destroyed = false
+	stateModels.booleanTunings.teardowns_disabled = false
+	----- floatTunings -----
+	local leashRangeAtTarget = target.leashRangeAtTarget or target.combatRangeAtTarget + target.leashBuffer
+	local leashRangeEnRoute = target.leashRangeEnRoute or target.combatRangeEnRoute + target.leashBuffer
+	stateModels.floatTunings.ai_phase_encounter_formup_timeout = 10
+	stateModels.floatTunings.ai_phase_encounter_formup_required_squads_percent = 1
+	stateModels.floatTunings.ai_phase_encounter_enemy_scan_range = target.combatRangeAtTarget
+	stateModels.floatTunings.ai_phase_encounter_enemy_scan_range_enroute = target.combatRangeEnRoute
+	stateModels.floatTunings.ai_phase_encounter_combat_area = target.combatRangeAtTarget
+	stateModels.floatTunings.ai_phase_encounter_combat_area_enroute = target.combatRangeEnRoute
+	stateModels.floatTunings.ai_phase_encounter_combat_leash = leashRangeAtTarget
+	stateModels.floatTunings.ai_phase_encounter_combat_leash_enroute = leashRangeEnRoute
+	stateModels.floatTunings.ai_phase_encounter_combat_fitness_threshold = 0
+	local destination_area
+	if target.skipPreciseMoveToTarget then
+		destination_area = 500
+	else
+		local size = Formation_GetDimensionsAndOffset(army.sgroup)	
+		destination_area = math.max(0.5 * size.x, 0.5 * size.y + math.abs(size.z)) -- z is offset from centre along y
+	end
+	stateModels.floatTunings.ai_phase_encounter_destination_area = destination_area
+	stateModels.floatTunings.ai_phase_encounter_destination_combat_area = target.combatRangeAtTarget
+	stateModels.floatTunings.ai_phase_encounter_destination_required_squads_percent = 0.5
+	stateModels.floatTunings.ai_phase_encounter_destination_required_squads_percent_enroute = 0.75
+	stateModels.floatTunings.ai_phase_encounter_archer_reposition_time_interval = 0
+	stateModels.floatTunings.ai_phase_encounter_cached_path_update_interval_secs = 5
+	stateModels.floatTunings.ai_phase_encounter_destroyed_wall_opening_ignore_radius = 30
+	stateModels.floatTunings.ai_phase_encounter_cavalry_random_path = 0
+	stateModels.floatTunings.ai_phase_encounter_open_path_length_to_look_for_siege_path = 120
+	stateModels.floatTunings.ai_phase_encounter_protect_distance = -20
+	stateModels.floatTunings.ai_phase_encounter_protect_squad_count_proportion = -1
+	----- integerTunings -----
+	stateModels.integerTunings.ai_phase_encounter_ram_max_passenger_count = target.ramPassengerCount
+	stateModels.integerTunings.ai_phase_encounter_siege_tower_max_passenger_count = target.siegeTowerPassengerCount
+	stateModels.integerTunings.ai_phase_encounter_ram_number_to_build = target.ramsBuiltWhenBlocked
+	assert(scartype(army.moveUnloadOption) == ST_NUMBER and army.moveUnloadOption >= 0 and army.moveUnloadOption < MOVE_UNLOAD_OPTION_COUNT, "Army move unload option is wrong type or out of range")
+	stateModels.integerTunings.ai_move_behaviour_unload_option = army.moveUnloadOption;
+	
+	return stateModels
+end
+
+function _Army_RestartEncounterFamily(army)
+	if _Army_CheckIfDead(army) == false then
+		local oldEncounterFamilyID = army.encounterFamily.id
+		local stateModelClone = Clone(army.encounterFamily.originalStateModels)
+		if DEBUG_ARMY_ENCOUNTER then
+			print("Army "..army.name.." EF "..oldEncounterFamilyID.." restarting...")
+		end
+		army.encounterFamily:stop()
+		army.encounterFamily = ArmyEncounterFamily:new(nil, army, stateModelClone)
+		army.encounterFamily:start()
+		local newEncounterFamilyID = army.encounterFamily.id
+		if DEBUG_ARMY then
+			if DEBUG_ARMY_ENCOUNTER then
+				print("Army "..army.name.." EF "..oldEncounterFamilyID.." restarted as "..newEncounterFamilyID)
+			else
+				print("Army "..army.name.." restarted")
+			end
+		end
+	end
+end
+
+function _Army_NotificationFromEncounterFamily(army, notificationType, encounterStage)
+	local notificationName = AIFormationPhaseEncounter_NotificationType_ToString(notificationType)
+	local debug_identifier = "Army "..army.name.." EF "..army.encounterFamily.id
+	--print(debug_identifier.." notification "..notificationName.." stage "..encounterStage)
+	if notificationType == AIEncounterNotification_StateTreeExit then
+		local endReason = encounterStage
+		local endReasonString = AIFormationPhaseEncounter_EndReason_ToString(endReason)
+		if endReason == AIFormationPhaseEncounter_EndReason_EnemiesAtTargetCleared or endReason == AIFormationPhaseEncounter_EndReason_AtDestination or endReason == AIFormationPhaseEncounter_EndReason_Timeout or endReason == AIFormationPhaseEncounter_EndReason_CombatThreshold then
+			_Army_Victory(army)
+		elseif endReason == AIFormationPhaseEncounter_EndReason_ShouldFallback then		-- fallback triggered according to user-set conditions
+			army_fatal(debug_identifier.." ended with ShouldFallback")
+		elseif endReason == AIFormationPhaseEncounter_EndReason_SelfSquadsEmpty then	
+			_Army_CheckIfDead(army)
+		elseif endReason == AIFormationPhaseEncounter_EndReason_CannotReachDestination then	
+			_Army_Blocked(army)
+		elseif endReason == AIFormationPhaseEncounter_EndReason_Torndown then
+			if army.teardown.callback then
+				assert(scartype(army.teardown.sgroup) == ST_SGROUP, "sgroup provided to Army_RemoveSGroup was destroyed before the callback was triggered")
+				print(debug_identifier.." teardown callback triggered")
+				army.teardown.callback({ army = army, sgroup = army.teardown.sgroup }, army.teardown.data)
+				army.teardown = {}
+			end
+		elseif endReason == AIFormationPhaseEncounter_EndReason_Invalid then
+			army_fatal(debug_identifier.." ended with Invalid Reason")
+		elseif endReason == AIFormationPhaseEncounter_EndReason_Failure then
+			-- This can happen if the units get themselves into a bad state. It is very rare but a known example of
+			-- this happening is if the units get too separated while chasing enemies. There might be other reasons
+			-- for legitimate encounter failure. Please note that this is different to EndReason Invalid.
+			-- Restarting the encounter should give us a new clusterting in case the units are too separated to
+			-- properly function and hopefully corrects all other failure reasons.
+			-- The "Have you tried turning it off an on again?" solution so to speak.
+			print(debug_identifier.. " ended with Failure. Restarting encounter family.")
+			_Army_RestartEncounterFamily(army)
+		else
+			army_fatal(debug_identifier.." ended with Unknown Reason [" .. endReason .. "]")
+		end
+	elseif notificationType == AIEncounterNotification_Success then
+		army_fatal(debug_identifier.." ended with Non-Statetree Success")
+	elseif notificationType == AIEncounterNotification_Failure then
+		army_fatal(debug_identifier.." ended with Non-Statetree Failure")
+	elseif notificationType == AIEncounterNotification_SquadAdded_Count then
+		-- Check if entry already exists (it shouldn't if statetree data is set up correctly).
+		local existingEntry = false
+		for addedInfoIndex, addedInfo in ipairs(t_armyEncounterFamily_addedSquadInfo) do
+			if addedInfo.army == army then
+				existingEntry = true
+			end
+		end
+		if not existingEntry then
+			-- The "Count" notification comes before the individual "Squad ID" notifications.
+			local squadAddInfo = { army = army, _addCount = encounterStage, _addedSquadIDs = {} }
+			table.insert(t_armyEncounterFamily_addedSquadInfo, squadAddInfo)
+		else
+			army_fatal("WARNING: Duplicate AIEncounterNotification_SquadAdded_Count was received on army:"..army.name..". Check StateTree setup.")
+		end
+	elseif notificationType == AIEncounterNotification_SquadAdded_ID then
+		local entryFound = false
+		for index, info in ipairs(t_armyEncounterFamily_addedSquadInfo) do
+			if info.army == army then
+				table.insert(info._addedSquadIDs, encounterStage) -- this value is added squad ID
+				-- Check if all squad added notifications have been received.
+				if info._addCount == #info._addedSquadIDs then
+					-- Add to the SCAR encounter SGroup the newly added AI squads (e.g. field constructed rams).
+					for index2, squadID in ipairs(info._addedSquadIDs) do
+						SGroup_Add(army.sgroup, Squad_FromID(squadID))
+					end
+					-- Done handling this batch of added squads. Clean up temporary stored info.
+					table.remove(t_armyEncounterFamily_addedSquadInfo, index)
+				end
+				entryFound = true
+				break
+			end
+		end
+		if not entryFound then
+			army_fatal("WARNING: AIEncounterNotification_SquadAdded_Count was not received in the correct order, on army:"..army.name..". Check StateTree setup.")
+		end	
+	else
+		army_fatal("unknown notification")
+	end
+end
+
+-----------------------------------------------------------------------
+------------------------ MetaTable Functions --------------------------
+-----------------------------------------------------------------------
+
+--to make the army class cleaner, several variables are are stored in a subTable called combatArenaParams. This 
+--makes it so that assigning such a variable to the army will result in it being stored in the subTable instead
+function _Army_NewVariableAssignment(army, variable, value)
+	if Table_Contains(ARMY_COMBAT_ARENA_PARAMETERS_SHORTHAND, variable) then
+		army.combatArenaParams[variable.."AtTarget"] = value
+		army.combatArenaParams[variable.."EnRoute"] = value
+	elseif Table_HasKey(ARMY_COMBAT_ARENA_PARAMETERS_WITH_DEFAULT, variable) or Table_Contains(ARMY_COMBAT_ARENA_PARAMETERS_WITHOUT_DEFAULT, variable) then
+		army.combatArenaParams[variable] = value
+	else
+		rawset(army, variable, value)
+	end
+end
+
+--these 2 functions are safeguards to ensure we catch cases where necessary variables are not being set
+--it would potentially be hard to catch these cases without these checks, because the stateModels that are
+--set from these variables are allowed to be nil (they will use AE defaults in such a case)
+function _Army_VariableLookupFailed(t, k)
+	army_fatal("army is missing variable "..k)
+end
+	
+function _Army_CombatArenaParamLookupFailed(t, k)
+	if Table_Contains(ARMY_COMBAT_ARENA_PARAMETERS_WITHOUT_DEFAULT, k) then --these params are allowed to be nil
+		return nil
+	else
+		army_fatal("army.combatArenaParams is missing param "..k) --anything else is a result of bad code
+	end
+end

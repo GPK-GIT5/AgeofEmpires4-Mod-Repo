@@ -1,0 +1,771 @@
+
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+--? @shortdesc Sets unit types
+function Outlaws_SetUnitTypes(unit_types)
+	t_outlaw_unit_types = unit_types
+end
+
+function Outlaws_GetUnitDataSplit(budget_total)
+	
+	local budget_half = budget_total * 0.5
+	local unit1 = Outlaws_GetUnitByScore()
+	local unit2 = Outlaws_GetUnitByScore()
+	
+	local unit_data = {
+		{type = unit1.scar_type, numSquads = math.ceil(budget_half / unit1.value)},
+		{type = unit2.scar_type, numSquads = math.ceil(budget_half / unit2.value)},
+	}
+	return unit_data
+end
+
+function Outlaws_GetUnitByScore()
+	
+	local highest_score = 0
+	local chosen_index = 1
+	for i = 1, #t_outlaw_unit_types do
+		
+		local unit_type = t_outlaw_unit_types[i]
+		local score = World_GetRand(1,100)
+		
+		if unit_type.score_multiplier ~= nil then
+			score = score * unit_type.score_multiplier
+		end
+		
+		if score > highest_score then
+			highest_score = score
+			chosen_index = i
+		end
+	end
+	return t_outlaw_unit_types[chosen_index]
+end
+
+--? @shortdesc Sets default difficulty tuning values
+function Outlaws_SetDefaultDifficultyTuning()
+	Outlaws_SetKidnapGoal(Rogue_DifVar({ 0, 1, 1, 2, 3, 4, 5, 6 }))
+	
+	Outlaws_SetRaidStartTime(Rogue_DifVar({ -1, 900, 500, 250, 200, 150, 100, 50 }))
+	Outlaws_SetRaidDelay(Rogue_DifVar({ 900, 900, 750, 500, 400, 300, 250, 200 }))
+	
+	Outlaws_SetRaidUnitCountMin(Rogue_DifVar({ 0, 2, 2, 2, 3, 3, 4, 4 }))
+	Outlaws_SetRaidUnitCountMax(Rogue_DifVar({ 0, 4, 6, 8, 9, 10, 12, 14 }))
+	
+	Outlaws_SetIncome(GetIntegerInExponentialRange(150, 300))
+end
+
+--? @shortdesc Sets per minute resource income for spawning units (gets divided between all camps)
+function Outlaws_SetIncome(amount)
+	total_income = amount
+	income_increment = math.floor(amount * 0.1) -- increase income every 5 minutes by this amount
+end
+
+function Outlaws_IncrementIncome()
+	total_income = total_income + income_increment
+	income_per_camp = math.floor(total_income / raid_camp_count)
+	
+	for i = 1, #t_raid_camps do
+		t_raid_camps[i].income = income_per_camp
+	end
+end
+
+--? @shortdesc Sets how many villagers the raiders can capture at once
+function Outlaws_SetKidnapGoal(count)
+	kidnap_goal = count
+end
+
+--? @shortdesc Sets when raiding starts
+function Outlaws_SetRaidStartTime(time)
+	raid_start_time = time
+end
+
+--? @shortdesc Sets the time between raids
+function Outlaws_SetRaidDelay(delay)
+	raid_delay = delay
+end
+
+--? @shortdesc Sets the min unit count for launching a raid
+function Outlaws_SetRaidUnitCountMin(min)
+	raid_unit_count_min = min
+end
+
+--? @shortdesc Sets the max count raid groups can have
+function Outlaws_SetRaidUnitCountMax(max)
+	raid_unit_count_max = max
+end
+
+function Outlaws_InitData(player_neutral, player_enemy, kidnap, hint_text, alert_text)
+	
+	Outlaws_InitObjectives()
+	
+	sg_victims_global = SGroup_CreateIfNotFound("sg_victims_global")
+	
+	player_victim = player_neutral -- neutral player that holds villagers when they've been kidnapped / captured
+	player_outlaw = player_enemy
+	
+	camp_hint_text = hint_text or "$11262388"
+	camp_alert_text = alert_text or "$11269984"
+	
+	kidnap_enabled = kidnap
+	hpid_kidnap = nil
+	
+	quick_wait_delay = 20
+	retreat_from_tc = true
+	landing_count_min = 5 -- min unit count before launching a naval landing
+end
+
+function Outlaws_FinalizeData(marker_name_raid, marker_name_defend, camp_count, eg_spawn_name)
+	print("Initializing Raiders")
+	print("    First Raid At: "..raid_start_time)
+	print("    Raid Interval: "..raid_delay)
+	print("    Total Income: "..total_income)
+	
+	raid_camp_count = camp_count
+	raid_counter = 0
+	raids_started = false
+	
+	t_raid_camps = {}
+	
+	t_raid_times = {}
+	for i = 0, raid_camp_count do
+		local time = raid_delay * i
+		table.insert(t_raid_times, time)
+	end
+	Table_Shuffle(t_raid_times) -- randomize raid trigger times
+	
+	raid_delay_increment = raid_delay * raid_camp_count
+	
+	income_per_camp = math.floor(total_income / raid_camp_count)
+	
+	for i = 1, raid_camp_count do
+		
+		local raid_spawn_marker = Marker_FromName(marker_name_raid..tostring(i), "")
+		local launches_landings = false
+		
+		local landing_spawn_name = "mkr_landing_spawn"..tostring(i)
+		if Marker_Exists(landing_spawn_name, "") then
+			launches_landings = true
+		end
+		
+		local camp = {
+			name = "raid_camp"..tostring(i),
+			spawn = raid_spawn_marker,
+			spawn_def = Marker_FromName(marker_name_defend..tostring(i), ""),
+			targets = nil,
+			current_target = nil,
+			income_counter = 0,
+			retreat_threshold = 0,
+			has_kidnapped = false,
+			retreats_from_tc = true,
+			can_launch_landings = launches_landings,
+			income = income_per_camp,
+			unit_budget = 0, -- reserve for storing income
+			phase = "wait",
+			quick_wait_count = 0,
+			raid_time = t_raid_times[i],
+			sg_raiders = SGroup_CreateIfNotFound("sg_raiders"..tostring(i)),
+			sg_defenders = SGroup_CreateIfNotFound("sg_defenders"..tostring(i)),
+			sg_victims = SGroup_CreateIfNotFound("sg_victims"..tostring(i)),
+			is_alive = true,
+			is_discovered = false,
+			hpid_obj = nil,
+			hpid_title = nil
+		}
+		table.insert(t_raid_camps, camp)
+	end
+	
+	if eg_spawn_name ~= "" then
+		for i = 1, #t_raid_camps do
+			t_raid_camps[i].eg_spawn = EGroup_FromName(eg_spawn_name..tostring(i))
+			
+			if t_raid_camps[i].can_launch_landings == true then
+				
+				sg_landing_raiders = SGroup_CreateIfNotFound("sg_landing_raiders")
+				sg_naval_transport = SGroup_CreateIfNotFound("sg_naval_transport")
+				t_raid_camps[i].eg_landing_dock = EGroup_FromName("eg_landing_dock"..tostring(i))
+			end
+		end
+	end
+	
+	Rule_AddInterval(Outlaws_IncrementIncome, 300)
+	Rule_AddInterval(Outlaws_CheckRaidCamps, 1)
+end
+
+--? @shortdesc Sets route for naval landings
+function Outlaws_SetLandingRoute(table)
+	t_landing_route = table
+end
+
+--? @shortdesc Sets raiding targets for camps
+function Outlaws_SetCampTargets(camp_index, targets)
+	t_raid_camps[camp_index].targets = targets
+end
+
+--? @shortdesc Creates camp units and sets raid start time
+function Outlaws_InitRaiding()
+	
+	-- spawn camp defenders
+	for i, camp in ipairs(t_raid_camps) do
+		CreateUnits(player_outlaw, Outlaws_GetUnitDataSplit(income_per_camp * 6), camp.spawn_def, camp.sg_defenders)
+	end
+
+	if raid_start_time > -1 then
+		
+		-- spawn initial raiders
+		for i, camp in ipairs(t_raid_camps) do
+			CreateUnits(player_outlaw, Outlaws_GetUnitDataSplit(income_per_camp * 3), camp.spawn, camp.sg_raiders)
+		end
+		
+		Rule_AddOneShot(Outlaws_StartRaids, raid_start_time)
+	end
+end
+
+
+function Outlaws_StartRaids()
+	
+	if kidnap_enabled then
+		Rule_AddGlobalEvent(Outlaws_OnSquadKilled, GE_SquadKilled)
+	end
+	raids_started = true
+end
+
+
+function Outlaws_CheckRaidCamps()
+	
+	raid_counter = raid_counter + 1
+	local all_camps_dead = true
+	SGroup_Clear(sg_allsquads)
+	Players_GetAllSquads(ROGUE_HUMAN_PLAYERS, sg_allsquads)
+	
+	-- check if camps are discovered
+	for a, camp in ipairs(t_raid_camps) do
+		
+		if camp.is_discovered == false then
+				
+			if Prox_AreSquadsNearMarker(sg_allsquads, camp.spawn, ANY, 50) then
+				
+				Players_RevealArea(ROGUE_HUMAN_PLAYERS, Util_GetPosition(camp.eg_spawn), 20, 20)
+				
+				--Sound_Play2D("mus_stinger_campaign_alert")
+				UI_CreateEventCue(camp_alert_text, Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_med_priority_play", ECV_Queue)
+				
+				camp.is_discovered = true
+				camp.hpid_title = HintPoint_Add(Util_GetPosition(camp.eg_spawn), true, camp_hint_text, 6, HPAT_Hint)
+			end
+		end
+	end
+	
+	-- if raids haven't started yet we don't need to check anything else
+	if raids_started == false then
+		return
+	end
+	
+	-- check if camps are alive
+	for i, camp in ipairs(t_raid_camps) do
+		if camp.is_alive == true then
+			
+			all_camps_dead = false
+			free_villagers = false
+			raiders_dead = false
+			defenders_dead = false
+			
+			if SGroup_CountSpawned(camp.sg_raiders) == 0 then
+				
+				raiders_dead = true
+				
+				if camp.eg_spawn ~= nil then
+					if EGroup_CountSpawned(camp.eg_spawn) == 0 then
+						camp.phase = "end"
+						camp.is_alive = false
+						defenders_dead = true
+						
+						if camp.hpid_title ~= nil then
+							HintPoint_Remove(camp.hpid_title)
+						end
+					end
+				end
+				
+				if SGroup_CountSpawned(camp.sg_defenders) == 0 then
+					defenders_dead = true
+				end
+			end
+			
+			
+			if kidnap_enabled then
+				if SGroup_CountSpawned(camp.sg_victims) > 0 then
+					
+					if Prox_AreSquadsNearMarker(camp.sg_victims, camp.spawn, ALL, 20) then
+						-- captured villagers have arrived in the camp, so camp defenders need to be dead
+						if raiders_dead and defenders_dead then
+							free_villagers = true
+						end
+					else
+						if raiders_dead then
+							free_villagers = true
+						else
+							-- check to see if individual villagers are too far from their captors
+							local _CheckVillagerDist = function(gid, idx, sid)
+								
+								if Util_GetDistance(sid, camp.sg_raiders) > 20 then
+									SGroup_Remove(sg_victims_global, sid)
+									SGroup_Remove(camp.sg_victims, sid)
+									Util_SetPlayerOwner(sid, ROGUE_HUMAN_PLAYERS[1])
+									return true
+								end
+								return false
+							end
+							SGroup_ForEach(camp.sg_victims, _CheckVillagerDist)
+						end
+					end
+				end
+				
+				if free_villagers == true then
+					
+					-- rescue any captured villagers
+					Util_SetPlayerOwner(camp.sg_victims, ROGUE_HUMAN_PLAYERS[1])
+					
+					if camp.speedMod ~= nil then
+						Modifier_Remove(camp.speedMod)
+					end
+					
+					Cmd_Stop(camp.sg_victims)
+					
+					SGroup_RemoveGroup(sg_victims_global, camp.sg_victims)
+					SGroup_Clear(camp.sg_victims)
+				end
+				
+				if SGroup_CountSpawned(camp.sg_victims) == 0 and camp.hpid_obj ~= nil then
+					Objective_RemoveUIElements(OBJ_RescueVillagers, camp.hpid_obj)
+				end
+				
+			end
+			
+			Outlaws_CheckRaidCamp(camp)
+		end
+	end
+	
+	if all_camps_dead == true then
+		Rule_RemoveMe()
+	end
+
+end
+
+
+function Outlaws_CheckRaidCamp(camp)
+	
+	if camp.phase == "quick_wait" then
+		
+		camp.quick_wait_count = camp.quick_wait_count + 1
+		if camp.quick_wait_count >= quick_wait_delay then
+			
+			if camp.current_target ~= nil then
+				Cmd_FormationAttackMove(camp.sg_raiders, camp.current_target)
+			end
+			camp.phase = "raid"
+		end
+	
+	elseif camp.phase == "wait" then
+		
+		-- income for unit spawning
+		camp.income_counter = camp.income_counter + 1
+		if camp.income_counter >= 60 then
+			
+			camp.unit_budget = camp.unit_budget + camp.income
+			camp.income_counter = 0
+			
+			if SGroup_CountSpawned(camp.sg_raiders) < raid_unit_count_max then
+				
+				local unit = Outlaws_GetUnitByScore()
+				local unit_count = math.floor(camp.unit_budget / unit.value)
+				
+				if unit_count > 4 then
+					unit_count = 4
+				end
+				
+				if unit_count > 0 then
+					camp.unit_budget = camp.unit_budget - (unit_count * unit.value)
+					CreateUnits(player_outlaw, {type = unit.scar_type, numSquads = unit_count}, camp.spawn, camp.sg_raiders)
+				end
+				
+			end
+		end
+		
+		-- is it time to launch a raid?
+		if raid_counter >= camp.raid_time then
+			
+			-- do we have enough units?
+			if SGroup_CountSpawned(camp.sg_raiders) >= raid_unit_count_min then
+				
+				can_launch_raid = false
+				launching_landing = false
+				chosen_target = nil
+				
+				if camp.can_launch_landings and SGroup_CountSpawned(camp.sg_raiders) >= landing_count_min then
+					
+					-- is there a transport available?
+					if sg_naval_transport ~= nil then
+						if SGroup_CountSpawned(sg_naval_transport) > 0 then
+							launching_landing = true
+						end
+					end
+				end
+				
+				if launching_landing then
+					
+					SGroup_Clear(sg_landing_raiders)
+					SGroup_AddGroup(sg_landing_raiders, camp.sg_raiders)
+					can_launch_raid = true
+				
+				elseif kidnap_enabled then
+					-- are there human owned villagers at any of our targets?
+					Table_Shuffle(camp.targets)
+					for i, target in ipairs(camp.targets) do
+						SGroup_Clear(sg_temp)
+						Players_GetAllSquadsNearMarker(ROGUE_HUMAN_PLAYERS, sg_temp, target)
+						SGroup_Filter(sg_temp, "scar_villager", FILTER_KEEP)
+						
+						if SGroup_CountSpawned(sg_temp) > 0 then
+							can_launch_raid = true
+							chosen_target = target
+						end
+					end
+				else
+					-- are there human owned units at any of our targets?
+					Table_Shuffle(camp.targets)
+					for i, target in ipairs(camp.targets) do
+						
+						if Players_AreSquadsNearMarker(ROGUE_HUMAN_PLAYERS, target) then
+							can_launch_raid = true
+							chosen_target = target
+						end
+					end
+				end
+				
+				
+				if can_launch_raid then
+					-- set retreat threshold
+					camp.retreat_threshold = SGroup_CountSpawned(camp.sg_raiders) * 0.5
+							
+					-- launch raid
+					if launching_landing then
+						camp.retreats_from_tc = false
+						Outlaws_LaunchNavalLanding()
+					else
+						camp.retreats_from_tc = true
+						camp.current_target = chosen_target
+						Cmd_FormationAttackMove(camp.sg_raiders, chosen_target)
+					end
+					
+					camp.phase = "raid"
+					camp.raid_time = camp.raid_time + raid_delay_increment
+				end
+			end
+		end
+		
+	elseif camp.phase == "raid" then
+		
+		-- should we retreat: are we below threshold?
+		if SGroup_CountSpawned(camp.sg_raiders) <= camp.retreat_threshold then
+			camp.phase = "retreat"
+		-- should we retreat: are we too close to the TC?
+		elseif Player_AreSquadsNearMarker(player_outlaw, mkr_tc) and camp.retreats_from_tc == true then
+			camp.phase = "quick_retreat"
+		-- have we ended up idling?
+		elseif SGroup_IsIdle(camp.sg_raiders, ALL) and SGroup_CountSpawned(camp.sg_raiders) > 0 then
+			-- find nearest player villager to attack
+			Outlaws_AttackVillagers(camp.sg_raiders)
+		end
+	
+	elseif camp.phase == "quick_retreat" then	
+		
+		Cmd_FormationMove(camp.sg_raiders, camp.spawn)
+		quick_wait_delay = 15 + World_GetRand(1, 15)
+		camp.quick_wait_count = 0
+		camp.phase = "quick_wait"
+	
+	elseif camp.phase == "retreat" then
+		
+		Cmd_FormationMove(camp.sg_raiders, camp.spawn)
+		
+		if camp.has_kidnapped then
+			Cmd_Move(camp.sg_victims, camp.spawn)
+			camp.phase = "end"
+		else
+			camp.phase = "wait"
+		end
+	end
+end
+
+--? @shortdesc Looks for the closest villagers to attack
+function Outlaws_AttackVillagers(raiders)
+	
+	SGroup_Clear(sg_allsquads)
+	Players_GetAllSquads(ROGUE_HUMAN_PLAYERS, sg_allsquads)
+	SGroup_Filter(sg_allsquads, "villager", FILTER_KEEP)
+	
+	if SGroup_CountSpawned(sg_allsquads) == 0 then
+		-- if no villagers found, attack towards the TC
+		Cmd_FormationAttackMove(raiders, mkr_tc)
+	else
+		local closest_squad = World_GetClosest(Util_GetPosition(raiders), sg_allsquads)
+		local sg_villager_target = SGroup_CreateUnique("sg_villager_target")
+		SGroup_Add(sg_villager_target, closest_squad)
+		Cmd_Attack(raiders, sg_villager_target)
+		
+		SGroup_Destroy(sg_villager_target)
+	end
+end
+
+--? @shortdesc Looks for the best site for naval landings
+function Outlaws_GetLandingSite()
+	
+	local landing_sites = AllMarkers_FromName("mkr_landing_site", "")
+	
+	local highest_score = -1
+	local chosen_marker = mkr_default_landing_site
+	for i = 1, #landing_sites do
+		
+		local marker = landing_sites[i]
+		local score = 0
+		
+		-- increase score based on number of player villagers
+		Player_GetAllSquadsNearMarker(ROGUE_HUMAN_PLAYERS[1], sg_temp, marker)
+		SGroup_Filter(sg_temp, "scar_villager", FILTER_KEEP)
+		
+		if SGroup_CountSpawned(sg_temp) > 0 then
+			score = World_GetRand(1,100) + (SGroup_CountSpawned(sg_temp) * 30)
+		end
+		
+		-- don't try to land on spots blocked by player buildings
+		World_GetEntitiesNearPoint(ROGUE_HUMAN_PLAYERS[1], eg_temp, Util_GetPosition(marker), 10, OT_Player)
+		if EGroup_CountSpawned(eg_temp) > 0 then
+			score = -1
+		end
+		
+		-- don't try to land on spots blocked by player naval units
+		local sg_pirate_naval = SGroup_CreateUnique("sg_pirate_naval")
+		World_GetSquadsNearPoint(ROGUE_HUMAN_PLAYERS[1], sg_pirate_naval, Util_GetPosition(marker), 20, OT_Player)
+		SGroup_Filter(sg_pirate_naval, "naval_unit", FILTER_KEEP)
+		if SGroup_CountSpawned(sg_temp) > 0 then
+			score = -1
+		end
+		
+		if score > highest_score then
+			highest_score = score
+			chosen_marker = marker
+		end
+	end
+	return chosen_marker
+end
+
+--? @shortdesc Launches naval landings
+function Outlaws_LaunchNavalLanding()
+	
+	print("Outlaws_LaunchNavalLanding")
+	landing_site = nil
+	Cmd_Garrison(sg_landing_raiders, sg_naval_transport)
+	Rule_AddInterval(Outlaws_CheckBoardingCompletion, 5)
+end
+
+function Outlaws_CheckBoardingCompletion()
+	
+	if SGroup_CountSpawned(sg_naval_transport) == 0 or SGroup_CountSpawned(sg_landing_raiders) == 0 then
+		Rule_RemoveMe()
+	elseif SGroup_IsInHoldSquad(sg_landing_raiders, ALL) then
+		Outlaws_StartLandingJourney()
+		Rule_RemoveMe()
+	else
+		Cmd_Garrison(sg_landing_raiders, sg_naval_transport)
+	end
+end
+	
+function Outlaws_StartLandingJourney()
+	
+	if SGroup_CountSpawned(sg_naval_transport) == 0 or SGroup_CountSpawned(sg_landing_raiders) == 0 then
+		return
+	end
+	
+	for i = 1, #t_landing_route do
+		Cmd_Move(sg_naval_transport, t_landing_route[i], true)
+	end
+	
+	Rule_AddInterval(Outlaws_CheckLandingArrival, 1)
+end
+
+function Outlaws_CheckLandingArrival()
+	
+	if SGroup_CountSpawned(sg_naval_transport) == 0 or SGroup_CountSpawned(sg_landing_raiders) == 0 then
+		Rule_RemoveMe()
+	end
+	
+	if Prox_AreSquadsNearMarker(sg_naval_transport, t_landing_route[#t_landing_route], ANY) then
+		
+		-- find place to land
+		landing_site = Outlaws_GetLandingSite()
+		
+		if landing_site == nil then
+			print("landing_site == nil")
+			Cmd_Move(sg_naval_transport, mkr_naval_exit, true, true)
+		else
+			Cmd_Move(sg_naval_transport, landing_site)
+			Rule_AddInterval(Outlaws_CheckTransportUnload, 1)
+		end
+		
+		Rule_RemoveMe()
+	end
+end
+
+function Outlaws_CheckTransportUnload()
+	
+	if SGroup_CountSpawned(sg_naval_transport) == 0 or SGroup_CountSpawned(sg_landing_raiders) == 0 then
+		Rule_RemoveMe()
+	end
+	
+	if Prox_AreSquadsNearMarker(sg_naval_transport, landing_site, ANY, 10) then
+		
+		if SGroup_IsInHoldSquad(sg_landing_raiders, ANY) == false then
+			-- raiders have unloaded
+			EventCues_CallToAction("$999630", CTA_ALARM, nil, nil, landing_site, 20, "icons/cta/illustrations/announce_incoming_attack_naval")
+			Sound_Play2D("mus_stinger_campaign_alert")
+			
+			for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+				FOW_PlayerRevealSGroup(player, sg_landing_raiders, 30, 20)
+			end
+			
+			Rule_AddOneShot(Outlaws_WithdrawTransport, 10)
+			Rule_RemoveMe()
+		else
+			Cmd_UngarrisonSquad(sg_landing_raiders)
+		end
+	end
+	
+end
+
+function Outlaws_WithdrawTransport()
+	
+	if SGroup_CountSpawned(sg_naval_transport) > 0 then
+		Cmd_Move(sg_naval_transport, mkr_naval_exit, true, true)
+	end
+	
+	if SGroup_CountSpawned(sg_landing_raiders) > 0 then
+		Outlaws_AttackVillagers(sg_landing_raiders)
+	end
+	
+	Rule_RemoveMe()
+end
+
+
+--? @shortdesc Handles events associated with any villager deaths
+function Outlaws_OnSquadKilled(context)
+	
+	local victim = context.victim
+	
+	if Squad_IsOfType(victim, "scar_villager") then
+		
+		if scartype(context.killer) == ST_ENTITY and not World_OwnsEntity(context.killer) then
+
+			if Entity_GetPlayerOwner(context.killer) == player_outlaw and Entity_IsOfType(context.killer, "outlaw") then
+				
+				-- who are the kidnappers?
+				local killer_pos = Util_GetPosition(context.killer)
+				local camp = Outlaws_FindCamp(killer_pos)
+				
+				if camp ~= nil then
+					
+					-- kidnap nearby villagers
+					SGroup_Clear(sg_temp)
+					Players_GetAllSquadsNearMarker(ROGUE_HUMAN_PLAYERS, sg_temp, Util_GetPosition(killer_pos), 6)
+					SGroup_Filter(sg_temp, "scar_villager", FILTER_KEEP)
+					
+					if SGroup_CountSpawned(sg_temp) > 0 then
+						-- go through sgroup and convert up to kidnap goal
+						local kidnap_count = 0
+						local _Kidnap = function(gid, idx, sid)
+							if kidnap_count < kidnap_goal then
+								
+								if Squad_IsInHoldEntity(sid) == false and Squad_IsInHoldSquad(sid) == false then
+									
+									kidnap_count = kidnap_count + 1
+									Util_SetPlayerOwner(sid, player_victim)
+									SGroup_Add(camp.sg_victims, sid)
+									SGroup_Add(sg_victims_global, sid)
+									
+									for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+										FOW_PlayerRevealSGroup(player, camp.sg_victims, 10, -1)
+									end
+								end
+							end
+						end
+						SGroup_ForEach(sg_temp, _Kidnap)
+						
+						camp.speedMod = Modify_UnitSpeed(camp.sg_victims, 5, 120, MUT_Set)
+						Modify_UnitSpeed(camp.sg_raiders, 5, 120, MUT_Set)
+						
+						camp.has_kidnapped = true
+						
+						-- show captured kicker
+						hpid_kidnap = HintPoint_Add(camp.sg_victims, true, "$11266955") -- Captured!
+						Rule_AddOneShot(Outlaws_RemoveKidnapKicker, 4)
+						
+						
+						if Objective_IsStarted(OBJ_RescueVillagers) == false then
+							Objective_Start(OBJ_RescueVillagers, true, true)
+						else
+							local icon = "icons/objectives/objectives_warning_small"
+							local sfx = "sfx_ui_shared_call_to_action_alert"
+						
+							UI_CreateEventCue("$11266957", Loc_Empty(), "high_priority", icon, sfx, ECV_Title|ECV_Queue, 8) -- Villagers Captured!
+						end
+						
+						camp.hpid_obj = Objective_AddUIElements(OBJ_RescueVillagers, camp.spawn, true, "$11266956", false, 0)
+					end
+					
+					-- Retreat back to camp
+					camp.phase = "retreat"
+					
+				end	
+			end
+		end
+	end
+	
+end
+
+function Outlaws_RemoveKidnapKicker()
+	HintPoint_Remove(hpid_kidnap)
+end
+
+function Outlaws_FindCamp(raid_position)
+	
+	local sg_local_raiders = SGroup_CreateIfNotFound("sg_local_raiders")
+	Player_GetAllSquadsNearMarker(player_outlaw, sg_local_raiders, raid_position, 10)
+	
+	for i, camp in ipairs(t_raid_camps) do
+		
+		if SGroup_ContainsSGroup(camp.sg_raiders, sg_local_raiders, ANY) then
+			return camp
+		end
+	end
+end
+
+--? @shortdesc Handles rescue villager objective
+function Outlaws_InitObjectives()
+	
+	OBJ_RescueVillagers = {
+		Title = "$11266956", -- Rescue Captured Villagers
+		Type = ObjectiveType_Information,
+		IsComplete = function()
+			
+			if Objective_IsVisible(OBJ_RescueVillagers) then
+				if SGroup_CountSpawned(sg_victims_global) == 0 then
+					Objective_Show(OBJ_RescueVillagers, false, false)
+				end
+			else
+				if SGroup_CountSpawned(sg_victims_global) > 0 then
+					Objective_Show(OBJ_RescueVillagers, true, false)
+				end
+			end
+		end,			
+	}
+	
+	Objective_Register(OBJ_RescueVillagers)
+end

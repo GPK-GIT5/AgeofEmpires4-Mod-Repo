@@ -1,0 +1,678 @@
+--
+-- Siege of Kazan
+--
+
+function SiegeKazan_InitObjectives()
+	
+	OBJ_SiegeKazan = {
+		Title = "$11180271", -- Siege Kazan
+		Type = ObjectiveType_Primary,
+		
+		OnStart = function()
+			Music_RestartAfterObjective(1) 
+			--Objective_Start(SOBJ_BreachOuter)
+			Rule_AddInterval (Kazan_ProxForSpeech, 5)
+			Rule_AddInterval(Kazan_AutoSaveLoop, 900)
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_KillKhanGuards)
+		end,
+		
+		OnComplete = function()
+			-- ACHIEVEMENT - Check for requirements
+          	Achievement_CheckAnnihilation()			
+			Mission_Complete()
+		end,
+	}
+	
+	SOBJ_BreachOuter = {
+		Title = "$11180272", -- Breach Kazan's Outer Wall
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SiegeKazan,
+		StartAlongsideParent = true,
+		Intel_Complete = EVENTS.Breach_Outer,
+		
+		OnStart = function()
+			hint_KazanWallNorth = Objective_AddUIElements(SOBJ_BreachOuter, mkr_kazandefnorthgate, true, 11180276, true, nil, nil, nil, "icons/races/mongols/abilities/unpack" ) -- Kazan Outer Wall
+			hint_KazanWallSouth = Objective_AddUIElements(SOBJ_BreachOuter, mkr_kazandefsouthgate, true, 11180276, true, nil, nil, nil, "icons/races/mongols/abilities/unpack" ) -- Kazan Outer Wall
+			
+			
+			Rule_AddEGroupEvent(Kazan_OuterWallBreached, eg_mon_outerwalls, GE_EntityKilled)
+			Rule_AddEGroupEvent(Kazan_InnerWallBreached, eg_mon_innerwalls, GE_EntityKilled)
+			
+		end,
+		
+		OnComplete = function()
+			Game_TransitionToState("taiga_morning", 30)
+			kazan_intensity = kazan_intensity + 1
+			Objective_RemoveUIElements(SOBJ_BreachOuter, hint_KazanWallNorth)
+			Objective_RemoveUIElements(SOBJ_BreachOuter, hint_KazanWallSouth)
+			-- start the inner wall objective unless something else has already triggered it
+			if not Objective_IsStarted(SOBJ_BreachInner) then
+				Objective_Start(SOBJ_BreachInner)
+			end
+		end,
+
+		IsFailed = function()
+		end,
+		
+		OnFail = function()
+		end,
+	}
+	
+	SOBJ_BreachInner = {
+		Title = 11180273, -- Breach Kazan's Inner Wall
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SiegeKazan,
+		Intel_Complete = EVENTS.Breach_Inner,
+		
+		OnStart = function()
+			hint_KazanWallInner = Objective_AddUIElements(SOBJ_BreachInner, mkr_innerkazangate, true, 11180277, true, nil, nil, nil, "icons/races/mongols/abilities/unpack" ) -- Kazan Inner Wall
+			Kazan_SpawnKazanDefenders()
+		end,
+		
+		OnComplete = function()
+			Kazan_FallbackToInnerDefense()
+			HintPoint_RemoveAll()
+			Objective_Start(SOBJ_KillKhanGuards)
+		end,
+		
+		IsFailed = function()
+		end,
+		
+		OnFail = function()
+		end,
+	}
+	
+	SOBJ_KillKhanGuards = {
+		Title = 11180274, -- Defeat Khan's Guards
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SiegeKazan,
+		
+		OnStart = function()
+			Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE, 120)
+			Obj_SetProgressVisible(SOBJ_KillKhanGuards.ID, true)
+			Obj_SetProgress(SOBJ_KillKhanGuards.ID, ((khan_guard_max - SGroup_Count(sg_mon_kazan_elite)) / khan_guard_max))
+			Rule_AddInterval(Kazan_GuardSpotted, 1)
+		end,
+		
+		IsComplete = function()
+			Obj_SetProgress(SOBJ_KillKhanGuards.ID, (khan_guard_max - SGroup_Count(sg_mon_kazan_elite)) / khan_guard_max)
+			if (SGroup_IsEmpty(sg_mon_kazan_elite)) then
+				return true
+			else
+				return false
+			end
+		end,
+		
+		OnComplete = function()
+		end,
+		
+		IsFailed = function()
+		end,
+		
+		OnFail = function()
+		end,
+	}
+	
+	OBJ_Failure = {
+		Title = 11180271, -- Siege Kazan
+		Type = ObjectiveType_Primary,
+				
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_KillKhanGuards)
+		end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Kazan_Outro_Camera)
+		end,
+		
+		IsFailed = function()
+		end,
+		
+		OnFail = function()
+		end,
+	}
+	
+	OBJ_DebugComplete = {
+		Title = LOC("Debug Complete"),
+		Type = ObjectiveType_Primary,
+		showTitle = false,
+		Cheat = function()
+			Mission_Complete()
+		end,
+	}
+	
+	Objective_Register(OBJ_SiegeKazan)
+	Objective_Register(SOBJ_BreachOuter)
+	Objective_Register(SOBJ_BreachInner)
+	Objective_Register(SOBJ_KillKhanGuards)
+	Objective_Register(OBJ_DebugComplete)
+end
+
+
+function Kazan_OuterWallBreached(context)
+			
+	if context.victim ~= nil then
+		Sound_Play2D(MUS_STING_TRIUMPHANT)
+		local pos = Util_GetPosition(context.victim)
+		Player_GetAllSquadsNearMarker(player1, sg_temp, pos, 30) 
+		print ("Outer wall walla with groupsize "..SGroup_CountSpawned(sg_temp))
+		if SGroup_CountSpawned(sg_temp) > 0 then
+			Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+		else
+			Sound_Play3D(WALLA_CAMP_CELEBRATE_MEDIUM, context.victim)
+		end
+		Objective_Complete(SOBJ_BreachOuter)
+		Rule_RemoveEGroupEvent(Kazan_OuterWallBreached, eg_mon_outerwalls)		
+	end 
+end
+
+
+function Kazan_InnerWallBreached(context)
+	
+	if context.victim ~= nil then
+		Sound_Play2D(MUS_STING_TRIUMPHANT)
+		local pos = Util_GetPosition(context.victim)
+		Player_GetAllSquadsNearMarker(player1, sg_temp, pos, 30) 
+		print ("Inner wall walla with groupsize "..SGroup_CountSpawned(sg_temp))
+		if SGroup_CountSpawned(sg_temp) > 0 then
+			Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+		else
+			Sound_Play3D(WALLA_CAMP_CELEBRATE_MEDIUM, context.victim)
+		end
+	end	
+	
+	-- flow if we go straight to the inner walls (bypassing the outer city & walls)
+	if not Objective_IsStarted(SOBJ_BreachInner) then
+		Objective_Start (SOBJ_BreachInner, false, false)
+		Objective_Complete(SOBJ_BreachOuter, false, false)
+		if Rule_Exists(Kazan_OuterWallBreached) then
+			Rule_RemoveEGroupEvent(Kazan_OuterWallBreached, eg_mon_outerwalls)
+		end
+	end
+		
+	Objective_Complete (SOBJ_BreachInner)
+	Rule_RemoveEGroupEvent(Kazan_InnerWallBreached, eg_mon_innerwalls)		
+end
+
+function Kazan_GuardSpotted()
+	
+	if Player_CanSeeSGroup(player1, sg_mon_kazan_elite, ANY) then
+		Rule_RemoveMe()
+		Sound_PlayWallaChargeOnSGroup(sg_mon_kazan_elite)
+		Util_StartIntel(EVENTS.Guard_Attack)
+	end
+	
+	
+end
+
+function CheckMarkerForUnits(marker)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, marker)
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		return true
+	else
+		return false
+	end
+end
+
+function Kazan_CheckDefendNorthOutpostKilled()
+	if SGroup_IsEmpty(MissionOMatic_FindModule("DefendNorthOutpost1").sgroup) and SGroup_IsEmpty(MissionOMatic_FindModule("DefendNorthOutpost2").sgroup) and SGroup_IsEmpty(MissionOMatic_FindModule("DefendNorthOutpost3").sgroup) then
+		kazan_intensity = kazan_intensity + 1
+		Rule_RemoveMe()
+	end
+end
+
+function Kazan_CheckDefendFieldGateKilled()
+	if SGroup_IsEmpty(MissionOMatic_FindModule("DefendFieldGate1").sgroup) and SGroup_IsEmpty(MissionOMatic_FindModule("DefendFieldGate2").sgroup) and SGroup_IsEmpty(MissionOMatic_FindModule("DefendFieldGate3").sgroup) then
+		kazan_intensity = kazan_intensity + 1
+		Rule_RemoveMe()
+	end
+end
+
+function Kazan_InitOutro()
+	
+	Player_GetAll(player2)
+	EGroup_SetPlayerOwner( eg_allentities, player1)
+	
+	local parade_units = {
+		{sbp = SBP.RUS.UNIT_IVAN_THE_TERRIBLE_CMP_RUS, spawn = mkr_outrocamcavspawn_0, destination = mkr_outrocamcavpath_end, sgroup = sg_rus_ivan},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_1, destination = mkr_outrocamcavpath_end},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_2, destination = mkr_outrocamcavpath_end},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_3, destination = mkr_outrocamcavpath_end},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_4, destination = mkr_outrocamcavpath_end},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_5, destination = mkr_outrocamcavpath_end},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_6, destination = mkr_outrocamcavpath_end},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_7, destination = mkr_outrocamcavpath_end},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_8, destination = mkr_outrocamcavpath_end},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_9, destination = mkr_outrocamcavpath_end},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outrocamcavspawn_10, destination = mkr_outrocamcavpath_end},
+	}
+	
+	local parade_path = {
+		mkr_outrocamcavpath1,
+		mkr_outrocamcavpath2,
+		mkr_outrocamcavpath3,
+		mkr_outrocamcavpath4,
+		mkr_outrocamcavpath5,
+		mkr_outrocamcavpath6,
+		mkr_outrocamcavpath7,
+		mkr_outrocamcavpath8,
+		mkr_outrocamcavpath9,
+		mkr_outrocamcavpath10,
+		mkr_outrocamcavpath11,
+		mkr_outrocamcavpath12,
+	}
+	
+	Util_UnitParade(parade_path, parade_units, sg_rus_outrocav1)
+	
+	--Modify_UnitSpeed(sg_rus_outrocav1, 1.8)
+	
+end
+
+function Kazan_OutroCavLoop()
+	if outroCavCount == outroCavTarget then
+		Rule_RemoveMe()
+	else
+		local sgroup = SGroup_CreateUnique("outrocav_")
+		UnitEntry_DeploySquads(player1, sgroup, { type = "scar_knight", numSquads = 2 }, mkr_outrocamcavspawn)
+		Rule_AddOneShot(Kazan_SendOutroCav, 0.1, { sgroup = sgroup } )
+	end
+	outroCavCount = outroCavCount + 1
+end
+
+function Kazan_SendOutroCav(context, data)
+	local markerList = {  
+			mkr_outrocamcavpath1,
+			mkr_outrocamcavpath2,
+			mkr_outrocamcavpath3,
+			mkr_outrocamcavpath4,
+			mkr_outrocamcavpath5,
+			mkr_outrocamcavpath6,
+			mkr_outrocamcavpath7,
+			mkr_outrocamcavpath8,
+		}
+	-- Add the others as waypoints
+	for index, marker in pairs(markerList) do
+		
+		if scartype(marker) == ST_MARKER then
+			if index < #markerList then
+				Cmd_FormationMove(data.sgroup, marker, true)
+			end
+		end
+	end
+end
+
+function Kazan_HasPlayerReachedCity()
+	local marker1 = CheckMarkerForUnits(mkr_kazancity)
+	
+	if marker1 then 
+		Kazan_SpawnKazanDefenders()
+		Rule_RemoveMe()
+	end 
+end
+
+function Kazan_SpawnKazanDefenders()
+	if not kazanDefendersSpawned then
+		kazanDefendersSpawned = true
+		
+		
+		Action_SpawnUnitsToModule_Do({ 
+				module = "NorthGate", 
+				spawnLocation = mkr_kazandefnorthgate,
+				units = {
+					{ type = "scar_archer", 	numSquads = Util_DifVar({3,  6,  6,  6}) },
+					{ type = "scar_handcannon", numSquads = Util_DifVar({2,  2,  2,  6}) },
+					{ type = "scar_manatarms", 	numSquads = Util_DifVar({2,  2,  2,  2}) },
+					{ type = "scar_spearman", 	numSquads = Util_DifVar({2,  2,  2,  2}) },
+				},
+			})
+		Action_SpawnUnitsToModule_Do({ 
+				module = "SouthGate", 
+				spawnLocation = mkr_kazandefsouthgate,
+				units = {
+					{ type = "scar_archer", 	numSquads = Util_DifVar({5,  8,  8,  10}) },
+					{ type = "scar_handcannon", numSquads = Util_DifVar({2,  4,  4,  8}) },
+					{ type = "scar_manatarms", 	numSquads = Util_DifVar({2,  2,  2,  2}) },
+				},
+			})
+		Action_SpawnUnitsToModule_Do({ 
+				module = "NorthWall", 
+				spawnLocation = mkr_kazandefnorthwall,
+				units = {
+					{ type = "scar_archer", 	numSquads = Util_DifVar({5,  8,  8,  10}) },
+					{ type = "scar_handcannon", numSquads = Util_DifVar({2,  4,  4,  8}) },
+					{ type = "scar_manatarms", 	numSquads = Util_DifVar({2,  2,  2,  2}) },
+					{ type = "scar_spearman", 	numSquads = Util_DifVar({3,  4,  4,  4}) },
+				},
+			})
+		Action_SpawnUnitsToModule_Do({ 
+				module = "SouthWall", 
+				spawnLocation = mkr_kazandefsouthwall,
+				units = {
+					{ type = "scar_archer", 	numSquads = Util_DifVar({5,  8,  8,  10}) },
+					{ type = "scar_handcannon", numSquads = Util_DifVar({2,  4,  4,  8}) },
+					{ type = "scar_manatarms", 	numSquads = Util_DifVar({2,  2,  2,  2}) },
+					{ type = "scar_spearman", 	numSquads = Util_DifVar({3,  4,  4,  4}) },
+				},
+			})
+		Action_SpawnUnitsToModule_Do({ 
+				module = "EastWall", 
+				spawnLocation = mkr_kazandefeastwall,
+				units = {
+					{ type = "scar_archer", 	numSquads = Util_DifVar({5,  8,  8,  10}) },
+					{ type = "scar_handcannon", numSquads = Util_DifVar({2,  4,  4,  8}) },
+					{ type = "scar_manatarms", 	numSquads = Util_DifVar({2,  2,  2,  2}) },
+					{ type = "scar_spearman", 	numSquads = Util_DifVar({3,  4,  4,  4}) },
+				},
+			})
+		Action_SpawnUnitsToModule_Do({ 
+				module = "Central", 
+				spawnLocation = mkr_kazandefcentral,
+				units = {
+					{ type = "scar_archer", 	numSquads = Util_DifVar({5,  8,  8,  10}) },
+					{ type = "scar_handcannon", numSquads = Util_DifVar({2,  4,  4,  8}) },
+					{ type = "scar_manatarms", 	numSquads = Util_DifVar({2,  2,  2,  2}) },
+					{ type = "scar_spearman", 	numSquads = Util_DifVar({3,  4,  4,  4}) },
+				},
+			})
+		Action_SpawnUnitsToModule_Do({ 
+				module = "KazanElite", 
+				spawnLocation = mkr_innerkazanspawn,
+				units = {
+					{ type = "scar_knight", 	numSquads = Util_DifVar({14, 20, 24, 28}) },
+					{ type = "scar_handcannon", numSquads = Util_DifVar({8, 12, 16, 20}) },
+				},
+			})
+		Rule_AddOneShot(Kazan_WallFormations, 1)
+		Rule_AddOneShot(Kazan_SpawnWallDefend, 1)
+		Rule_AddOneShot(Kazan_WallMove, 5)
+		khan_guard_max = SGroup_CountSpawned(sg_mon_kazan_elite)
+	end
+end
+
+function Kazan_SpawnWallDefend()
+	
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall1", 
+			spawnLocation = mkr_kazandefnorthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({4, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall2", 
+			spawnLocation = mkr_kazandefnorthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({3, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall3", 
+			spawnLocation = mkr_kazandefnorthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({4, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall4", 
+			spawnLocation = mkr_kazandefnorthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({3, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall5", 
+			spawnLocation = mkr_kazandefnorthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({4, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall6", 
+			spawnLocation = mkr_kazandefnorthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({3, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall7", 
+			spawnLocation = mkr_kazandefsouthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({4, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall8", 
+			spawnLocation = mkr_kazandefsouthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({3, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall9", 
+			spawnLocation = mkr_kazandefsouthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({4, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall10", 
+			spawnLocation = mkr_kazandefsouthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({3, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall11", 
+			spawnLocation = mkr_kazandefsouthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({4, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanOuterWall12", 
+			spawnLocation = mkr_kazandefsouthwall,
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({3, 5, 5, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanInnerWall1", 
+			spawnLocation = mkr_kazandefcentral,
+			units = {
+				{ type = "scar_archer", 	numSquads = Util_DifVar({0, 2, 2, 6}) },
+				{ type = "scar_handcannon", numSquads = Util_DifVar({3, 4, 4, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanInnerWall2", 
+			spawnLocation = mkr_kazandefcentral,
+			units = {
+				{ type = "scar_archer", 	numSquads = Util_DifVar({4, 4, 4, 8}) },
+				{ type = "scar_handcannon", numSquads = Util_DifVar({0, 2, 2, 6}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanInnerWall3", 
+			spawnLocation = mkr_kazandefcentral,
+			units = {
+				{ type = "scar_archer", 	numSquads = Util_DifVar({0, 2, 2, 6}) },
+				{ type = "scar_handcannon", numSquads = Util_DifVar({3, 4, 4, 8}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanInnerWall4", 
+			spawnLocation = mkr_kazandefcentral,
+			units = {
+				{ type = "scar_archer", 	numSquads = Util_DifVar({4, 4, 4, 8}) },
+				{ type = "scar_handcannon", numSquads = Util_DifVar({0, 2, 2, 6}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanInnerWall5", 
+			spawnLocation = mkr_kazandefcentral,
+			units = {
+				{ type = "scar_archer", 	numSquads = Util_DifVar({4, 4, 4, 8}) },
+				{ type = "scar_handcannon", numSquads = Util_DifVar({0, 2, 2, 6}) },
+			},
+		})
+	Action_SpawnUnitsToModule_Do({ 
+			module = "KazanInnerWall6", 
+			spawnLocation = mkr_kazandefcentral,
+			units = {
+				{ type = "scar_archer", 	numSquads = Util_DifVar({0, 2, 2, 6}) },
+				{ type = "scar_handcannon", numSquads = Util_DifVar({3, 4, 4, 8}) },
+			},
+		})
+end
+
+function Kazan_WallFormations()
+	Cmd_Ability(sg_mon_kazan_outerwall1, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall2, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall3, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall4, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall5, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall6, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall7, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall8, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall9, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall10,	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall11, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_outerwall12, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_innerwall1, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_innerwall2, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_innerwall3, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_innerwall4, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_innerwall5, 	BP_GetAbilityBlueprint("core_formation_spread"))
+	Cmd_Ability(sg_mon_kazan_innerwall6, 	BP_GetAbilityBlueprint("core_formation_spread"))
+end
+
+function Kazan_WallMove()
+	Cmd_FormationMove(sg_mon_kazan_outerwall1, mkr_kazanouter_walldef1)
+	Cmd_FormationMove(sg_mon_kazan_outerwall2, mkr_kazanouter_walldef2)
+	Cmd_FormationMove(sg_mon_kazan_outerwall3, mkr_kazanouter_walldef3)
+	Cmd_FormationMove(sg_mon_kazan_outerwall4, mkr_kazanouter_walldef4)
+	Cmd_FormationMove(sg_mon_kazan_outerwall5, mkr_kazanouter_walldef5)
+	Cmd_FormationMove(sg_mon_kazan_outerwall6, mkr_kazanouter_walldef6)
+	Cmd_FormationMove(sg_mon_kazan_outerwall7, mkr_kazanouter_walldef7)
+	Cmd_FormationMove(sg_mon_kazan_outerwall8, mkr_kazanouter_walldef8)
+	Cmd_FormationMove(sg_mon_kazan_outerwall9, mkr_kazanouter_walldef9)
+	Cmd_FormationMove(sg_mon_kazan_outerwall10, mkr_kazanouter_walldef10)
+	Cmd_FormationMove(sg_mon_kazan_outerwall11, mkr_kazanouter_walldef11)
+	Cmd_FormationMove(sg_mon_kazan_outerwall12, mkr_kazanouter_walldef12)
+	Cmd_FormationMove(sg_mon_kazan_innerwall1, mkr_kazaninner_walldef1)
+	Cmd_FormationMove(sg_mon_kazan_innerwall2, mkr_kazaninner_walldef2)
+	Cmd_FormationMove(sg_mon_kazan_innerwall3, mkr_kazaninner_walldef3)
+	Cmd_FormationMove(sg_mon_kazan_innerwall4, mkr_kazaninner_walldef4)
+	Cmd_FormationMove(sg_mon_kazan_innerwall5, mkr_kazaninner_walldef5)
+	Cmd_FormationMove(sg_mon_kazan_innerwall6, mkr_kazaninner_walldef6)
+end
+
+function Kazan_FallbackToInnerDefense()
+	local function _SGroupRetreatFraction(module, numToOne)
+		local i = 0
+		local sgroup = module.sgroup
+		local _RandomRetreat = function(gid, idx, sid)
+			if i >= numToOne or Squad_IsOfType(sid, "villager") then
+				local retreatMarker = Table_GetRandomItem({ mkr_kazanretreat1, mkr_kazanretreat2, mkr_kazanretreat3, mkr_kazanretreat4 })
+				i = 0
+				SGroup_Single(sg_single, sid)
+				Defend_RemoveSGroup(module, sg_single)
+				Cmd_MoveToAndDestroy(sg_single, retreatMarker)
+			else
+				i = i + 1
+			end
+		end
+		SGroup_ForEach(sgroup, _RandomRetreat)
+	end
+	
+	local moduleTable = {
+		"NorthGate",
+		"SouthGate",
+		"NorthWall",
+		"SouthWall",
+		"EastWall",
+		"Central",		
+		"KazanOuterWall1",
+		"KazanOuterWall2",
+		"KazanOuterWall3",
+		"KazanOuterWall4",
+		"KazanOuterWall5",
+		"KazanOuterWall6",
+		"KazanOuterWall7",
+		"KazanOuterWall8",
+		"KazanOuterWall9",
+		"KazanOuterWall10",
+		"KazanOuterWall11",
+		"KazanOuterWall12"
+	}
+	
+	for i,v in pairs(moduleTable) do
+		local module = MissionOMatic_FindModule(v)
+		module.reinforcements.enabled = false
+		_SGroupRetreatFraction(module, 2)
+	end
+	
+	TransferModuleIntoModule("NorthGate","KazanInnerDefense")
+	TransferModuleIntoModule("SouthGate","KazanInnerDefense")
+	TransferModuleIntoModule("NorthWall","KazanInnerDefense")
+	TransferModuleIntoModule("SouthWall","KazanInnerDefense")
+	TransferModuleIntoModule("EastWall","KazanInnerDefense")
+	TransferModuleIntoModule("Central","KazanInnerDefense")
+
+	TransferModuleIntoModule("KazanOuterWall1","KazanInnerWall1")
+	TransferModuleIntoModule("KazanOuterWall2","KazanInnerWall1")
+	TransferModuleIntoModule("KazanOuterWall3","KazanInnerWall2")
+	TransferModuleIntoModule("KazanOuterWall4","KazanInnerWall2")
+	TransferModuleIntoModule("KazanOuterWall5","KazanInnerWall3")
+	TransferModuleIntoModule("KazanOuterWall6","KazanInnerWall3")
+	TransferModuleIntoModule("KazanOuterWall7","KazanInnerWall4")
+	TransferModuleIntoModule("KazanOuterWall8","KazanInnerWall4")
+	TransferModuleIntoModule("KazanOuterWall9","KazanInnerWall5")
+	TransferModuleIntoModule("KazanOuterWall10","KazanInnerWall5")
+	TransferModuleIntoModule("KazanOuterWall11","KazanInnerWall6")
+	TransferModuleIntoModule("KazanOuterWall12","KazanInnerWall6")
+	
+	Cmd_AttackMove(sg_mon_kazan_inner, mkr_innerkazan)
+end
+
+function Kazan_AutoSaveLoop()
+	Util_AutoSave(true, true)
+end
+
+
+function Kazan_ProxForSpeech()
+	
+	
+	if not b_VolgaIntelPlayed then
+		
+		local volga1 = CheckMarkerForUnits(mkr_northford)
+		local volga2 = CheckMarkerForUnits(mkr_westford)
+		local volga3 = CheckMarkerForUnits(mkr_kazansouthford)
+		
+		if volga1 or volga2 or volga3 then
+			Util_StartIntel(EVENTS.Cross_Volga)
+			b_VolgaIntelPlayed = true
+		end	
+	else
+		if not b_PastureIntelPlayed then
+			if CheckMarkerForUnits(mkr_fieldgate) then
+				Util_StartIntel(EVENTS.Pastures)
+				b_PastureIntelPlayed = true
+			end
+		end
+		
+		if not b_WallsSightedIntelPlayed then
+			
+			if Player_CanSeeEGroup(player1, eg_mon_outerwalls, ANY) then
+				Util_StartIntel(EVENTS.See_Walls)
+				b_WallsSightedIntelPlayed = true
+				Rule_RemoveMe()
+			end
+			
+		end
+	end
+	
+end

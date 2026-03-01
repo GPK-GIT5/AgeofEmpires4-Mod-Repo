@@ -1,0 +1,489 @@
+--
+-- Juyong 1213 - Primary Objectives Phase 4
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function Juyong_InitObjectives_Phase4()
+
+	OBJ_Juyong = { Title = "$11180874", -- Breach the Great Wall
+		Type = ObjectiveType_Primary,
+		
+		PreStart = function()
+			Util_AutoSave()
+			Objective_Start(SOBJ_BuildSiege, false)
+		end,
+		
+		OnStart = function()
+			Util_StartIntel(EVENTS["BurnKeep_Juyong"])
+			Objective_Start(SOBJ_RazeKeepJuyong, false)
+			Objective_Start(SOBJ_BuildSiege, false)
+			MissionTutorial_Blacksmith()
+			
+			if UI_IsXboxControllerUI() then
+				MissionTutorial_SiegeEngineer_Xbox()
+			else
+				MissionTutorial_SiegeEngineer()
+			end
+			
+			MissionTutorial_Ram()
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_RazeKeepJuyong)
+		end,
+		
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		
+		IsFailed = Juyong_CheckTotalFailure, 
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+		
+		Cheat = Joyong_CheatToObjective,
+		
+	}
+	
+	SOBJ_RazeKeepJuyong = { Title = "$11180876",  -- Raze the keep
+		Type = ObjectiveType_Primary, Parent = OBJ_Juyong,
+		
+		OnStart = function()
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+			hint_Juyong = Objective_AddUIElements(SOBJ_RazeKeepJuyong, base_juyong, true, 11180877, true, nil, nil, nil, "icons/races/mongols/abilities/unpack" ) -- Juyong
+
+		end,
+		
+		OnComplete = function()
+			HintPoint_Remove(hint_Juyong)
+			Objective_Complete(SOBJ_BuildSiege, false, false)
+		end,
+	}
+	
+	SOBJ_BuildSiege = { Title = "$11180875", -- Optional: Construct siege towers or rams
+		Type = ObjectiveType_Primary, Parent = OBJ_Juyong,
+
+		counterGoal = 4,
+		
+		PreStart = function()
+			Objective_SetCounter(SOBJ_BuildSiege, 0, SOBJ_BuildSiege.counterGoal)
+		end,
+		
+		OnStart = function()
+		end,
+		
+		IsComplete = function()
+			return Objective_GetCounter(SOBJ_BuildSiege) >= SOBJ_BuildSiege.counterGoal
+		end,
+		
+		OnComplete = function()
+		end,
+	}
+	
+	OBJ_DebugComplete = {
+		Title = LOC("Debug Complete"),
+		Type = ObjectiveType_Primary,
+		showTitle = false,
+		Cheat = function()
+			Player_GetAll(g_playerJin)
+            EGroup_Filter(eg_allentities, EBP.CHINESE.BUILDING_DEFENSE_GREATWALL_GATE_CMP_CHI, FILTER_KEEP)
+            EGroup_DestroyAllEntities(eg_allentities)
+			Mission_Complete()
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Juyong)
+	Objective_Register(SOBJ_RazeKeepJuyong)
+	Objective_Register(SOBJ_BuildSiege)
+	Objective_Register(OBJ_DebugComplete)
+	
+	
+end
+
+function Juyong_GroupWallsForObjectives()
+	
+	print("")
+	Player_GetAllEntitiesNearMarker(g_playerJin, eg_jin_greatwall, base_juyong, 250)
+	EGroup_Filter(eg_jin_greatwall, { "stone_wall", "stone_gate" }, FILTER_KEEP)
+	
+	startingcount_greatWall = EGroup_Count(eg_jin_greatwall)
+	
+end
+
+function Juyong_ApproachGreatWall()
+	Player_GetAll(g_playerMongol)
+	if Prox_AreSquadsNearMarker(sg_allsquads,base_juyong, ANY, 85) then
+		Rule_RemoveMe()
+		Music_PlayStinger("mus_camp_cust_mongol_drum_short_finalbattle_dry")
+		Rule_Remove(Juyong_RetreatOffMap)
+	end 
+end
+
+function Juyong_CheckGreatWallBreached()
+	if startingcount_greatWall > EGroup_Count(eg_jin_greatwall) then
+		EGroup_Clear(eg_allentities)
+		World_GetEntitiesNearMarker(g_playerJin, eg_allentities, mkr_juyong_gate, OT_Player)
+		EGroup_Filter(eg_allentities, "wall", FILTER_KEEP)
+		
+		EGroup_DestroyAllEntities(eg_allentities)
+		EGroup_DestroyAllEntities(eg_gate_impass)
+		
+		Rule_RemoveMe()
+		Rule_Remove(Juyong_JuyongWave)
+		
+		Util_StartIntel(EVENTS["BreachWall"])
+	end 
+end
+
+function Juyong_ShowGreatWall()
+	Player_GetAll(g_playerMongol)
+	if Prox_AreSquadsNearMarker(sg_allsquads,juyong_reveal_1, ANY, 85) then
+		FOW_RevealMarker(juyong_reveal_1, 10)
+		FOW_RevealMarker(juyong_reveal_2, 10)
+		FOW_RevealMarker(juyong_reveal_3, 10)
+		FOW_RevealMarker(juyong_reveal_4, 10)
+		FOW_RevealMarker(juyong_reveal_5, 10)
+		Rule_RemoveMe()
+	end
+end
+
+function Juyong_InitOutro()
+	
+	local juyongRoad = {
+		mkr_juyong_outro4,
+		mkr_juyong_outro5,
+		mkr_juyong_outro6,
+		mkr_juyong_outro7,
+		mkr_juyong_outro8,
+		mkr_juyong_outro9,
+	}	
+	
+	local northWall = {
+		mkr_juyong_northwall1,
+		mkr_juyong_northwall2,
+	}
+	
+	local southWall = {
+		mkr_juyong_southwall2,
+		mkr_juyong_southwall3,
+	}
+	
+	Game_TransitionToState("steppes_sunset", 0)
+	
+	Player_GetAll(g_playerJin)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	Player_SetRelationship(g_playerMongol, g_playerJin, R_ALLY)
+	Player_SetRelationship(g_playerJin, g_playerMongol, R_ALLY)
+	
+	-- Convert all walls
+	EGroup_Filter(eg_allentities, "wall", FILTER_KEEP)
+	EGroup_SetPlayerOwner(eg_allentities, g_playerMongol)
+	
+	-- For the rest, maybe burn
+	Player_GetAllEntitiesNearMarker(g_playerJin, eg_temp, mkr_juyong_burn)
+	EGroup_Filter(eg_temp, "wall", FILTER_REMOVE)
+	EGroup_Filter(eg_temp, "tower", FILTER_REMOVE)
+
+	local function _Burn(gid, index, iid)
+		Entity_SetHealth(iid, 0.20)
+		--if Entity_IsBurning(iid) ~= true then
+			--Entity_SetOnFire(iid)
+		--end
+	end
+	EGroup_ForEach(eg_temp, _Burn)
+
+		sg_outro_guard1 = SGroup_CreateIfNotFound("sg_outro_guard1")
+		sg_outro_guard2 = SGroup_CreateIfNotFound("sg_outro_guard2")
+		
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav01, { sbp = BP_GetSquadBlueprint("unit_genghis_khan_cmp_mon"), numSquads = 1 }, mkr_juyong_outrospawn01)
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav02, { type = "scar_knight", numSquads = 2 }, mkr_juyong_outrospawn02 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav03, { type = "scar_knight", numSquads = 2 }, mkr_juyong_outrospawn03 )
+		--UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav04, { type = "scar_knight", numSquads = 3 }, mkr_juyong_outrospawn04 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav05, { type = "scar_knight", numSquads = 2 }, mkr_juyong_outrospawn05 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav06, { type = "scar_knight", numSquads = 2 }, mkr_juyong_outrospawn06 )
+		--UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav07, { type = "scar_knight", numSquads = 3 }, mkr_juyong_outrospawn07 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav08, { type = "scar_knight", numSquads = 2 }, mkr_juyong_outrospawn08 )
+		--UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav09, { type = "scar_knight", numSquads = 3 }, mkr_juyong_outrospawn09 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav10, { type = "scar_knight", numSquads = 2 }, mkr_juyong_outrospawn10 )
+		--UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav11, { sbp = BP_GetSquadBlueprint("building_town_center_moving_mon"), numSquads = 1}, mkr_juyong_outrospawn11 )
+		--UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav12, { sbp = BP_GetSquadBlueprint("building_house_moving_mon"), numSquads = 1}, mkr_juyong_outrospawn12 )
+		--UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav13, { sbp = BP_GetSquadBlueprint("building_unit_infantry_moving_mon"), numSquads = 1}, mkr_juyong_outrospawn13 )
+		--UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav14, { sbp = BP_GetSquadBlueprint("building_pasture_moving_mon"), numSquads = 1}, mkr_juyong_outrospawn14 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav15, { type = "scar_horseman", numSquads = 2 }, mkr_juyong_outrospawn15 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav16, { type = "scar_horseman", numSquads = 2 }, mkr_juyong_outrospawn16 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav17, { type = "scar_horseman", numSquads = 2 }, mkr_juyong_outrospawn17 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav18, { type = "scar_horseman", numSquads = 2 }, mkr_juyong_outrospawn18 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav19, { type = "scar_horseman", numSquads = 2 }, mkr_juyong_outrospawn19 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav20, { type = "scar_horseman", numSquads = 2 }, mkr_juyong_outrospawn20 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav21, { type = "scar_horsearcher", numSquads = 2 }, mkr_juyong_outrospawn21 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav22, { type = "scar_horsearcher", numSquads = 2 }, mkr_juyong_outrospawn22 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav23, { type = "scar_horsearcher", numSquads = 2 }, mkr_juyong_outrospawn23 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrocav24, { type = "scar_horsearcher", numSquads = 2 }, mkr_juyong_outrospawn24 )
+	
+	local units = {
+		{ type = "scar_archer", numSquads = 2, spawn = mkr_outro_archers01},
+		{ type = "scar_archer", numSquads = 2, spawn = mkr_outro_archers02},
+		{ type = "scar_archer", numSquads = 2, spawn = mkr_outro_archers03},
+		{ type = "scar_archer", numSquads = 2, spawn = mkr_outro_archers04},
+	}
+		
+		--UnitEntry_DeploySquads(g_playerMongol, sg_mon_outroarcher1, { type = "scar_archer", numSquads = 8 }, mkr_juyong_archersnorth )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outroarcher2, units, mkr_juyong_archerssouth )
+		
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrospearman1, { type = "scar_villager", numSquads = 3 }, mkr_juyong_spearman1spawn )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outrospearman2, { type = "scar_villager", numSquads = 3 }, mkr_juyong_spearman2spawn )
+		
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outro_villager01, { type = "scar_villager", numSquads = 3 }, mkr_juyong_spearman1 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_mon_outro_villager02, { type = "scar_villager", numSquads = 3 }, mkr_juyong_spearman2 )
+		
+		UnitEntry_DeploySquads(g_playerMongol, sg_outro_guard1, { type = "scar_spearman", numSquads = 1 }, mkr_outro_guard1 )
+		UnitEntry_DeploySquads(g_playerMongol, sg_outro_guard2, { type = "scar_spearman", numSquads = 1 }, mkr_outro_guard2 )
+		
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.1, { sgroup = sg_mon_outrocav01, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.1, { sgroup = sg_mon_outrocav02, markerList = juyongRoad } ) 
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.1, { sgroup = sg_mon_outrocav03, markerList = juyongRoad } )
+		--Rule_AddOneShot(Juyong_SendOutroUnits, 1.1, { sgroup = sg_mon_outrocav04, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.1, { sgroup = sg_mon_outrocav05, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.1, { sgroup = sg_mon_outrocav06, markerList = juyongRoad } )
+		--Rule_AddOneShot(Juyong_SendOutroUnits, 1.1, { sgroup = sg_mon_outrocav07, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.1, { sgroup = sg_mon_outrocav08, markerList = juyongRoad } ) 
+		--Rule_AddOneShot(Juyong_SendOutroUnits, 1.1, { sgroup = sg_mon_outrocav09, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.1, { sgroup = sg_mon_outrocav10, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.1, { sgroup = sg_mon_outrocav15, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.2, { sgroup = sg_mon_outrocav16, markerList = juyongRoad } ) 
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.2, { sgroup = sg_mon_outrocav17, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.2, { sgroup = sg_mon_outrocav18, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.2, { sgroup = sg_mon_outrocav19, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.2, { sgroup = sg_mon_outrocav20, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.2, { sgroup = sg_mon_outrocav21, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.2, { sgroup = sg_mon_outrocav22, markerList = juyongRoad } ) 
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.2, { sgroup = sg_mon_outrocav23, markerList = juyongRoad } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 0.2, { sgroup = sg_mon_outrocav24, markerList = juyongRoad } )
+		
+		--Rule_AddOneShot(Juyong_SendOutroUnits, 1, { sgroup = sg_mon_outroarcher1, markerList = northWall } )
+		Rule_AddOneShot(Juyong_SendOutroUnits, 1, { sgroup = sg_mon_outroarcher2, markerList = southWall } )
+		
+		--Rule_AddOneShot(Juyong_SendOutroUnits, 1, { sgroup = sg_mon_outrospearman1, markerList = { mkr_juyong_spearman1 } } )
+		--Rule_AddOneShot(Juyong_SendOutroUnits, 1, { sgroup = sg_mon_outrospearman2, markerList = { mkr_juyong_spearman2 } } )
+		
+		outroUnitList = {
+			sg_mon_outrocav01,
+			sg_mon_outrocav02,
+			sg_mon_outrocav03,
+			--sg_mon_outrocav04,
+			sg_mon_outrocav05,
+			sg_mon_outrocav06,
+			--sg_mon_outrocav07,
+			sg_mon_outrocav08,
+			--sg_mon_outrocav09,
+			sg_mon_outrocav10,
+			--sg_mon_outrocav11,
+			sg_mon_outrocav12,
+			sg_mon_outrocav13,
+			sg_mon_outrocav14,
+			sg_mon_outrocav15,
+			sg_mon_outrocav16,
+			sg_mon_outrocav17,
+			sg_mon_outrocav18,
+			sg_mon_outrocav19,
+			sg_mon_outrocav20,
+			sg_mon_outrocav21,
+			sg_mon_outrocav22,
+			sg_mon_outrocav23,
+			sg_mon_outrocav24,
+		}
+		
+		for i,v in ipairs(outroUnitList) do
+			Modify_SetUnitMaxSpeed(v, 6)
+		end
+	end
+
+function Juyong_SendOutroUnits(context, data)
+	
+	-- Add the others as waypoints
+	for index, marker in pairs(data.markerList) do
+		
+		if scartype(marker) == ST_MARKER then
+			if index <= #data.markerList then
+				Cmd_FormationMove(data.sgroup, marker, true)
+			end
+		end
+	end
+	
+	if data.destination ~= nil then
+		Cmd_FormationMove(data.sgroup, data.destination, true)
+	end
+end
+
+function Modify_SetUnitMaxSpeed(group, newSpeed, duration)
+
+	-- create the appropriate modifier
+	local modifier = Modifier_Create(MAT_Entity, "speed_maximum_modifier", MUT_Set, true, newSpeed, "")
+	local result = {}
+	
+	-- apply this to each squad in the group
+	local _ApplyModifier = function (gid, idx, sid)
+		if Squad_IsAlive(sid) and Squad_Count(sid) > 0 then
+			local modids = Modifier_ApplyToSquad(modifier, sid, duration or 0)
+			table.insert(result, modids)
+			Modifier_AddToSquadTable(sid, modids)
+		end
+	end
+	SGroup_ForEachEx(group, _ApplyModifier, true, true)
+	
+	return result
+	
+end
+
+
+
+
+
+--
+-- Mission cheat menu item to cheat to this objective
+--
+
+function Joyong_CheatToObjective()
+	
+	Module_StopAndDelete("JinPostZhangjiakou1")
+	Module_StopAndDelete("JinForestPost")
+	Module_StopAndDelete("ZhangjiakouArchersNorth1")
+	Module_StopAndDelete("ZhangjiakouArchersNorth2")
+	Module_StopAndDelete("ZhangjiakouArchersNorth3")
+	Module_StopAndDelete("ZhangjiakouArchersNorth4")
+	Module_StopAndDelete("ZhangjiakouArchersSouth1")
+	Module_StopAndDelete("ZhangjiakouArchersSouth2")
+	Module_StopAndDelete("ZhangjiakouArchersSouth3")
+	Module_StopAndDelete("ZhangjiakouArchersSouth4")
+	Module_StopAndDelete("ZhangjiakouDefend")
+	Module_StopAndDelete("ZhangjiakouRetreaters")
+	Module_StopAndDelete("JinRoadPost1")
+	Module_StopAndDelete("JinRoadPost2")
+	Module_StopAndDelete("JinRoadPost7")
+	Module_StopAndDelete("JinYanqing")
+	Module_StopAndDelete("MountainPatrol1")
+	Module_StopAndDelete("MountainPatrol2")
+	Module_StopAndDelete("FieldPatrol1")
+	Module_StopAndDelete("FieldPatrol3")
+	Module_StopAndDelete("YanqingPatrol")
+	Module_StopAndDelete("NorthPatrol")
+	Module_StopAndDelete("SouthPatrol")
+	Module_StopAndDelete("NorthDefend")
+	Module_StopAndDelete("MidfieldDefend")
+	
+	VillagerLife_Stop("villagerlife_north")
+	VillagerLife_Stop("villagerlife_south1")
+	VillagerLife_Stop("villagerlife_south2")
+	VillagerLife_Stop("villagerlife_south3")
+	VillagerLife_Stop("villagerlife_south4")
+	VillagerLife_Stop("villagerlife_yan")
+	VillagerLife_Stop("villagerlife_zhang")
+	VillagerLife_Stop("villagerlife_midfield")
+	
+	Capture_Location("Zhangjiakou")
+	Capture_Location("ZhangjiakouGate")
+	Capture_Location("Yanqing")
+	Capture_Location("Midfield")
+
+	Juyong_CleanUpIntro()
+	
+	Player_SetCurrentAge(g_playerMongol, AGE_FEUDAL)
+	
+	Player_SetRelationship(g_playerJin, g_playerMongol, R_ENEMY)	
+	
+	Player_CompleteUpgrade(g_playerMongol, UPG.MONGOL.UPGRADE_UNIT_SPEARMAN_2_MON)
+	Player_CompleteUpgrade(g_playerMongol, UPG.MONGOL.UPGRADE_UNIT_HORSEMAN_2_MON)
+
+	Player_CompleteUpgrade(g_playerMongol, UPG.MONGOL.UPGRADE_IMPROVED_SIEGE_ENGINEERS_MON)
+	Player_CompleteUpgrade(g_playerMongol, UPG.MONGOL.UPGRADE_MELEE_DAMAGE_I_IMPROVED_MON)
+	Player_CompleteUpgrade(g_playerMongol, UPG.MONGOL.UPGRADE_MELEE_ARMOR_I_IMPROVED_MON)
+	
+	Player_SetResource(g_playerMongol, RT_Food, 1000)
+	Player_SetResource(g_playerMongol, RT_Wood, 1000)
+	Player_SetResource(g_playerMongol, RT_Gold, 700)
+	Player_SetResource(g_playerMongol, RT_Stone, 500)
+	
+	-- military units
+	local units = {
+		{type = "scar_scout", numSquads = 2},
+		{type = "scar_spearman", numSquads = 30},
+		{type = "scar_archer", numSquads = 20},
+		{type = "scar_horseman", numSquads = 10},
+	}
+	local options = {
+		facing = Util_GetPosition(mkr_juyong_outrospawn16),
+	}
+	UnitEntry_DeploySquads(g_playerMongol, sg_blah, units, mkr_juyong_outrospawn18, nil, nil, options)
+	
+	-- rams (spawn them behind the main units)
+	local units = {
+		{type = "scar_ram", numSquads = 3},
+		{type = "scar_villager", numSquads = 4},
+	}
+	local options = {
+		facing = Util_GetPosition(mkr_juyong_outrospawn17),
+	}
+	UnitEntry_DeploySquads(g_playerMongol, sg_blah, units, mkr_juyong_outrospawn24, nil, nil, options)
+	
+	Camera_MoveTo(mkr_juyong_outrospawn20)
+	
+end
+
+function Module_StopAndDelete(name)
+	
+	local module = MissionOMatic_FindModule(name)
+
+	if module ~= nil then 
+		
+		local sgroup = Prefab_DoAction(module, "GetSGroup")
+		
+		Prefab_DoAction(module, "Stop")
+		
+		SGroup_DestroyAllSquads(sgroup)
+				
+	end
+	
+end
+
+function VillagerLife_Stop(name)
+	
+	local instance = VillagerLife_Find(name)
+	
+	if instance ~= nil then 
+		
+		SGroup_DestroyAllSquads(instance.sg_villagers)
+		
+	end
+
+end	
+
+function Capture_Location(name)
+	
+	local location = LOCATION(name)
+	
+	if location ~= nil then 
+		
+		-- add the ground reticule (else the next bit will FSE)
+		local size = math.max(Marker_GetProximityRadiusOrDefault(location.marker, 0), 10)
+		location.data.captureReticuleID = UI_ModalVisual_CreateReticule(BP_GetReticuleBlueprint("campaign_capturelocation_enemy"), size)
+		UI_ModalVisual_SetPosition(location.data.captureReticuleID, Util_GetPosition(location.marker))
+
+		location.data.villagerCount = 0
+		location.data.extraVillagerCount = 0
+		
+		Location_Capture(location, g_playerMongol)
+
+	end
+	
+end

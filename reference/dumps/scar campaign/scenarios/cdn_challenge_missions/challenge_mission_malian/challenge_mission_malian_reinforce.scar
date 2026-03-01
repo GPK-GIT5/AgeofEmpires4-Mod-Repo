@@ -1,0 +1,155 @@
+
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--														Player Reinforcement UI
+------------------------------------------------------------------------------------------------------------------------------------------
+import("MissionOMatic/MissionOMatic.scar")
+
+function UI_ReinforcePanel_UpdateData()
+	
+	uiData_ReinforcePanel = {
+		Visible = true,
+		Reserves = {}
+	}
+	
+	for index, reserve in pairs(t_reinforcementData) do
+
+		local uiData = {
+			
+			Name = Loc_GetString(reserve.displayName),
+			
+			TradeCountVisible = false,
+			BuyButtonVisible = false,
+			BuyButtonEnabled = false,
+			BuyButtonOpacity = 0.44,
+			BuyButtonCommand = UI_CreateCommand("UI_RequestAid_ButtonCallback"),
+			BuyButtonParameter = reserve.id,
+			AidButtonTitle = Loc_GetString(Loc_FormatText("$11182459", reserve.cost)), -- Loc_GetString(reserve.buttontext),
+			Cost = reserve.cost,
+			ResourceWarning = true,
+			PopWarning = true,
+			CostColour = "#FFBFBFBF",
+			ShowMoneyIcon = true,
+			CostOnButtons = true,
+		}			
+		
+		uiData.TradeCountVisible = false
+		uiData.BuyButtonVisible = true
+		
+		--if player has gold available
+		local player_gold = Player_GetResource(localPlayer, RT_Gold)
+			
+		if player_gold >= reserve.cost then
+			uiData.ResourceWarning = false
+			uiData.CostColour = "#FFFFDB88"
+		end
+
+		local totalAidAmount = reserve.aidAmount + reserve.aidAmount_2	
+		if (Player_GetCurrentPopulation(localPlayer, CT_Personnel) + totalAidAmount) <= Player_GetCurrentPopulationCap(localPlayer, CT_Personnel) then
+			uiData.PopWarning = false
+		end
+		
+		if uiData.ResourceWarning == false and uiData.PopWarning == false then
+			uiData.BuyButtonEnabled = true 
+			uiData.BuyButtonOpacity = 1.0
+		end
+		
+		
+		uiData.CostAmount = Loc_GetString(Loc_FormatText("$11184216", uiData.Cost))
+		
+		uiData.AidButtonTooltipTitle = Loc_GetString(Loc_FormatText("$11226459", reserve.aidAmount))
+		
+		if reserve.aidAmount_2 > 0 then
+			uiData.AidButtonTooltip = Loc_GetString(Loc_FormatText(reserve.tooltip, reserve.aidAmount, reserve.aidAmount_2))
+		else
+			--tooltip mouseover
+			uiData.AidButtonTooltip = Loc_FormatText(reserve.tooltip)
+		end
+		
+		table.insert(uiData_ReinforcePanel.Reserves, uiData)
+		
+	end
+	
+	uiData_ReinforcePanel.Visible = true
+	_diplomacy.data_context.buyReserves = uiData_ReinforcePanel
+	Diplomacy_UpdateUI()
+	
+end
+
+function UI_RequestAid_ButtonCallback(parameter)
+	
+	for index, reserve in pairs(t_reinforcementData) do 
+	
+		if reserve.id == parameter then
+			
+			if Player_GetResource(localPlayer, RT_Gold) >= reserve.cost then
+				
+				player_reinforcement_counter = player_reinforcement_counter + 1
+				
+				reinforcements_called = true
+				Player_AddResource(localPlayer, RT_Gold, -reserve.cost)
+				challengeGoldSpent = challengeGoldSpent + reserve.cost
+				
+				local units = reserve.units
+				
+				_G["sg_"..player_reinforcement_counter] = SGroup_CreateIfNotFound(("sg_reinforcement"..player_reinforcement_counter))
+				sg_requestAid = _G["sg_"..player_reinforcement_counter]
+				
+				--spawn units
+				if(parameter == "reserve1" or parameter == "reserve2") then
+					UnitEntry_DeploySquads(localPlayer, _G["sg_"..player_reinforcement_counter], units, mkr_reinforce_barracks, nil, nil)
+					Cmd_FormationAttackMove(_G["sg_"..player_reinforcement_counter], mkr_reinforce_barracks_rally, false)
+				else
+					UnitEntry_DeploySquads(localPlayer, _G["sg_"..player_reinforcement_counter], units, mkr_reinforce_archery, nil, nil)
+					Cmd_FormationAttackMove(_G["sg_"..player_reinforcement_counter], mkr_reinforce_archery_rally, false)
+				end
+				
+				--satisfy objective if it exists
+				if(OBJ_Recruit ~= nil and SOBJ_RecruitPanel ~= nil) then
+					if(Objective_IsComplete(OBJ_Recruit) == false and Objective_IsComplete(SOBJ_RecruitPanel) == false) then
+						Objective_Complete(SOBJ_RecruitPanel, false, false)
+						Objective_Complete(OBJ_Recruit, true, false)
+					end
+				end
+				
+				UI_RequestAid_EventCue()
+				Sound_PlayWallaCelebrateOnSGroup(_G["sg_"..player_reinforcement_counter])
+				
+				if b_reinforceCooldown == false then
+					Start_IntelCooldown(_G["sg_"..player_reinforcement_counter], reserve)
+				end
+				
+				UI_ReinforcePanel_UpdateData()
+										
+								
+			end
+		end
+	end
+end
+
+function UI_RequestAid_EventCue()	
+	
+	local icon_path = "icons\\event_queue_high_priority_large"
+	local sfx_path = "sfx_ui_event_queue_high_priority_play"
+	UI_CreateEventCueClickable(-1, 10, 0, 0.0, 42813, Loc_Empty(), "high_priority", icon_path, sfx_path, 255, 255, 255, 255, ECV_Title, UI_RequestAid_MoveCamera)
+end
+
+function UI_RequestAid_MoveCamera()	
+	if sg_requestAid ~= nil then
+		Camera_MoveTo(sg_requestAid)
+	end
+end
+
+function Start_IntelCooldown(target, reserve)
+
+	b_reinforceCooldown = true
+	
+	UI_CreateMinimapBlip(target, 10, CTA_CELEBRATE)
+	
+
+	Rule_AddOneShot(ReinforceIntel_Cooldown, .5)
+end
+
+function ReinforceIntel_Cooldown()
+	b_reinforceCooldown = false
+end

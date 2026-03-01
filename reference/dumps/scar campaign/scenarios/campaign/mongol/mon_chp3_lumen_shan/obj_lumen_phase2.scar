@@ -1,0 +1,560 @@
+--
+-- Lumen Shan 1268 - Wall Off Passage - Phase 2
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_lumen_phase3.scar")
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function LumenShan_InitObjectives_Phase2()
+
+	OBJ_Blockade = { Title = "$11178744", Type = ObjectiveType_Build,
+		
+		Intel_Start = EVENTS.Blockade_Start,
+		Intel_Complete = EVENTS.Block_Road_Success,
+		
+		uiPathEast = {},
+		uiPathWest = {},
+		
+		-- This is OBJECTIVE 4
+		Cheat = function()
+			-- Bump the pop cap
+			Player_SetPopCapOverride(g_playerMongol, 180)
+			-- Enable the popcap counter
+			UI_SetPlayerDataContext(g_playerMongol, { PopulationCapOn = true })
+			-- Capture Lumen Shan
+			local locationTable = LOCATION("Lumen")
+			Location_SetPlayerOwner(locationTable, g_playerMongol)
+			-- Also add an audio monitor
+			Rule_AddInterval(Lumen_CheckLossLumen, 3)
+			-- Reveal the area
+			Lumen_RevealAroundLumen()
+			-- Destroy stuff the player should have destroyed
+			Player_GetAllEntitiesNearMarker(g_playerSong, eg_temp, mkr_reveal_lumen_1)
+			EGroup_Kill(eg_temp)
+			Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_reveal_lumen_1)
+			SGroup_Kill(sg_temp)
+			-- And teleport the starting units
+			SGroup_FormationWarpToMarker(sg_all_intro_mongols, mkr_cheat_1)
+			Camera_MoveTo(mkr_cheat_1)
+		end,
+		
+		PreStart = function()
+			Util_AutoSave()
+			-- Start the pathfinding stuff
+			if Game_GetSPDifficulty() >= GD_NORMAL then
+				Lumen_UpdateCachedPath()
+				Rule_AddInterval(Lumen_ManageRaiders, 1)
+			end
+			
+			Rule_AddInterval(Lumen_UpdateCachedPath, 3)
+			Rule_AddInterval(Lumen_NewScout, 20)
+			-- Also fire this off once
+			Lumen_ManageRaiders()
+		end,
+		
+		OnStart = function()
+			-- Start the other village objective after a long delay
+			Rule_AddOneShot(Lumen_StartBohekou, 60)
+			Music_UnlockIntensity()
+			
+			if UI_IsXboxControllerUI() then
+				Lumen_SetupLeaderHint_Xbox()
+			else
+				Lumen_SetupLeaderHint()
+			end
+			
+			-- Only do this on lower difficulties
+			if Game_GetSPDifficulty() <= GD_HARD then
+				Objective_Start(SOBJ_Towers, false, false)
+			end
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_Walls)
+		end,
+		
+		PreComplete = function()
+			Rule_Remove(Lumen_NewScout)
+		end,
+		
+		OnComplete = function()
+			Rule_Remove(Lumen_ManageRaiders)
+			Objective_Start(OBJ_Defense)
+		end,
+		
+		IsFailed = function()
+			local wallsFailed = Objective_IsFailed(SOBJ_Walls) == true
+			if counterExceeded == true then
+				print("LUMEN: Faling during wall build phase")
+			end
+			return wallsFailed
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_Walls = { Title = "$11178814", Type = ObjectiveType_Build, Parent = OBJ_Blockade, StartAlongsideParent = true,
+		
+		currentDistToNorth = 0,
+		counterMax = 15,
+		halfwayVOplayed = false,
+		
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			
+			if Game_GetSPDifficulty() <= GD_NORMAL then
+				
+				SOBJ_Walls.easyHints = {
+					{ hintID = Objective_AddUIElements(SOBJ_Walls, mkr_easy_walls_1, true, "$11184225"), marker = mkr_easy_walls_1},
+					--{ hintID = Objective_AddUIElements(SOBJ_Walls, mkr_easy_walls_2, true, "$11184226"), marker = mkr_easy_walls_2},
+					{ hintID = Objective_AddUIElements(SOBJ_Walls, mkr_easy_walls_3, true, "$11184225"), marker = mkr_easy_walls_3},
+					--{ hintID = Objective_AddUIElements(SOBJ_Walls, mkr_easy_walls_4, true, "$11184226"), marker = mkr_easy_walls_4},
+					{ hintID = Objective_AddUIElements(SOBJ_Walls, mkr_easy_walls_5, true, "$11184225"), marker = mkr_easy_walls_5},
+					--{ hintID = Objective_AddUIElements(SOBJ_Walls, mkr_easy_walls_6, true, "$11184226"), marker = mkr_easy_walls_6},
+				}
+				
+			end
+			
+		end,
+		
+		IsComplete = Lumen_EvaluateBlockade,
+		
+		IsFailed = Lumen_CheckChineseLoss,
+		
+		OnComplete = function()
+			Player_GetSquadsOnscreen(g_playerMongol, sg_temp)
+			Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+			Objective_Complete(OBJ_Blockade)
+		end,
+	}
+	SOBJ_Towers = { Title = "$11204899", Type = ObjectiveType_Build, Parent = OBJ_Blockade, StartAlongsideParent = false,
+		
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			Player_GetAll(g_playerMongol)
+			EGroup_Filter(eg_allentities, EBP.CHINESE.BUILDING_DEFENSE_TOWER_CHI, FILTER_KEEP)
+			EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+			
+			if EGroup_CountSpawned(eg_allentities) <= 0 then
+				return false	
+			end
+			
+			return EGroup_HasUpgrade(eg_allentities, UPG.COMMON.UPGRADE_TOWER_SPRINGALD, ANY) or EGroup_HasUpgrade(eg_allentities, UPG.COMMON.UPGRADE_TOWER_CANNON, ANY)
+		end,
+		
+		OnComplete = function()
+			
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Blockade)
+	Objective_Register(SOBJ_Walls)
+	Objective_Register(SOBJ_Towers)
+	
+end
+
+
+function Lumen_SetupLeaderHint_Xbox()
+	
+	MissionOMatic_HintOnHover_Xbox(Lumen_TriggerZhengHint_Xbox,
+		"Liu Zheng can boost the construction of nearby walls, towers, and buildings.",
+		"$11193294",
+		"campaign_mon_chp3_lumen_shan_zheng",
+		BP_GetAbilityBlueprint("leader_construction_activated"))
+end
+
+function Lumen_SetupLeaderHint()
+	
+	MissionOMatic_HintOnHover(Lumen_TriggerZhengHint,
+		"Liu Zheng can boost the construction of nearby walls, towers, and buildings.",
+		"$11193294",
+		"campaign_mon_chp3_lumen_shan_zheng",
+		BP_GetAbilityBlueprint("leader_construction_activated"))
+end
+
+
+--? @shortdesc Makes sure the player has Chinese villagers and/or a Chinese TC
+--? @args NIL
+--? @result BOOLEAN
+function Lumen_CheckChineseLoss()
+	
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, {EBP.CHINESE.BUILDING_TOWN_CENTER_CHI, EBP.CHINESE.BUILDING_TOWN_CENTER_CAPITAL_CHI}, FILTER_KEEP)
+	local chineseCountTCs = EGroup_Count(eg_allentities)
+	
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+	local chineseCountVillagers = SGroup_CountSpawned(sg_allsquads)
+	
+	return (chineseCountTCs + chineseCountVillagers) <= 0
+	
+end
+
+--? @shortdesc Makes a pathfinding request between Song start and goal points. Expensive; shouldn't be run too often
+function Lumen_UpdateCachedPath()
+	
+	for index, path in pairs(g_pathChecks) do
+		AIPlayer_ClearCachedPath(g_playerSong, path.ID)
+		AIPlayer_RequestHighPath(g_playerSong,
+			path.ID,
+			path.origin,
+			path.target,
+			EBP.CORE.UNIT_SIEGE_TOWER_3,
+			true)
+	end
+	
+	-- IMPORTANT NOTE: These paths will fail if there are any gates in the way, friend or foe, because we're using the Siege Tower as a reference.
+	-- This is INTENDED, because otherwise the player won't be able to build gates in their walls if they want to complete the objective.
+	-- However, this also means the player absolutely has to destroy both Palisade gates in the Song camp to the north, or else it fails.
+	-- Perhaps we can force-destroy those palisades...
+
+end
+
+--? @shortdesc Uses pathfinding data to attempt to evaluate whether the player has blocked off the path north
+function Lumen_EvaluateBlockade()
+
+	g_timeCheckFirst = g_timeCheckFirst or World_GetGameTime()
+	g_timeCheckLast = g_timeCheckLast or World_GetGameTime()
+	g_timeCheckNow = World_GetGameTime()
+	local elapsedTime = (g_timeCheckNow - g_timeCheckFirst)
+	g_timeCheckLast = g_timeCheckNow
+	
+	-- Reduce the cooldown by the elapsed time
+	if g_wallStingerCooldown.current > 0 then
+		g_wallStingerCooldown.current = g_wallStingerCooldown.current - elapsedTime
+	end
+	
+	if elapsedTime < 10 then
+		return false
+	end
+	
+	local pathSpacing = 52
+	local pathIcon = "military_route_enemy"
+	
+	-- These will determine what kind of stinger we use
+	local changeDetected = false
+	local path_better = false
+	local path_worse = false
+	local block_better = false
+	local block_worse = false
+	
+	-- If there's a brand new blockage, we'll want to play a stinger
+	local newBlockComplete = false
+	-- Handle each path
+	for index, path in pairs(g_pathChecks) do
+		local currentLength = AIPlayer_GetCachedPathLength(g_playerSong, path.ID)
+		if currentLength > 0 then
+			-- We want to make sure these are valid
+			path.originalLength = path.originalLength or currentLength
+			-- WESTERN PATH
+			-- If lengths don't match, update the UI
+			if currentLength ~= path.length then
+				
+				changeDetected = true
+				if path.length ~= nil then
+					path_better = (currentLength > path.length)
+					path_worse = (currentLength < path.length)
+				end
+				
+				-- Update the stored version
+				path.length = currentLength
+				-- Get the points
+				local pointList = AIPlayer_GetCachedPathPoints(g_playerSong, path.ID)
+				-- Update the UI
+				MarkerPaths_GenerateIcons(path.pathName, pointList, pathIcon, pathSpacing)
+				-- Check the distance between final path point and target
+				if #pointList >= 1 then
+					--Check against both exits
+					local exitDist1 = Util_GetDistance(Marker_GetPosition(mkr_song_north_1), pointList[#pointList])
+					local exitDist2 = Util_GetDistance(Marker_GetPosition(mkr_song_north_2), pointList[#pointList])
+					local newDist = math.min(exitDist1, exitDist2)					
+					-- We want to track whether the distance blocked increases
+					block_better = (newDist > path.blockDist)
+					block_worse = (newDist < path.blockDist)
+					-- Now commit the new value
+					path.blockDist = newDist
+				end
+			end
+		end
+		path.fullyBlocked = path.blockDist >= SOBJ_Walls.counterMax
+	end
+	
+	-- Did we fully block a path? If so, a stinger is needed
+	if newBlockComplete == true and g_wallStingerCooldown.current <= 0 then
+		-- Tick up the cooldown
+		g_wallStingerCooldown.current = g_wallStingerCooldown.max
+		-- Play the positive stinger
+		Music_PlayStinger(MUS_STING_POSITIVE)
+	end
+	
+	-- For clarity, we'll make these and aggregate the two western paths
+	local isWestSideBlocked = g_pathChecks.westAlt.blockDist >= SOBJ_Walls.counterMax and g_pathChecks.westAlt.blockDist >= SOBJ_Walls.counterMax
+	local isEastSideBlocked = g_pathChecks.east.blockDist >= SOBJ_Walls.counterMax and g_pathChecks.eastAlt.blockDist >= SOBJ_Walls.counterMax
+	-- Did we block the first of the two sides? If so, play some VO as well
+	if not SOBJ_Walls.halfwayVOplayed then
+		if isEastSideBlocked or isWestSideBlocked then
+			Rule_AddOneShot(Lumen_DelayedHalfBlockedVO, 1.5)
+			SOBJ_Walls.halfwayVOplayed = true
+		end
+	end
+	
+	-- Logic for removing Standard-difficulty (Easy) hintpoints moved here so they can be removed based on road blockage
+	if scartype(SOBJ_Walls.easyHints) == ST_TABLE then
+		for index, hintTable in pairs(SOBJ_Walls.easyHints) do
+			if hintTable.hintID ~= nil then
+				local hintShouldBeCleared = false
+				-- first check if the entire route is blocked
+				if (hintTable.marker == mkr_easy_walls_1) or (hintTable.marker == mkr_easy_walls_3) then
+					hintShouldBeCleared = isEastSideBlocked
+				elseif hintTable.marker == mkr_easy_walls_5 then
+					hintShouldBeCleared = isWestSideBlocked
+				end
+				-- if we're still false, check for the player building nearby
+				if not hintShouldBeCleared then 
+					Player_GetAllEntitiesNearMarker(g_playerMongol, eg_temp, hintTable.marker, 20)
+					EGroup_Filter(eg_temp, {EBP.CHINESE.BUILDING_DEFENSE_WALL_BASTION_CHI, EBP.CHINESE.BUILDING_DEFENSE_WALL_BASTION_CHI}, FILTER_KEEP)
+					EGroup_FilterUnderConstruction(eg_temp, FILTER_REMOVE)
+					if EGroup_Count(eg_temp) > 0 then
+						hintShouldBeCleared = true
+					end
+				end
+				-- if this hint should be cleared, do so
+				if hintShouldBeCleared then
+					Objective_RemoveUIElements(SOBJ_Walls, hintTable.hintID)
+					hintTable.hintID = nil
+				end
+			end
+		end
+	end
+	
+	-- How close do the Song paths get to the road north? Set the counter to reflect that
+	SOBJ_Walls.currentDistToNorth = math.min(g_pathChecks.west.blockDist, g_pathChecks.westAlt.blockDist, g_pathChecks.east.blockDist, g_pathChecks.eastAlt.blockDist)
+	-- If the closest they can get is further than the distance we're trying to keep them away, return true
+	return SOBJ_Walls.currentDistToNorth >= SOBJ_Walls.counterMax
+	
+end
+
+--? @shortdesc Regularly generates raiders and updates their targets
+function Lumen_ManageRaiders(context, data)
+	
+	-- We'll use this to harass the player if they're not building walls
+	if g_idleTracker ~= nil then
+		g_idleTracker = g_idleTracker + 1
+	else
+		-- This will only be relevant the very first time this is called
+		-- Give the player a longer head start here, so there isn't almost-immediately a band of cavalry on them
+		g_idleTracker = -90
+	end
+	
+	g_maxIdleLeeway = g_maxIdleLeeway or 45
+	local issuedRaiders = nil
+
+	--print("LUMEN: Managing raiders (currently "..tostring(#g_raidSystem.raidParties)..", idleness: "..tostring(g_idleTracker)..")")
+
+	-- If a new wall has been added, let's see if we want to add it as someone's target
+	-- Make sure we don't do this when the idleTracker is negative, though, i.e. the opening minutes of the objective
+	if g_idleTracker >= 0 and scartype(g_lastWallPos) == ST_SCARPOS then
+		-- Find whoever is closest to the target
+		print("LUMEN: Raid party sent via Lumen_ManageRaiders (wall construction)")
+		
+		-- If we're going to be spawning new raiders, we don't want them spawning just anywhere
+		-- Give them stub spawn points and force-spawn a new group to make sure it's spawning in a distributed fashion
+		if Raiding_CountParties() < g_raidSystem.partyLimit then
+			g_newPartyTarget = g_newPartyTarget or 1
+			local stubMarkers = {mkr_song_path_b, mkr_song_path_a}
+			local stubTarget = stubMarkers[g_newPartyTarget]
+			g_newPartyTarget = g_newPartyTarget + 1
+			if g_newPartyTarget > #stubMarkers then
+				g_newPartyTarget = 1
+			end
+			-- Save the group to see if they're new
+			issuedRaiders = Raiding_TriggerRaid(stubTarget, true, nil, true)
+			
+		else
+			-- If there are already enough groups, just issue a target on the last wall group
+			issuedRaiders = Raiding_TriggerRaid(g_lastWallPos)
+			-- Nullify the stored value regardless, so it's only true the first frame after a wall has been built
+			g_lastWallPos = nil
+		end
+		-- Reset the idle tracker!
+		g_idleTracker = 0
+		
+	end
+	
+	-- Regularly select some raid targets or send some over regardless, assuming the leader isn't downed
+	if (g_idleTracker >= g_maxIdleLeeway) then
+		
+		-- If there are NO raid parties currently active, we're making a new one - make sure to send it towards one of the villages
+		-- If there ARE active raid parties, just give them a new target to move towards
+		-- We used to send existing raid parties to target squads, but the AI can't handle walls well enough to arbitrarily find targets behind walls
+		-- So we're just going to have to target villages and hope the player actually has stuff there
+		g_newPartyTarget = g_newPartyTarget or 1
+			
+		-- Pick a village, starting with Bohekou for the first wave
+		-- Why Bohekou? Because often when the player has just captured Lumen, they will move their army elsewhere soon after
+		-- Targeting Lumen first can cripple the player at that very early stage, so make them appear elsewhere instead
+		local villageTargets = { mkr_neutral_bohekou, mkr_neutral_lumen }
+		issuedRaiders = Raiding_TriggerRaid(villageTargets[g_newPartyTarget])
+		
+		-- And increment this for next time, so it starts in another place
+		g_newPartyTarget = g_newPartyTarget + 1
+		if g_newPartyTarget > #villageTargets then
+			g_newPartyTarget = 1
+		end
+		
+		-- Reset the idle tracker
+		-- Setting this to 0 means it'll always take g_maxIdleLeeway time AFTER the first wave
+		-- The first wave will still be determined by the composite of g_maxIdleLeeway and the initial value provided to g_idleTracker above
+		g_idleTracker = 0
+	end
+	
+	if issuedRaiders ~= nil then
+		-- If this RovingArmy doesn't have an onBlocked function, add one now - they all need one
+		if issuedRaiders.onBlockedFunction == nil then
+			issuedRaiders.onBlockedFunction = Lumen_RetreatBlockedRaiders
+		end
+		-- If a Raider module is complete, i.e. has no targets left, pull it back!
+		-- We can just spawn a new one later. Calling ManageRaiders again often leaves them stuck.
+		if issuedRaiders.onCompleteFunction == nil then
+			issuedRaiders.onCompleteFunction = Lumen_RetreatBlockedRaiders
+		end
+	end
+	
+end
+
+--? @shortdesc A function invoked when raiders become blocked
+function Lumen_RetreatBlockedRaiders(module)
+	
+	-- The first thing we need to do is try to find gates
+	-- Due to AI pathfinding limitations, destroyed bridges will make the AI not able to find gates in some locations
+	-- So let's manually find all gates and pick the nearest one we haven't already tried to get to
+	if scartype(module.sgroup) == ST_SGROUP and SGroup_CountSpawned(module.sgroup) > 0 then
+		
+		if scartype(module.bypassGateAttempts) ~= ST_EGROUP then
+			module.bypassGateAttempts = EGroup_CreateUnique("gates_by_"..module.descriptor)
+		end
+		
+		Player_GetAll(g_playerMongol, sg_allsquads, eg_allentities)
+		EGroup_Filter(eg_allentities, "gate", FILTER_KEEP)
+		
+		local _removeAlreadyTried = function(gid, idx, eid)
+			if EGroup_ContainsEntity(module.bypassGateAttempts, eid) == true then
+				EGroup_Remove(eg_allentities, eid)
+			end
+		end
+		EGroup_ForEach(eg_allentities, _removeAlreadyTried)
+		
+		if EGroup_CountSpawned(eg_allentities) > 0 then
+			local closestGate = EGroup_GetClosestEntity(eg_allentities, SGroup_GetPosition(module.sgroup))
+			EGroup_Add(module.bypassGateAttempts, closestGate)
+			RovingArmy_SetTarget(module, Util_GetPosition(closestGate))
+			-- If we're trying a gate, don't do anything else yet!
+			return
+		end
+		-- If there are no gates to try, just go on and continue with the escape logic
+		
+	end
+	
+	-- If they're well and truly cut off, honestly
+	-- It seems appropriate for them to run around in a panic looking for a way out
+	-- So just reset all the flags so they try again
+	if module.flagExit1 == true and module.flagExit2 == true and module.flagExit3 == true then
+		module.flagExit1 = false
+		module.flagExit2 = false
+		module.flagExit3 = false
+		print("LUMEN: Raiders triple-blocked! They're just going to run around now")
+	end
+	
+	-- We'll need to try these exits one by one
+	if module.flagExit1 ~= true then
+		print("LUMEN: Raiders blocked, trying mkr_song_south_1")
+		RovingArmy_SetTarget(module, mkr_song_south_1)
+		module.flagExit1 = true
+		
+	elseif module.flagExit2 ~= true then
+		print("LUMEN: Raiders blocked, trying mkr_song_south_2")
+		RovingArmy_SetTarget(module, mkr_song_south_2)
+		module.flagExit2 = true
+		
+	elseif module.flagExit3 ~= true then
+		print("LUMEN: Raiders blocked, trying mkr_song_south_3")
+		RovingArmy_SetTarget(module, mkr_song_south_3)
+		module.flagExit3 = true
+		
+	end
+	
+	-- Remove this RovingArmy from the raider system, so it doesn't get any new orders
+	Raiding_RemoveParty(module)
+	-- Also forcibly set this
+	module.onCompleteFunction = Lumen_VanishBlockedRaiders
+	
+end
+
+--? @shortdesc A function invoked when raiders become blocked
+function Lumen_VanishBlockedRaiders(module)
+	
+	if module == nil or module.sgroup == nil then
+		print(string.format("WARNING (Lumen): blocked raider module %s doesn't have an sgroup?", module))
+		return
+	elseif SGroup_Count(module.sgroup) <= 0 then
+		print(string.format("WARNING (Lumen): blocked raider module %s has empty sgroup?", module))
+		return
+	end
+	
+	-- Hacky but unfortunately seems necesary for now
+	local exitTarget = RovingArmy_GetTarget(module)
+	if exitTarget == nil then
+		local lastTarget = #(module.targets)
+		if module.targets[lastTarget] ~= nil then
+			exitTarget = module.targets[lastTarget].position
+		end
+	end
+	
+	-- If we're close enough to the intended exit, just vanish them entirely
+	if exitTarget == nil then
+		print("LUMEN: Raiders previously blocked, lost all targets, nothing to do!")
+		
+	elseif Util_GetDistanceSquared(module.sgroup, exitTarget) <= 30 * 30 then
+		print("LUMEN: Raiders previously blocked, arrived at exit, despawning")
+		SGroup_DestroyAllSquads(module.sgroup)
+		return
+	end
+	
+	-- If they didn't make it to any exits, stage another retreat
+	Lumen_RetreatBlockedRaiders(module)
+	
+end
+
+--? @shortdesc Spawns a single scout that tries to find the way north
+function Lumen_NewScout()
+	
+	-- Assemble the data
+	local scoutPath = Lumen_GetValidPath()
+	print("LUMEN: Raid probe sent via Lumen_NewScout")
+	Raiding_TriggerProbe(scoutPath, false, scoutPath[1])
+	
+end
+
+--? @shortdesc Slightly delays the VO that plays when one side of the map is blocked off, allowing the preceding positive stinger to be heard
+function Lumen_DelayedHalfBlockedVO(context, data)
+	Util_StartIntel(EVENTS.First_Road_Blocked)
+end

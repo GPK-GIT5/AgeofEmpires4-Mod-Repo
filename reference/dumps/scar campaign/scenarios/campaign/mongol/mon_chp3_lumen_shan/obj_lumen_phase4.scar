@@ -1,0 +1,382 @@
+--
+-- Lumen Shan 1268 - Wall Off Passage - Phase 4
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+PATH_LUMEN = 2
+PATH_BOHEKOU = 3
+PATH_EXIT = 4
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function LumenShan_InitObjectives_Phase4()
+
+	OBJ_Remedial = { Title = "$11178816", Type = ObjectiveType_Primary,
+
+		Cheat = function()
+			print("Cheating here not supported yet!")
+		end,
+		
+		PreStart = function()
+			Lumen_SecretCleanup()
+			Lumen_LaunchSongSally()
+			Rule_AddOneShot(Lumen_RedirectRemainingUnits, 1)
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_FinalChance)
+		end,
+		
+		
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		
+		IsFailed = function()
+			local finalChanceFailed = Objective_IsFailed(SOBJ_FinalChance) == true
+			if counterExceeded == true then
+				print("LUMEN: Faling at top level objective!")
+			end
+			return finalChanceFailed
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_FinalChance = { Title = Loc_FormatText("$11178817", 20), Type = ObjectiveType_Battle, Parent = OBJ_Remedial, StartAlongsideParent = true,
+		
+		counterCurrent = 0,
+		counterMax = 20,
+		
+		PreStart = function()
+			Objective_SetCounter(SOBJ_FinalChance, 0, SOBJ_FinalChance.counterMax)
+			MissionOMatic_Objective_SetupHintpoints(SOBJ_FinalChance,
+			{
+				{
+					marker = mkr_song_south_2,
+					text = "$11178821",
+					blip = true,
+					worldArrow = true,
+				},
+			})
+		end,
+		
+		IsComplete = function()
+			-- Whether the module was actually defeated, or it was whittled below a certain point and then escaped, this should cover both.
+			-- If the player whittled it below the loss threshold, and it all crosses, it'll just read as Empty without triggering IsFailed, so we'll be okay.
+			local isDefeated = g_moduleReturnSally ~= nil and (RovingArmy_IsDefeated(g_moduleReturnSally) == true or RovingArmy_IsEmpty(g_moduleReturnSally) == true)
+			return isDefeated and (g_finaleThresholdCrossed ~= true)
+		end,
+		
+		OnComplete = function()
+			
+		end,
+		
+		IsFailed = function()
+			Objective_SetCounter(SOBJ_FinalChance, SOBJ_FinalChance.counterCurrent, SOBJ_FinalChance.counterMax)
+			local counterExceeded = SOBJ_FinalChance.counterCurrent >= SOBJ_FinalChance.counterMax
+			if counterExceeded == true then
+				print(string.format("LUMEN: Failing, counter exceeded! %s units escaped!", SOBJ_FinalChance.counterMax - SOBJ_FinalChance.counterCurrent))
+			end
+			return SOBJ_FinalChance.counterCurrent >= SOBJ_FinalChance.counterMax
+		end,
+		
+		OnFail = function()
+			
+		end,
+	}
+	OBJ_DebugComplete = { Title = LOC("Debug Complete"), Type = ObjectiveType_Primary, showTitle = false,
+		
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		
+		Cheat = function()
+			Mission_Complete()
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Remedial)
+	Objective_Register(SOBJ_FinalChance)
+	
+	Objective_Register(OBJ_DebugComplete)
+	
+end
+
+--? @shortdesc Deletes enemy units the player can't see, because they complicate things
+function Lumen_SecretCleanup()
+	
+	--Delete everything in the lower part of the map
+	Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_secret_cleanup, Marker_GetProximityRadiusOrDefault(mkr_secret_cleanup, 325))
+	local removeIfHidden = function(gid, idx, sid)
+		if Player_CanSeeSquad(g_playerMongol, sid, false) then
+			Squad_Destroy(sid)
+		end
+	end
+	
+end
+
+--? @shortdesc Collects and moves around any leftover units on the map, making them part of the sally?
+function Lumen_RedirectRemainingUnits(context, data)
+	
+	print("LUMEN: Redirecting all remaining units...")
+	local sg_remaining_units = SGroup_CreateUnique("sg_remaining_units")
+	Player_GetAll(g_playerSong, sg_remaining_units)
+	local exemptionModule = MissionOMatic_FindModule("SongReturnSally")
+	
+	-- Start by removing the exempt module
+	if scartype(exemptionModule.sgroup) == ST_SGROUP then
+		SGroup_RemoveGroup(sg_remaining_units, exemptionModule.sgroup)
+	end
+	
+	-- Next, go through existing modules
+	-- We need to copy this table, or else we'll be removing stuff from t_allModules while iterating through it
+	local allModules = Clone(t_allModules, false)
+	-- Extract everyone not in the Return module from their modules
+	for index, module in pairs(allModules) do
+		if module.player == g_playerSong and module.descriptor ~= exemptionModule.descriptor then
+			sg_disbandedUnits = SGroup_CreateUnique("sg_disbandedUnits")
+			if module.prefabName == "Defend" then
+				Defend_Disband(module, sg_disbandedUnits)
+			elseif module.prefabName == "RovingArmy" then
+				RovingArmy_Disband(module, sg_disbandedUnits)
+			else
+				print("LUMEN: Unhandled straggler module of prefab: "..tostring(module.prefabName))
+			end
+			
+			if SGroup_Count(sg_disbandedUnits) > 0 then
+				--print(string.format("LUMEN: %s stragglers, removing %s", SGroup_Count(sg_remaining_units), SGroup_Count(sg_disbandedUnits)))
+				
+				SGroup_RemoveGroup(sg_remaining_units, sg_disbandedUnits)
+				Cmd_Stop(sg_disbandedUnits)
+				
+				-- Send them to attack what is presumably a player base
+				local stragglerTarget = Util_GetClosestMarker(sg_disbandedUnits, {mkr_neutral_lumen, mkr_neutral_bohekou})
+				Cmd_FormationAttackMove(sg_disbandedUnits, stragglerTarget, false)
+			end
+		end
+	end
+	
+	Lumen_SetupStragglerModules()
+	Rule_AddInterval(Lumen_ManageStragglerModules, 3)
+	
+end
+
+function Lumen_SetupStragglerModules()
+	
+	g_stragglersLumen = RovingArmy_Init({
+		descriptor = "SongStragglersLumen",
+		type = "RovingArmy",
+		player = g_playerSong,
+		idleTimeOverride = 0,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			mkr_neutral_lumen,
+		},
+		combatRange = 45,
+		leashRange = 60,
+	})
+	
+	g_stragglersBohekou = RovingArmy_Init({
+		descriptor = "SongStragglersBohekou",
+		type = "RovingArmy",
+		player = g_playerSong,
+		idleTimeOverride = 0,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			mkr_neutral_bohekou,
+		},
+		combatRange = 45,
+		leashRange = 60,
+	})
+	
+end
+
+function Lumen_ManageStragglerModules(context, data)
+	
+	-- Stragglers are split into two groups
+	local splitStragglers = {}
+	splitStragglers[mkr_neutral_lumen] = SGroup_CreateIfNotFound("sg_stragglers_lumen")
+	splitStragglers[mkr_neutral_bohekou] = SGroup_CreateIfNotFound("sg_stragglers_bohekou")
+	
+	-- We want to ignore module units
+	Player_GetAll(g_playerSong, sg_allsquads)
+	local returnSally = MissionOMatic_FindModule("SongReturnSally")
+	SGroup_RemoveGroup(sg_allsquads, returnSally.sgroup)
+	
+	-- Is Lumen still waiting?
+	if g_stragglersLumen ~= nil and g_stragglersLumen.noLongerWaiting ~= true then
+		-- Find everyone near Bohekou and add it to that module
+		Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_neutral_lumen, 50)
+		-- Remove whoever was already within the straggler group
+		SGroup_RemoveGroup(sg_temp, returnSally.sgroup)
+		SGroup_RemoveGroup(sg_temp, g_stragglersLumen.sgroup)
+		-- And the other one
+		if g_stragglersBohekou ~= nil then
+			SGroup_RemoveGroup(sg_temp, g_stragglersBohekou.sgroup)
+		end
+		
+		RovingArmy_AddSGroup(g_stragglersLumen, sg_temp)
+		SGroup_RemoveGroup(sg_allsquads, g_stragglersLumen.sgroup)
+		SGroup_RemoveGroup(splitStragglers[mkr_neutral_lumen], g_stragglersLumen.sgroup)
+		
+		if SGroup_Count(g_stragglersLumen.sgroup) > 0 and SGroup_Count(sg_temp) > 0 then
+			Cmd_FormationMove(g_stragglersLumen.sgroup, SGroup_GetPosition(g_stragglersLumen.sgroup), false, false, mkr_song_north_1)
+		end
+		
+		-- Is the return module near the marker?
+		if SGroup_CountSpawned(returnSally.sgroup) > 0 then
+			-- OR, is it near a special marker that catches the weird, hard-to-repro case where the return sally skips Lumen?
+			local emergencyCatch = Util_GetDistance(returnSally.sgroup, mkr_return_sally_catch) < 20
+			if Util_GetDistance(returnSally.sgroup, mkr_neutral_lumen) < 30 or emergencyCatch == true then
+				local delay = 15
+				if emergencyCatch == true then
+					delay = 1
+				end
+				
+				Rule_AddOneShot(Lumen_DelayedAssignStragglersLumen, delay)
+				g_stragglersLumen.noLongerWaiting = true
+			end
+		end
+	end
+	
+	-- Is Bohekou still waiting?
+	if g_stragglersBohekou ~= nil and g_stragglersBohekou.noLongerWaiting ~= true then
+		-- Find everyone near Bohekou and add it to that module
+		Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_neutral_bohekou, 50)
+		SGroup_RemoveGroup(sg_temp, returnSally.sgroup)
+		SGroup_RemoveGroup(sg_temp, g_stragglersBohekou.sgroup)
+		if g_stragglersLumen ~= nil then
+			SGroup_RemoveGroup(sg_temp, g_stragglersLumen.sgroup)
+		end
+		
+		RovingArmy_AddSGroup(g_stragglersBohekou, sg_temp)
+		SGroup_RemoveGroup(sg_allsquads, g_stragglersBohekou.sgroup)
+		SGroup_RemoveGroup(splitStragglers[mkr_neutral_bohekou], g_stragglersBohekou.sgroup)
+		
+		if SGroup_Count(g_stragglersBohekou.sgroup) > 0 and SGroup_Count(sg_temp) > 0 then
+			Cmd_FormationMove(g_stragglersBohekou.sgroup, SGroup_GetPosition(g_stragglersBohekou.sgroup), false, false, mkr_song_north_1)
+		end
+		
+		-- Is the return module near the marker?
+		if SGroup_CountSpawned(returnSally.sgroup) > 0 and Util_GetDistance(returnSally.sgroup, mkr_neutral_bohekou) < 30 then
+			Rule_AddOneShot(Lumen_DelayedAssignStragglersBohekou, 20)
+			g_stragglersBohekou.noLongerWaiting = true
+		end
+	end
+	
+	-- If both towns have already been visited, we shouldn't direct units at them anymore!
+	if g_stragglersLumen.noLongerWaiting == true and g_stragglersBohekou.noLongerWaiting == true then
+		-- Stop any of them that might still be running around
+		if SGroup_Count(splitStragglers[mkr_neutral_lumen]) > 0 then
+			SGroup_RemoveGroup(splitStragglers[mkr_neutral_lumen], returnSally.sgroup)
+			SGroup_RemoveGroup(splitStragglers[mkr_neutral_lumen], g_stragglersLumen.sgroup)
+			Cmd_Stop(splitStragglers[mkr_neutral_lumen])
+		end
+		if SGroup_Count(splitStragglers[mkr_neutral_bohekou]) > 0 then
+			SGroup_RemoveGroup(splitStragglers[mkr_neutral_bohekou], returnSally.sgroup)
+			SGroup_RemoveGroup(splitStragglers[mkr_neutral_lumen], g_stragglersBohekou.sgroup)
+			Cmd_Stop(splitStragglers[mkr_neutral_bohekou])
+		end
+		-- Activate a rule that sends stragglers towards the return sally
+		Rule_AddInterval(Lumen_AssignStragglers, 1)
+		Rule_RemoveMe()
+		return
+	end
+	
+	-- If we haven't gone through both towns yet, we should make sure no idle units are dawdling around
+	-- Split any stragglers according to whatever town they're closest to
+	local _MoveStragglers = function(gid, idx, sid)
+		local closerTown = Util_GetClosestMarker(sid, { mkr_neutral_lumen, mkr_neutral_bohekou })
+		
+		if SGroup_ContainsSquad(returnSally.sgroup, Squad_GetID(sid), false) or SGroup_ContainsSquad(g_stragglersLumen.sgroup, Squad_GetID(sid), false) or SGroup_ContainsSquad(g_stragglersBohekou.sgroup, Squad_GetID(sid), false) then
+			return
+		end
+		
+		if SGroup_ContainsSquad(splitStragglers[closerTown], Squad_GetID(sid), false) == false or Squad_IsIdle(sid) == true then
+			SGroup_Add(splitStragglers[closerTown], sid)
+		end
+	end
+	SGroup_ForEach(sg_allsquads, _MoveStragglers)
+	
+	if SGroup_Count(splitStragglers[mkr_neutral_lumen]) > 0 then
+		Cmd_AttackMove(splitStragglers[mkr_neutral_lumen], mkr_neutral_lumen, false)
+	end
+	
+	if SGroup_Count(splitStragglers[mkr_neutral_bohekou]) > 0 then
+		Cmd_AttackMove(splitStragglers[mkr_neutral_bohekou], mkr_neutral_bohekou, false)
+	end
+	
+end
+
+function Lumen_DelayedAssignStragglersLumen(context, data)
+	RovingArmy_AddTargets(g_stragglersLumen, { mkr_neutral_bohekou, mkr_song_south_2, })
+end
+
+function Lumen_DelayedAssignStragglersBohekou(context, data)
+	RovingArmy_AddTargets(g_stragglersBohekou, { mkr_song_south_2, })
+end
+
+--? @shortdesc Regularly looks for Song stragglers and, if possible, assigns them to the ReturnSally
+function Lumen_AssignStragglers(context, data)
+	
+	local returnSally = MissionOMatic_FindModule("SongReturnSally")
+	if returnSally == nil or SGroup_Count(returnSally.sgroup) <= 0 then
+		return
+	end
+	
+	sg_song_stragglers = SGroup_CreateIfNotFound("sg_song_stragglers")
+	SGroup_Clear(sg_song_stragglers)
+	
+	-- Add anything that's not in the module but is near it - we don't want units just running past
+	Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, Util_GetPosition(returnSally.sgroup), 30)
+	local _AddIfClose = function(gid, idx, sid)
+		local limitNotBroken = (SGroup_Count(returnSally.sgroup) + SGroup_Count(sg_song_stragglers)) < 200
+		if SGroup_ContainsSquad(returnSally.sgroup, sid.SquadID, false) == false and limitNotBroken == true then
+			SGroup_Add(sg_song_stragglers, sid)
+		end
+	end
+	SGroup_ForEach(sg_temp, _AddIfClose)
+	
+	-- Add all those units to the return module
+	if SGroup_Count(sg_song_stragglers) > 0 then
+		RovingArmy_AddSGroup(returnSally, sg_song_stragglers)
+	end
+	
+	-- Everything else? Make sure it's moving towards that roving army!
+	Player_GetAll(g_playerSong, sg_allsquads)
+	
+	SGroup_RemoveGroup(sg_allsquads, returnSally.sgroup)
+	if scartype(g_stragglersLumen.sgroup) == ST_SGROUP and SGroup_Count(g_stragglersLumen.sgroup) > 0 then
+		SGroup_RemoveGroup(sg_allsquads, g_stragglersLumen.sgroup)
+	end
+	if scartype(g_stragglersBohekou.sgroup) == ST_SGROUP and SGroup_Count(g_stragglersBohekou.sgroup) > 0 then
+		SGroup_RemoveGroup(sg_allsquads, g_stragglersBohekou.sgroup)
+	end
+	
+	Cmd_AttackMove(sg_allsquads, Util_GetPosition(returnSally.sgroup), false)
+	
+	-- NUCLEAR OPTION
+	-- Because units keep somehow straggling
+	sg_stubbonStragglers = SGroup_CreateIfNotFound("sg_stubbonStragglers")
+	SGroup_Clear(sg_stubbonStragglers)
+	local _MoveStragglers = function(gid, idx, sid)
+		if Squad_IsIdle(sid) == true then
+			SGroup_Add(sg_stubbonStragglers, sid)
+		end
+	end
+	-- If we picked up anyone new this time around, ALSO give them a move order
+	Player_GetAll(g_playerSong, sg_allsquads)
+	SGroup_ForEach(sg_allsquads, _MoveStragglers)
+	Cmd_AttackMove(sg_stubbonStragglers, Util_GetPosition(returnSally.sgroup), false)
+
+end

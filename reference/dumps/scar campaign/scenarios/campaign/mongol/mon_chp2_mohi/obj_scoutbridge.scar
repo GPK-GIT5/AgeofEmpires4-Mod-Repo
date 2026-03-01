@@ -1,0 +1,576 @@
+--
+-- Battle of Mohi 1241
+--
+import("MissionOMatic/MissionOMatic.scar")
+
+function ScoutBridge_InitObjectives()
+	
+	SOBJ_ScoutBridge = {
+		
+		Title = "$11176395", --"Scout the area across the bridge" 
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DestroyArmy,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			hpid_scoutbridge = Objective_AddUIElements(SOBJ_ScoutBridge, Marker_GetPosition(mkr_bridge), true, "$11180892") -- Scout this area
+		end,
+		
+		PreStart = function()
+			Modify_EntityMaxHealth(sg_leaderSubutai.sgroup, 4, MUT_Multiplication)			
+			Modify_EntityMaxHealth(sg_leaderBatu, 4, MUT_Multiplication)	
+			
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_bela_start_2), Marker_GetProximityRadiusOrDefault(mkr_bela_start_2, 0), -1)
+			
+			Rule_AddInterval(ScoutBridge_SpawnFlankAmbushers, 1)
+			Rule_AddInterval(Mohi_HealAmbushers, 1)
+			
+			-- Hide Death (delete units)
+			Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_unit_death"), ITEM_REMOVED)
+		end,
+		
+		IsComplete = function()
+			ScoutBridge_CanPlayerSeeAmbushUnits() --This function starts the ambush objectives when it becomes viable
+			return false
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+			return SGroup_CountSpawned(sg_allsquads) <= 0
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+		
+	} --This is the Hungarian Ambush part of the mission
+	
+	SOBJ_EscapeAmbush = {
+		
+		Title = "$11180899", -- "Escape the ambush"
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DestroyArmy,
+		
+		Intel_Start = EVENTS.Scout_Bridge_Complete,
+		
+		PreStart = function()
+
+			--Reveal a lot of the map for player 2
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_bela_pursuers_1), 300, -1)
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_bela_pursuers_2), 300, -1)
+			
+			Rule_AddOneShot(ScoutBridge_DelayedPursuerTargetUpdate, 10)
+			
+			--Move Batu to the friendly side of the bridge
+			RovingArmy_SetTarget(batu_start, mkr_ally_bridge_east)		
+			
+		end,
+		
+		IsComplete = function()
+			if not ScoutBridge_CanPlayerSeeAmbushUnits() and player_spotted then
+				--Check if cavalry groups are dead or AWOL for 5+ seconds
+				if (SGroup_IsEmpty(sg_cavgroup_left) and SGroup_IsEmpty(sg_cavgroup_right)) or not ScoutBridge_HasPlayerSeenCavalryRecently() then
+					return true
+				end
+			end
+			return false
+		end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Prepare_Assault)
+			Objective_Start(SOBJ_OptRepairBridge, false, false)
+			Objective_Start(SOBJ_SupportBatu)
+			if Game_GetSPDifficulty() <= GD_NORMAL then
+				Objective_Start(SOBJ_OptMangonels, false, false)
+			end
+			Objective_Start(SOBJ_BatuTimer)
+			Music_PostCombat_End()
+			Sound_SetForceMusic(false)
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+			return SGroup_CountSpawned(sg_allsquads) <= 0
+		end,
+		
+		OnFail = function()
+			Objective_Start(SOBJ_OptRepairBridge, false, false)
+			Objective_Start(SOBJ_SupportBatu)
+			if Game_GetSPDifficulty() <= GD_NORMAL then
+				Objective_Start(SOBJ_OptMangonels, false, false)
+			end
+			Objective_Start(SOBJ_BatuTimer)
+			Music_PostCombat_End()
+			Sound_SetForceMusic(false)
+		end,
+	}
+	
+	SOBJ_SupportBatu = {
+		
+		Title = "$11176397", -- Ready an army at the Hungarian position's flanks
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DestroyArmy,
+		
+		SetupUI = function()
+			--UI Indicating Batu's planned attack
+			bridge_UI_started = true
+			if bridge_is_seen == false then
+				hpid_findBridge = Objective_AddUIElements(SOBJ_OptRepairBridge, mkr_bridge_hint, true, "$11220624") --Broken bridge
+			else
+				hpid_repairBridge = Objective_AddUIElements(SOBJ_OptRepairBridge, mkr_bridge_hint, true, "$11195750") 
+			end
+			hpid_rightflank = Objective_AddUIElements(SOBJ_SupportBatu, mkr_flank_hint_right, true, "$11183412") -- Rally your armies here to prepare for the attack
+		end,
+		
+		PreStart = function()
+			-- on console, restore the econ HUD at this point
+			if UI_IsXboxUI() then
+				Game_SetVisibility (VF_XboxUIResourceCard, true)
+				Game_SetVisibility (VF_XboxUIVillagerPriorities, true)
+			end				
+			--Spawn structures/units for the player to use to build up an army
+			ScoutBridge_SpawnStructures()
+			local units = {
+				{type = "scar_villager", numSquads = 10, spawn = mkr_villager_start, destination = mkr_villagers},
+				{ sbp = SBP.MONGOL.UNIT_SUBUTAI_3_CMP_MON, numSquads = 1, spawn = mkr_villager_start, destination = mkr_villagers, sgroup = sg_leaderSubutai.sgroup },
+				{type = "scar_knight", numSquads = 4, spawn = mkr_subutai_escorts, destination = mkr_player_spawn},
+				{type = "scar_horsearcher", numSquads = 6, spawn = mkr_subutai_escorts, destination = mkr_player_spawn},
+			}
+			UnitEntry_DeploySquads(player1, sg_player_villagers, units)
+			
+			--Unreveal the markers that were revealed previously
+			FOW_PlayerUnRevealArea(player2, Marker_GetPosition(mkr_bela_pursuers_1))
+			FOW_PlayerUnRevealArea(player2, Marker_GetPosition(mkr_bela_pursuers_2))
+			
+			FOW_PlayerUnRevealArea(player2, Marker_GetPosition(mkr_bela_start_2))
+			
+			--Keep the bridge revealed slightly for player 2 just incase someone gets cheeky and tries to cross the same spot.
+			--Also reveals Batu when he crosses so Hungarians can fight his army.
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_bridge), 30, -1)
+			
+			-- Re-Enable Death (delete units)
+			Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_unit_death"), ITEM_DEFAULT)
+			
+		end,
+		
+		OnStart = function()
+			Util_AutoSave()
+			
+			EventCues_CallToAction("$11180894", CTA_CELEBRATE, EVENTS.Subutai_Arrives, nil, sg_player_villagers, 40, nil, MUS_STING_TRIUMPHANT) -- Subutai and the Mongol camp have arrived!
+		end,
+		
+		IsComplete = function()
+			visibleGroups[1] = SGroup_IsUnderAttackByPlayer(sg_forward_guard_01, player1, 1)
+			visibleGroups[2] = SGroup_IsUnderAttackByPlayer(sg_forward_guard_02, player1, 1)
+			visibleGroups[3] = SGroup_IsUnderAttackByPlayer(sg_forward_guard_03, player1, 1)
+			_AreAmbushersUnderAttack = function()
+				for i = 1, 3, 1 do
+					if visibleGroups[i] then
+						ambushers_attacked = true
+						return true
+					end
+				end
+				return false
+			end
+			
+			return _AreAmbushersUnderAttack()
+		end,
+		
+		PreComplete = function()
+			--Batu attack while the UI is doing its thing
+			DissolveModuleIntoModule("batu_start", "batu_attack")
+			
+			if not Objective_IsComplete(SOBJ_BatuTimer) then
+				Objective_Complete(SOBJ_BatuTimer, false)
+			end
+		end,
+		
+		OnComplete = function()
+			--Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, batu_attack.sgroup)
+			Sound_PlayWallaChargeOnSGroup(batu_attack.sgroup)
+			
+			--Play objective complete VO
+			if ambushers_attacked == true then
+				Util_StartIntel(EVENTS.On_Go_Button)
+			else
+				Util_StartIntel(EVENTS.Timer_RunOut)
+			end
+			
+			Rule_AddOneShot(ScoutBridge_DelayDrums, 1)
+			
+			Objective_Start(SOBJ_AttackBridge)
+		end,
+	} --This is the segment where the player should build up an army and economy
+	
+	SOBJ_OptRepairBridge = {
+		Title = "$11220623", --Repair the broken bridge
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_DestroyArmy,
+		IsComplete = function()
+			return bridge_is_repaired
+		end,
+		OnComplete = function()
+		end,
+		
+	}
+	SOBJ_OptMangonels = {
+		Title = "$11205782", -- Optional: Build Mangonels to provide ranged area damage
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_DestroyArmy,
+		
+		mangonelCount = 2,
+		
+		SetupUI = function()
+			Objective_SetCounter(SOBJ_OptMangonels, 0, SOBJ_OptMangonels.mangonelCount)
+		end,
+		
+		PreStart = function()
+
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "scar_mangonel", FILTER_KEEP)
+			local mangonelCount = SGroup_CountSpawned(sg_allsquads)
+			Objective_SetCounter(SOBJ_OptMangonels, mangonelCount, SOBJ_OptMangonels.mangonelCount)
+			return mangonelCount >= SOBJ_OptMangonels.mangonelCount
+		end,
+		
+		PreComplete = function()
+			
+		end,
+		
+		OnComplete = function()
+			
+		end,
+	}
+	
+	SOBJ_BatuTimer = {
+		
+		Title = "$11176399", -- Batu Khan is waiting to attack
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DestroyArmy,
+		
+		SetupUI = function()
+			Objective_StartTimer(SOBJ_BatuTimer, COUNT_DOWN, batu_timer, 60)
+			Obj_SetProgressVisible(SOBJ_BatuTimer.ID, true)
+			Obj_SetProgress(SOBJ_BatuTimer.ID, Objective_GetTimerSeconds(SOBJ_BatuTimer) / batu_timer)
+		end,
+		
+		OnStart = function()
+			--Set off a warning when the timer is halfway completed
+			Rule_AddOneShot(ScoutBridge_BatuWarning, (batu_timer / 2))
+		end,
+		
+		IsComplete = function()
+			Obj_SetProgress(SOBJ_BatuTimer.ID, Objective_GetTimerSeconds(SOBJ_BatuTimer) / batu_timer)
+			return Objective_GetTimerSeconds(SOBJ_BatuTimer) <= 0
+		end,
+		
+		PreComplete = function()
+			if not Objective_IsComplete(SOBJ_SupportBatu) then
+				Objective_Complete(SOBJ_SupportBatu, false)
+			end
+			Obj_SetProgressVisible(SOBJ_BatuTimer.ID, false)
+		end,
+		
+	} --This is where Batu's timer is
+	
+	SOBJ_AttackBridge = {
+		
+		Title = "$11176400", -- Attack across the bridge
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyArmy,
+		
+		Intel_Complete = EVENTS.Assault_Bridge_Complete,
+		
+		SetupUI = function()
+			Objective_AddUIElements(SOBJ_AttackBridge, mkr_ambush_tracking, true, "$11176400") -- Attack across the bridge
+			Obj_SetProgressVisible(SOBJ_AttackBridge.ID, true)
+			Obj_SetProgress(SOBJ_AttackBridge.ID, 0)
+		end,
+		
+		PreStart = function()
+			Music_LockIntensity(MUSIC_TENSE_COMBAT, 30)
+		end,
+		
+		OnStart = function()
+			if Game_GetSPDifficulty() >= GD_NORMAL then
+				Rule_AddInterval(ScoutBridge_BotherPlayerIfIdle, 120)
+			end
+			Rule_AddGlobalEvent(ScoutBridge_StopReinforcingAmbushers, GE_SquadKilled)
+		end,
+		
+		IsComplete = function()
+
+			local initial_sum = ambush_01.highestUnitCount + ambush_02.highestUnitCount + ambush_03.highestUnitCount
+			local current_sum = SGroup_CountSpawned(ambush_01.sgroup) + SGroup_CountSpawned(ambush_02.sgroup) + SGroup_CountSpawned(ambush_03.sgroup)
+			local target_sum = initial_sum * ambush_01.withdrawThreshold
+			
+			Obj_SetProgress(SOBJ_AttackBridge.ID, (current_sum - initial_sum) / (target_sum - initial_sum))
+			
+			--Check if all ambush modules are below their withdrawThreshold
+			return Obj_GetProgress(SOBJ_AttackBridge.ID) >= 1
+			
+		end,
+		
+		PreComplete = function()
+			
+			--Manually set the ambush modules to "retreat" by setting their fallback positions as their target
+			RovingArmy_SetTarget(ambush_01, mkr_left_defend_line_01)
+			RovingArmy_SetTarget(ambush_02, mkr_right_defend_line_01)
+			RovingArmy_SetTarget(ambush_03, mkr_right_defend_line_01)
+			
+			--Play celebration walla on player's units at objective site when it completes
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_ambush_tracking)
+			Sound_PlayWallaCelebrateOnSGroup(sg_allsquads)
+			
+			--Set the minimum combat intensity to tense
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+			
+			Obj_SetProgressVisible(SOBJ_AttackBridge.ID, false) --Hide the progress bar
+			World_SetInteractionStage(1) -- Increase the playable area to include the Hungarian Cart Fort
+		end,
+		
+		OnComplete = function()
+			--Unreveal this area for player 2 since they don't need to see this area anymore.
+			FOW_PlayerUnRevealArea(player2, Marker_GetPosition(mkr_bridge))
+			
+			Objective_Start(SOBJ_DriveArmyBack)
+			
+			-- ACHIEVEMENT UNLOCK - Forgot A Batu - Kill twice as many opponents as Batu's army when assaulting the bridge in the Battle of Mohi
+			local doubleBatuKills = batuKills * 2
+			
+			if subutaiKills >= doubleBatuKills then
+				Game_SendCustomChallengeEvent(player1, CE_ACHIEVSUBUTAIBEATSBATU, 1)
+			end
+			
+			if g_batuDamageMod ~= nil then
+				Modifier_Remove(g_batuDamageMod)
+			end
+			
+		end,
+	} --This is where the player and Batu attack the Hungarian bridge position
+	
+	Objective_Register(SOBJ_ScoutBridge)
+	Objective_Register(SOBJ_EscapeAmbush)
+	Objective_Register(SOBJ_OptRepairBridge)
+	Objective_Register(SOBJ_SupportBatu)
+	Objective_Register(SOBJ_OptMangonels)
+	Objective_Register(SOBJ_BatuTimer)
+	Objective_Register(SOBJ_AttackBridge)
+	Objective_Register(SOBJ_DriveArmyBack)
+	Objective_Register(SOBJ_AssaultTheCamp)
+	
+end
+
+function ScoutBridge_CanPlayerSeeAmbushUnits()
+
+	--Checks to see if any of the ambushers are visible
+	local ambusher_groups = {
+		sg_cavgroup_left,
+		sg_cavgroup_right,
+		sg_forward_guard_01,
+		sg_forward_guard_02,
+		sg_forward_guard_03
+	}
+	
+	local _AreAnyAmbushersVisible = function()
+		local enemy_spotted = false
+		for i = 1, #ambusher_groups, 1 do
+			if Player_CanSeeSGroup(player1, ambusher_groups[i], ANY) then
+				enemy_spotted = true
+				last_time_seen = World_GetGameTime()
+
+				break
+			end
+		end
+		return enemy_spotted
+	end
+	
+
+	if _AreAnyAmbushersVisible() then
+		if not player_spotted then
+			--Designate the player as spotted and increase the pursue distance for the aggressive cavalry 
+			player_spotted = true
+			ScoutBridge_AmbushWalla()
+			
+			--Set music intensity
+			Music_PlayStinger("mus_stinger_event_combat_threat")
+			Music_SetIntensityAfterObjective(2, MUSIC_COMBAT)
+			
+			--Start the escape ambush objective set
+			Objective_Complete(SOBJ_ScoutBridge, false)
+			Objective_Start(SOBJ_EscapeAmbush)
+			
+		end
+		
+		return true
+	else 
+		return false
+	end
+end
+
+function ScoutBridge_SpawnStructures()
+	
+	--This function handles the spawning of the player's structures at the start of the base building phase
+	local _SpawnSquadAndMove = function(squad_bp, spawn_marker, destination_marker)
+		UnitEntry_DeploySquads(player1, sg_playerBuildings, {sbp = squad_bp, numSquads = 1, destination = destination_marker}, spawn_marker)
+	end
+	
+	_SpawnSquadAndMove(SBP.MONGOL.BUILDING_TOWN_CENTER_CAPITAL_MOVING_MON, mkr_town_center, mkr_dest_tc)
+	_SpawnSquadAndMove(SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON, mkr_town_center, mkr_dest_barracks)
+	_SpawnSquadAndMove(SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON, mkr_town_center, mkr_dest_stable)
+	_SpawnSquadAndMove(SBP.MONGOL.BUILDING_HOUSE_MOVING_MON, mkr_town_center, mkr_dest_pasture)
+	_SpawnSquadAndMove(SBP.MONGOL.BUILDING_WONDER_AGE1_KURULTAI_MOVING_MON, mkr_town_center, mkr_dest_landmark1)
+	
+	-- Flag that the player has gotten buildings
+	g_playerBuildingsGranted = true
+
+end
+
+function ScoutBridge_BatuWarning()
+	
+	--This function is called halfway through the preparation timer to remind the player that Batu is waiting to attack
+	
+	if not Objective_IsComplete(SOBJ_SupportBatu) then
+		Util_StartIntel(EVENTS.Batu_Halfway)
+	end
+	
+end
+
+function ScoutBridge_DelayDrums()
+	Music_PlayStinger("mus_camp_cust_mongol_drum_short_cavalry_dry")
+end
+
+function ScoutBridge_AmbushWalla()
+	Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, sg_forward_guard_01)
+	Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, sg_forward_guard_02)
+	Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, sg_forward_guard_03)
+end
+
+function ScoutBridge_BotherPlayerIfIdle(context, data)
+	
+	--This function is designed to bother the player if they are busy idling in their base while Batu is fighting to cross the bridge
+	--It is assumed to have been called after giving the player a grace period to launch the attack
+	
+	if not Objective_IsComplete(SOBJ_AttackBridge) and not Objective_IsFailed(SOBJ_AttackBridge) then
+		
+		--Check if the ambusher groups haven't been attacked by the player in the past 120 seconds
+		if not SGroup_IsUnderAttackByPlayer(sg_forward_guard_01, player1, 120) and 
+			not SGroup_IsUnderAttackByPlayer(sg_forward_guard_02, player1, 120) and
+			not SGroup_IsUnderAttackByPlayer(sg_forward_guard_03, player1, 120) then
+			
+			--If there are no players nearby, spawn the group of annoying units
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_ford_defend, 100)
+			if SGroup_CountSpawned(sg_temp) <= 0 then
+				
+				local roving_army = {
+					type = "RovingArmy",
+					descriptor = "Hungarian_Ambush_SallyGroup",
+					player = player2,
+					targets = {mkr_enemy_attack_zone},
+					units = {
+						{ type = "scar_spearman", numSquads = Util_DifVar({5, 6, 8, 12})},
+					},
+					spawnLocation = mkr_ford_defend,
+					onDeathDissolve = true,
+				}
+				
+				RovingArmy_Init(roving_army)
+				
+				--Play a VO reminder to the player to get attackin'
+				if subutai_alone_reminder ~= true then
+					subutai_alone_reminder = true
+					Util_StartIntel(EVENTS.Subutai_Alone)
+				end
+			end
+			
+		end
+		
+	else
+		Rule_RemoveMe() --The objective has been complete, so we don't need to keep sending out annoying attacks
+	end
+		
+end
+
+function ScoutBridge_StopReinforcingAmbushers(context, data)
+	
+	local victim = context.victim
+	local killer = context.killer
+	
+	if not World_OwnsSquad(victim) and Squad_GetPlayerOwner(victim) == player2 then
+		if killer ~= nil and not World_OwnsEntity(killer) and Entity_GetPlayerOwner(killer) == player1 then
+			if SGroup_ContainsSquad(ambush_01.sgroup, victim.SquadID, true) or SGroup_ContainsSquad(ambush_02.sgroup, victim.SquadID, true) or SGroup_ContainsSquad(ambush_03.sgroup, victim.SquadID, true) then
+				
+				ambush_01.reinforcements.enabled = false
+				ambush_02.reinforcements.enabled = false
+				ambush_03.reinforcements.enabled = false
+				
+				ambush_01.withdrawThreshold = 0.4
+				ambush_02.withdrawThreshold = 0.4
+				ambush_03.withdrawThreshold = 0.4
+				
+				ambush_01.onDeathDissolve = true
+				ambush_02.onDeathDissolve = true
+				ambush_03.onDeathDissolve = true
+	
+				Rule_RemoveMe()
+				
+			end
+		end
+	end
+	
+end
+
+function ScoutBridge_SpawnFlankAmbushers()
+	if not Objective_IsComplete(SOBJ_ScoutBridge) then
+		Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_enemy_flank_zone)
+		if SGroup_CountSpawned(sg_temp) > 0 then
+			--Spawn a roving army module
+			local _units = {
+				{ type = "scar_manatarms", numSquads = 10 },
+				{ type = "scar_crossbowman", numSquads = 8 },
+			}
+			
+			local moduleData = {
+				type = "RovingArmy",
+				descriptor = "RovingArmy_Flankers",
+				player = player2,
+				targets = { mkr_enemy_flank_zone },
+				units = _units,
+				spawnLocation = mkr_enemy_flank_spawner,
+				onDeathDissolve = true,
+			}
+			
+			RovingArmy_Init(moduleData)
+			
+			Rule_RemoveMe()
+		end
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function ScoutBridge_DelayedPursuerTargetUpdate()
+	RovingArmy_AddTarget(bela_cavgroup_left, mkr_enemy_attack_zone)
+	RovingArmy_AddTarget(bela_cavgroup_right, mkr_enemy_attack_zone)
+end
+
+function ScoutBridge_HasPlayerSeenCavalryRecently()
+	if Player_CanSeeSGroup(player1, sg_cavgroup_left, ANY) or Player_CanSeeSGroup(player1, sg_cavgroup_right, ANY) then
+		last_time_seen = World_GetGameTime()
+	else
+		if last_time_seen ~= nil and (World_GetGameTime() - last_time_seen >= 15) then
+			return false
+		end
+	end
+	
+	return true
+end

@@ -1,0 +1,369 @@
+
+
+
+
+
+function MovePlan_RegisterPlan()
+	
+	local movePlan = {
+		
+		name = "Move",
+		
+		phases = {
+			
+			FormUp = {
+				startFunction = MovePlan_FormUpPhase_Start,
+				aiNotificationFunction = MovePlan_FormUpPhase_Notification,
+				endFunction = MovePlan_FormUpPhase_End,
+			},
+			
+			Move = {
+				startFunction = MovePlan_MovePhase_Start,
+				aiNotificationFunction = MovePlan_MovePhase_Notification,
+				endFunction = MovePlan_MovePhase_End,
+			},
+
+			Intercept = {		-- units met en route while moving to target
+				startFunction = MovePlan_InterceptPhase_Start,
+				aiNotificationFunction = MovePlan_InterceptPhase_Notification,
+				endFunction = MovePlan_InterceptPhase_End,
+			},
+			
+		},
+		
+		start = MovePlan_Start,
+		preprocessGoalData = MovePlan_ProcessGoalData,
+		
+		defaultGoalData = {
+			
+			target = REQUIRED,		-- not exactly a value, but this will throw an error if the user leaves this out
+			
+			formUpRange = 10,
+			destroy_buildings = false,
+			attackMove = false,
+			maxIdleTime = 2,
+		},		
+		
+	}
+	
+	Encounter_RegisterPlan(movePlan)
+	
+end
+
+
+function MovePlan_ProcessGoalData(goal, encounter)
+
+	-- add a range if we don't already have one
+	if goal.range == nil then 
+		
+		local defaultRange = 20	
+		
+		if scartype(goal.target) == ST_MARKER then	
+			goal.range = math.max(Marker_GetProximityRadiusOrDefault(goal.target, defaultRange), defaultRange)
+		else
+			goal.range = defaultRange 
+		end
+	end
+	
+	if goal.attackMove == true then 
+		goal.attackMove = attackMoveStyle_attackEverything
+	elseif goal.attackMove == false or goal.attackMove == nil then 
+		goal.attackMove = attackMoveStyle_ignoreEverything
+	end
+	
+end
+
+
+function MovePlan_Start(encounter)		-- decide which phase to start this encounter in
+	
+	local goal = encounter.goal 
+
+	if (scartype(goal.target) == ST_SGROUP and SGroup_CountSpawned(goal.target) == 0)
+	or (scartype(goal.target) == ST_EGROUP and EGroup_CountSpawned(goal.target) == 0) then 
+		
+		_Encounter_Finish(encounter, true, "success")
+		return 
+		
+	end
+	
+	
+	if Prox_AreSquadsNearMarker(encounter.sgroup, Util_GetPosition(goal.target), ALL, goal.range) then					-- units are already at the target area 
+		_Encounter_Finish(encounter, true, "success")
+	elseif Prox_AreSquadsNearMarker(encounter.sgroup, Util_GetPosition(encounter.sgroup), ALL, goal.formUpRange) then	-- units are close enough together to jump straight to the Move phase
+		_Encounter_TransitionToPhase(encounter, "Move")
+	else																												-- otherwise, form up first
+		_Encounter_TransitionToPhase(encounter, "FormUp")
+	end
+	
+end
+
+
+
+
+
+--
+-- Form Up Phase
+--
+
+function MovePlan_FormUpPhase_Start(encounter, options)
+	
+	local goal = encounter.goal 
+
+	if (scartype(goal.target) == ST_SGROUP and SGroup_CountSpawned(goal.target) == 0)
+	or (scartype(goal.target) == ST_EGROUP and EGroup_CountSpawned(goal.target) == 0) then 
+		
+		_Encounter_Finish(encounter, true, "success")
+		return 
+		
+	end
+	
+		
+	local scratchpad = encounter.scratchpad	
+	scratchpad.formUpPosition = Util_GetPosition(encounter.sgroup)
+
+	local aiEncounter = AI_CreateRestoreEncounter(encounter.player, AIEncounterType_FormationPhase, encounter.encounterID)
+	
+	AIEncounter_ResourceGuidance_SquadGroup(aiEncounter, encounter.sgroup)
+	AIEncounter_MoveGuidance_EnableAggressiveMove(aiEncounter, false)
+	AIEncounter_EngagementGuidance_SetMaxIdleTime(aiEncounter, 0.0)
+	
+	-- set small target area for form up, to ensure they make a formation
+	AIEncounter_TargetGuidance_SetTargetLeash(aiEncounter, math.max(goal.formUpRange, 15))
+	AIEncounter_TargetGuidance_SetTargetArea(aiEncounter, math.max(goal.formUpRange, 15))
+	AIEncounter_TargetGuidance_SetTargetPosition(aiEncounter, scratchpad.formUpPosition)
+	
+	-- make sure 99% are in area, do not wait for command to finish
+	AIEncounter_FormationPhaseGuidance_SetMoveExitParams(aiEncounter, 0, 0.9, 0.0)
+	
+	-- create move task for everyone
+	AIEncounter_FormationTaskStateGuidance_Move(aiEncounter, false, 0, 0, 0, 0, {})
+
+	-- trigger the encounter
+	AIEncounter_Notify_SetPlayerEventEncounterID(aiEncounter, encounter.callbackID)
+	AIEncounter_Trigger(aiEncounter)
+	
+end
+
+function MovePlan_FormUpPhase_Notification(encounter, context)
+	
+	if context.notificationType == AIEncounterNotification_Success then
+		
+		_Encounter_TransitionToPhase(encounter, "Move")
+		
+	elseif context.notificationType == AIEncounterNotification_Failure then
+		
+		_Encounter_Finish(encounter, true, "fail")
+		
+	end	
+	
+end
+
+function MovePlan_FormUpPhase_End(encounter)
+
+	-- clean up (remove rules, etc)
+	
+end
+
+
+
+
+
+
+--
+-- Move Phase
+--
+function MovePlan_MovePhase_Start(encounter, options)
+
+	local goal = encounter.goal 
+	local attackMoveStyle = goal.attackMove
+	
+	if (scartype(goal.target) == ST_SGROUP and SGroup_CountSpawned(goal.target) == 0)
+	or (scartype(goal.target) == ST_EGROUP and EGroup_CountSpawned(goal.target) == 0) then 
+		
+		_Encounter_Finish(encounter, true, "success")
+		return 
+		
+	end
+
+	local aiEncounter = AI_CreateRestoreEncounter(encounter.player, AIEncounterType_FormationPhase, encounter.encounterID)
+	
+	AIEncounter_ResourceGuidance_SquadGroup(aiEncounter, encounter.sgroup)
+	AIEncounter_MoveGuidance_EnableAggressiveMove(aiEncounter, false)	
+	AIEncounter_EngagementGuidance_SetMaxIdleTime(aiEncounter, 0.0)
+	
+
+	if attackMoveStyle.shouldAttackMoveToTarget == true then 
+		-- scan range 50m
+		-- combat fitness threshold - do you even care to stop for something so weak - 0 means 0% expected losses for the encounter's units (not the enemy), 1 means 100% expected losses
+		-- enemy heading within 30 degree cone towards us OR
+		-- enemy within 120 degree forward cone OR 
+		-- enemy within 15m 
+
+		AIEncounter_FormationPhaseGuidance_SetMoveEnemiesExitParams(aiEncounter, attackMoveStyle.scanRange, attackMoveStyle.combatFitnessThreshold, attackMoveStyle.enemyHeadingCone, attackMoveStyle.scanCone, attackMoveStyle.distance, attackMoveStyle.excludedBuildings)
+	end
+		
+
+	AIEncounter_TargetGuidance_SetTarget(aiEncounter, goal.target, encounter.sgroup)
+	AIEncounter_TargetGuidance_SetTargetArea(aiEncounter, goal.range)	
+	AIEncounter_TargetGuidance_SetTargetLeash(aiEncounter, 30.0)								-- leash isn't really used, target area can be used to determine squads at destination
+	
+
+	AIEncounter_FormationPhaseGuidance_SetMoveExitParams(aiEncounter, 0, 0.25, 0.0)				-- wait for commands to finish
+	
+	AIEncounter_FormationTaskStateGuidance_Move(aiEncounter, false, 0, 0, 0, 0, {})				-- create one move task
+	
+	-- trigger the encounter
+	AIEncounter_Notify_SetPlayerEventEncounterID(aiEncounter, encounter.callbackID)
+	AIEncounter_Trigger(aiEncounter)
+	
+end
+
+
+function MovePlan_MovePhase_Notification(encounter, context)
+
+	if context.notificationType == AIEncounterNotification_Success then
+		
+		_Encounter_Finish(encounter, true, "success")
+		
+	elseif context.notificationType == AIEncounterNotification_Failure then
+		
+		local reason = AIEncounter_FormationPhase_GetEndReason(context.encounterID)
+		
+		if reason == AIFormationPhaseEncounter_EndReason_CombatThreshold or reason == AIFormationPhaseEncounter_EndReason_WasAttacked then
+			
+			-- TODO: Get combat threshold and either attack (i.e. go to Intercept phase) or run away (a new phase I'd need to write)
+
+			local attackMoveStyle = encounter.goal.attackMove
+			
+			SGroup_Clear(sg_temp)
+			EGroup_Clear(eg_temp)
+
+			AIEncounter_FormationPhase_GetEnemiesAtEnd(context.encounterID, sg_temp, eg_temp)
+			
+			for i, building in ipairs(attackMoveStyle.excludedBuildings) do
+				EGroup_Filter(eg_temp, building, FILTER_REMOVE)
+			end
+			
+			local attackPosition = nil
+
+			if SGroup_Count(sg_temp) > 0 then
+				attackPosition = SGroup_GetPosition(sg_temp)		
+			elseif EGroup_Count(eg_temp) > 0 then
+				attackPosition = EGroup_GetPosition(eg_temp)	
+			end
+			
+			local options = {
+				targetArea = attackPosition,
+				targetRange = attackMoveStyle.scanRange,
+				targetLeashRange = attackMoveStyle.scanRange + 10,
+			}
+			_Encounter_TransitionToPhase(encounter, "Intercept", options)
+			
+		else
+			
+			_Encounter_Finish(encounter, true, "fail")
+			
+		end
+		
+	end		
+	
+end
+
+
+
+function MovePlan_MovePhase_End(encounter)
+
+	-- clean up (remove rules, etc)
+
+end
+
+
+
+
+
+
+
+
+
+
+--
+-- Intercept Phase
+--
+
+function MovePlan_InterceptPhase_Start(encounter, options)
+
+	local goal = encounter.goal 
+
+	if (scartype(goal.target) == ST_SGROUP and SGroup_CountSpawned(goal.target) == 0)
+	or (scartype(goal.target) == ST_EGROUP and EGroup_CountSpawned(goal.target) == 0) then 
+		
+		_Encounter_Finish(encounter, true, "success")
+		return 
+		
+	end
+	
+	local aiEncounter = AI_CreateRestoreEncounter(encounter.player, AIEncounterType_FormationPhase, encounter.encounterID)
+	AIEncounter_ResourceGuidance_SquadGroup(aiEncounter, encounter.sgroup)
+	AIEncounter_MoveGuidance_EnableAggressiveMove(aiEncounter, true)
+	
+	AIEncounter_EngagementGuidance_SetMaxIdleTime(aiEncounter, 2.0)
+	
+	AIEncounter_TargetGuidance_SetTargetPosition(aiEncounter, options.targetArea)		-- using a position here (instead of the squads themselves) to avoid kiting
+	AIEncounter_TargetGuidance_SetTargetArea(aiEncounter, options.targetRange)
+	AIEncounter_TargetGuidance_SetTargetLeash(aiEncounter, options.targetLeashRange)
+	
+
+	
+	-- timeout not used
+	--- destroy target not used (its a position)
+	-- enemy squads must be cleared
+	-- enemy buildings will be cleared
+	-- scan for enemy range 40m
+	local attackMoveStyle = goal.attackMove
+	AIEncounter_FormationPhaseGuidance_SetCombatExitParams(aiEncounter, 0, false, true, attackMoveStyle.attackBuildings, options.targetRange, attackMoveStyle.excludedBuildings)
+	
+	-- create min range task for archers, priority 1 is higher so these will get squads first	
+	local minRangeTypes = {"archer", "crossbowman"}
+	local archerPriorityBag = BP_GetAIFormationTargetPriorityBlueprint("archer_target_priority") -- currently unused by required by the API
+	AIEncounter_FormationTaskStateGuidance_MinRange(aiEncounter, 1, 0, 0, 0, 2.0, true, minRangeTypes, archerPriorityBag)
+
+	-- create attack move task for everyone else in groups with maximum 4 squads, types can be mixed
+	AIEncounter_FormationTaskStateGuidance_Move(aiEncounter, true, 0, 0, 4, 0, {})	
+	
+	-- trigger the encounter
+	AIEncounter_Notify_SetPlayerEventEncounterID(aiEncounter, encounter.callbackID)
+	AIEncounter_Trigger(aiEncounter)
+
+end
+
+
+function MovePlan_InterceptPhase_Notification(encounter, context)
+
+	if context.notificationType == AIEncounterNotification_Success then
+		
+		_Encounter_TransitionToPhase(encounter, "FormUp")		-- reforms the group, then carries on to the Move phase
+		
+	elseif context.notificationType == AIEncounterNotification_Failure then
+		
+		_Encounter_Finish(encounter, true, "fail")
+		
+	end
+	
+end
+
+
+function MovePlan_InterceptPhase_End(encounter)
+
+	-- clean up (remove rules, etc)
+	
+end
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,246 @@
+--
+-- Moscow - Prepare for the Mongols
+--
+
+
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+
+function Refugees_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_Refugees = {
+	
+		Title = 11192933, --Hold the city while the citizens escape
+		Type = OT_Primary,
+		PreStart = Refugees_PreStart,
+		OnStart = Refugees_OnStart,
+		Intel_Complete = EVENTS.Citizens_Cleared,
+		--IsComplete = Prepare_IsComplete,
+		--OnComplete = Prepare_OnComplete,
+		--IsFailed = Prepare_IsFailed,
+		--OnFail = Prepare_OnFail,
+	}
+	
+	SOBJ_MongolBlockade = {
+	
+		Title = 11192934, --Defeat Mongols blocking the path
+		Type = OT_Secondary,
+		Parent = OBJ_Refugees,
+		StartAlongsideParent = false,
+	}
+		
+	Objective_Register(OBJ_Refugees)
+	Objective_Register(SOBJ_MongolBlockade)
+		
+end
+
+-----------------------
+--OBJECTIVE FUNCTIONS--
+-----------------------
+
+function Refugees_PreStart()
+	Util_StartIntel(EVENTS.MongolFinalFight_Part3)
+end
+
+function Refugees_OnStart()	
+	if Rule_Exists(RefugeesIntro) then
+		Rule_Remove(RefugeesIntro)
+		SGroup_Destroy(sg_refugees)
+	end
+	
+	refugeesSpawned = 0
+	RefugeesOutro()
+	Player_GetAllSquadsNearMarker(player3, sg_spawned_notescaped, mkr_escape_radius)
+	SGroup_Filter(sg_spawned_notescaped, SBP.RUS.UNIT_PRINCE_DMITRI_CMP_RUS, FILTER_REMOVE)
+	--Timer_Start("refugeeTimer", 180)
+	protectRefugees = HintPoint_Add(sg_spawned_notescaped, true, 11192935, 5, nil, "icons/objectives/objective" ) --Protect the Fleeing Citizens
+	Rule_AddInterval(EnsureFleeing, 3)
+	Obj_SetProgressVisible(OBJ_Refugees.ID, true)
+	Rule_AddInterval(Track_RefugeeCount, 1)
+	Refugee_FearWalla() --Fear walla SFX
+end
+
+-----------------------
+-----INTRO REFUGEES----
+-----------------------
+
+function RefugeesIntro() --Starts spawning villagers to flee into Moscow, loops until the villager cap has been met.
+	refugeesSpawned = refugeesSpawned or 0
+	
+	t_refugeeSpawns = AllMarkers_FromName("mkr_refugee_spawn", "")
+	
+	if refugeesSpawned <= 50 then
+		local spawnLocation = Util_GetRandomPosition(Table_GetRandomItem(t_refugeeSpawns), true)
+		local spawnAmount = World_GetRand(1, 2)
+		SGroup_Clear(sg_refugeestemp)
+		UnitEntry_DeploySquads(player3, sg_refugees, {{type = "scar_villager", numSquads = spawnAmount, sgroup = sg_refugeestemp}}, spawnLocation)
+		Cmd_MoveToAndDestroy(sg_refugeestemp, Table_GetRandomItem(t_villagerDestroy))
+		Modify_UnitSpeed(sg_refugeestemp, (World_GetRand(100, 200)/100))
+		refugeesSpawned = refugeesSpawned+spawnAmount
+		--Rule_AddOneShot(RefugeesIntro, (World_GetRand(10,150)/100))		
+	end
+	
+	if refugeesSpawned >= 50 and SGroup_CountSpawned(sg_refugees) <= 0 then
+		Util_StartIntel(EVENTS.RefugeesArrived)
+	elseif refugeesSpawned < 50 then
+		Rule_AddOneShot(RefugeesIntro, (World_GetRand(10,150)/100))
+	elseif refugeesSpawned >= 50 and SGroup_CountSpawned(sg_refugees) > 0 then
+		Rule_AddOneShot(RefugeesIntro, 8)
+		HelpStuckRefugees(sg_refugees)
+	end
+end
+
+function HelpStuckRefugees(sg_refstuck)
+	local _CheckStuck = function(gid, index, sid)
+		if Squad_IsMoving(sid) == false then
+			SGroup_Single(sg_single, sid)
+			Cmd_MoveToAndDestroy(sg_single, Table_GetRandomItem(t_villagerDestroy))
+		end
+	end
+	SGroup_ForEach(sg_refstuck, _CheckStuck)
+end
+
+--Intro Refugee Call to Actions--
+
+function Refugees_CTA()
+	--Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_outer_southeast_gate, 30)
+	if Player_CanSeeSGroup(player1, sg_refugees, ANY) then
+		--local spottedPos = nil	
+		--local _Seen = function(gid, idx, sid)
+			--if Player_CanSeeSquad(player1, sid, ANY) then
+				--spottedPos = sid
+			--end
+		--end
+			
+		--SGroup_ForEach(sg_refugees, _Seen)
+		Rule_RemoveMe()
+		Refugee_FearWalla() --Screm
+		Rule_AddOneShot(Refugee_CTA_Activate, 6)
+		
+	end
+end
+
+-- Plays individual fear wall on fleeing refugees.
+function Refugee_FearWalla() 
+	Player_GetAll(player3)
+	local refugeeCount = SGroup_CountSpawned(sg_allsquads)
+	if SGroup_CountSpawned(sg_allsquads) > 0 then
+		local t_fearSFX = {"sfx_walla_villager_panic_female_hah", "sfx_walla_villager_panic_male_hah"} --sfx_walla_villager_panic_female_hah, sfx_walla_villager_panic_male_hah
+		local randSquad = SGroup_GetRandomSpawnedSquad(sg_allsquads)
+		Sound_PlayOnSquad(Table_GetRandomItem(t_fearSFX), randSquad)
+		local scaledRandInterval = (World_GetRand(5, 10)+(refugeesSpawned-refugeeCount))/5
+		Rule_AddOneShot(Refugee_FearWalla, scaledRandInterval)
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function Refugee_CTA_Activate()
+	EventCues_CallToAction(11182636, CTA_UNIQUE_CHANGE, EVENTS.Refugees, EVENTS.RefugeesInteract, mkr_CTA_refugees, 20, "icons/cta/illustrations/12_mongols_charging") --Refugees fleeing the Mongols have started arriving!
+	Sound_Play2D("sfx_campaign_scripted_small_group_fear")
+	Sound_Play2D("mus_stinger_campaign_alert")
+end
+
+-----------------------
+-----OUTRO REFUGEES----
+-----------------------
+
+function RefugeesOutro() --Starts spawning villagers to flee out of Moscow, loops until the villager cap has been met.
+	
+	refugeesSpawned = refugeesSpawned or 0
+	
+	if refugeesSpawned < t_difficulty.escapingVillagers then
+		local spawnLocation = Table_GetRandomItem(t_villagerDestroy)
+		local spawnAmount = World_GetRand(1, 2)
+		SGroup_Clear(sg_refugeestemp)
+		local TradeCart_Chance = function()
+			if World_GetRand(1, 50) >= 50 then
+				return "scar_trade_cart"
+			else
+				return "scar_villager"
+			end
+		end
+		local spawnType = TradeCart_Chance()
+		UnitEntry_DeploySquads(player3, sg_refugees, {{type = spawnType, numSquads = spawnAmount, sgroup = sg_refugeestemp}}, spawnLocation)
+		Cmd_MoveToAndDestroy(sg_refugeestemp, mkr_outro_departure)
+		Modify_UnitSpeed(sg_refugeestemp, (World_GetRand(100, 200)/100))
+		Rule_AddSGroupEvent(RefugeesRemaining, sg_refugeestemp, GE_SquadKilled)
+		refugeesSpawned = refugeesSpawned+spawnAmount
+		--Rule_AddOneShot(RefugeesIntro, (World_GetRand(10,150)/100))
+	end
+	
+	if refugeesSpawned < t_difficulty.escapingVillagers then--and SGroup_CountSpawned(sg_refugees) <= 0 then
+		Rule_AddOneShot(RefugeesOutro, World_GetRand(50, 100)/100)
+	end
+	
+	--refugeesSpawned = refugeesSpawned+spawnAmount
+	
+	--Objective_RemoveUIElements(OBJ_Refugees, protectRefugees)
+	--protectRefugees = Objective_AddUIElements(OBJ_Refugees, sg_refugees, true, LOC("Protect"), true, 5)
+	
+	--MissionTutorial_SelectAll()
+end
+
+function Track_RefugeeCount() --Tracks how many villagers have made it out of Moscow and completes the mission when they've all made it.
+	Player_GetAllSquadsNearMarker(player3, sg_spawned_notescaped, mkr_escape_radius)
+	SGroup_Filter(sg_spawned_notescaped, SBP.RUS.UNIT_PRINCE_DMITRI_CMP_RUS, FILTER_REMOVE)
+	Obj_SetProgress(OBJ_Refugees.ID, (refugeesSpawned-SGroup_CountSpawned(sg_spawned_notescaped))/t_difficulty.escapingVillagers) --Timer_GetElapsed("refugeeTimer")/120)
+	
+	Player_GetAll(player3)
+	SGroup_RemoveGroup(sg_allsquads, sg_spawned_notescaped)
+	Rule_RemoveSGroupEvent(RefugeesRemaining, sg_allsquads)
+	
+		-- Achievement Unlock (if walls are not breached)	
+	if b_outerCityBreached == false then
+		Game_SendCustomChallengeEvent(player1, CE_ACHIEVSTOPMONGOLENTERCITY, 1)
+	end 
+	
+	if refugeesSpawned-SGroup_CountSpawned(sg_spawned_notescaped) >= t_difficulty.escapingVillagers then --Timer_GetElapsed("refugeeTimer") >= 120 then
+		Rule_RemoveMe()
+		Music_Stop()
+		Rule_Remove(MongolAttacks_BreachedUnits)
+		MongolAttacks_StopCountdownToFailure()
+		Objective_Stop(OBJ_MoscowDefense)
+		Objective_Complete(OBJ_Refugees)
+		--Util_StartIntel(EVENTS.Citizens_Cleared)
+	end
+		
+end
+
+function RefugeesRemaining(context) --Decriments the count of spawned villagers when one dies. (Dead villagers shouldn't count as escaped)
+	refugeesSpawned = refugeesSpawned-1
+	if Rule_Exists(RefugeesOutro) ~= true then
+		Rule_AddOneShot(RefugeesOutro, World_GetRand(50, 100)/100)
+	end
+end
+
+function RampUpEndingDanger() --If most of the villagers have spawned and the player's walls still stand, removes the retraints on the Mongol armies.
+	if b_innerwallBreached == false then
+		if refugeesSpawned >= (t_difficulty.escapingVillagers*0.75) then
+			Rule_RemoveMe()
+			Modifier_Remove(khanCineSpeed)
+			Cmd_FormationAttackMove(sg_khansarmy, mkr_innercity_target, true)
+			--RovingArmy_SetTarget(MissionOMatic_FindModule("KhansArmy"), mkr_innercity_target)
+			b_EndingComplete = true
+		end
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function EnsureFleeing() -- Checks for any villagers who have stopped moving and forces them to keep moving.
+	local _CheckMoving = function(gid, index, sid)
+		if Squad_IsMoving(sid) ~= true then
+			SGroup_Single(sg_single, sid)
+			Cmd_MoveToAndDestroy(sg_single, mkr_outro_departure)
+		end
+	end
+	
+	SGroup_ForEach(sg_refugees, _CheckMoving)
+end

@@ -1,0 +1,150 @@
+
+DISABLE_SPAWN_MARKERS = false	-- If true will disable the new spawn method and instead revert back to the old method.
+
+eTerrainType = {
+	invalid = -1,
+	sky = 0,
+	land = 1,
+	water = 2,
+	max = 2
+}
+
+-----------------------------------------------------------------------
+--
+-- Helper functions for using dynamic spawn markers.
+--
+-----------------------------------------------------------------------
+
+function DynamicSpawning_IsEnabled()
+	return DISABLE_SPAWN_MARKERS ~= true and dist_dynamic_spawn_marker ~= nil
+end
+
+-- Filter function to be used when gathering spawn markers, discards markers that are below a minimum distance to any player start position.
+function DynamicSpawning_FilterByPlayerStartDistance(marker_entity, context_data)
+	
+	local minDistance = context_data
+	local markerPos = Entity_GetPosition(marker_entity)
+	
+	-- Find shortest distance to player start.
+	local closestPlayerIndex = 1
+	local closestPlayerDistance = World_GetWidth() * 2
+	
+	for playerIndex = 1, World_GetPlayerCount() do
+		
+		local playerStartPos = Player_GetStartingPosition(World_GetPlayerAt(playerIndex))
+		local playerStartDistance = Util_GetDistance(playerStartPos, markerPos)
+		
+		if playerStartDistance < closestPlayerDistance then
+			closestPlayerDistance = playerStartDistance
+			closestPlayerIndex = playerIndex
+		end
+	end
+	
+	-- If distance is too short discard, otherwise mark for insert.
+	return closestPlayerDistance >= minDistance
+end
+
+-- Fills the provided output table with both land and water spawn markers. filter_function_cb should be a function that accepts 2 params (which will
+-- be the marker entity and context data) and returns a bool, true to insert the marker, false to discard. Can be nil to get all markers with no
+-- filtering. context_data will be passed through to the filter function and can be any data needed by the filter function itself, if filter_function_cb
+--  is nil then this won't be used and can also be nil.
+function DynamicSpawning_GatherAllSpawnMarkers(output_table, filter_function_cb, context_data)
+	
+	if dist_dynamic_spawn_marker ~= nil then
+		for markerIndex = 1, EGroup_Count(dist_dynamic_spawn_marker) - 1 do
+			
+			local markerEntity = EGroup_GetEntityAt(dist_dynamic_spawn_marker, markerIndex)
+			local insertMarker = true
+			
+			-- Run the entity through the user filter
+			if (filter_function_cb ~= nil) then
+				insertMarker = filter_function_cb(markerEntity, context_data)
+			end
+			
+			-- Add to the output table
+			if (insertMarker) then
+				table.insert(output_table, markerEntity)
+			end
+		end
+	end
+end
+
+ -- Same as DynamicSpawning_GatherAllSpawnMarkers but only gathers markers on land.
+function DynamicSpawning_GatherLandSpawnMarkers(output_table, filter_function_cb, context_data)
+	
+	if dist_dynamic_spawn_marker ~= nil then
+		for markerIndex = 1, EGroup_Count(dist_dynamic_spawn_marker) - 1 do
+			
+			local markerEntity = EGroup_GetEntityAt(dist_dynamic_spawn_marker, markerIndex)
+			local markerPosition = Entity_GetPosition(markerEntity);
+			local terrainType = World_GetTerrainCellType(markerPosition.x, markerPosition.z) -- 0 == sky, 1 == land, 2 == water/sea
+			
+			if (terrainType == eTerrainType.land) then
+				
+				local insertMarker = true
+				
+				-- Run the entity through the user filter
+				if (filter_function_cb ~= nil) then
+					insertMarker = filter_function_cb(markerEntity, context_data)
+				end
+				
+				-- Add to the output table
+				if (insertMarker) then
+					table.insert(output_table, markerEntity)
+				end
+			end
+		end
+	end
+end
+
+ -- Same as DynamicSpawning_GatherAllSpawnMarkers but only gathers markers on water.
+function DynamicSpawning_GatherWaterSpawnMarkers(output_table, filter_function_cb, context_data)
+	
+	if dist_dynamic_spawn_marker ~= nil then
+		for markerIndex = 1, EGroup_Count(dist_dynamic_spawn_marker) - 1 do
+			
+			local markerEntity = EGroup_GetEntityAt(dist_dynamic_spawn_marker, markerIndex)
+			local markerPosition = Entity_GetPosition(markerEntity);
+			local terrainType = World_GetTerrainCellType(markerPosition.x, markerPosition.z) -- 0 == sky, 1 == land, 2 == water/sea
+			
+			if (terrainType == eTerrainType.water) then
+				
+				local insertMarker = true
+				
+				-- Run the entity through the user filter
+				if (filter_function_cb ~= nil) then
+					insertMarker = filter_function_cb(markerEntity, context_data)
+				end
+				
+				-- Add to the output table
+				if (insertMarker) then
+					table.insert(output_table, markerEntity)
+				end
+			end
+		end
+	end
+end
+
+-- Sets provided markers to be visible or invisible, useful for debugging (only works if the marker blueprint is set to be visible in game).
+function DynamicSpawning_DebugSetMarkerVisibility(marker_table, visibility)
+	
+	if dist_dynamic_spawn_marker ~= nil then
+		for _, markerEntity in pairs(marker_table) do
+			Entity_VisHide(markerEntity, visibility ~= true)
+		end
+	end
+end
+
+-- Sets all the markers to be visible or invisible, useful for debugging (only works if the marker blueprint is set to be visible in game).
+function DynamicSpawning_DebugSetMarkerVisibilityAll(visibility)
+	
+	if dist_dynamic_spawn_marker ~= nil then
+		for markerIndex = 1, EGroup_Count(dist_dynamic_spawn_marker) - 1 do
+			
+			local markerEntity = EGroup_GetEntityAt(dist_dynamic_spawn_marker, markerIndex)
+			Entity_VisHide(markerEntity, visibility ~= true)
+		end
+	end
+end
+
+

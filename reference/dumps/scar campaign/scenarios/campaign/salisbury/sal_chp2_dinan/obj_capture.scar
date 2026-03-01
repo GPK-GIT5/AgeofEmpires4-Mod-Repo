@@ -1,0 +1,336 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("sal_chp2_dinan.scar")
+import("sal_chp2_dinan.events")
+import("training_sal_chp2_dinan.scar")
+
+function Capture_InitObjectives()
+
+	OBJ_Capture = {
+		Title = "$999636", -- CAPTURE CHATEAU DE DINAN
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.CaptureStart, -- Handles spawning in enemies and incoming support army
+
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_Destroy)
+		end,
+		OnComplete = function()
+			-- Mission-o-Matic handles playing the outro
+			Mission_Complete()
+		end
+	}
+	
+	SOBJ_March = {
+		Title = "$999637", -- March to the keep
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Capture,
+		StartAlongsideParent = true,
+		SetupUI = March_UI,
+		OnStart = March_Start,
+		--Intel_Start = EVENTS.MarchStart,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_Destroy, false, true)
+		end
+	}
+	
+	SOBJ_Destroy = {
+		Title = "$999642", --999642
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_Capture,
+		StartAlongsideParent = false,
+		SetupUI = Destroy_UI,
+		OnStart = Destroy_Start,
+		Intel_Start = EVENTS.DestroyStart,
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_Capture)
+	Objective_Register(SOBJ_March)
+	Objective_Register(SOBJ_Destroy)
+	
+	OBJ_HeroAbility = {
+		Title = "$999522", -- (Optional) Use Guillaume's Hero Ability
+		Type = ObjectiveType_Optional,
+        OnStart = HeroAbility_Start,
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		end
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_HeroAbility)
+	
+end
+
+-- ///// March //////////////////////////////////////////////
+function March_UI()
+	
+	Objective_AddUIElements(SOBJ_March, mkr_chateau_dinan, true, "$999637", true, 5)
+	Objective_AddGroundReticule(SOBJ_March, mkr_chateau_dinan, Marker_GetProximityRadiusOrDefault(mkr_chateau_dinan, 5), BP_GetReticuleBlueprint("aura_ring"), false)
+end
+
+function March_Start()
+
+	sg_army = SGroup_CreateIfNotFound("sg_army")
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, {"scar_spearman", "scar_horseman", "scar_archer"}, FILTER_KEEP)
+	SGroup_AddGroup(sg_army, sg_allsquads)
+	
+	Goals_SelectDPad()
+	Rule_Add(March_Monitor)
+	Rule_Add(SelectAll_Monitor)
+	Rule_Add(HeroAbility_StartMonitor)
+	
+	Music_LockIntensity(MUSIC_TENSE_COMBAT) --Raise Music Intensity
+end
+
+function SpawnEnemies()
+	
+	sg_enemies = SGroup_CreateIfNotFound("sg_enemies")
+	sg_outpost_enemies = SGroup_CreateIfNotFound("sg_outpost_enemies")
+	sg_garrison = SGroup_CreateIfNotFound("sg_garrison")
+	
+	-- Outpost
+	UnitEntry_DeploySquads(player2, sg_outpost_enemies, {{type = "scar_spearman", numSquads = num_spear_outpost }}, mkr_enemy_outpost_spawn_01)
+	UnitEntry_DeploySquads(player2, sg_outpost_enemies, {{type = "scar_archer", numSquads = num_archers_outpost }}, mkr_enemy_outpost_spawn_02)
+	UnitEntry_DeploySquads(player2, sg_garrison, {{type = "scar_villager", numSquads = num_garrison }}, mkr_enemy_outpost_spawn_garrison)
+	Util_FallBackToGarrisonBuilding(sg_garrison, 15)
+	-- Exterior
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_spearman", numSquads = num_spear_ext }}, mkr_enemy_spearmen_ext_01)
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_archer", numSquads = num_archers_ext_per_mkr }}, mkr_enemy_archers_ext_01)
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_archer", numSquads = num_archers_ext_per_mkr }}, mkr_enemy_archers_ext_02)
+	
+	--Front
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_spearman", numSquads = num_spear_front_per_mkr }}, mkr_enemy_spearmen_front_01)
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_spearman", numSquads = num_spear_front_per_mkr }}, mkr_enemy_spearmen_front_02)
+	
+	--Docks
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_spearman", numSquads = num_spear_docks_per_mkr }}, mkr_enemy_spearmen_docks_01)
+	
+	--Town Center
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_spearman", numSquads = num_spear_tc }}, mkr_enemy_spearmen_tc_01)
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_horseman", numSquads = num_cavalry_tc }}, mkr_enemy_cavalry_tc_01)
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_archer", numSquads = num_archers_tc }}, mkr_enemy_archers_tc_01)
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_horseman", numSquads = num_cavalry_rear }}, mkr_enemy_cavalry_rear_01)
+	
+	--Keep
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_spearman", numSquads = num_spear_keep }}, mkr_enemy_spearmen_keep_01)
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_horseman", numSquads = num_cavalry_keep }}, mkr_enemy_cavalry_keep_01)
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_archer", numSquads = num_archers_keep_per_mkr }}, mkr_enemy_archers_keep_01)
+	UnitEntry_DeploySquads(player2, sg_enemies, {{type = "scar_archer", numSquads = num_archers_keep_per_mkr }}, mkr_enemy_archers_keep_02)
+	
+	StartPatrols()
+	
+end
+
+function StartPatrols() 
+	
+	sg_patrol01 = SGroup_CreateIfNotFound("sg_patrol01")
+	sg_patrol02 = SGroup_CreateIfNotFound("sg_patrol02")
+	
+	local patrol01Module = 
+	{
+		type = "RovingArmy",
+		descriptor = "patrol01",
+		player = player2,
+		sgroup = sg_patrol01,
+		targetingType = ARMY_TARGETING_CYCLE,
+		targets = {
+			mkr_patrol_1a,
+			mkr_patrol_1b,
+			mkr_patrol_1c,
+			mkr_patrol_1d,
+		},			
+		spawnLocation = mkr_patrol_1a,
+		withdrawThreshold = 0,
+		units = 
+		{
+			{type = "scar_spearman", numSquads = num_spear_patrol_01},
+			{type = "scar_archer", numSquads = num_archers_patrol_01},
+		},
+	}
+	RovingArmy_Init(patrol01Module)
+	
+	local patrol02Module = 
+	{
+		type = "RovingArmy",
+		descriptor = "patrol02",
+		player = player2,
+		sgroup = sg_patrol02,
+		targetingType = ARMY_TARGETING_REVERSE,
+		targets = {
+			mkr_patrol_2a,
+			mkr_patrol_2b,
+			mkr_patrol_2c,
+		},			
+		spawnLocation = mkr_patrol_2a,
+		withdrawThreshold = 0,
+		units = 
+		{
+			{type = "scar_spearman", numSquads = num_spear_patrol_02},
+			{type = "scar_archer", numSquads = num_archers_patrol_02},
+		},
+	}
+	RovingArmy_Init(patrol02Module)
+end
+
+function SelectAll_Monitor()
+
+	if Misc_IsSGroupSelected(sg_army, true) then
+		Util_StartIntel(EVENTS.SelectedWholeArmy)
+		Rule_RemoveMe()
+	end
+end
+
+function March_Monitor()
+
+	if Prox_AreSquadsNearMarker(sg_army, mkr_chateau_dinan, false) then
+
+		Objective_Complete(SOBJ_March, false, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+function HeroAbility_StartMonitor()
+
+	if Prox_AreSquadsNearMarker(sg_william, mkr_outpost, false, 50) then
+
+		Objective_Start(OBJ_HeroAbility, false, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+function HeroAbility_Start()
+	
+	Goals_HeroAbility()
+	Rule_AddSGroupEvent(HeroAbility_Monitor, sg_william, GE_AbilityExecuted)
+	Rule_Add(HeroAbilityFail_Monitor)
+	
+end
+
+function HeroAbility_Monitor(context)
+	Objective_Complete(OBJ_HeroAbility, false, true)
+	Rule_RemoveMe()
+end
+
+function HeroAbilityFail_Monitor()
+	
+	local remaining = SGroup_CountSpawned(sg_outpost_enemies)
+	
+	if remaining == 0 then
+
+		Objective_Fail(OBJ_HeroAbility, false, true)
+		Rule_RemoveMe()
+	end
+	
+end
+
+-- ///// Destroy //////////////////////////////////////////////
+function Destroy_UI()
+	
+	Objective_AddUIElements(SOBJ_Destroy, eg_enemy_keep, true, "$11172043", true, 5) -- Destroy the keep
+end
+
+function Destroy_Start()
+
+	--Goals_Destroy()
+	Rule_Add(Destroy_Monitor)
+	Rule_AddInterval(KeepAttacked, 5)
+	
+	Reinforcement_Setup()
+	Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE) --Raise Music Intensity
+	Entity_SetInvulnerableMinCap(EGroup_GetSpawnedEntityAt(eg_enemy_keep, 1), 0.01, 0)
+end
+
+function Destroy_Monitor()
+
+	if EGroup_CountSpawned(eg_enemy_keep) == 0 or Entity_GetHealthPercentage(EGroup_GetSpawnedEntityAt(eg_enemy_keep, 1)) < 0.05 then
+		
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_army)
+		Objective_Complete(SOBJ_Destroy, true, true)
+		Rule_RemoveMe()
+	end
+end
+
+function KeepAttacked()
+	
+	if Prox_ArePlayersNearMarker(player1, mkr_dinan_keep, false, 20) then
+		
+		Cmd_AttackMove(sg_enemies, mkr_dinan_keep)
+		
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Reinforcement_Setup()
+	
+	sg_armySpearmen = Player_GetSquadsFromType( player1, "scar_spearman") 
+	sg_armyHorsemen = Player_GetSquadsFromType( player1, "scar_horseman") 
+	sg_armyArchers = Player_GetSquadsFromType( player1, "scar_archer")
+
+	hasReinforced = false	
+	Rule_AddInterval(Reinforcement_Monitor, 5)
+end
+
+function Reinforcement_Monitor()
+	local spearCount = SGroup_CountSpawned(sg_armySpearmen)
+	local archerCount = SGroup_CountSpawned(sg_armyArchers)
+	local horseCount = SGroup_CountSpawned(sg_armyHorsemen)
+	
+	if(spearCount <= 2) then
+		
+		local sg_spearReinforce = SGroup_CreateUnique()
+		UnitEntry_DeploySquads(player1, sg_spearReinforce, {{type = "scar_spearman", numSquads = 7 }}, mkr_reinforcements_spear_spawn)
+		Cmd_Move(sg_spearReinforce, mkr_chateau_dinan)
+		SGroup_AddGroup(sg_armySpearmen, sg_spearReinforce)
+		
+		if not hasReinforced then
+			EventCues_CallToAction("$11202439", CTA_UNIQUE_CHANGE, nil, nil, sg_spearReinforce, 15)
+			hasReinforced = true
+			
+			Cmd_AttackMove(sg_spearReinforce, mkr_reinforcements_waypoint_01)
+			Cmd_AttackMove(sg_spearReinforce, mkr_reinforcements_waypoint_02, true)
+			Cmd_AttackMove(sg_spearReinforce, mkr_reinforcements_waypoint_03, true)
+			Cmd_AttackMove(sg_spearReinforce, mkr_reinforcements_waypoint_04, true)
+		end
+	end
+	
+	if(archerCount <= 2) then
+		
+		local sg_archerReinforce = SGroup_CreateUnique()
+		UnitEntry_DeploySquads(player1, sg_archerReinforce, {{type = "scar_archer", numSquads = 10 }}, mkr_reinforcements_cav_spawn)
+		Cmd_Move(sg_archerReinforce, mkr_chateau_dinan)
+		SGroup_AddGroup(sg_armyArchers, sg_archerReinforce)
+		
+		if not hasReinforced then
+			EventCues_CallToAction("$11202439", CTA_UNIQUE_CHANGE, nil, nil, sg_archerReinforce, 15)
+			hasReinforced = true
+			
+			Cmd_AttackMove(sg_archerReinforce, mkr_reinforcements_waypoint_01)
+			Cmd_AttackMove(sg_archerReinforce, mkr_reinforcements_waypoint_02, true)
+			Cmd_AttackMove(sg_archerReinforce, mkr_reinforcements_waypoint_03, true)
+			Cmd_AttackMove(sg_archerReinforce, mkr_reinforcements_waypoint_04, true)
+		end
+	end
+	
+	if(horseCount <= 2) then
+		
+		local sg_horseReinforce = SGroup_CreateUnique()
+		UnitEntry_DeploySquads(player1, sg_horseReinforce, {{type = "scar_horseman", numSquads = 10 }}, mkr_reinforcements_archer_spawn)
+		Cmd_Move(sg_horseReinforce, mkr_chateau_dinan)
+		SGroup_AddGroup(sg_armyHorsemen, sg_horseReinforce)
+		
+		if not hasReinforced then
+			EventCues_CallToAction("$11202439", CTA_UNIQUE_CHANGE, nil, nil, sg_horseReinforce, 15)
+			hasReinforced = true
+			
+			Cmd_AttackMove(sg_horseReinforce, mkr_reinforcements_waypoint_01)
+			Cmd_AttackMove(sg_horseReinforce, mkr_reinforcements_waypoint_02, true)
+			Cmd_AttackMove(sg_horseReinforce, mkr_reinforcements_waypoint_03, true)
+			Cmd_AttackMove(sg_horseReinforce, mkr_reinforcements_waypoint_04, true)
+		end
+	end
+end

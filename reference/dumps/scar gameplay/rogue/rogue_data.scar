@@ -1,0 +1,247 @@
+import("missionomatic/missionomatic.scar")
+
+--? Float initial_income_multiplier (default = 1.0) AI's starting income rate will be multiplied by this value. Use this
+--? to tune the initial difficulty of the AI waves. 2.0 would make it twice as hard, 0.5 would make it half as hard.
+--? Float income_scaling_multiplier (default = 1.0) The rate that AI income scales will be multiplied by this value. Use 
+--? to tune the late-game difficulty of the AI waves. 2.0 would make it twice as hard, 0.5 would make it half as hard.
+function RogueData_Init()
+	rogue_wave_strength = rogue_wave_strength or 1.0
+	print("Wave Strength - "..rogue_wave_strength)
+	boon_event_index = boon_event_index or -1
+	boon_event_cue_template = "boon_event"
+	boon_event_cue_sfx = "sfx_ui_vizier_point_notification"
+	
+	debug_round_intervals = true
+	debug_sim_events = true
+	debug_resources = false
+	debug_upgrades = false
+	debug_roamers = true
+	
+	rogue_difficulty = Game_GetSPDifficulty()
+	print("Difficulty - "..Rogue_DifVar({ "Easiest", "Easy", "Intermediate", "Hard", "Hardest", "Ridiculous", "Outrageous", "Absurd" }).." ("..rogue_difficulty..")")
+	
+	conqueror_is_enabled = Game_RogueModeConquerorEnabled()
+	if conqueror_is_enabled then
+		print("Conqueror - Enabled")
+	else
+		print("Conqueror - Disabled")
+	end
+	
+	SIDE_OBJECTIVE_COUNT = 2
+	
+	TICS_PER_SECOND = 8
+	
+	STARTING_MIN_LANES = 1
+	STARTING_MAX_LANES = 1
+	
+	DEFAULT_RESERVE_USAGE = 0.5
+	BOSS_RESERVE_USAGE = 0.75
+	
+	WAVE_UNIT_THRESHOLD_MIN = 800
+	WAVE_UNIT_THRESHOLD_MAX = 1100
+	
+	STARTING_AGE = 1
+	
+	if Util_GetCommandLineArgument("rogue_stress_test") then --extremely fast ramp up for perf debug
+		ROGUE_STRESS_TEST = true
+		print("Stress Test - Enabled")
+	else
+		ROGUE_STRESS_TEST = false
+		print("Stress Test - Disabled")
+	end
+	
+	R_0 =  RogueData_GenerateScalingDifficultyScores(0, 1.20) * rogue_wave_strength 				
+	R_1 = (RogueData_GenerateScalingDifficultyScores(95,  1.35) * rogue_wave_strength) / 60 			
+	R_2 = (RogueData_GenerateScalingDifficultyScores(15,  1.35) * rogue_wave_strength) / (60 ^ 2)		
+	R_3 = (RogueData_GenerateScalingDifficultyScores(0.40,1.35) * rogue_wave_strength) / (60 ^ 3)		
+	R_4 = (RogueData_GenerateScalingDifficultyScores(0.0, 1.35) * rogue_wave_strength) / (60 ^ 4)		
+	R_5 = (RogueData_GenerateScalingDifficultyScores(0.0, 1.35) * rogue_wave_strength) / (60 ^ 5)		
+	R_6 = (RogueData_GenerateScalingDifficultyScores(0.0, 1.35) * rogue_wave_strength) / (60 ^ 6)		
+	
+	ROUNDS_REPEAT_START = 60 * 45 
+	ROUNDS_REPEAT_END = ROUNDS_REPEAT_START -- gets updated when calculated
+	ROUNDS_REPEATED = 9 -- should be a multiple of BREAK_INTERVAL
+	RESOURCE_SCALING_UNTIL = 60 * 45
+	MAX_CADENCE_AT = 60 * 45
+	
+	BOSS_FACTOR = 1.0 -- how much extra time is granted after boss rounds
+	BREAK_FACTOR = 1.0 -- how much extra time is granted when the player gets a break
+	BREAK_INTERVAL = 3 -- how many rounds between breaks
+	
+	ARRIVAL_THRESHOLD_DISTANCE = 60
+	WAVE_STAGING_DURATION = WAVE_STAGING_DURATION or 10
+	
+	SURVIVAL_TIME_BRONZE = 60 * 25
+	SURVIVAL_TIME_SILVER = 60 * 35
+	SURVIVAL_TIME_GOLD = 60 * 45
+	SURVIVAL_TIME_CONQUEROR = 60 * 45
+	
+	LANE_RESOURCE_MODIFIER = 1.1
+	
+	if ROGUE_STRESS_TEST == true then
+		--R_0 = R_0 * 24.0
+		--R_1 = R_1 * 8.0
+		--R_2 = R_2 * 2.5
+		local lane_multiplier = LANE_RESOURCE_MODIFIER ^ 2
+		local s_a = RESOURCE_SCALING_UNTIL - 1
+		local s_b = RESOURCE_SCALING_UNTIL
+		local r_equation_a = R_0 + R_1*s_a + R_2*(s_a^2) + R_3*(s_a^3) + R_4*(s_a^4) + R_5*(s_a^5) + R_6*(s_a^6)
+		local r_equation_b = R_0 + R_1*s_b + R_2*(s_b^2) + R_3*(s_b^3) + R_4*(s_b^4) + R_5*(s_b^5) + R_6*(s_b^6)
+		local resources_per_second = (r_equation_b - r_equation_a) * lane_multiplier
+		
+		R_0 = 0
+		R_1 = resources_per_second
+		R_2 = 0	
+		R_3 = 0	
+		R_4 = 0	
+		R_5 = 0	
+		R_6 = 0
+	end
+	
+	WALK_SPEED = 2.5
+	
+	MASTERY_ENDLESS_MODE_COMPLETE_AT = SURVIVAL_TIME_GOLD + (60 * 15) -- Value for mastery An Empire For the Ages, survive 15 mins into endless mode
+	
+	round_index = 0
+	wave_index = 0
+	subwave_index = 0
+	
+	rounds = {}
+	active_subwaves = {}
+	
+	states = {
+		sim = {},
+		game = {},
+	}
+	states.sim = {
+		second = 0,
+		seconds_since_gathering_started = 0,
+		r_equation = 0,
+		r_equation_previous = 0,
+		resources_per_second = 0,
+		resources_current = 0,
+		resources_total = 0,
+		resource_lane_multiplier = 1,
+		resources_gathered_strings = {},
+		current_age = STARTING_AGE,
+		min_lanes = STARTING_MIN_LANES,
+		max_lanes = STARTING_MAX_LANES,
+		next_lane_count = STARTING_MAX_LANES,
+		events = {},
+		event_index = 1,
+		lane_is_locked = {},
+		lane_is_prioritized = {},
+		boss_waves_queued = 0,
+		gathering_has_started = false,
+		roamer_index = 1
+	}
+	
+	for key, value in pairs(states.sim) do
+		states.game[key] = Clone(value)
+	end
+	
+	sg_wave_units = SGroup_CreateUniqueWithPrefix("sg_wave_units")
+	
+	states.sim.name = "sim"
+	states.game.name = "game"
+	
+	rogue_spawns_queue = {}
+	Rule_Add(SpawnManager_Update)
+	
+	sublane_names = { "left", "center", "right" }
+	
+	wonder_position = Marker_GetPosition(mkr_wonder)
+	
+	defender_sizes = {
+		{ name = "small", multiplier = 1.0 },
+		{ name = "med", multiplier = 2.5, },
+		{ name = "large", multiplier = 6 },
+	}
+	defender_reserve = 0
+	
+	DEFENDER_DIFFICULTY_VALUE = RogueData_GenerateScalingDifficultyScores(120, 1.25)
+	
+	OBJECTIVE_HOSTILES_SIZE_MODIFIER = 6.25
+	sideObjectivesCompleted = 0
+	
+	archtypes = {
+		{ name = "infantry", max_formation_size = 35 },
+		{ name = "cavalry",  max_formation_size = 21 },
+		{ name = "siege", 	 max_formation_size = 4 },
+		{ name = "ram", 	 max_formation_size = 4 },
+	}
+
+	unit_types = {
+		{ name = "militia",	 	 archtype_name = "infantry", wave_role = "tank", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 },
+		{ name = "spearman",	 archtype_name = "infantry", wave_role = "tank", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 },
+		{ name = "horseman", 	 archtype_name = "cavalry",  wave_role = "tank", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 },
+		{ name = "manatarms", 	 archtype_name = "infantry", wave_role = "tank", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 },
+		{ name = "landsknecht",  archtype_name = "infantry", wave_role = "tank", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 },
+		{ name = "knight", 		 archtype_name = "cavalry",  wave_role = "tank", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 },
+		{ name = "onna_bugeisha",archtype_name = "infantry", wave_role = "tank", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 },
+		{ name = "kanabo",		 archtype_name = "infantry", wave_role = "tank", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 },
+		{ name = "archer", 		 archtype_name = "infantry", wave_role = "dps", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 1 },
+		{ name = "crossbowman",  archtype_name = "infantry", wave_role = "dps", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 1 },
+		{ name = "horsearcher",  archtype_name = "cavalry",  wave_role = "dps", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 1 }, -- mongol / japanese / maybe byz
+		{ name = "handcannon", 	 archtype_name = "infantry", wave_role = "dps", 	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 1 },
+		{ name = "ozutsu", 		 archtype_name = "infantry", wave_role = "support",  weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 3 }, -- japanese
+		{ name = "shinobi", 	 archtype_name = "infantry", wave_role = "none",  	 weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 }, -- japanese
+		{ name = "mangonel", 	 archtype_name = "siege", 	 wave_role = "support",  weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 2 },
+		{ name = "springald", 	 archtype_name = "siege",  	 wave_role = "support",  weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 1 },
+		{ name = "trebuchet", 	 archtype_name = "siege",  	 wave_role = "support",  weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 3 },
+		{ name = "bombard", 	 archtype_name = "siege", 	 wave_role = "support",  weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 3 },
+		--{ name = "culverin", 	 archtype_name = "siege", 	 wave_role = "support",  weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 1 }, -- hre
+		{ name = "ribauldequin", archtype_name = "siege", 	 wave_role = "support",  weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 1 }, -- japanese
+		{ name = "ram", 		 archtype_name = "ram", 	 wave_role = "support",  weight_per_age = { 1.0, 1.0, 1.0, 1.0 }, damage_to_buildings = 3 },
+	}
+	
+	boss_archtypes = {
+		{ name = "infantry", scar_type = "scar_rogue_infantry_boss" },
+		{ name = "cavalry",  scar_type = "scar_rogue_cavalry_boss" },
+		{ name = "siege",  scar_type = "scar_rogue_siege_boss" },
+	}
+
+	OBJ_DUMMY = {
+		Title = "Dummy Swords",
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_Defend,
+		IsSecret = true,
+		showTitle = false,
+		StartAlongsideParent = false,
+	} 
+	OBJ_DUMMY_DIAMOND = {
+		Title = "Dummy Diamond",
+		Type = ObjectiveType_Bonus,
+		Parent = OBJ_Defend,
+		IsSecret = true,
+		showTitle = false,
+		StartAlongsideParent = false,
+	} 
+	OBJ_DUMMY_INFORMATION = {
+		Title = "Dummy Information",
+		Type = ObjectiveType_Information,
+		Parent = OBJ_Defend,
+		IsSecret = true,
+		showTitle = false,
+		StartAlongsideParent = false,
+	} 
+	Objective_Register(OBJ_DUMMY)
+	Objective_Register(OBJ_DUMMY_DIAMOND)
+	Objective_Register(OBJ_DUMMY_INFORMATION)
+end
+
+function RogueData_GenerateScalingDifficultyScores(initial_value, multiplier)
+	local values = {}
+	local value = initial_value
+	for i = 1, 8 do
+		table.insert(values, value)
+		value = value * multiplier
+	end
+	return Rogue_DifVar(values)
+end
+
+function RogueData_Cheat_Playtime(seconds)
+	if Misc_IsDevMode() then
+		states.game.second = seconds;
+	end
+end

@@ -1,0 +1,222 @@
+--
+-- Kalka River - 1223 - Ambush Attack
+--
+
+function AmbushAttack_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	SOBJ_KillAllRusAmbushPt = {
+	
+		Title = "$11172162", --Eliminate all the incoming Rus
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyTheRusUltimate,
+		StartAlongsideParent = false, 
+		--Intel_Complete = EVENTS.Lure_Rus_Complete,
+		SetupUI = KillAllRusAmbushPt_UI,
+		OnStart = KillAllRusAmbushPt_Start,
+		
+		PreComplete = function()
+			-- Moved here from alongside the VO to coincide with banner appearance
+			Rule_AddOneShot(Kalka_DelayedAmbushVictoryWalla, 2)
+			-- Play whatever VO is appropriate
+			if g_ambushFailed == true then
+				Util_StartIntel(EVENTS.Lure_Rus_No_Ambush)
+			else
+				Util_StartIntel(EVENTS.Lure_Rus_Complete)
+			end
+		end,
+		
+		OnComplete = KillAllRusAmbushPt_OnComplete,
+	}
+	
+	Objective_Register(SOBJ_KillAllRusAmbushPt)
+	
+end
+
+
+function Kalka_DelayedAmbushVictoryWalla(context, data)
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE,sg_mon_horsearchers )
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE,sg_ambush_group_2 )
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE,sg_ambush_group_3 )
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE,sg_ambush_group_4 )
+end
+
+
+function AmbushAttack_OnStart()
+	
+	FOW_RevealMarker(mkr_reveal_ambush,-1)
+	
+end
+
+function KillAllRusAmbushPt_UI()
+	Objective_SetProgressBar(SOBJ_KillAllRusAmbushPt, 0)
+	hpid_AmbushC = Objective_AddUIElements(SOBJ_KillAllRusAmbushPt, mkr_ambush_point, true,nil,false, nil, nil, nil)
+end
+
+function KillAllRusAmbushPt_Start()
+	
+	Rule_AddOneShot(spawnLateUnits_toRetreat,30)
+	
+	Kalka_InitRusArmyCount()
+	
+	Rule_AddInterval(KillAllRusAmbushPt_Monitor, 1)
+	Rule_AddInterval(Kalka_CheckAllReinforcements, 3)
+	
+	FOW_RevealMarker(mkr_reveal_ambush,-1)
+	
+	Music_LockIntensity(MUSIC_COMBAT_RARE, 30)
+	Sound_SetMusicIntensityScaling(0.6) -- scale the music intensity to 0.6 time than regular as large units 
+	Sound_SetMinimumMusicCombatIntensity(481, 0)
+	
+	Kalka_ModifyRusSpeed(1.25)
+end
+
+function Kalka_InitRusArmyCount()
+	
+	local count_armyLeft = SGroup_CountSpawned(sg_rus_army_2_attack) + SGroup_CountSpawned(sg_rus_army_2_attack_a) + SGroup_CountSpawned(sg_rus_army_2_attack_b) + SGroup_CountSpawned(sg_rus_army_2_attack_c) 
+	local count_armyRight = SGroup_CountSpawned(sg_rus_army_3_attack) + SGroup_CountSpawned(sg_rus_army_3_attack_a) + SGroup_CountSpawned(sg_rus_army_3_attack_b) + SGroup_CountSpawned(sg_rus_army_3_attack_c)
+	local count_armyCenter = SGroup_CountSpawned(sg_rus_army_1_attack) + SGroup_CountSpawned(sg_rus_army_1_attack_a) + SGroup_CountSpawned(sg_rus_army_1_attack_b)
+	
+	rusInitArmyCount = count_armyLeft + count_armyRight + count_armyCenter
+	
+end
+
+function KillAllRusAmbushPt_Monitor()
+
+	local count_armyLeft = SGroup_CountSpawned(sg_rus_army_2_attack) + SGroup_CountSpawned(sg_rus_army_2_attack_a) + SGroup_CountSpawned(sg_rus_army_2_attack_b) + SGroup_CountSpawned(sg_rus_army_2_attack_c) 
+	local count_armyRight = SGroup_CountSpawned(sg_rus_army_3_attack) + SGroup_CountSpawned(sg_rus_army_3_attack_a) + SGroup_CountSpawned(sg_rus_army_3_attack_b) + SGroup_CountSpawned(sg_rus_army_3_attack_c)
+	local count_armyCenter = SGroup_CountSpawned(sg_rus_army_1_attack) + SGroup_CountSpawned(sg_rus_army_1_attack_a) + SGroup_CountSpawned(sg_rus_army_1_attack_b)
+	
+	local rusArmyCount = count_armyLeft + count_armyRight + count_armyCenter
+	
+	
+	local rusKilled = rusInitArmyCount - rusArmyCount
+			
+	if rusKilled > rusKilledPrev then
+		Objective_SetProgressBar(SOBJ_KillAllRusAmbushPt, (rusKilled / rusInitArmyCount))
+		rusKilledPrev = rusKilled
+	end
+	
+	
+	if rusArmyCount <= 25 then
+		
+		Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_ambush_point, 40)
+		local count_front = SGroup_CountSpawned(sg_temp)
+		
+		Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_ambush_point_rear, 40)
+		local count_rear = SGroup_CountSpawned(sg_temp)
+		
+		if rusArmyCount == 0 or count_front + count_rear == 0 then
+			
+			Objective_Complete(SOBJ_KillAllRusAmbushPt)
+			make_units_retreat()
+			Rule_RemoveMe()
+		end
+		
+	elseif rusArmyCount <= rusMergeThreshold and rusHaveMerged == false then
+		
+		rusHaveMerged = true
+		Rule_Remove(Kalka_CheckAllReinforcements)
+		
+		DissolveModuleIntoModule("rus_attack", "rus_attack02")
+		DissolveModuleIntoModule("rus_attack_a", "rus_attack02_a")
+		DissolveModuleIntoModule("rus_attack_b", "rus_attack02_b")
+		
+		DissolveModuleIntoModule("rus_attack03", "rus_attack02")
+		DissolveModuleIntoModule("rus_attack03_a", "rus_attack02_a")
+		DissolveModuleIntoModule("rus_attack03_b", "rus_attack02_b")
+		DissolveModuleIntoModule("rus_attack03_c", "rus_attack02_c")
+	end
+	
+end
+
+function Kalka_CheckAllReinforcements()
+	
+	if rusHaveMerged == false then
+		
+		Kalka_CheckReinforcements("rus_attack")
+		Kalka_CheckReinforcements("rus_attack_a")
+		Kalka_CheckReinforcements("rus_attack_b")
+		
+		Kalka_CheckReinforcements("rus_attack02")
+		Kalka_CheckReinforcements("rus_attack02_a")
+		Kalka_CheckReinforcements("rus_attack02_b")
+		Kalka_CheckReinforcements("rus_attack02_c")
+	end
+end
+
+function Kalka_CheckReinforcements(moduleName)
+	
+	local module = MissionOMatic_FindModule(moduleName)
+	local unitCount = SGroup_CountSpawned(module.sgroup)
+	
+	if unitCount >= 10 and unitCount <= rusReinforceThreshold then
+		
+		local supportModule = MissionOMatic_FindModule(module.support_module)
+		
+		if SGroup_CountSpawned(supportModule.sgroup) >= 15 then
+			
+			local numUnitsToMove = World_GetRand(6, 9)
+			local unitsMovedCount = 0
+			
+			local _CountUnits = function(gid, idx, sid)
+				if unitsMovedCount < numUnitsToMove then
+					unitsMovedCount = unitsMovedCount + 1
+					SGroup_Add(sg_temp, sid)
+				else
+					return true
+				end
+			end
+			
+			SGroup_Clear(sg_temp)
+			SGroup_ForEach(supportModule.sgroup, _CountUnits)
+			
+			Prefab_DoAction(module, "AddSGroup", sg_temp)
+			Prefab_DoAction(supportModule, "RemoveSGroup", sg_temp)
+			SGroup_RemoveGroup(supportModule.sgroup, sg_temp)
+		end
+		
+	end
+	
+end
+
+function KillAllRusAmbushPt_OnComplete()
+	Music_StopMedium()
+	
+	Objective_RemoveUIElements(SOBJ_KillAllRusAmbushPt,hpid_AmbushC)
+	
+	FOW_UnRevealMarker(mkr_reveal_ambush)
+	Rule_Add(CheckMongolApproaching)
+end
+
+function ObjectiveStartNextObj_Enclosed()
+	Objective_Start(SOBJ_KillAllEnclosedRus, true, true)
+end
+
+
+function spawnLateUnits_toRetreat()
+	
+	if Objective_IsComplete(SOBJ_KillAllRusAmbushPt) == false then
+		units = { 
+			{ sbp = SBP.RUS.UNIT_SPEARMAN_1_RUS, numSquads = 10, spawn = mkr_cart_stockade },
+			{ type = "scar_archer", numSquads = 5,spawn = mkr_cart_stockade},
+		}
+		SpawnUnitsToModule(units, "rus_attack04_retreat", mkr_cart_stockade)
+		
+		local _SetVillagerHealth = function(gid, idx, sid)
+			Squad_SetHealth(sid, World_GetRand(30, 80) / 100)
+		end
+		SGroup_ForEach(sg_rus_army_4_toretreat, _SetVillagerHealth)
+	end
+end
+
+function make_units_retreat()
+	
+	if SGroup_CountSpawned(sg_rus_army_4_toretreat) > 0 then 
+		Cmd_Retreat( sg_rus_army_4_toretreat, Marker_GetPosition(mkr_cart_stockade), false)
+		
+		DissolveModuleIntoModule("rus_attack04_retreat", "stockade_defend" )
+	end
+end
+
+
+

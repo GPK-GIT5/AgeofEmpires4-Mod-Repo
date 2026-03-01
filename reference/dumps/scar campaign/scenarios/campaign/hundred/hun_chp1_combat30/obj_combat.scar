@@ -1,0 +1,634 @@
+--
+-- Combat of the Thirty - Combat
+--
+
+
+function Combat_InitObjectives()
+	
+	OBJ_Combat1 = {
+		
+		Title = 11180022, -- "Round 1 - Defeat English Soldiers"
+		Type = ObjectiveType_Battle,
+		OnStart = function()
+			Combat30_RemoveProduction()
+			Combat30_RetreatAllUnselectedChampions()
+			Util_StartIntel(EVENTS["Combat_Start"])
+			Music_LockIntensity(MUSIC_TENSE_RARE)
+			Rule_AddInterval(Combat30_OnSeeEnglishAudioStinger, 2)
+			
+			Rule_AddGlobalEvent(Combat30_OnSquadKilled, GE_SquadKilled)
+			Rule_AddGlobalEvent(Combat30_OnSquadBuilt, GE_BuildItemComplete)
+			
+			Objective_Start(SOBJ_EngUnits1, false, false)
+			Combat30_SelectArmyPath()
+			hint_Combat = Objective_AddUIElements(OBJ_Combat1, mkr_combatring, true, nil, false)
+			Rule_AddInterval(Combat1_PlayerSeesEnemy, 3)
+			Rule_AddInterval(Combat1_EnteredArena, 1)
+			
+			EventCues_CallToAction(11180029, CTA_UNIQUE_STAKES, nil, nil, mkr_combatring, 20, "icons/cta/illustrations/07_raised_stakes_two_knights") -- "Round 1 has begun!"
+			Combat30_CheerBoth()
+			ui_round = Loc_GetString(11180030) -- "ROUND 1"
+			Sound_Play2D("mus_stinger_campaign_triumph_short")
+			--Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+			Combat30_UnitCountUpdate()
+			
+			Rule_AddInterval(Combat30_FirstRoundComplete, 1)
+			b_round1Started = true
+			
+			-- Achievement tracking for Achievement #13 - Du Bois Are Back In Town - Defeat the English in the arena without losing any units
+			Rule_AddGlobalEvent(Combat30_AchievementTracker, GE_SquadKilled)
+			
+		end,
+		PreComplete = function()
+			local leaderSquad = SGroup_GetSquadAt(g_leaderBeaumanoir.sgroup, 1)
+			local leader_is_down = Entity_GetStateModelBool(Squad_GetFirstEntity(leaderSquad), "hero_inactive")
+			if leader_is_down then
+				Missionomatic_FlipLeader(Squad_GetID(leaderSquad))	
+			end
+			SGroup_SetAvgHealth(g_leaderBeaumanoir.sgroup, 1)
+			Combat_UnlockGate()
+			Combat30_CheerBoth()
+			Cmd_Stop(sg_fre_army)
+			Cmd_Stop(sg_eng_army)
+			Util_SetPlayerOwner(sg_eng_army, player5)
+			Rule_AddOneShot(Combat30_ReturnToBase, 1)
+		end,
+		OnComplete = function()
+			Combat30_ChooseBreakVO()
+			Objective_Complete(SOBJ_EngUnits1, false, false)
+			Objective_Start(OBJ_Break1)
+			MissionTutorial_Combat30Blacksmith()
+			Rule_RemoveGlobalEvent(Combat30_AchievementTracker)
+			Rule_AddInterval(Combat1_ReturnedToBase, 4)
+		end,
+	}
+	
+	SOBJ_EngUnits1 = {
+		
+		Title = 11180024, -- "Remaining English Units"
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_Combat1,
+		OnStart = function()
+			Obj_SetProgressVisible(SOBJ_EngUnits1.ID, true)
+			Objective_SetCounter(SOBJ_EngUnits1, 0, 30)
+		end,
+	}
+	
+	OBJ_Break1 = {
+		
+		Title = 11180025, -- "Reinforce Units and Research Technology"
+		Type = OT_Primary,
+		OnStart = function()
+	
+			Combat30_ReaddProduction()
+			Objective_Start(SOBJ_Return, false, false)
+			
+			Modify_PlayerProductionRate(player1, 100)
+			Modify_PlayerProductionRate(player2, 100)
+		end,
+		OnComplete = function()
+			Combat30_RemoveProduction()
+			Objective_Complete(SOBJ_Return, false, false)
+			
+			Music_LockIntensity(MUSIC_TENSE_RARE)
+			
+			Modify_PlayerProductionRate(player1, 0.01)
+			Modify_PlayerProductionRate(player2, 0.01)
+		
+			Objective_Start(OBJ_Combat2)
+			ui_round = Loc_GetString(11180031) -- "ROUND 2"
+		end,
+	}
+	
+	SOBJ_Return = {
+		
+		Title = 11184578, -- "Return to the field when prepared" 
+		Type = OT_Secondary,
+		Parent = OBJ_Break1,
+		OnStart = FreUnits2_Start,
+		Intel_Complete = EVENTS.Combat2,
+	}
+	
+	OBJ_Combat2 = {
+		
+		Title = 11180026, -- "Round 2 - Defeat English Soldiers"
+		Type = ObjectiveType_Battle,
+		OnStart = function()
+			Objective_Start(SOBJ_EngUnits2, false, false)
+			--Rule_AddInterval(Combat30_ReinforceRovingArmy, 20)
+			Combat30_UnitCountUpdate()
+			Combat30_TransferEnglishToAttack()
+			
+			EventCues_CallToAction(11180032, CTA_UNIQUE_STAKES, nil , nil, mkr_combatring, 20, "icons/cta/illustrations/07_raised_stakes_two_knights") -- "Round 2 has begun!"
+			Sound_Play2D("mus_stinger_campaign_triumph_short")
+			--Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+			Combat30_CheerBoth()
+			Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE)
+			
+			b_round2Started = true
+			
+			-- Achievement tracking for Achievement #13 - Du Bois Are Back In Town - Defeat the English in the arena without losing any units
+			--if not Rule_Exists(Combat30_AchievementTracker) then
+			Rule_AddGlobalEvent(Combat30_AchievementTracker, GE_SquadKilled)
+			--end
+			
+		end,
+		OnComplete = function()
+			Rule_RemoveGlobalEvent(Combat30_AchievementTracker)
+			Combat30_GrantAchievement()
+			Combat30_CheerBoth()
+			Objective_Complete(SOBJ_EngUnits2, false, false)
+			Mission_Complete()
+		end,
+	}
+	
+	SOBJ_EngUnits2 = {
+		
+		Title = 11180024, -- "Remaining English Units"
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_Combat2,
+		OnStart = function()
+			Obj_SetProgressVisible(SOBJ_EngUnits2.ID, true)
+			Combat30_UnitCountUpdate()
+		end,
+	}
+	
+	OBJ_DebugComplete = {
+		Title = LOC("Debug Complete"),
+		Type = OT_Primary,
+		showTitle = false,
+		Cheat = function()
+			Combat30_CleanUpIntro()
+			Combat30_SpawnDebugOutroUnits()
+			--Combat30_InitOutro()
+			Util_StartIntel(EVENTS.Victory_Surrender)
+		end,
+	}
+	
+	Objective_Register(OBJ_Combat1)
+	Objective_Register(SOBJ_EngUnits1)
+	Objective_Register(OBJ_Break1)
+	Objective_Register(SOBJ_Return)
+	Objective_Register(OBJ_Combat2)
+	Objective_Register(SOBJ_EngUnits2)
+	Objective_Register(OBJ_DebugComplete)
+	
+end
+
+
+function Combat1_EnteredArena()
+	if Player_AreSquadsNearMarker(player1, mkr_gate) then
+		Rule_RemoveMe()
+		Combat30_TransferEnglishToAttack()
+		Rule_AddInterval(Combat_LockGate, 1)
+	end
+end
+
+function Combat_LockGate()
+	local sg_playerALL = SGroup_CreateUnique()
+	local sg_playerARENA = SGroup_CreateUnique()
+	local sg_englishALL = SGroup_CreateUnique()
+	local sg_englishARENA = SGroup_CreateUnique()
+	Player_GetAll(player1, sg_playerALL, eg_allentities)
+	Player_GetAllSquadsNearMarker(player1, sg_playerARENA, mkr_gate)
+	Player_GetAll(player5, sg_englishALL, eg_allentities)
+	Player_GetAllSquadsNearMarker(player5, sg_englishARENA, mkr_gate)
+	if SGroup_CountSpawned(sg_playerALL) == SGroup_CountSpawned(sg_playerARENA)
+		and SGroup_CountSpawned(sg_englishALL) == SGroup_CountSpawned(sg_englishARENA) then
+		Rule_RemoveMe()
+		Missionomatic_SetGateLock(eg_arenagates, true)
+	elseif SGroup_CountSpawned(sg_playerALL) ~= SGroup_CountSpawned(sg_playerARENA) then
+		SGroup_RemoveGroup(sg_playerALL, sg_playerARENA)
+		Cmd_FormationMove(sg_playerALL, mkr_fre_arena_start)
+	end
+	
+	SGroup_Destroy(sg_playerALL)
+	SGroup_Destroy(sg_playerARENA)
+	SGroup_Destroy(sg_englishALL)
+	SGroup_Destroy(sg_englishARENA)
+end
+
+function Combat_UnlockGate()
+	Missionomatic_SetGateLock(eg_arenagates, false)
+end
+
+function Combat1_PlayerSeesEnemy()
+	if SGroup_IsUnderAttack(sg_fre_army, ANY, 5) or Player_AreSquadsNearMarker(player1, mkr_center) then
+		Objective_RemoveUIElements(OBJ_Combat1, hint_Combat)
+		Rule_RemoveMe()
+	end
+end
+
+function Combat1_ReturnedToBase()
+	sg_fre_all = SGroup_CreateIfNotFound("sg_fre_all")
+	sg_fre_inbase = SGroup_CreateIfNotFound("sg_fre_inbase")
+	Player_GetAll(player1, sg_fre_all)
+	Player_GetAllSquadsNearMarker(player1, sg_fre_inbase, mkr_inbase)
+	SGroup_RemoveGroup(sg_fre_all, sg_fre_inbase)
+	if SGroup_IsEmpty(sg_fre_all) then
+		SGroup_SetAvgHealth(sg_fre_army, 1)
+		SGroup_SetAvgHealth(sg_eng_army, 1)
+		SGroup_SetAvgHealth(sg_p3_army, 1)
+		Rule_AddInterval(Combat1_ReturnedToField, 2)
+		Rule_RemoveMe()
+		Rule_Remove(Combat30_FrenchReturntoBaseLoop)
+	end
+end
+
+function Combat1_ReturnedToField()
+	if Player_AreSquadsNearMarker(player1, mkr_gate) then
+		Rule_RemoveMe()
+		Objective_Complete(SOBJ_Return, false)
+		Rule_AddOneShot(Combat30_CompleteBreak, 18)
+		Combat30_ReturnToField()
+	end
+end
+
+function Combat30_CompleteBreak()
+	Objective_Complete(OBJ_Break1, false)
+end
+
+function Combat30_UnitCountUpdate()
+	Player_GetAll(player2, sg_eng_army)
+	local engCount = SGroup_Count(sg_eng_army)
+	
+	if Objective_IsStarted(OBJ_Combat2) then
+		Objective_SetCounter(SOBJ_EngUnits2, (30 - engCount), 30)
+		Obj_SetProgress(SOBJ_EngUnits2.ID, (30 - engCount) / 30)
+	elseif Objective_IsStarted(OBJ_Combat1) then
+		Objective_SetCounter(SOBJ_EngUnits1, (30 - engCount), 30)
+		Obj_SetProgress(SOBJ_EngUnits1.ID, (30 - engCount) / 30)
+	end
+	--Combat30_ShowScoreUI()	
+end
+
+function Combat30_ChooseBreakVO()
+	local closeThreshold = 3
+	
+	if freKills > (engKills + closeThreshold) then
+		Util_StartIntel(EVENTS["Break1"])
+	elseif engKills > (freKills + closeThreshold) then
+		Util_StartIntel(EVENTS["Break1_FrenchLoss"])
+	else
+		Util_StartIntel(EVENTS["Break1_Even"])
+	end
+end
+
+
+function Combat30_ReturnToBase()
+	Player_GetAll(player5, sg_p3_army)	
+	SGroup_RemoveGroup(sg_p3_army, sg_eng_crowd)
+	Cmd_FormationMove(sg_p3_army, mkr_enggate, false)
+	Cmd_FormationMove(sg_p3_army, mkr_engbase, true)
+	Cmd_FormationMove(sg_fre_army, mkr_enggate, false)
+	Rule_AddInterval(Combat30_FrenchReturntoBaseLoop, 1)
+end
+
+function Combat30_FrenchReturntoBaseLoop()
+	if Util_GetDistance(sg_fre_army, mkr_frerally) > 10 then
+		Cmd_FormationMove(sg_fre_army, mkr_frerally)
+	end
+	if Objective_IsComplete(OBJ_Break1) then
+		Rule_RemoveMe()
+	end
+end
+
+function Combat30_RemoveProduction()
+	Util_SetPlayerOwner(eg_fre_production, player3)
+end
+
+function Combat30_ReaddProduction()
+	Util_SetPlayerOwner(eg_fre_production, player1)
+end
+
+function Combat30_ReturnToField()
+	Player_GetAll(player5, sg_eng_army)
+	SGroup_RemoveGroup(sg_eng_army, sg_eng_crowd)
+	--Cmd_FormationMove(sg_eng_army, mkr_eng_rally)
+	MoveToAndRespectFacing(sg_eng_army, mkr_eng_rally)
+	Rule_AddInterval(Combat_LockGate, 1)
+end
+
+function Combat30_TransferEnglishToAttack()
+	Player_GetAll(player5, sg_eng_army)
+	SGroup_RemoveGroup(sg_eng_army, sg_eng_crowd)
+	SGroup_SetPlayerOwner(sg_eng_army, player2)
+	Player_GetAll(player2, sg_eng_army)
+	RovingArmy_AddSGroup(MissionOMatic_FindModule("Attack1"), sg_eng_army)
+end
+
+
+function Combat30_OnSquadKilled(context)
+
+	local victim = context.victim	
+	local killer = context.killer
+	if Squad_GetPlayerOwner(victim) == player2 then
+		Combat30_CheerFrench()
+		if firstKill then
+			firstKill = false
+		end
+		freKills = freKills + 1
+	end	
+	if Squad_GetPlayerOwner(victim) == player1 then
+		Combat30_CheerEnglish()
+		engKills = engKills + 1
+	end
+	Rule_AddOneShot(Combat30_UnitCountUpdate, 0.25)
+	Rule_AddOneShot(Combat30_EliminationCheck, 1)
+end
+
+function Combat30_OnSquadBuilt(context)
+	
+	Player_GetAll(player2, sg_eng_army)
+	Player_GetAll(player1, sg_fre_army)
+	
+	Rule_AddOneShot(Combat30_UnitCountUpdate, 0.25)
+end
+
+function Combat30_EliminationCheck()
+	if outro_inprogress == false then
+		if b_round2Started == true then
+			Player_GetAll(player1, sg_fre_army)
+			if SGroup_Count(sg_eng_army) == 0 then
+				outro_inprogress = true
+				Objective_Complete(OBJ_Combat2)
+			elseif SGroup_Count(sg_fre_army) == 0 then
+				outro_inprogress = true
+				Mission_Fail()
+				Sound_Play2D("sfx_campaign_scripted_crowd_beds_stop")
+				Sound_Play2D("sfx_campaign_scripted_crowd_cheering_stop")
+			end
+		end
+	end
+end
+
+function Combat30_ReinforceRovingArmy()
+	if Objective_IsStarted(OBJ_Break1) and not Objective_IsComplete(OBJ_Break1) then
+		Rule_RemoveMe()
+	else
+		Player_GetAll(player2, sg_eng_army)	
+		RovingArmy_AddSGroup(MissionOMatic_FindModule("Attack1"), sg_eng_army)
+	end
+end
+
+function Combat30_RebuildToCounter()
+	local module = MissionOMatic_FindModule("DefendEngBase")
+	local highestKillCount = 0
+	local highestKillCountType = "scar_spearman"
+	local bestComposition = nil
+	local unitCompositions = {
+		{ --MAA/Spear
+			{ type = "scar_manatarms", numSquads = 15 },
+			{ type = "scar_spearman", numSquads = 15 },
+		},
+		{ --Horse/Spear
+			{ type = "scar_spearman", numSquads = 15 },
+			{ type = "scar_horseman", numSquads = 9 },
+			{ type = "scar_manatarms", numSquads = 6 },
+		},
+		{ --Knights/Horse/Spear
+			{ type = "scar_spearman", numSquads = 10 },
+			{ type = "scar_horseman", numSquads = 14 },
+			{ type = "scar_knight", numSquads = 6 },
+		},
+		{ --Knights/MAA/Spear
+			{ type = "scar_spearman", numSquads = 10 },
+			{ type = "scar_manatarms", numSquads = 14 },
+			{ type = "scar_knight", numSquads = 5 },
+		},
+	}
+	
+	if Game_GetSPDifficulty() <= GD_EASY then --Just rebuild default for Easy
+		bestComposition = { --Easy
+			{ type = "scar_spearman", numSquads = 5, 								spawn = mkr_engspawn_1 },
+			{ type = "scar_manatarms", numSquads = 2, 								spawn = mkr_engspawn_2 },
+			{ type = "scar_spearman", numSquads = 2, 								spawn = mkr_engspawn_2 },
+			{ type = "scar_spearman", numSquads = 5, 								spawn = mkr_engspawn_3 },
+			{ sbp = BP_GetSquadBlueprint("unit_manatarms_3_hre"), numSquads = 6, 	spawn = mkr_engspawn_4 },
+			{ type = "scar_spearman", numSquads = 5, 								spawn = mkr_engspawn_5 },
+			{ type = "scar_spearman", numSquads = 5, 								spawn = mkr_engspawn_6 },
+		}
+	else -- On Medium/Hard, rebuild to a counter
+		for k in pairs(combat30_unitKillCount) do
+			if combat30_unitKillCount[k] > highestKillCount then
+				highestKillCountType = k
+				highestKillCount = combat30_unitKillCount[k]
+			end
+		end
+		
+		if highestKillCountType == "scar_spearman" then
+			bestComposition = unitCompositions[World_GetRand(3,4)]		
+		elseif highestKillCountType == "scar_manatarms" then
+			bestComposition = unitCompositions[World_GetRand(6,7)]	
+		elseif highestKillCountType == "scar_horseman" then
+			bestComposition = unitCompositions[World_GetRand(1,3)]		
+		elseif highestKillCountType == "scar_knight" then
+			bestComposition = unitCompositions[World_GetRand(1,3)]		
+		end
+	end
+	
+	Reinforcement_SetIdealComposition(module, bestComposition)
+	MissionOMatic_RequestUnits(module, {units = Reinforcement_GenerateReplacementUnitList(module, module.idealComposition), where = module.position })
+end
+
+
+function Combat30_SpawnDebugOutroUnits()
+	Player_GetAll(player1)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	Player_GetAll(player2)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	
+	debugUnitTable = {
+		{ type = "scar_spearman", numSquads = 10 },
+		{ type = "scar_archer", numSquads = 6 },
+		{ type = "scar_manatarms", numSquads = 5 },
+		{ type = "scar_horseman", numSquads = 4 },
+	}
+	
+	UnitEntry_DeploySquads(player1, sg_fre_army, debugUnitTable, mkr_frebase)
+end
+
+function Combat30_InitOutro()
+	sg_outro_villagercheer = SGroup_CreateIfNotFound("sg_outro_villagercheer")
+	sg_outro_villagercheer02 = SGroup_CreateIfNotFound("sg_outro_villagercheer02")
+	
+	outro_knights01 = SGroup_CreateIfNotFound("outro_knights01")
+	outro_knights02 = SGroup_CreateIfNotFound("outro_knights02")
+	outro_manatarms01 = SGroup_CreateIfNotFound("outro_manatarms01")
+	outro_manatarms02 = SGroup_CreateIfNotFound("outro_manatarms02")
+	outro_spearman01 = SGroup_CreateIfNotFound("outro_spearman01")
+	outro_spearman02 = SGroup_CreateIfNotFound("outro_spearman02")
+	outro_villager = SGroup_CreateIfNotFound("outro_villager")
+	outro_knights01_far = SGroup_CreateIfNotFound("outro_knights01_far")
+	outro_knights02_far = SGroup_CreateIfNotFound("outro_knights02_far")
+	outro_manatarms01_far = SGroup_CreateIfNotFound("outro_manatarms01_far")
+	outro_manatarms02_far = SGroup_CreateIfNotFound("outro_manatarms02_far")
+	outro_spearman01_far = SGroup_CreateIfNotFound("outro_spearman01_far")
+	outro_spearman02_far = SGroup_CreateIfNotFound("outro_spearman02_far")
+	outro_villager_far = SGroup_CreateIfNotFound("outro_villager_far")
+	sg_outro_units = SGroup_CreateIfNotFound("sg_outro_units")
+	sg_outro_beaumanoir = SGroup_CreateIfNotFound("sg_outro_beaumanoir")
+	sg_outro_knight01 = SGroup_CreateIfNotFound("sg_outro_knight01")
+	sg_outro_knight02 = SGroup_CreateIfNotFound("sg_outro_knight02")
+	sg_outro_knight03 = SGroup_CreateIfNotFound("sg_outro_knight03")
+	sg_outro_knight04 = SGroup_CreateIfNotFound("sg_outro_knight04")
+	sg_outro_scout = SGroup_CreateIfNotFound("sg_outro_scout")
+	sg_fre_blois = SGroup_CreateIfNotFound("sg_fre_blois")
+	sg_fre_charruel = SGroup_CreateIfNotFound("sg_fre_charruel")
+	sg_fre_rochefort = SGroup_CreateIfNotFound("sg_fre_rochefort")
+	sg_fre_arrel = SGroup_CreateIfNotFound("sg_fre_arrel")
+	
+	UnitEntry_DeploySquads(player3, sg_outro_villagercheer, {type = "scar_villager", numSquads = 6}, mkr_outro_villager_cheer)
+	UnitEntry_DeploySquads(player3, sg_outro_villagercheer02, {type = "scar_villager", numSquads = 4}, mkr_outro_villager_cheer02)
+	
+	UnitEntry_DeploySquads(player1, sg_fre_beaumanoir, { sbp = SBP.FRENCH.UNIT_JEAN_DE_BEAUMANOIR_CMP_FRE }, mkr_outro_beaumanoir)
+	
+	UnitEntry_DeploySquads(player1, sg_fre_blois, { sbp = SBP.FRENCH.UNIT_GEOFFROY_DU_BLOIS_CMP_FRE, numSquads = 1}, mkr_outro_knight01)
+	UnitEntry_DeploySquads(player1, sg_fre_charruel, { sbp = SBP.FRENCH.UNIT_YVES_CHARRUEL_CMP_FRE, numSquads = 1}, mkr_outro_knight02)
+	UnitEntry_DeploySquads(player1, sg_fre_rochefort, { sbp = SBP.FRENCH.UNIT_GUY_DE_ROCHEFORT_CMP_FRE, numSquads = 1}, mkr_outro_knight03)
+	UnitEntry_DeploySquads(player1, sg_fre_arrel, { sbp = SBP.FRENCH.UNIT_OLIVIER_ARREL_CMP_FRE, numSquads = 1}, mkr_outro_knight04)
+	
+	SGroup_EnableLeaderCrown(sg_fre_beaumanoir, false)
+	SGroup_EnableLeaderCrown(sg_fre_blois, false)
+	SGroup_EnableLeaderCrown(sg_fre_charruel, false)
+	SGroup_EnableLeaderCrown(sg_fre_rochefort, false)
+	SGroup_EnableLeaderCrown(sg_fre_arrel, false)
+	
+	Rule_AddOneShot(Combat30_Outro_Parade, 5)
+	
+	UnitEntry_DeploySquads(player1, sg_outro_scout, {type = "scar_scout", numSquads = 1}, mkr_outro_scout)
+	
+	Rule_AddOneShot(Combat30_Outro_Scout, 8)
+	
+end
+
+function Combat30_Outro_Scout()
+	
+	Modify_UnitSpeed(sg_outro_scout, 0.4)
+	
+	Cmd_FormationMove(sg_outro_scout, mkr_outro_scout_mid01, false)
+	Cmd_FormationMove(sg_outro_scout, mkr_outro_scout_mid02, true)
+	Cmd_FormationMove(sg_outro_scout, mkr_outro_scout_dest, true)
+	
+end
+
+function Combat30_Outro_Parade()
+	
+	local parade_markers = {
+		mkr_outro_parade_target01,
+		mkr_outro_parade12,
+		mkr_outro_parade_target02,
+		mkr_outro_parade_target03,
+		mkr_outro_parade_target04,
+		mkr_outro_parade_target05,
+	}
+	
+	local units = {
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outro_parade06, sgroup = outro_knights01},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outro_parade05, sgroup = outro_knights02},
+		{type = "scar_manatarms", numSquads = 3, spawn = mkr_outro_parade04, sgroup = outro_manatarms01},
+		{type = "scar_manatarms", numSquads = 2, spawn = mkr_outro_parade03, sgroup = outro_manatarms02},
+		{type = "scar_spearman", numSquads = 2, spawn = mkr_outro_parade07, sgroup = outro_spearman02},
+		{type = "scar_villager", numSquads = 3, spawn = mkr_outro_parade01, sgroup = outro_villager},
+		{type = "scar_spearman", numSquads = 3, spawn = mkr_outro_parade02, sgroup = outro_spearman01},
+	}
+	
+	--UnitEntry_DeploySquads(player1, sg_outro, units, mkr_outro_parade01)
+	
+	Util_UnitParade (parade_markers, units)
+	--Modify_UnitSpeed(sg_allsquads, 0.75) -- Knights: 0.3. Infantry: 0.5
+	Modify_UnitSpeed(outro_knights01, 0.3)
+	Modify_UnitSpeed(outro_knights02, 0.3)
+	Modify_UnitSpeed(outro_manatarms01, 0.36)
+	Modify_UnitSpeed(outro_manatarms02, 0.36)
+	Modify_UnitSpeed(outro_spearman01, 0.33)
+	Modify_UnitSpeed(outro_spearman02, 0.33)
+	Modify_UnitSpeed(outro_villager, 0.3)
+	
+	local parade_markers02 = {
+		mkr_outro_parade_target03,
+		mkr_outro_parade_target04,
+		mkr_outro_parade_target05,
+	}
+	
+	
+	local units_far = {
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outro_parade13, sgroup = outro_knights02_far},
+		{type = "scar_manatarms", numSquads = 2, spawn = mkr_outro_parade12, sgroup = outro_manatarms01_far},
+		{type = "scar_manatarms", numSquads = 2, spawn = mkr_outro_parade11, sgroup = outro_manatarms02_far},
+		{type = "scar_spearman", numSquads = 2, spawn = mkr_outro_parade10, sgroup = outro_spearman01_far},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outro_parade14, sgroup = outro_knights01_far},
+		{type = "scar_spearman", numSquads = 2, spawn = mkr_outro_parade09, sgroup = outro_spearman02_far},
+		{type = "scar_villager", numSquads = 2, spawn = mkr_outro_parade08, sgroup = outro_villager_far},
+	}
+	
+	Util_UnitParade (parade_markers02, units_far)
+	Modify_UnitSpeed(outro_knights01_far, 0.3)
+	Modify_UnitSpeed(outro_knights02_far, 0.3)
+	Modify_UnitSpeed(outro_manatarms01_far, 0.36)
+	Modify_UnitSpeed(outro_manatarms02_far, 0.36)
+	Modify_UnitSpeed(outro_spearman01_far, 0.33)
+	Modify_UnitSpeed(outro_spearman02_far, 0.33)
+	Modify_UnitSpeed(outro_villager_far, 0.3)
+	
+end
+
+function Combat30_AssignToGroup(sgroupid, squadindex, squadid)
+	sgroupAssignIterator = sgroupAssignIterator + 1
+	
+	if sgroupAssignIterator == 3 then
+		sgroupAssignIterator = 0
+		SGroup_Add(sg_fre_outro3, squadid)
+	elseif sgroupAssignIterator == 2 then
+		SGroup_Add(sg_fre_outro2, squadid)
+	elseif sgroupAssignIterator == 1 then
+		SGroup_Add(sg_fre_outro1, squadid)
+	end
+end
+
+function Combat30_OnSeeEnglishAudioStinger()
+	if Player_CanSeeSGroup(player1, sg_eng_army, false) then
+		
+		--Music_PlayStinger("mus_stinger_event_combat_threat")
+		Music_UnlockIntensity()
+		Sound_SetMinimumMusicCombatIntensity(801, 0)
+		
+		Rule_RemoveMe()
+		print("English spotted - removing rule")
+	end
+end
+
+function Combat30_RetreatAllUnselectedChampions()
+	
+	local sgroupData = {
+		{ sgroup = sg_recruit1,			objective1 = SOBJ_Recruit1, objective2 = SOBJ_Recruit1_Optional, },
+		{ sgroup = sg_recruit2,			objective1 = SOBJ_Recruit2, objective2 = SOBJ_Recruit2_Optional, },
+		{ sgroup = sg_recruit3,			objective1 = SOBJ_Recruit3, objective2 = SOBJ_Recruit3_Optional, },
+		{ sgroup = sg_recruit4,			objective1 = SOBJ_Recruit4, objective2 = SOBJ_Recruit4_Optional, },
+		{ sgroup = sg_recruit1_escort,	objective1 = SOBJ_Recruit1, objective2 = SOBJ_Recruit1_Optional, },
+		{ sgroup = sg_recruit2_escort,	objective1 = SOBJ_Recruit2, objective2 = SOBJ_Recruit2_Optional, },
+		{ sgroup = sg_recruit3_escort,	objective1 = SOBJ_Recruit3, objective2 = SOBJ_Recruit3_Optional, },
+		{ sgroup = sg_recruit4_escort,	objective1 = SOBJ_Recruit4, objective2 = SOBJ_Recruit4_Optional, },
+	}
+	
+	for k,v in pairs(sgroupData) do
+		local sgroup = v.sgroup
+		local objective1 = v.objective1
+		local objective2 = v.objective2
+		
+		if Objective_IsComplete(objective1) or Objective_IsComplete(objective2) then
+			Combat30_RetreatRecruitSGroup(sgroup)
+		end
+	end
+end
+
+function Combat30_SelectArmyPath()
+	RovingArmy_SetTargets(MissionOMatic_FindModule("Attack1"), { mkr_combatring_target_a, mkr_combatring_target_b })
+end
+
+function Combat30_FirstRoundComplete()
+	if freKills >= 15 or engKills >= 15 then
+		Rule_RemoveMe()
+		Objective_Complete(OBJ_Combat1)
+	end
+end

@@ -1,0 +1,926 @@
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("obj_approach.scar")
+import("obj_preround.scar")
+import("obj_combat.scar")
+import("diplomacy_hun_chp1_combat30.scar")
+import("training_combat30.scar")
+
+function Mission_SetupVariables()
+	
+	----Debug Params	
+	--breakTimer = 30
+	--combatTimer = 60
+	--popCap = 20
+	
+	g_leaderBeaumanoir = Missionomatic_InitializeLeader({
+		name = 11180019, -- Jean de Beaumanoir
+		owner = player1,
+		neutralHolder = player6,
+	})
+		
+	defendTimer = 90
+	breakTimer = 60
+	combatTimer = 120
+	popCap = 30
+	
+	damageScale = .75
+	REVEAL_RADIUS = 25
+	
+	firstKill = true
+	outro_inprogress = false
+	rochefortTutorialTriggered = false
+	boisTutorialTriggered = false
+	beaumanoir_isslow = false
+	beaumanoirLastDownedVO = World_GetGameTime()
+	
+	last_champion_collected = 0
+	recruitFailedCount = 0
+	recruitedChampions = 0 
+	
+	freKills = 0
+	engKills = 0
+	
+	followerGroupCount = 0
+	followerArray = {}
+	
+	championPanelString = 11195779
+	
+	sg_recruit2_enemies = SGroup_CreateIfNotFound("sg_recruit2_enemies")
+	sg_recruit4_enemies = SGroup_CreateIfNotFound("sg_recruit4_enemies")
+	recrui1_1_modules = {}
+	recrui1_2_modules = {}
+	recrui1_4_modules = {}
+	recruit_module_groups = { recrui1_1_modules, recrui1_2_modules, nil, recrui1_4_modules }
+	
+	sg_eng_army = SGroup_CreateIfNotFound("sg_eng_army")
+	sg_fre_army = SGroup_CreateIfNotFound("sg_fre_army")
+	sg_p3_army = SGroup_CreateIfNotFound("sg_p3_army")
+	sg_fre_hold = SGroup_CreateIfNotFound("sg_fre_hold")
+	
+	sg_fre_champion1 = SGroup_CreateIfNotFound("sg_fre_champion1")
+	sg_fre_champion2 = SGroup_CreateIfNotFound("sg_fre_champion2")
+	sg_fre_champion3 = SGroup_CreateIfNotFound("sg_fre_champion3")
+	
+	sg_fre_beaumanoir = SGroup_CreateIfNotFound("sg_fre_beaumanoir")
+	
+	
+	sg_recruit1 = SGroup_CreateIfNotFound("sg_recruit1")
+	sg_recruit2 = SGroup_CreateIfNotFound("sg_recruit2")
+	sg_recruit3 = SGroup_CreateIfNotFound("sg_recruit3")
+	sg_recruit4 = SGroup_CreateIfNotFound("sg_recruit4")
+	
+	sg_recruit1_escort = SGroup_CreateIfNotFound("sg_recruit1_escort")
+	sg_recruit2_escort = SGroup_CreateIfNotFound("sg_recruit2_escort")
+	sg_recruit3_escort = SGroup_CreateIfNotFound("sg_recruit3_escort")
+	sg_recruit4_escort = SGroup_CreateIfNotFound("sg_recruit4_escort")
+	
+	sg_recruit4_spearmen = SGroup_CreateIfNotFound("sg_recruit4_spearmen")
+	
+	sg_travellers_hold = SGroup_CreateIfNotFound("sg_travellers_hold")
+	
+	sg_fre_crowd = SGroup_CreateIfNotFound("sg_fre_crowd")
+	sg_eng_crowd = SGroup_CreateIfNotFound("sg_eng_crowd")
+	
+	sg_fre_intro = SGroup_CreateIfNotFound("sg_fre_intro")
+	sg_eng_intro = SGroup_CreateIfNotFound("sg_eng_intro")
+	sg_fre_intro_attache = SGroup_CreateIfNotFound("sg_fre_intro_attache")
+	sg_eng_intro_attache = SGroup_CreateIfNotFound("sg_eng_intro_attache")
+	sg_eng_intro_villager_cheer = SGroup_CreateIfNotFound("sg_eng_intro_villager_cheer")
+	sg_fre_intro_villager_cheer = SGroup_CreateIfNotFound("sg_fre_intro_villager_cheer")
+	
+	sg_fre_outro1 = SGroup_CreateIfNotFound("sg_fre_outro1")
+	sg_fre_outro2 = SGroup_CreateIfNotFound("sg_fre_outro2")
+	sg_fre_outro3 = SGroup_CreateIfNotFound("sg_fre_outro3")
+	
+	eg_fre_production = EGroup_CreateIfNotFound("eg_fre_production")
+	eg_fre_invulnerable_buildings = EGroup_CreateIfNotFound("eg_fre_invulnerable_buildings")
+	eg_eng_invulnerable_buildings = EGroup_CreateIfNotFound("eg_eng_invulnerable_buildings")
+	eg_eng_tents = EGroup_CreateIfNotFound("eg_eng_tents")
+	
+	ui_round = "ROUND 1"
+	ui_france_count = "0"
+	ui_england_count = "0"
+	
+	player_reinforcement_counter = 0
+	player_champion_selections = 0
+	
+	t_recruitData = {
+		{
+			id = "reserve1",
+			displayName = "$11196257", -- Olivier Arrel
+			buttontext = "$11190359", --Healing
+			tooltip = "$11199846",
+			tooltip1 = "$11190358",
+			tooltip2 = "$11182407", --%1AMOUNT% Spearmen
+			aidAmount = 9,
+			aidAmount_2 = 0,
+			cost = 0,
+			intel_event = "GetReinforcementsA",
+			intel_played = false,
+			units = {{ type = "scar_spearman", numSquads = 9}, { sbp = SBP.FRENCH.UNIT_OLIVIER_ARREL_CMP_FRE, numSquads = 1}},
+			sgroups = {sg_recruit1, sg_recruit1_escort}
+		},
+		{
+			id = "reserve2",
+			displayName = "$11196258", --Sir Guy de Rochefort
+			buttontext = "$11199851", --Reduce Armor
+			tooltip = "$11199848",
+			tooltip1 = "$11198018",
+			tooltip2 = "$11195781", --%1AMOUNT% Man-at-arms and %2AMOUNT% Spearmen
+			aidAmount = 5,
+			aidAmount_2 = 4,
+			cost = 0,
+			intel_event = "GetReinforcementsB",
+			intel_played = false,
+			units = {{ type = "scar_manatarms", numSquads = 5}, { type = "scar_spearman", numSquads = 4}, { sbp = SBP.FRENCH.UNIT_GUY_DE_ROCHEFORT_CMP_FRE, numSquads = 1}},
+			sgroups = {sg_recruit2, sg_recruit2_escort}
+		},
+		{
+			id = "reserve3",
+			displayName = "$11196256", --Sir Yves Charruel
+			buttontext = "$11189468", --Armor
+			tooltip = "$11199845",
+			tooltip1 = "$11189446",
+			tooltip2 = "$11195782", --%1AMOUNT% Man-at-arms
+			aidAmount = 9,
+			aidAmount_2 = 0,
+			cost = 0,
+			intel_event = "GetReinforcementsC",
+			intel_played = false,
+			units = {{ type = "scar_manatarms", numSquads = 9}, { sbp = SBP.FRENCH.UNIT_YVES_CHARRUEL_CMP_FRE, numSquads = 1}},
+			sgroups = {sg_recruit3, sg_recruit3_escort}
+		},
+		{
+			id = "reserve4",
+			displayName = "$11197579", --Sir Geoffroy du Bois
+			buttontext = "$11190165", --Movement
+			tooltip = "$11199847",
+			tooltip1 = "$11190139",
+			tooltip2 = "$11201985", --%1AMOUNT% Lancers and %2AMOUNT% Horsemen
+			aidAmount = 4,
+			aidAmount_2 = 5,
+			cost = 500,
+			intel_event = "GetReinforcementsD",
+			intel_played = false,
+			units = {{ type = "scar_knight", numSquads = 4}, { type = "scar_horseman", numSquads = 5}, { sbp = SBP.FRENCH.UNIT_GEOFFROY_DU_BLOIS_CMP_FRE, numSquads = 1}},
+			sgroups = {sg_recruit4, sg_recruit4_escort}
+		}
+	}
+	t_availableRecruitData = {}
+
+	combat30_unitCompositions_Story = {
+		{ -- MAA / Spear
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_1 },
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_2 },
+			{ sbp = BP_GetSquadBlueprint("unit_landsknecht_mercenary_3_hre_cmp"), numSquads = 4, spawn = mkr_engspawn_3 },
+			{ type = "scar_spearman", numSquads = 5, 								spawn = mkr_engspawn_4 },
+			{ type = "scar_spearman", numSquads = 6, 								spawn = mkr_engspawn_5 },
+			{ type = "scar_spearman", numSquads = 5, 								spawn = mkr_engspawn_6 },
+		},
+		{ -- MAA / Cavalry
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_1 },
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_2 },
+			{ type = "scar_knight",   numSquads = 4, 								spawn = mkr_engspawn_3 },
+			{ type = "scar_horseman", numSquads = 5, 								spawn = mkr_engspawn_4 },
+			{ type = "scar_horseman", numSquads = 5, 								spawn = mkr_engspawn_5 },
+			{ type = "scar_horseman", numSquads = 6, 								spawn = mkr_engspawn_6 },
+		}
+	}
+	combat30_unitCompositions_Easy = {
+		{ -- MAA / Spear
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_1 },
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_2 },
+			{ sbp = BP_GetSquadBlueprint("unit_landsknecht_mercenary_3_hre_cmp"), numSquads = 6, spawn = mkr_engspawn_3 },
+			{ type = "scar_spearman", numSquads = 5, 								spawn = mkr_engspawn_4 },
+			{ type = "scar_spearman", numSquads = 5, 								spawn = mkr_engspawn_5 },
+			{ type = "scar_spearman", numSquads = 4, 								spawn = mkr_engspawn_6 },
+		},
+		{ -- MAA / Cavalry
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_1 },
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_2 },
+			{ type = "scar_knight",   numSquads = 6, 								spawn = mkr_engspawn_3 },
+			{ type = "scar_horseman", numSquads = 5, 								spawn = mkr_engspawn_4 },
+			{ type = "scar_horseman", numSquads = 5, 								spawn = mkr_engspawn_5 },
+			{ type = "scar_horseman", numSquads = 4, 								spawn = mkr_engspawn_6 },
+		}
+	}
+	combat30_unitCompositions_Normal = {
+		{ -- MAA / Spear
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_1 },
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_2 },
+			{ sbp = BP_GetSquadBlueprint("unit_landsknecht_mercenary_3_hre_cmp"), numSquads = 4, spawn = mkr_engspawn_3 },
+			{ sbp = BP_GetSquadBlueprint("unit_landsknecht_mercenary_3_hre_cmp"), numSquads = 4, spawn = mkr_engspawn_4 },
+			{ type = "scar_spearman", numSquads = 6, 								spawn = mkr_engspawn_5 },
+			{ type = "scar_spearman", numSquads = 6, 								spawn = mkr_engspawn_6 },
+		},
+		{ -- MAA / Cavalry
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_1 },
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_2 },
+			{ type = "scar_knight",   numSquads = 4, 								spawn = mkr_engspawn_3 },
+			{ type = "scar_knight",   numSquads = 4, 								spawn = mkr_engspawn_4 },
+			{ type = "scar_horseman", numSquads = 6, 								spawn = mkr_engspawn_5 },
+			{ type = "scar_horseman", numSquads = 6, 								spawn = mkr_engspawn_6 },
+		}
+	}
+	combat30_unitCompositions_Hard = {
+		{ -- MAA / Spear
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_1 },
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_2 },
+			{ sbp = BP_GetSquadBlueprint("unit_landsknecht_mercenary_3_hre_cmp"), numSquads = 4, spawn = mkr_engspawn_3 },
+			{ sbp = BP_GetSquadBlueprint("unit_landsknecht_mercenary_3_hre_cmp"), numSquads = 5, spawn = mkr_engspawn_4 },
+			{ type = "scar_spearman", numSquads = 6, 								spawn = mkr_engspawn_5 },
+			{ type = "scar_spearman", numSquads = 5, 								spawn = mkr_engspawn_6 },
+		},
+		{ -- MAA / Cavalry
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_1 },
+			{ type = "scar_manatarms", numSquads = 5, 								spawn = mkr_engspawn_2 },
+			{ type = "scar_knight",   numSquads = 4, 								spawn = mkr_engspawn_3 },
+			{ type = "scar_knight",   numSquads = 5, 								spawn = mkr_engspawn_4 },
+			{ type = "scar_horseman", numSquads = 6, 								spawn = mkr_engspawn_5 },
+			{ type = "scar_horseman", numSquads = 5, 								spawn = mkr_engspawn_6 },
+		}
+	}
+	combat30_hintsStory = {
+		{
+			{ spawn = mkr_engspawn_1, string = "$11122390" },
+			{ spawn = mkr_engspawn_3, string = "$11201443" },
+			{ spawn = mkr_engspawn_5, string = "$11119086" },
+		},
+		{
+			{ spawn = mkr_engspawn_1, string = "$11122390" },
+			{ spawn = mkr_engspawn_3, string = "$11150925" },
+			{ spawn = mkr_engspawn_5, string = "$11142680" },
+		},
+	}
+	combat30_hintsEasy = {
+		{
+			{ spawn = mkr_engspawn_1, string = "$11122390" },
+			{ spawn = mkr_engspawn_3, string = "$11201443" },
+			{ spawn = mkr_engspawn_5, string = "$11119086" },
+		},
+		{
+			{ spawn = mkr_engspawn_1, string = "$11122390" },
+			{ spawn = mkr_engspawn_3, string = "$11150925" },
+			{ spawn = mkr_engspawn_5, string = "$11142680" },
+		},
+	}
+	combat30_hintsNormal = {
+		{
+			{ spawn = mkr_engspawn_1, string = "$11122390" },
+			{ spawn = mkr_engspawn_3, string = "$11201443" },
+			{ spawn = mkr_engspawn_5, string = "$11119086" },
+		},
+		{
+			{ spawn = mkr_engspawn_1, string = "$11122390" },
+			{ spawn = mkr_engspawn_3, string = "$11150925" },
+			{ spawn = mkr_engspawn_5, string = "$11142680" },
+		},
+	}
+	combat30_hintsHard = {
+		{
+			{ spawn = mkr_engspawn_1, string = "$11122390" },
+			{ spawn = mkr_engspawn_3, string = "$11201443" },
+			{ spawn = mkr_engspawn_5, string = "$11119086" },
+		},
+		{
+			{ spawn = mkr_engspawn_1, string = "$11122390" },
+			{ spawn = mkr_engspawn_3, string = "$11150925" },
+			{ spawn = mkr_engspawn_5, string = "$11142680" },
+		},
+	}
+	combat30_unitKillCount = {
+		scar_manatarms = 0,
+		scar_spearman = 0,
+		scar_archer = 0,
+		scar_crossbowman = 0,
+		scar_horseman = 0,
+		scar_knight = 0,
+	}
+	
+	Approach_InitObjectives()
+	PreRound_InitObjectives()
+	Combat_InitObjectives()
+	
+	arenaUnitLost = 0
+	
+end
+
+function Mission_SetupPlayers()
+	
+	player1 = World_GetPlayerAt(1)
+	player2 = World_GetPlayerAt(2)
+	player3 = World_GetPlayerAt(3)
+	player4 = World_GetPlayerAt(4)
+	player5 = World_GetPlayerAt(5)
+	player6 = World_GetPlayerAt(6)
+	player7 = World_GetPlayerAt(7)
+	player8 = World_GetPlayerAt(8)
+	
+		
+	--player 1 - French
+	Setup_SetPlayerName(player1, Loc_GetString("$11180019"))
+	Player_SetCurrentAge(player1, AGE_CASTLE)
+	Player_SetMaximumAge(player1, AGE_CASTLE)
+	
+	--player 2 - English
+	Setup_SetPlayerName(player2, Loc_GetString("$11180020"))
+	Player_SetCurrentAge(player2, AGE_CASTLE)
+	Player_SetMaximumAge(player2, AGE_CASTLE)
+	
+	--player 3 - Local French
+	Setup_SetPlayerName(player3, Loc_GetString("$11201649"))
+	Player_SetCurrentAge(player3, AGE_CASTLE)
+	Player_SetMaximumAge(player3, AGE_CASTLE)
+	
+	--player 4 - Aggressive Local (Yves)
+	Setup_SetPlayerName(player4, Loc_GetString("$11201649"))
+	Player_SetCurrentAge(player4, AGE_CASTLE)
+	Player_SetMaximumAge(player4, AGE_CASTLE)
+	
+	--player 5 - Passive English
+	Setup_SetPlayerName(player5, Loc_GetString("$11180020"))
+	Player_SetCurrentAge(player5, AGE_CASTLE)
+	Player_SetMaximumAge(player5, AGE_CASTLE)
+	
+	--player 7 - Local French
+	Setup_SetPlayerName(player7, Loc_GetString("$11201649"))
+	Player_SetCurrentAge(player7, AGE_CASTLE)
+	Player_SetMaximumAge(player7, AGE_CASTLE)
+	World_EnableSharedLineOfSight(player7, player1, false)
+
+	
+	
+	
+	--player relationships
+	Player_SetRelationship(player1, player3, R_ALLY)
+	Player_SetRelationship(player3, player1, R_ALLY)
+	Player_SetRelationship(player3, player5, R_ALLY)
+	Player_SetRelationship(player5, player3, R_ALLY)
+	Player_SetRelationship(player1, player5, R_ALLY)
+	Player_SetRelationship(player5, player1, R_ALLY)
+	Player_SetRelationship(player7, player1, R_ALLY)
+	Player_SetRelationship(player1, player7, R_ALLY)
+	Player_SetRelationship(player2, player5, R_ALLY)
+	Player_SetRelationship(player5, player2, R_ALLY)
+	
+	Player_SetRelationship(player3, player7, R_ALLY)
+	Player_SetRelationship(player7, player3, R_ALLY)
+	Player_SetRelationship(player2, player7, R_ALLY)
+	Player_SetRelationship(player7, player2, R_ALLY)
+	Player_SetRelationship(player4, player7, R_ALLY)
+	Player_SetRelationship(player7, player4, R_ALLY)
+	
+	
+	Player_SetRelationship(player1, player4, R_ENEMY)
+	Player_SetRelationship(player4, player1, R_ENEMY)
+	Player_SetRelationship(player3, player4, R_ALLY)
+	Player_SetRelationship(player4, player3, R_ALLY)
+	
+	Player_SetRelationship(player6, player2, R_ALLY)
+	Player_SetRelationship(player2, player6, R_ALLY)
+	Player_SetRelationship(player6, player3, R_ALLY)
+	Player_SetRelationship(player3, player6, R_ALLY)
+	Player_SetRelationship(player6, player1, R_ALLY)
+	Player_SetRelationship(player1, player6, R_ALLY)
+	
+	-- ui / paint scheme colours
+	Game_SetPlayerSlotColour(player1, 1)			-- player 1 - French (blue index 1)
+	Game_SetPlayerUISlotColour(player1, 1)
+	Game_SetPlayerSlotColour(player2, 2)			-- player 2 - English (red index 2)
+	Game_SetPlayerUISlotColour(player2, 2)
+	Game_SetPlayerSlotColour(player3, 3)			-- player 3 - Local French (yellow index 3)
+	Game_SetPlayerUISlotColour(player3, 3)
+	Game_SetPlayerSlotColour(player4, 2)			-- player 4 - Aggressive French / Yves (red index 2)
+	Game_SetPlayerUISlotColour(player4, 2)
+	Game_SetPlayerSlotColour(player5, 7)			-- player 5 - Passive English (orange index 7, yellow index 3)
+	Game_SetPlayerUISlotColour(player5, 3)
+	Game_SetPlayerSlotColour(player6, 1)			-- player 6 - Downed Leader holder (blue index 1)
+	Game_SetPlayerUISlotColour(player6, 1)
+	Game_SetPlayerSlotColour(player7, 3)			-- player 7 - Local french (yellow index 3)
+	Game_SetPlayerUISlotColour(player7, 3)
+	Game_SetPlayerSlotColour(player8, 1)			-- player 8 - French Supporters (blue index 1)
+	Game_SetPlayerUISlotColour(player8, 1)
+	
+	
+	AI_Enable(player6, false)
+	
+	World_EnableSharedLineOfSight(player1, player5, false)	
+	World_EnableSharedLineOfSight(player1, player3, false)
+		
+	PlayerUpgrades_Auto(player1)
+	PlayerUpgrades_Auto(player2)
+	PlayerUpgrades_Auto(player4)
+	PlayerUpgrades_Auto(player5)
+end
+
+function Mission_SetRestrictions()
+	
+	Player_SetPopCapOverride(player1, 30)
+	Player_SetPopCapOverride(player2, 30)
+	Modify_PlayerProductionRate(player2, 1.5)
+	Action_SetResources_Do({player = player1, resources = {food = 1000, wood = 0, gold = Util_DifVar({750, 750, 450, 150}), stone = 0}})
+	
+	Wave_OverrideUnitBuildTime("scar_spearman", 1)
+	Wave_OverrideUnitBuildTime("scar_manatarms", 1)
+	Wave_OverrideUnitBuildTime("scar_archer", 1)
+	Wave_OverrideUnitBuildTime("scar_crossbowman", 1)
+	Wave_OverrideUnitBuildTime("scar_horseman", 1)
+	Wave_OverrideUnitBuildTime("scar_knight", 1)
+	
+	
+	Player_GetAll(player1)
+	EGroup_AddEGroup(eg_fre_invulnerable_buildings, eg_allentities)
+	EGroup_Filter(eg_fre_invulnerable_buildings, {"wall", "gate"}, FILTER_KEEP)
+	Misc_SetEGroupSelectable(eg_fre_invulnerable_buildings, false)
+	EGroup_SetInvulnerable(eg_fre_invulnerable_buildings, true)
+	Misc_SetEGroupSelectable(eg_fre_tents, false)
+	EGroup_SetInvulnerable(eg_fre_tents, true)
+	EGroup_SetTargetingType(eg_fre_tents, Targeting_None)
+	
+	Player_GetAll(player2)
+	EGroup_AddEGroup(eg_eng_invulnerable_buildings, eg_allentities)
+	EGroup_Filter(eg_eng_invulnerable_buildings, {"wall", "gate"}, FILTER_KEEP)
+	Misc_SetEGroupSelectable(eg_eng_invulnerable_buildings, false)
+	Misc_SetEGroupSelectable(eg_eng_tents, false)
+	EGroup_SetInvulnerable(eg_eng_invulnerable_buildings, true)
+	EGroup_SetInvulnerable(eg_eng_tents, true)
+	EGroup_SetTargetingType(eg_eng_tents, Targeting_None)
+end
+
+
+function Mission_PreInit()
+	Combat30_HideTributeMenu()
+end
+
+function Mission_Preset()
+	
+	-- Enable player colours
+	PlayerColour_Enable()
+	
+	--Player Upgrades
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_UNIT_SPEARMAN_3)
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_UNIT_ARCHER_3)
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_UNIT_HORSEMAN_3)
+	Player_CompleteUpgrade(player1, UPG.FRENCH.UPGRADE_UNIT_KNIGHT_3_FRE)
+	Player_RemoveUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_DAMAGE_I)
+	Player_RemoveUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_ARMOR_I)
+	Player_RemoveUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_DAMAGE_II)
+	Player_RemoveUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_ARMOR_II)
+	Player_RemoveUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_DAMAGE_III)
+	Player_RemoveUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_ARMOR_III)
+	Player_SetUpgradeAvailability(player1, UPG.FRENCH.UPGRADE_CAVALRY_GRAPERED_LANCE_FRE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_TECH_MILITARY_ACADEMY, ITEM_REMOVED)
+	
+	Cmd_FormationMove(sg_eng_army, mkr_engbase)
+	
+	--EnemyUpgrades
+	Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_UNIT_SPEARMAN_3)
+	Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_UNIT_ARCHER_3)
+	Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_UNIT_HORSEMAN_3)
+	Player_CompleteUpgrade(player2, UPG.ENGLISH.UPGRADE_UNIT_MANATARMS_3_ENG)
+	Player_CompleteUpgrade(player5, UPG.COMMON.UPGRADE_UNIT_SPEARMAN_3)
+	Player_CompleteUpgrade(player5, UPG.COMMON.UPGRADE_UNIT_ARCHER_3)
+	Player_CompleteUpgrade(player5, UPG.COMMON.UPGRADE_UNIT_HORSEMAN_3)
+	Player_CompleteUpgrade(player5, UPG.ENGLISH.UPGRADE_UNIT_MANATARMS_3_ENG)
+	
+	if Game_GetSPDifficulty() == GD_EXPERT then
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_MELEE_ARMOR_III)
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_MELEE_DAMAGE_III)
+		Player_CompleteUpgrade(player5, UPG.COMMON.UPGRADE_MELEE_ARMOR_III)
+		Player_CompleteUpgrade(player5, UPG.COMMON.UPGRADE_MELEE_DAMAGE_III)
+	end
+	
+	--Intro Action
+	Combat30_SpawnChampions()
+	Combat30_InitIntroUnits_Proto()
+end
+
+function Mission_Start()
+	-- on console don't restore VPS as we have no villagers
+	Cardinal_EnablePartialXboxUI(true, {VF_XboxUIVillagerPriorities})
+
+	recruit_module_groups[4] = { MissionOMatic_FindModule("EnglishArchers1"), 
+		MissionOMatic_FindModule("EnglishArchers2"), MissionOMatic_FindModule("EnglishArchers3"), 
+		MissionOMatic_FindModule("EnglishArchers4"), MissionOMatic_FindModule("EnglishArchers5"), 
+		MissionOMatic_FindModule("EnglishArchers6"), MissionOMatic_FindModule("EnglishArchers7") 
+	}
+	Objective_Start(OBJ_RecruitChampions)
+end
+		
+function GetRecipe()
+	
+	local recipe = {
+	
+		campaign = "hun",
+		chapter = "chapter1",
+		phase = "mission_combat30",
+		enableShroud = true,
+		
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,
+		
+		locations = {
+		},  -- end of LOCATIONS table
+		
+		--
+		-- Modules
+		--
+		modules = {
+			--Unit Spawners
+			{				
+				type = "Defend",
+				descriptor = "DefendEngBase",
+				marker = mkr_engbase,
+				player = player2,
+				spawnInFormation = true,
+				direction = 45,
+				spawnLocation = mkr_engbase,
+			},
+			{				
+				type = "Defend",
+				descriptor = "DefendRecruit1",
+				marker = mkr_recruit1,
+				player = player3,
+				spawnInFormation = true,
+				direction = 45,
+				spawnLocation = mkr_recruit1,
+			},
+			{				
+				type = "Defend",
+				descriptor = "DefendRecruit2",
+				marker = mkr_recruit2,
+				player = player3,
+				spawnInFormation = true,
+				direction = 45,
+				spawnLocation = mkr_recruit2,
+			},
+			-- Attacking
+			{
+				type = "RovingArmy",
+				descriptor = "Attack1",
+				spawnLocation = mkr_engbase,
+				player = player2,
+				attackMove = attackMoveStyle_aggressive,
+				targets = {
+					mkr_combatfield,
+				},
+				targetingType = ARMY_TARGETING_CYCLE,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "EnglishRaid1",
+				spawnLocation = mkr_englishskirmish_spawn,
+				player = player2,
+				attackMoveAtTarget = attackMoveStyle_aggressive,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				target = { marker = mkr_recruit2_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit2_boundary) },
+				originalTarget = { marker = mkr_recruit2_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit2_boundary) }, 
+				targetingType = ARMY_TARGETING_CYCLE,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "EnglishRaid2",
+				spawnLocation = mkr_englishskirmish_spawn,
+				player = player2,
+				attackMoveAtTarget = attackMoveStyle_aggressive,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				target = { marker = mkr_recruit2_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit2_boundary) },
+				originalTarget = { marker = mkr_recruit2_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit2_boundary) },
+				targetingType = ARMY_TARGETING_CYCLE,
+			},
+			{				
+				type = "RovingArmy",
+				descriptor = "EnglishArchers1",
+				spawnLocation = mkr_englisharchers,
+				target = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				originalTarget = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				attackMoveAtTarget = attackMoveStyle_aggressive,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				player = player2,
+				spawnInFormation = true,
+				direction = 45,
+			},
+			{				
+				type = "RovingArmy",
+				descriptor = "EnglishArchers2",
+				spawnLocation = mkr_englisharchers,
+				target = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				originalTarget = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				attackMoveAtTarget = attackMoveStyle_aggressive,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				player = player2,
+				spawnInFormation = true,
+				direction = 45,
+			},
+			{				
+				type = "RovingArmy",
+				descriptor = "EnglishArchers3",
+				spawnLocation = mkr_englisharchers,
+				target = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				originalTarget = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				attackMoveAtTarget = attackMoveStyle_aggressive,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				player = player2,
+				spawnInFormation = true,
+				direction = 45,
+			},
+			{				
+				type = "RovingArmy",
+				descriptor = "EnglishArchers4",
+				spawnLocation = mkr_englisharchers,
+				target = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				originalTarget = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				attackMoveAtTarget = attackMoveStyle_aggressive,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				player = player2,
+				spawnInFormation = true,
+				direction = 45,
+			},
+			{				
+				type = "RovingArmy",
+				descriptor = "EnglishArchers5",
+				spawnLocation = mkr_englisharchers,
+				target = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				originalTarget = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				attackMoveAtTarget = attackMoveStyle_aggressive,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				player = player2,
+				spawnInFormation = true,
+				direction = 45,
+			},
+			{				
+				type = "RovingArmy",
+				descriptor = "EnglishArchers6",
+				spawnLocation = mkr_englisharchers,
+				target = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				originalTarget = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				attackMoveAtTarget = attackMoveStyle_aggressive,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				player = player2,
+				spawnInFormation = true,
+				direction = 45,
+			},
+			{				
+				type = "RovingArmy",
+				descriptor = "EnglishArchers7",
+				spawnLocation = mkr_englisharchers,
+				target = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				originalTarget = { marker = mkr_recruit4_boundary, leashRange = Marker_GetProximityRadius(mkr_recruit4_boundary) },
+				attackMoveAtTarget = attackMoveStyle_aggressive,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				player = player2,
+				spawnInFormation = true,
+				direction = 45,
+			},
+		},
+		objectives = {
+		},
+		--
+		-- Playbill
+		--
+		playbill = {
+		},
+		
+		--
+		-- Presentation things for the start or end of a mission
+		--
+		onStart = {
+			intelEvent = "",
+			expositionCamera = {},
+			titleCard = {
+				date = 11160650,
+				location = 11160649,
+			},
+			actions = {
+			},
+		},
+
+		onWin = {
+		},
+		
+		onLose = {
+		},
+	}
+	
+	return recipe
+end
+
+function Combat30_SendIntroUnits(context, data)
+	
+	-- Add the others as waypoints
+	for index, marker in pairs(data.markerList) do
+		
+		if scartype(marker) == ST_MARKER then
+			if index <= #data.markerList then
+				Cmd_FormationMove(data.sgroup, marker, true)
+			end
+		end
+	end
+	Cmd_HoldPosition(data.sgroup,SGroup_GetPosition(data.sgroup),true)
+	
+	if data.destination ~= nil then
+		Cmd_FormationMove(data.sgroup, data.destination, true)
+	end
+end
+
+function Combat30_CleanUpIntro()
+	SGroup_DestroyAllSquads(sg_fre_intro)
+	SGroup_DestroyAllSquads(sg_eng_intro)
+	SGroup_DestroyAllSquads(sg_fre_intro_attache)
+	SGroup_DestroyAllSquads(sg_eng_intro_attache)
+	SGroup_DestroyAllSquads(sg_fre_intro_villager_cheer)
+	SGroup_DestroyAllSquads(sg_eng_intro_villager_cheer)
+end
+
+function Combat30_InitIntroUnits_Proto()
+	
+	UnitEntry_DeploySquads(player1,  g_leaderBeaumanoir.sgroup, { sbp = SBP.FRENCH.UNIT_JEAN_DE_BEAUMANOIR_CMP_FRE }, mkr_beaumanoir_start)
+	
+	Cmd_FormationMove(g_leaderBeaumanoir.sgroup, mkr_josselin)
+
+	intro_hero_speed = 	Modify_UnitSpeed(g_leaderBeaumanoir.sgroup, 0.35)
+	
+	sg_intro_cheer01 = SGroup_CreateIfNotFound("sg_intro_cheer01")
+	sg_intro_cheer02 = SGroup_CreateIfNotFound("sg_intro_cheer02")
+	sg_intro_cheer03 = SGroup_CreateIfNotFound("sg_intro_cheer03")
+	sg_intro_cheer04 = SGroup_CreateIfNotFound("sg_intro_cheer04")
+	sg_intro_horsemen = SGroup_CreateIfNotFound("sg_intro_horsemen")
+	sg_intro_escort = SGroup_CreateIfNotFound("sg_intro_escort")
+	
+	sg_intro_cheer05 = SGroup_CreateIfNotFound("sg_intro_cheer05")
+	sg_intro_cheer_01a = SGroup_CreateIfNotFound("sg_intro_cheer_01a")
+	sg_intro_cheer_02a = SGroup_CreateIfNotFound("sg_intro_cheer_02a")
+	sg_intro_cheer_03a = SGroup_CreateIfNotFound("sg_intro_cheer_03a")
+	
+	--Background cheer groupssg_intro_background
+	sg_intro_background = SGroup_CreateIfNotFound("sg_intro_background")
+	
+	--Create local units table with spawn locations 
+	local units = {
+		{type = "scar_villager", numSquads = 3, spawn = mkr_intro_bg01 },
+		{type = "scar_villager", numSquads = 2, spawn = mkr_intro_bg02 },
+		{type = "scar_villager", numSquads = 2, spawn = mkr_intro_bg03 },
+		{type = "scar_villager", numSquads = 3, spawn = mkr_intro_bg04 },
+		{type = "scar_villager", numSquads = 5, spawn = mkr_intro_bg05 },
+		{type = "scar_villager", numSquads = 3, spawn = mkr_intro_bg06 },
+		{type = "scar_villager", numSquads = 2, spawn = mkr_intro_bg07 },
+		{type = "scar_villager", numSquads = 3, spawn = mkr_intro_bg08 },
+		{type = "scar_villager", numSquads = 5, spawn = mkr_intro_bg09 },
+		{type = "scar_villager", numSquads = 2, spawn = mkr_intro_bg10 },
+		{type = "scar_villager", numSquads = 4, spawn = mkr_intro_bg11 },
+		{type = "scar_villager", numSquads = 2, spawn = mkr_intro_bg12 },
+		{type = "scar_villager", numSquads = 2, spawn = mkr_intro_bg13 },
+	}
+	
+	UnitEntry_DeploySquads(player3, sg_intro_background, units, mkr_intro_bg01)
+	
+	UnitEntry_DeploySquads(player3, sg_intro_cheer_02a, {type = "scar_villager", numSquads = 4}, mkr_intro_cheer02a) 
+	UnitEntry_DeploySquads(player3, sg_intro_cheer_03a, {type = "scar_villager", numSquads = 6}, mkr_intro_cheer03a)
+	UnitEntry_DeploySquads(player3, sg_intro_cheer05, {type = "scar_villager", numSquads = 4}, mkr_intro_cheer05) 
+	UnitEntry_DeploySquads(player3, sg_intro_cheer_01a, {type = "scar_villager", numSquads = 3}, mkr_intro_cheer01a)
+	UnitEntry_DeploySquads(player3, sg_intro_cheer01, {type = "scar_villager", numSquads = 4}, mkr_intro_cheer01)
+	UnitEntry_DeploySquads(player3, sg_intro_cheer02, {type = "scar_villager", numSquads = 3}, mkr_intro_cheer02)
+	UnitEntry_DeploySquads(player3, sg_intro_cheer03, {type = "scar_villager", numSquads = 3}, mkr_intro_cheer03)
+	UnitEntry_DeploySquads(player3, sg_intro_cheer04, {type = "scar_archer", numSquads = 2}, mkr_intro_cheer04)	
+	
+	UnitEntry_DeploySquads(player3, sg_intro_horsemen, {type = "scar_horseman", numSquads = 2}, mkr_intro_horsemen)
+	UnitEntry_DeploySquads(player3, sg_intro_escort, {type = "scar_spearman", numSquads = 2}, mkr_josselin_followers)
+	
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_horsemen_dest)
+	intro_horsemen_speed = Modify_UnitSpeed(sg_intro_horsemen, 0.5)
+	
+	Cmd_FormationMove(sg_intro_escort, mkr_josselin_escort)
+	intro_escort_speed = Modify_UnitSpeed(sg_intro_escort, 0.4)
+	
+end
+
+function Combat30_SkipIntro()
+	Rule_Remove(Intro_Cheer01)
+	
+	SGroup_FormationWarpToMarker(g_leaderBeaumanoir.sgroup, mkr_josselin)
+	SGroup_FormationWarpToMarker(sg_intro_horsemen, mkr_intro_horsemen_dest)
+	SGroup_FormationWarpToMarker(sg_intro_escort, mkr_josselin_escort)
+	
+	SGroup_FormationWarpToMarker(sg_intro_cheer_02a, mkr_intro_cheer02a)
+	SGroup_FormationWarpToMarker(sg_intro_cheer_03a, mkr_intro_cheer03a)
+	SGroup_FormationWarpToMarker(sg_intro_cheer05, mkr_intro_cheer05)
+	SGroup_FormationWarpToMarker(sg_intro_cheer_01a, mkr_intro_cheer01a)
+	SGroup_FormationWarpToMarker(sg_intro_cheer01, mkr_intro_cheer01)
+	SGroup_FormationWarpToMarker(sg_intro_cheer02, mkr_intro_cheer02)
+	
+	Modifier_Remove(intro_hero_speed)
+	Modifier_Remove(intro_escort_speed)
+	Modifier_Remove(intro_horsemen_speed)
+	
+end
+
+function Combat30_VillagersToWork()
+	
+	SGroup_AddGroups(sg_intro_background, {sg_intro_cheer_02a, sg_intro_cheer_01a, sg_intro_cheer_03a, sg_intro_cheer01, sg_intro_cheer05, sg_intro_cheer02, sg_intro_cheer03})
+	
+	Modify_GoldGatherRate(sg_intro_background, 0.1)
+	Modify_GoldCarryCapacity(sg_intro_background, 0.1)
+	Modify_WoodGatherRate(sg_intro_background, 0.1)
+	Modify_WoodCarryCapacity(sg_intro_background, 0.1)
+	Modify_StoneGatherRate(sg_intro_background, 0.1)
+	Modify_StoneCarryCapacity(sg_intro_background, 0.1)
+	
+	Rule_AddInterval(Combat30_AssignSomeVillagers, 0.1)
+end
+
+function Combat30_AssignSomeVillagers()
+	
+	if SGroup_Count(sg_intro_background) == 0 then
+		Rule_RemoveMe()
+	else		
+		local sgroup = SGroup_CreateUnique("sg_villager_")
+		local groupSize = World_GetRand(0, 3)
+		
+		if SGroup_Count(sg_intro_background) < groupSize then
+			groupSize = SGroup_Count(sg_intro_background)
+		end
+		
+		if groupSize > 0 then -- For a more scattered pacing, there's a chance of not sending any villagers on a beat
+			
+			for i=1, groupSize, 1 do
+				SGroup_Add(sgroup, SGroup_GetSquadAt(sg_intro_background, i))
+			end
+			SGroup_RemoveGroup(sg_intro_background, sgroup)
+			
+			local job = World_GetRand(1, 7)
+			
+			if job == 1 or job == 2 then
+				AssignVillagersToWood(sgroup)
+			elseif job == 3 then
+				AssignVillagersToGold(sgroup)
+			elseif job == 4 then
+				AssignVillagersToStone(sgroup)
+			elseif job == 5 or job == 6  or job == 7 then
+				Cmd_MoveToAndDestroy(sgroup, mkr_despawn)
+			end		
+		end
+	end
+end
+
+function Combat30_UpdateFollowerTargets()
+	for k, v in ipairs(followerArray) do
+		
+		local championSGroup = v[1]
+		local championPosition = SGroup_GetPosition(v[1])
+		local followerSGroup = v[2]
+		if not SGroup_IsEmpty(championSGroup) and not SGroup_IsEmpty(followerSGroup) then 
+			if Util_GetDistance(championSGroup, followerSGroup) > 5 then
+				Cmd_FormationMove(followerSGroup, championSGroup, true)
+			end
+		end
+	end
+end
+
+function Combat30_SpawnFollowers(sgroup, num, scar_type, marker)
+	-- Get the champion and spawn followers of the correct type
+	local sourceSGroup = sgroup
+	followerGroupCount = followerGroupCount + 1
+	
+	local units = {
+		{ type = scar_type, numSquads = num },
+	}
+	
+	newSGroup = SGroup_CreateUniqueWithPrefix("Follower_")
+	UnitEntry_DeploySquads(player3, newSGroup, units[1], marker)
+	table.insert(followerArray, { sourceSGroup, newSGroup } )
+end
+
+-- Achievement tracking for Achievement #13 - Du Bois Are Back In Town - Win in the arena without losing more than 10 units during the Combat of the Thirty
+function Combat30_AchievementTracker(context)
+	
+	if Squad_IsValid(Squad_GetID(context.victim)) then
+		
+		if not World_OwnsSquad(context.victim) then
+			
+			local owner = Squad_GetPlayerOwner(context.victim)
+			
+			-- Verify that victim belongs to player
+			if owner == player1 then
+				
+				arenaUnitLost = arenaUnitLost + 1
+				
+				-- Stop achievement tracking if achievement task has failed
+				if arenaUnitLost > 10 then
+					Rule_RemoveMe()
+				end		
+			end
+		end
+	end
+end
+
+-- Achievement tracking for Achievement #13 - Du Bois Are Back In Town - Win in the arena without losing more than 10 units during the Combat of the Thirty
+function Combat30_GrantAchievement()
+	
+	-- If player has not lost any units during arena rounds
+	if arenaUnitLost <= 10 then
+		
+		-- Grant achievement completion
+		Game_SendCustomChallengeEvent(player1, CE_ACHIEVNODEATHSINCOMBAT30ARENA, 1)
+		
+	end
+end

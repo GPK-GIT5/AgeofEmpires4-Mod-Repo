@@ -1,0 +1,522 @@
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+--
+-- DESIGNER LIBRARY
+-- Provides some high level functions for us to set things up simply.
+-- 
+-- Copyright 2016 SEGA Corporation, Developed by Relic Entertainment
+--
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+
+--? @group scardoc;DesignerLib
+
+-------------------------------------------------------------------------
+--
+-- MISCELLANEOUS FUNCTIONS
+--
+-------------------------------------------------------------------------
+
+--? @shortdesc Returns a random item from a table. You can return multiple items (without duplicates) by passing in an optional number parameter.
+--? @args Table table[, Integer numberofitems]
+--? @result Item/Table
+function Table_GetRandomItem(thistable, num)
+	
+	if scartype(thistable) ~= ST_TABLE then
+		fatal("Table_GetRandomItem: Table is invalid")
+	end
+
+	local size = (#thistable)
+	
+	if num == nil or num == 1 then
+		
+		return thistable[World_GetRand(1, size)]
+		
+	else
+		
+		if num > size then
+			num = size
+		end
+		
+		local indexes = {}
+		local result = {}
+		
+		for n = 1, size do
+			indexes[n] = n
+		end
+		
+		for n = 1, num do
+			
+			local rand = World_GetRand(1, (#indexes))
+			local value = indexes[rand]
+			table.remove(indexes, rand)
+			
+			table.insert(result, thistable[value])
+			
+		end
+		
+		return result
+		
+	end
+	
+end
+
+--? @shortdesc Takes a table of key-value pairs, where the keys are the items, and the values are the weights. The chance that a particular key is chosen is proportional to its associated weight. Weights should be integers.  
+--? @result Returns a random key according to the weights, or returns nil if there are no valid choices.
+function Table_GetRandomItemWeighted(thistable)
+	local total_weight = 0
+	local cumulative_weights = {}
+	for item, weight in pairs(thistable) do
+		total_weight = total_weight + weight
+		table.insert(cumulative_weights, {item = item, weight = total_weight})
+	end
+	if total_weight > 0 then
+		local r = World_GetRand(1, total_weight)
+
+		for i, row in ipairs(cumulative_weights) do
+			if row.weight >= r then
+				return row.item
+			end
+		end
+
+	end
+	return nil
+end
+
+--? @shortdesc Returns a random item from the input table based on random weights. 
+--? @extdesc Takes a table of key-value pairs, where the keys are the items, and the values are the weights.
+--? The chance that a particular key is chosen is proportional to its associated weight. Weights should be integers.
+--? The input table must be enumeratable by Table_DeterministicOrderedPairs.
+--? @result Returns a random key according to the weights, or returns nil if there are no valid choices.
+function Table_GetRandomItemWeighted_Deterministic(thistable)
+	local total_weight = 0
+	local cumulative_weights = {}
+	for item, weight in Table_DeterministicOrderedPairs(thistable) do
+		total_weight = total_weight + weight
+		table.insert(cumulative_weights, {item = item, weight = total_weight})
+	end
+	if total_weight > 0 then
+		local r = World_GetRand(1, total_weight)
+
+		for i, row in ipairs(cumulative_weights) do
+			if row.weight >= r then
+				return row.item
+			end
+		end
+
+	end
+	return nil
+end
+
+--? @shortdesc Checks if a table contains the specified item 
+--? @args LuaTable OriginalTable, Item item
+--? @result Boolean
+function Table_Contains(table_id, item)
+	
+	if table_id == nil then
+		fatal("Table: "..tostring(table_id).." does not exist!")
+		return
+	end
+	
+	if (#table_id) == 0 then
+		return false
+	else
+		for i = 1, (#table_id) do
+			if table_id[i] == item then
+				return true
+			end
+		end
+		return false
+	end
+
+end
+
+--? @shortdesc Copies the contents of the original table returns a new table with the contents of that table 
+--? @args LuaTable OriginalTable
+--? @result LuaTable
+function Table_Copy(temp)
+
+	local new_table = {}
+
+	for k,v in pairs(temp) do
+		if scartype(temp[k]) == ST_TABLE then
+			new_table[k] = Table_Copy(temp[k])
+		else
+			new_table[k] = temp[k]
+		end
+	end
+	
+	return new_table
+
+end
+
+
+--? @shortdesc Makes a table read-only. This can be done recursively to also apply to any subtables.
+--? @extdesc Any attempts to write to this table after this has been called will trigger a Fatal SCAR Error. You can customize the error message that will be given with the "error" parameter. 
+--? @args Table table[, Boolean recursive, String errorMessage]
+function Table_MakeReadOnly(table, recursive, errorMessage)
+
+	if errorMessage == nil then 
+		errorMessage = "Attempt to write to a read-only table"
+	end
+	
+	local metatable = getmetatable(table)
+	if metatable == nil then 
+		metatable = {}
+	end
+	metatable.__newindex = function() fatal(errorMessage) end 
+	setmetatable(table, metatable)
+		
+	if recursive == true then 
+		for index, value in pairs(table) do 
+			if scartype(value) == ST_TABLE then 
+				Table_MakeReadOnly(value, recursive, errorMessage)
+			end 
+		end
+	end	
+	
+end
+
+--? @shortdesc Finds all on-screen squads for the passed player, clearing and filling the sgroup with those squads
+--? @args PLAYER player, SGROUP sgroup
+--? @result Void
+function Player_GetSquadsOnscreen(player, sgroup)
+	
+	sgroup = sgroup or sg_temp
+	
+	Player_GetAll(player)
+	SGroup_Clear(sgroup)
+	
+	local _CheckVisibility = function(gid, idx, sid)
+		if Squad_IsAlive(sid) then
+			if Misc_IsSquadOnScreen(sid, 100) then
+				SGroup_Add(sgroup, sid)
+			end
+		end
+	end
+	SGroup_ForEach(sg_allsquads, _CheckVisibility)
+	
+end
+
+--? @shortdesc Counts how many units a player currently has in production at their production buildings, if they have any
+--? @args PLAYER player
+--? @result Number
+function Player_GetProductionQueueSize(player)
+	local totalProductionQueueSize = 0
+	local _CountProductionQueueItems = function(gid, idx, eid)		
+		if Entity_HasProductionQueue(eid) == false then
+			return 
+		else
+			totalProductionQueueSize = totalProductionQueueSize + Entity_GetProductionQueueSize(eid)
+		end
+	end
+	-- Check all production buildings!
+	Player_GetAll(player)
+	EGroup_ForEach(eg_allentities, _CountProductionQueueItems)
+	return totalProductionQueueSize
+end
+
+--? @shortdesc Disables any resource income - useful to stop resources accruing during the opening movie
+--? @args Void
+--? @result Void
+function Resources_Disable(player)
+
+	if player == nil then
+		player = Game_GetLocalPlayer()
+	end
+	local playerID = Player_GetID(player)
+
+	-- _resourcekillers is a table which maps players to modifiers that set their income to zero.
+	if _resourcekillers == nil then
+		_resourcekillers = {}
+	end
+	
+	if _resourcekillers[playerID] == nil then
+		_resourcekillers[playerID] = {}
+		for i = RT_Begin, RT_Count do
+			_resourcekillers[playerID][i] = Modify_PlayerResourceRate(player, i, 0)
+		end
+	end
+	
+end
+
+
+--? @shortdesc Re-enables resource income. 
+--? @args Void
+--? @result Void
+function Resources_Enable(player)
+
+	if player == nil then
+		player = Game_GetLocalPlayer()
+	end
+	local playerID = Player_GetID(player)
+
+	if _resourcekillers == nil then
+		_resourcekillers = {}
+		return
+	end
+
+	if _resourcekillers[playerID] ~= nil then
+		for i = RT_Begin, RT_Count do
+			Modifier_Remove(_resourcekillers[playerID][i])
+		end
+	end
+	
+	_resourcekillers[playerID] = nil
+	
+end
+
+--? @shortdesc Checks if Resources_Disable is currently applying to a player.
+--? @args Void
+--? @result Boolean
+function Are_Resources_Disabled(player)
+
+	if player == nil then
+		player = Game_GetLocalPlayer()
+	end
+	local playerID = Player_GetID(player)
+	
+	if _resourcekillers == nil then
+		return false
+	end
+	
+	return (_resourcekillers[playerID] ~= nil)
+end
+
+--? @shortdesc Returns a string describing the Scartype
+--? @args object
+--? @result STRING
+function Debug_ScartypeToString(object)
+	
+	local typeString = ""
+
+	if (scartype(object) == ST_NIL) then
+		typeString = "ST_NIL"
+	elseif (scartype(object) == ST_BOOLEAN) then
+		typeString = "ST_BOOLEAN"
+	elseif (scartype(object) == ST_NUMBER) then
+		typeString = "ST_NUMBER"
+	elseif (scartype(object) == ST_STRING) then
+		typeString = "ST_STRING"
+	elseif (scartype(object) == ST_TABLE) then
+		typeString = "ST_TABLE"
+	elseif (scartype(object) == ST_FUNCTION) then
+		typeString = "ST_FUNCTION"
+	elseif (scartype(object) == ST_SCARPOS) then
+		typeString = "ST_SCARPOS"
+	elseif (scartype(object) == ST_EGROUP) then
+		typeString = "ST_EGROUP"
+	elseif (scartype(object) == ST_ENTITY) then
+		typeString = "ST_ENTITY"
+	elseif (scartype(object) == ST_SGROUP) then
+		typeString = "ST_SGROUP"
+	elseif (scartype(object) == ST_SQUAD) then
+		typeString = "ST_SQUAD"
+	elseif (scartype(object) == ST_TEAM) then
+		typeString = "ST_TEAM"
+	elseif (scartype(object) == ST_MARKER) then
+		typeString = "ST_MARKER"
+	elseif (scartype(object) == ST_PBG) then
+		typeString = "ST_PBG"
+	elseif (scartype(object) == ST_UNKNOWN) then
+		typeString = "ST_UNKNOWN"
+	else
+		typeString = "error: no type"
+	end
+	
+	return typeString
+	
+end
+
+--? @shortdesc Sets all Entities in an EGroup on fire
+--? @args EGROUP egroup
+function EGroup_SetOnFire(egroup)
+
+	local function _BurnEntity(gid, idx, eid)
+		if Entity_IsBurning(eid) ~= true then
+			Entity_SetOnFire(eid)
+		end	
+	end
+	EGroup_ForEach(egroup, _BurnEntity)
+	
+end
+
+--? @shortdesc Sets whether or not Entities in an EGroup should continue burning while invulnerable
+--? @args EGROUP egroup, Boolean stayBurning
+function EGroup_SetStayBurningWhileInvulnerable(egroup, stayBurning)
+
+	local function _SetStayBurningWhileInvulnerableEntity(gid, idx, eid)
+		Entity_SetStayBurningWhileInvulnerable(eid, stayBurning)
+	end
+	EGroup_ForEach(egroup, _SetStayBurningWhileInvulnerableEntity)
+end
+
+--? @shortdesc Splits an SGroup as cleanly as possible into X new SGroups, returning a table of the SGroups in question
+--? @args SGROUP sgroup, NUMBER numNewSGroups
+function SGroup_Split(sourceSGroup, numNewSGroups)
+	
+	local result = {}
+	local sgroupCount = SGroup_Count(sourceSGroup)
+	-- Complex logic only necessary for multiple target SGroups and units
+	if numNewSGroups > 1 and sgroupCount > 1 then
+		-- This keeps track of which group we're adding to now
+		local splitterIterator = 1
+		for squadIdx = 1, sgroupCount, 1 do
+			-- If we don't have an SGroup here yet, add one
+			if #result < splitterIterator then
+				table.insert(result, SGroup_CreateUnique(SGroup_GetName(sourceSGroup).."_split_"..tostring(splitterIterator)))
+			end
+			-- Add the squad to the SGroup at this iterator
+			SGroup_Add(result[splitterIterator], SGroup_GetSquadAt(sourceSGroup, squadIdx))
+			-- Update the iterator
+			splitterIterator = splitterIterator + 1
+			if splitterIterator > numNewSGroups then
+				splitterIterator = 1
+			end
+		end
+	
+	-- If we've only got one of either, return a copy of the same SGroup
+	elseif numNewSGroups == 1 or sgroupCount == 1 then
+		table.insert(result, SGroup_CreateUnique(SGroup_GetName(sourceSGroup).."_split_1"))
+		SGroup_AddGroup(result[1], sourceSGroup)
+	
+	-- If either of them is zero, return an empty table!
+	end
+	
+	return result
+	
+end
+
+--? @shortdesc Splits an SGroup as cleanly as possible into multiple SGroups. 
+--? @args SGROUP sourceSGroup, TABLE sgroupTable, BOOLEAN clearSGroups
+function SGroup_SplitIntoExistingSGroups(sourceSGroup, sgroupTable, clearSGroups)
+	local sgroupCount = #sgroupTable
+	for i, sgroup in ipairs(sgroupTable) do
+		assert(scartype(sgroup) == ST_SGROUP, "sgroupTable must include sgroups only")
+		if clearSGroups then
+			SGroup_Clear(sgroup)
+		end
+	end
+	local squadCount = SGroup_CountSpawned(sourceSGroup)
+	local tableIndex = 0
+	for squadIndex = 1, squadCount, 1 do
+		tableIndex = tableIndex + 1
+		if tableIndex > sgroupCount then
+			tableIndex = 1
+		end
+		SGroup_Add(sgroupTable[tableIndex], SGroup_GetSquadAt(sourceSGroup, squadIndex))
+	end
+end
+
+--? @shortdesc Splits an SGroup enough even-sized groups that none is larger than the max size indicated
+--? @args SGROUP sgroup, NUMBER maxSGroupSize
+function SGroup_SplitUnderCap(sourceSGroup, maxSGroupSize)
+	
+	local result = {}
+	local sgroupCount = 1
+	local finalSize = SGroup_Count(sourceSGroup)
+	if finalSize > maxSGroupSize then
+		sgroupCount = math.ceil(finalSize / maxSGroupSize)
+		finalSize = finalSize / sgroupCount
+	end
+	
+	return SGroup_Split(sourceSGroup, sgroupCount)
+	
+end
+
+--? @shortdesc Gets the COUNT closest squads to POSITION from SGROUP. Does NOT remove squads from the source SGroup
+function SGroup_GetClosestSquads(sgroup, count, position)
+	
+	if scartype(sgroup) ~= ST_SGROUP or SGroup_Count(sgroup) <= 0 then
+		fatal(string.format("Can't get closest squad from Squad: %s, Count: %s, Position: %s", sgroup, count, position))
+		return nil
+	end
+	
+	-- Make sure the position is valid
+	if scartype(position) ~= ST_SCARPOS and Util_HasPosition(position) == true then
+		position = Util_GetPosition(position)
+	end
+	
+	if scartype(position) ~= ST_SCARPOS then
+		fatal(string.format("Can't get closest squad from Squad: %s, Count: %s, Position: %s", sgroup, count, position))
+		return nil
+	end
+	
+	local squadDistances = {}
+	
+	local _processSquad = function(_sgroup, _index, _squad)
+		if Entity_IsSpawned(Squad_GetFirstEntity(_squad)) then
+			table.insert(squadDistances, {squad = _squad, distanceSquared = Util_GetDistanceSquared(_squad, position)})
+		end
+	end
+	
+	SGroup_ForEach(sgroup, _processSquad)
+	table.sort(squadDistances, function(a, b) return a.distanceSquared < b.distanceSquared end)
+	
+	local sg_closest = SGroup_CreateUnique("sg_closest")
+	local squadCount = math.min(#squadDistances, count)
+	local squadIndex = 1
+	
+	while (squadIndex <= squadCount) do
+		SGroup_Add(sg_closest, squadDistances[squadIndex].squad)
+		squadIndex = squadIndex + 1
+	end
+	
+	return sg_closest
+end
+
+--? @shortdesc Sets the targeting type of entities in an sgroup
+function SGroup_SetTargetingType(sgroup, targetingType)
+	
+	if scartype(sgroup) ~= ST_SGROUP then
+		return
+	end
+	
+	-- Targeting_Manual
+	-- Targeting_Automatic
+	-- Targeting_None
+	
+	local _ApplyToSquad = function(gid, idx, sid)
+		Entity_SetTargetingType(Squad_GetFirstEntity(sid), targetingType)
+	end
+	
+	SGroup_ForEach(sgroup, _ApplyToSquad)	
+	
+end
+
+--? @shortdesc Returns true if a squad is currently patrolling
+function Squad_IsPatrolling(squad)
+	assert(scartype(squad) == ST_SQUAD, string.format("Squad isn't a squad, it's %s", scartype_tostring(entity)))
+	if scartype(squad) == ST_SQUAD then
+		local entity = Squad_GetFirstEntity(squad)
+		assert(scartype(entity) == ST_ENTITY, string.format("Squad %s first entity is not an entity! Is %s", Squad_GetBlueprint(squad), scartype_tostring(entity)))
+		if scartype(entity) == ST_ENTITY then
+			return Entity_ActiveCommandIs(entity, CMD_Patrol)
+		end
+	end
+	return false
+end
+
+--? @shortdesc Returns an average position for a table of positions
+function Position_GetAverage(positionTable)
+
+	local avgPosition = nil
+	
+	local numPositions = #positionTable
+	if numPositions > 0 then
+		local x_total = 0
+		local y_total = 0
+		local z_total = 0
+		for index, position in pairs(positionTable) do
+			x_total = x_total + position.x
+			y_total = y_total + position.y
+			z_total = z_total + position.z
+		end
+		avgPosition = World_Pos(x_total / numPositions, y_total / numPositions, z_total / numPositions)
+	else
+		avgPosition = World_Pos(0, 0, 0)
+	end
+	
+	return avgPosition
+	
+end

@@ -1,0 +1,294 @@
+function RochesterSupply_InitObjectives()
+
+OBJ_RochesterSupply = {
+		
+		Title = "$11175644", --"Optional: Cut-off Rochester's Supplies"
+		Type = ObjectiveType_Optional,
+		SetupUI = RochesterSupply_SetupUI,
+		OnStart = RochesterSupply_OnStart,
+		Intel_Complete = EVENTS.SupplyComplete,
+		IsComplete = RochesterSupply_IsComplete,
+		OnComplete = SiegeEntropy,
+	}
+		SOBJ_FlamingFarms = {
+		
+		Title = "$11175645", --"Burn the farms"
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_RochesterSupply,
+		StartAlongsideParent = true,
+		Intel_Complete = EVENTS.Burn_Farms_Complete,
+		OnComplete = RochesterSupply_EntropyIfFirst,
+	}
+		SOBJ_TroubledTrade = {
+		
+		Title = "$11175646", --"Destroy the Trade Carts"
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_RochesterSupply,
+		StartAlongsideParent = true,
+		Intel_Complete = EVENTS.SupplySpotted_Complete,
+		OnComplete = RochesterSupply_EntropyIfFirst,
+	}
+
+	Objective_Register(OBJ_RochesterSupply)
+	Objective_Register(SOBJ_FlamingFarms)
+	Objective_Register(SOBJ_TroubledTrade)
+	
+end
+
+--ROCHESTER SUPPLY OBJECTIVE--
+function RochesterSupply_SetupUI()
+	Util_AutoSave()
+end
+
+function RochesterSupply_OnStart()
+
+end
+
+function RochesterSupply_Init()
+	--UnitEntry_DeploySquads(player2, sg_trade_wagons, {{sbp = SBP.ENGLISH.UNIT_TRADE_CART_ENG, numSquads = 1,}}, mkr_stmargots)
+	--UnitEntry_DeploySquads(player2, sg_trade_wagons, {{sbp = SBP.ENGLISH.UNIT_TRADE_CART_ENG, numSquads = 1,}}, mkr_rochester_all)
+	--UnitEntry_DeploySquads(player2, sg_trade_wagons, {{sbp = SBP.ENGLISH.UNIT_TRADE_CART_ENG, numSquads = 1,}}, mkr_traderspawn)
+	
+	--AssignTradecartsToTrade(sg_trade_wagons, eg_trade_settlement)
+	--Init_TradeDefenders(sg_trade_wagons)
+	
+	Init_EnemyTrade()
+	Rule_AddOneShot(Init_EnemyTrade, 35)
+	
+	Rule_AddInterval(DiscoverFarms,1)
+	Rule_AddInterval(DiscoverWagons,1)
+	
+	Rule_AddInterval(StMargaretsMonitor, {interval = 2, delay = 0.5})
+end
+
+function RochesterSupply_IsComplete()
+	if b_WallsBreached == true and Objective_IsComplete(SOBJ_FlamingFarms) then
+		return true
+	end
+	
+	return Objective_AreSubObjectivesComplete(OBJ_RochesterSupply, ALL)
+end
+
+
+function DiscoverFarms() --Starts objective on farm egroup discovery
+	if Player_CanSeeEGroup(player1, eg_rochestersupply, false) then
+		Rule_RemoveMe()
+		Util_StartIntel(EVENTS.Burn_Farms)
+		if Objective_IsStarted(OBJ_RochesterSupply) ~= true then
+			Objective_Start(OBJ_RochesterSupply)
+		end
+		i_rochesterSupplyMax = EGroup_CountSpawned(eg_rochestersupply)
+		Rochester_GetMills()
+		
+		Rule_AddInterval(RochesterSupply_Update, 0.5)
+		
+	end
+end
+
+function Rochester_GetMills()
+	
+	t_allMills = {}
+	local _Rochester_MillUI = function(gid, index, eid)
+		_G["rochester_mills_"..index] = Objective_AddUIElements(SOBJ_FlamingFarms, eid, true, 11191766, true)
+		t_allMills[index] = {mill = eid, ui = _G["rochester_mills_"..index]}
+	end
+	EGroup_ForEach(eg_rochestersupply, _Rochester_MillUI)
+			
+end
+
+function RochesterSupply_Update() --Updates the Rochester Supply UI & Objectives
+	local int_RochesterSupplyCurrent = EGroup_CountSpawned(eg_rochestersupply)
+	int_LastRunValue = int_LastRunValue or int_RochesterSupplyCurrent
+	int_RochesterSupplyLost = math.abs(int_RochesterSupplyCurrent-i_rochesterSupplyMax)
+	Objective_SetCounter(SOBJ_FlamingFarms, int_RochesterSupplyLost ,i_rochesterSupplyMax)
+	
+	if int_RochesterSupplyCurrent <= 0 then
+		Objective_Complete(SOBJ_FlamingFarms)
+		Rule_RemoveMe()
+	elseif int_RochesterSupplyCurrent <= 3 then
+		if b_CountrysidePatroled == false then
+			DefendCountryside()
+		end
+	end
+	
+	if int_LastRunValue ~= int_RochesterSupplyCurrent then
+		AudOnScreen(player1, "WALLA_CAMP_CELEBRATE_")
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		int_LastRunValue = int_RochesterSupplyCurrent
+		for index = #t_allMills, 1, -1 do
+			if Entity_IsAlive(t_allMills[index].mill) ~= true then
+				Objective_RemoveUIElements(SOBJ_FlamingFarms, t_allMills[index].ui)
+				table.remove(t_allMills, index)
+			end
+		end
+		if #t_allMills == 0 then
+			Rule_RemoveMe()
+		end
+	end
+	
+end
+
+function DiscoverWagons() --Starts objective on wagon sgroup discovery
+	if Player_CanSeeSGroup(player1, sg_trade_wagons, false) then
+		Rule_RemoveMe()
+		deadCart_Count = deadCart_Count or 0
+		Util_StartIntel(EVENTS.SupplySpotted)
+		if Objective_IsStarted(OBJ_RochesterSupply) ~= true then
+			Objective_Start(OBJ_RochesterSupply)
+		end
+		Objective_SetCounter(SOBJ_TroubledTrade, deadCart_Count, 6)
+		Rule_AddSGroupEvent(WagonKilled_SquadKilled, sg_trade_wagons, GE_SquadKilled)
+		Rule_EnterProximity(TraderArrivedPing, ANY, sg_trade_wagons, mkr_rochester_market, 15, true, {})
+		Create_TraderMinimapPath()		
+		Trader_ObjectiveUI()
+	end
+end
+
+function Trader_ObjectiveUI()
+	local _Rochester_TraderUI = function(gid, index, sid)
+		_G["rochester_trader_"..index] = Objective_AddUIElements(SOBJ_TroubledTrade, sid, true, 11191765, true)
+	end
+	SGroup_ForEach(sg_trade_wagons, _Rochester_TraderUI)
+	FOW_PlayerRevealSGroup(player1, sg_trade_wagons, 5, -1)
+end
+
+function Create_TraderMinimapPath()
+	PATH_ROCHESTER = 0
+	AIPlayer_RequestHighPath(player2, PATH_ROCHESTER, Util_GetPosition(mkr_tradingpost), Util_GetPosition(mkr_rochester_market), EBP.CORE.UNIT_TRADE_CART, true)
+	Rule_AddOneShot(Rochester_DisplayMinimapPath, 2, { pathID = PATH_ROCHESTER, pathName = "rochester" })
+end
+
+function Rochester_DisplayMinimapPath(context, data)
+	
+	local pointList = AIPlayer_GetCachedPathPoints(player2, data.pathID)
+	MarkerPaths_GenerateIcons("rochester_trade", pointList, "military_route_enemy", 30)
+	
+end
+
+function TraderArrivedPing()
+	UI_CreateEventCueClickable(-1, 10, -1, 0, 11195104,	11195105, "low_priority", "", "sfx_ui_event_queue_low_priority_play", 255, 255, 255, 255, ECV_Queue, nothing) --A Trader has arrived at Rochester!/A Trader has delivered supplies to the rebels at Rochester.
+end
+
+function WagonKilled_SquadKilled(context) --Countdown on wagon death, at 0 complete
+	deadCart_Count = deadCart_Count+1
+	--sg_oldcarts = SGroup_CreateIfNotFound("sg_oldcarts")
+	--sg_newcarts = SGroup_CreateIfNotFound("sg_newcarts")
+	Objective_SetCounter(SOBJ_TroubledTrade, deadCart_Count, 6)
+	AudOnScreen(player1, "WALLA_CAMP_CELEBRATE_")
+	Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+	
+	if b_TraderoutePatroled == false then
+		DefendTraderoute()
+	end
+	
+	--Player_GetAll(player2)
+	--SGroup_Filter(sg_allsquads, "scar_trade_cart", FILTER_REMOVE, sg_oldcarts)
+		
+	if SGroup_CountSpawned(sg_trade_wagons) < 2 and i_TraderNumber <= 6 then
+		Init_EnemyTrade()
+	end
+	
+	Trader_ObjectiveUI()
+	
+	Rule_RemoveSGroupEvent(WagonKilled_SquadKilled, sg_trade_wagons)
+	Rule_AddSGroupEvent(WagonKilled_SquadKilled, sg_trade_wagons, GE_SquadKilled)
+	
+	--Player_GetAll(player2, sg_newcarts)
+	--SGroup_Filter(sg_newcarts, "scar_trade_cart", FILTER_KEEP)
+	--SGroup_RemoveGroup(sg_newcarts, sg_oldcarts)
+	
+	--Rule_AddSGroupEvent(WagonKilled_SquadKilled, sg_newcarts, GE_SquadKilled)
+	
+	if deadCart_Count == 6 then
+		Rule_RemoveSGroupEvent(WagonKilled_SquadKilled, sg_trade_wagons)
+		Objective_Complete(SOBJ_TroubledTrade)
+		
+		MarkerPaths_ClearIcons("rochester_trade", true)
+		--Rule_Remove(TraderArrivedPing)
+	end
+end
+
+function Init_TradeDefenders(traders)
+	
+	if traders ~= nil then
+					
+		local _SpinupDefenders = function(gid, idx, iid)
+			
+			
+			_G["sg_traders_"..idx] = SGroup_CreateIfNotFound("sg_traders_"..idx)
+			SGroup_Add(_G["sg_traders_"..idx], iid)
+			
+			_G["sg_trade_defenders_"..idx] = SGroup_CreateIfNotFound("sg_trade_defenders_"..idx)
+			
+			local defenderName = "trade_defender_"..idx
+			print(defenderName)
+			
+			local moduleData = 
+			{
+				type = "RovingArmy",
+				descriptor = defenderName,
+				player = player2,
+				sgroup = _G["sg_trade_defenders_"..idx],
+				targetingType = ARMY_TARGETING_CYCLE,
+				onDeathDissolve = true,
+				onCompleteModule = "DefendRochester",
+				targets = {(_G["sg_traders_"..idx])},
+				idleTimeOverride = 3,				
+				spawnLocation = Util_GetPosition(_G["sg_traders_"..idx]),
+				units = 
+				{
+					{type = "scar_horseman", numSquads = 5*t_difficulty.defenderValue},
+				},
+			}
+			RovingArmy_Init(moduleData)
+			
+			
+			--local units = 
+				--{
+					--{type = "scar_horseman", numSquads = 5*t_difficulty.defenderValue},
+				--}
+			
+			--UnitEntry_DeploySquads(player2, _G["sg_trade_defenders_"..idx] , units, Util_GetPosition(iid))
+			--Cmd_FormationMove(_G["sg_trade_defenders_"..idx] , _G["sg_traders_"..idx])
+		
+		end
+		
+		SGroup_ForEach(traders, _SpinupDefenders)
+	
+	end
+end
+
+-- this triggers when each sub-objective comnpletes but only does anything the first time
+function RochesterSupply_EntropyIfFirst()
+	
+	if b_supplyIntelCompleted == false then
+		SiegeEntropy()
+	end
+	
+end
+
+-- when the player find's st margarets, we play some speech and add hintpoints to the monastery and market
+function StMargaretsMonitor()
+	
+	local StMargaretsCheck = Player_CanSeeEGroup(player1, eg_stmargarets, ANY)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_stmargots_visualtrigger)
+	local playerInRange =  SGroup_CountSpawned(sg_temp) > 0
+	
+	if StMargaretsCheck and playerInRange then
+		-- reveal egroup in FOW
+		FOW_RevealEGroupOnly(eg_stmargarets, 30, -1)
+		hp_monastery = HintPoint_Add(eg_monastery, true, 11195984, 5) -- St. Margaret's Monastery
+		hp_market = HintPoint_Add(eg_trade_settlement, true, 11195985, 5) -- Market at St. Margaret's
+		-- add tags
+		Util_StartIntel(EVENTS.StMargarets)
+		Rule_RemoveMe()
+		
+	end
+end
+
+--End Rochester Supply Objectives-
+
+--DEBUG--
+--MissionOMatic_FindModule("TradeDefenders_1").position = sg_traders_1
+--Defend_UpdateTargetLocation(MissionOMatic_FindModule("TradeDefenders_1"), sg_traders_1, false)
+--RovingArmy_SetTarget((MissionOMatic_FindModule("TradeDefenders_1")), sg_traders_1, 1)

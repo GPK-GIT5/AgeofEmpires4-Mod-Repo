@@ -1,0 +1,695 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+function InitData1()
+	--Player_GetStateModelFloat(player1, "shajar_num_spies_ayy")
+	pending_invasions = {}
+	active_invasions = {}
+	enemy_soldiers_killed = 0
+	enemy_leaders_killed = 0
+	enemy_headquarters_killed = false
+	initial_leader_count = 3
+	LEADER_SETUP_TIME = 80 --15
+	SHAJAR_ABILITY_DELAY = 20
+	ENEMY_REINFORCEMENT_DELAY = Util_DifVar({ -1, -1, 800, 400 })
+	INVASION_DELAY_AFTER_TRANSITION = Util_DifVar({ 200, 180, 160, 140 }) --1
+	INVASION_INTERVAL = Util_DifVar({ 300, 270, 240, 210 })
+	INVASION_MUSTER_DURATION = 120 --needs to be less than inverval
+	
+	COMBAT_RANGE_LARGE = 45
+	LEASH_RANGE_LARGE = 85
+	
+	COST_UPPER = Util_DifVar({ 900, 1200, 1750, 2400 })
+	COST_LOWER = COST_UPPER / 2
+	COST_DIFF = COST_UPPER - COST_LOWER
+	
+	anti_wall_unit_types = { "scar_trebuchet", "scar_ram", "scar_mangonel" }
+	
+	VILLAGER_COUNT_BERRIES = 6
+	VILLAGER_COUNT_GOLD = 4
+	VILLAGER_COUNT_WOOD = 6
+	
+	sg_masters = SGroup_CreateUniqueWithPrefix("sg_masters")
+	sg_ambush_bait = SGroup_CreateUniqueWithPrefix("sg_ambush_bait")
+	eg_trees = EGroup_CreateUniqueWithPrefix("eg_trees")
+	
+	WALK_SPEED = 2.5
+	
+	BAIBARS_DELAY = 1500
+	ROUNDS_REPEATED = 4
+	INVASIONS_IN_THE_FIELD = 2
+	
+	front_army_units_manatarms =    {{ type = "scar_manatarms",   numSquads = Util_DifVar({ 5, 6, 9, 12 }) }}
+	front_army_units_crossbowman =  {{ type = "scar_crossbowman", numSquads = Util_DifVar({ 5, 6, 9, 12 }) }}
+	front_army_units_spearman = 	{{ type = "scar_spearman",	  numSquads = Util_DifVar({ 5, 6, 9, 12 }) }}
+	front_army_units_archer = 	 	{{ type = "scar_archer", 	  numSquads = Util_DifVar({ 5, 6, 9, 12 }) }}
+	front_army_units_militia = 	 	{{ type = "scar_militia", 	  numSquads = Util_DifVar({ 5, 6, 9, 12 }) }}
+	
+	lanes = {
+		west = {
+			targets = { mkr_assault_west_1, mkr_assault_west_2, mkr_assault_west_3, mkr_assault_west_4, mkr_assault_west_gate, mkr_player_base },
+			fallbacks = { mkr_assault_west_3, mkr_assault_west_2, mkr_assault_west_1, mkr_retreat },
+			arrive = mkr_invasion_arrive_west,
+		},
+		north = {
+			targets = { mkr_assault_north_1, mkr_assault_north_2, mkr_player_base, mkr_assault_north_gate },
+			fallbacks = { mkr_assault_north_1, mkr_retreat },
+			arrive = mkr_invasion_arrive_north,
+		},
+		east = {
+			targets = { mkr_assault_east_1, mkr_assault_east_2, mkr_assault_east_3, mkr_assault_east_4, mkr_assault_east_gate, mkr_player_base },
+			fallbacks = { mkr_assault_east_3, mkr_assault_east_2, mkr_assault_east_1, mkr_retreat },
+			arrive = mkr_invasion_arrive_east,
+		},
+	}
+	all_lanes = { lanes.north }
+	if Game_GetSPDifficulty() >= GD_HARD then
+		all_lanes = { lanes.west, lanes.north, lanes.east }	
+	end
+	
+	buildingTypes = { "barracks", "archery_range", "stable", "siege_workshop", "monastery" }
+	
+	Camp_Init()
+	
+	holy_order_teuton = {
+		name = "Teuton",
+		member_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_CRU,
+		member_count = Util_DifVar({ 14, 16, 22, 28 }),
+		member_spawn = mkr_holy_order_teuton_01,
+		member_waypoint = mkr_waypoint_teuton,
+		master_pool = pool_home_master,
+		master_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_MASTER_CRU,
+		master_spawn = mkr_master_teuton,
+		master_waypoints = { mkr_master_teuton_dest_1, mkr_master_teuton_dest_2, mkr_master_teuton_dest_3, mkr_master_teuton_dest_4, mkr_master_teuton_dest_5 },
+		master_walk_speed = 3.0,
+		master_sgroup = SGroup_CreateUniqueWithPrefix("sg_master_teuton"),
+	}
+	holy_order_hospitaller = {
+		name = "Hospitaller",
+		member_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU,
+		member_count = Util_DifVar({ 7, 8, 11, 14 }),
+		member_spawn = mkr_holy_order_hospitaller_01,
+		member_waypoint = mkr_waypoint_hospitaller,
+		master_pool = pool_field_west,
+		master_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_MASTER_CRU,
+		master_spawn = mkr_master_hospitaller,
+		master_waypoints = { mkr_master_hospitaller_dest_1, mkr_master_hospitaller_dest_2, mkr_master_hospitaller_dest_3, mkr_master_hospitaller_dest_4 },
+		master_walk_speed = 3.5,
+		master_sgroup = SGroup_CreateUniqueWithPrefix("sg_master_hospitaller"),
+	}
+	holy_order_templar = {
+		name = "Templar",
+		member_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU,
+		member_count = Util_DifVar({ 7, 8, 11, 14 }),
+		member_spawn = mkr_holy_order_templar_01,
+		member_waypoint = nil,
+		master_pool = pool_field_east,
+		master_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU,
+		master_spawn = mkr_master_templar,
+		master_waypoints = { mkr_master_templar_dest_1, mkr_master_templar_dest_2, mkr_master_templar_dest_3, mkr_master_templar_dest_4, mkr_master_templar_dest_5, mkr_master_templar_dest_6 },
+		master_walk_speed = 3.5,
+		master_sgroup = SGroup_CreateUniqueWithPrefix("sg_master_templar"),
+	}
+	holy_orders = { holy_order_teuton, holy_order_hospitaller, holy_order_templar }
+	
+	--------------------------------------------------------------------------------------------------------------
+	--------------------------------------------------- SBPs -----------------------------------------------------
+	--------------------------------------------------------------------------------------------------------------
+	unitTypes = {
+		scar_spearman = { 	 buildingType = "barracks", 	  pools = { pool_tents }, }, --15
+		scar_manatarms = { 	 buildingType = "barracks", 	  pools = { pool_tents }, }, --22
+		scar_militia = { 	 buildingType = "barracks", 	  pools = { pool_tents }, }, --10
+		scar_archer = { 	 buildingType = "archery_range",  pools = { pool_tents }, }, --15
+		scar_crossbowman = { buildingType = "archery_range",  pools = { pool_tents }, }, --22
+		scar_horseman = { 	 buildingType = "stable", 	 	  pools = {pool_field_west, pool_field_east, pool_field_south }, }, --22
+		scar_knight = { 	 buildingType = "stable", 		  pools = {pool_field_west, pool_field_east, pool_field_south }, }, --35
+		scar_mangonel = { 	 buildingType = "siege_workshop", pools = {pool_tents_siege }, }, --35
+		scar_springald = { 	 buildingType = "siege_workshop", pools = {pool_tents_siege }, }, --35
+		scar_trebuchet = { 	 buildingType = "siege_workshop", pools = {pool_tents_siege }, }, --35
+		scar_ram = { 		 buildingType = "siege_workshop", pools = {pool_tents_siege }, }, --35
+		scar_siege_tower = { buildingType = "siege_workshop", pools = {pool_tents_siege }, }, --35
+	}
+	unitSBPs = {}
+	unitSBPs[SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU] = 		   	  	{ buildingType = "stable", 	  pools = { pool_field_west, pool_field_east, pool_field_south }, }
+	unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_CRU] = 	   		{ buildingType = "monastery", pools = { pool_home }, }
+	unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_MASTER_CRU] = 		{ buildingType = "monastery", pools = { pool_home_master }, }
+	unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU] = 	   		{ buildingType = "monastery", pools = { pool_field_west }, }
+	unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU] = 	{ buildingType = "monastery", pools = { pool_field_west }, }
+	unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU] = 	    { buildingType = "monastery", pools = { pool_field_east }, }
+	unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_MASTER_CRU] = { buildingType = "monastery", pools = { pool_field_east }, }
+	
+	for unitType, unitTypeData in pairs(unitTypes) do
+		local sbp = Cardinal_ConvertTypeToSquadBlueprint(unitType, player2, false)
+		unitSBPs[sbp] = unitTypeData
+	end
+	
+	defending_armies = {
+		{
+			name = "front_army_01",
+			targets = { mkr_front_army_01 },
+			units = front_army_units_manatarms,
+		},
+		{
+			name = "front_army_02",
+			targets = { mkr_front_army_02 },
+			units = front_army_units_manatarms,
+		},
+		{
+			name = "front_army_03",
+			targets = { mkr_front_army_03 },
+			units = front_army_units_manatarms,
+		},
+		{
+			name = "front_army_04",
+			targets = { mkr_front_army_04 },
+			units = front_army_units_crossbowman,
+		},
+		{
+			name = "front_army_05",
+			targets = { mkr_front_army_05 },
+			units = front_army_units_crossbowman,
+		},
+		{
+			name = "front_army_06",
+			targets = { mkr_front_army_06 },
+			units = front_army_units_crossbowman,
+		},
+		{
+			name = "front_army_07",
+			targets = { mkr_front_army_07},
+			units = front_army_units_militia,
+		},
+		{
+			name = "front_army_08",
+			targets = { mkr_front_army_08 },
+			units = front_army_units_militia,
+		},
+		{
+			name = "front_army_09",
+			targets = { mkr_front_army_09 },
+			units = front_army_units_manatarms,
+		},
+		{
+			name = "front_army_10",
+			targets = { mkr_front_army_10 },
+			units = front_army_units_manatarms,
+		},
+		{
+			name = "front_army_11",
+			targets = { mkr_front_army_11 },
+			units = front_army_units_archer,
+		},
+		{
+			name = "front_army_12",
+			targets = { mkr_front_army_12 },
+			units = front_army_units_archer,
+		},
+		{
+			name = "front_army_13",
+			targets = { mkr_front_army_13 },
+			units = front_army_units_archer,
+		},
+		{
+			name = "front_army_14",
+			targets = { mkr_front_army_14 },
+			units = front_army_units_archer,
+		},
+		{
+			name = "front_army_15",
+			targets = { mkr_front_army_15 },
+			units = front_army_units_archer,
+		},
+		{
+			name = "front_army_16",
+			targets = { mkr_front_army_16 },
+			units = front_army_units_crossbowman,
+		},
+		{
+			name = "defend_01",
+			targets = { mkr_defend_01_01 },
+			units = {
+				{ type = "scar_archer", numSquads = 3 }
+			},
+		},
+		{
+			name = "defend_02",
+			targets = { mkr_defend_02_01 },
+			player = player2,
+			units = {
+				{ type = "scar_archer", numSquads = 3 }
+			},
+		},
+		{
+			name = "defend_03",
+			targets = { mkr_defend_03_01 },
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({ 3, 4, 5, 6 }) },
+			},
+		},
+		{
+			name = "defend_04",
+			targets = { mkr_defend_04_01 },
+			units = {
+				{ type = "scar_spearman", numSquads = Util_DifVar({ 3, 4, 5, 6 }) },
+			},
+		},
+		{
+			name = "defend_05",
+			targets = { mkr_defend_05_01 },
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({ 3, 4, 5, 6 }) },
+			},
+		},
+		{
+			name = "defend_06",
+			targets = { mkr_defend_06_01 },
+			units = {
+				{ type = "scar_spearman", numSquads = Util_DifVar({ 3, 4, 5, 6 }) },
+			},
+		},
+		{
+			name = "defend_07",
+			targets = { mkr_defend_07_01 },
+			units = {
+				{ type = "scar_horseman", numSquads = Util_DifVar({ 5,6,8,10 }) },
+			},
+		},
+		{
+			name = "defend_08",
+			targets = { mkr_defend_08_01 },
+			units = {
+				{ type = "scar_knight", numSquads = Util_DifVar({ 2, 2, 3, 4 }) },
+			},
+		},
+		{
+			name = "defend_09",
+			targets = { mkr_defend_09_01 },
+			units = {
+				{ type = "scar_horseman", numSquads = Util_DifVar({ 5,6,8,10 }) },
+			},
+		},
+		{
+			name = "army_09",
+			targets = { mkr_army_09_01 },
+			units = {
+				{ type = "scar_manatarms", numSquads = Util_DifVar({ 3,4,5,6 }) },
+			},
+		},
+		{
+			name = "army_10",
+			targets = { mkr_army_10_01, mkr_army_10_02 },
+			units = {
+				{ type = "scar_horseman", numSquads = Util_DifVar({ 5, 6, 9, 12 }) },
+			},
+		},
+		{
+			name = "army_11",
+			targets = { mkr_army_11_01, mkr_army_11_02 },
+			units = {
+				{ type = "scar_knight", numSquads = Util_DifVar({ 5, 6, 9, 12 }) },
+			},
+		},
+		{
+			name = "army_12",
+			targets = { mkr_army_12_01 },
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({ 3, 3, 3, 3 }) },
+			},
+		},
+		{
+			name = "army_13",
+			targets = { mkr_army_13_01, mkr_army_13_02 },
+			units = {
+				{ type = "scar_spearman", numSquads = Util_DifVar({ 5, 6, 9, 12 }) },
+			},
+		},
+		{
+			name = "army_14",
+			targets = { mkr_army_14_01 },
+			units = {
+				{ type = "scar_manatarms", numSquads = Util_DifVar({ 8,10,15,20 }) },
+			},
+		},
+		{
+			name = "army_15",
+			targets = { mkr_army_15_01 },
+			units = {
+				{ type = "scar_crossbowman", numSquads = Util_DifVar({ 6, 8, 11, 15 }) },
+			},
+		},
+		{
+			name = "army_16",
+			targets = { mkr_army_16_01, mkr_army_16_02 },
+			units = {
+				{ type = "scar_knight", numSquads = Util_DifVar({ 4, 5, 6, 8 }) },
+			},
+		},
+		{
+			name = "army_17",
+			targets = { mkr_army_17_01 },
+			units = {
+				{ type = "scar_manatarms", numSquads = Util_DifVar({ 6, 8, 11, 15 }) },
+			},
+		},
+		{
+			name = "army_18",
+			targets = { mkr_army_18_01 },
+			units = {
+				{ type = "scar_crossbowman", numSquads = Util_DifVar({ 3,4,5,6 }) },
+			},
+		},
+		{
+			name = "army_19",
+			targets = { mkr_army_19_01 },
+			units = {
+				{ type = "scar_knight", numSquads = Util_DifVar({ 3, 3, 4, 5 }) },
+			},
+		},
+		{
+			name = "army_20",
+			targets = { mkr_army_20_01 },
+			units = {
+				{ type = "scar_horseman", numSquads = Util_DifVar({ 3, 3, 4, 5 }) },
+			},
+		},
+		{
+			name = "army_21",
+			targets = { mkr_army_21_01 },
+			units = {
+				{ type = "scar_knight", numSquads = Util_DifVar({ 5,6,8,10 }) },
+			},
+		},
+		{
+			name = "army_22",
+			targets = { mkr_army_22_01 },
+			units = {
+				{ type = "scar_knight", numSquads = Util_DifVar({ 3,4,6,8 }) },
+			},
+		},
+		{
+			name = "army_23",
+			targets = { mkr_army_23_01 },
+			units = {
+				{ type = "scar_manatarms", numSquads = Util_DifVar({ 8,10,15,20 }) },
+			},
+		},
+		{
+			name = "army_24",
+			targets = { mkr_army_24_01 },
+			units = {
+				{ type = "scar_knight",   numSquads = Util_DifVar({ 6,7,9,12 }) },
+			},
+		},
+		{
+			name = "army_25",
+			targets = { mkr_army_25_01 },
+			units = {
+				{ type = "scar_archer",   numSquads = Util_DifVar({ 12,15,21,30 }) },
+			},
+		},
+		{
+			name = "army_26",
+			targets = { mkr_army_26_01 },
+			units = {
+				{ type = "scar_knight",   numSquads = Util_DifVar({ 6,7,9,12 }) },
+			},
+		},
+		{
+			name = "army_27",
+			targets = { mkr_army_27_01 },
+			units = {
+				{ type = "scar_horseman",   numSquads = Util_DifVar({ 6,7,9,12 }) },
+			},
+		},
+		{
+			name = "army_28",
+			targets = { mkr_army_28_01 },
+			units = {
+				{ type = "scar_manatarms", numSquads = Util_DifVar({ 8,10,15,20 }) },
+			},
+		},
+		{
+			name = "army_29",
+			targets = { mkr_army_29_01 },
+			units = {
+				{ type = "scar_knight", numSquads = Util_DifVar({ 5,6,8,10 }) },
+			},
+		},
+		{
+			name = "army_30",
+			targets = { mkr_army_30_01 },
+			units = {
+				{ type = "scar_knight", numSquads = Util_DifVar({ 5,6,8,10 }) },
+			},
+		},
+		{
+			name = "army_31",
+			targets = { mkr_army_31_01 },
+			units = {
+				{ type = "scar_archer", numSquads = Util_DifVar({ 6, 8, 11, 15 }) },
+			},
+		},
+		{
+			name = "army_32",
+			targets = { mkr_army_32_01,mkr_army_32_02 },
+			units = {
+				{ type = "scar_crossbowman", numSquads = Util_DifVar({ 6, 8, 11, 15 }) },
+			},
+			combatRange = COMBAT_RANGE_LARGE,
+			leashRange = LEASH_RANGE_LARGE
+		},
+		{
+			name = "army_33",
+			targets = { mkr_army_33_01, mkr_army_33_02 },
+			units = {
+				{ type = "scar_knight", numSquads = Util_DifVar({ 5, 6, 9, 12 }) },
+			},
+			combatRange = COMBAT_RANGE_LARGE,
+			leashRange = LEASH_RANGE_LARGE
+		},
+		{
+			name = "army_34",
+			targets = { mkr_army_34_01, mkr_army_34_02 },
+			units = {
+				{ type = "scar_mansurah", numSquads = Util_DifVar({ 5, 6, 9, 12 }) },
+			},
+			combatRange = COMBAT_RANGE_LARGE,
+			leashRange = LEASH_RANGE_LARGE
+		},
+
+	}
+	for _, army in ipairs(defending_armies) do
+		army.player = player2
+		if army.target or #army.targets == 1 then
+			army.useCustomDirection = true
+		end
+		if army.targetOrder == nil then
+			army.targetOrder = TARGET_ORDER_PATROL
+		end
+		if army.idleTime == nil then
+			army.idleTime = 4
+		end
+	end
+	local params = {
+		name = "army_blocked",
+		player = player2,
+		target = mkr_retreat,
+		useCustomDirection = true,
+	}
+	army_blocked = Army_Init(params)
+	
+	CreateUnits(player3, {{ type = "scar_spearman", numSquads = 6 }}, mkr_spearmen)
+	CreateUnits(player3, {{ type = "scar_archer", numSquads = 6 }}, mkr_archers)
+end
+
+function GetRecipe()
+	return {
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,
+		audioSettings = {
+			campaignName = "abb",
+			missionName = "rts1350mansurah",
+		},
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_slaves_to_sultans",
+				title = "$11253225", -- Nile Delta
+				date =  "$11253224", -- 1250
+			},
+		},
+	}
+end
+
+function InitData2()
+		--------------------------------------------------------------------------------------------------------------
+	--------------------------------------------- CAMP UNITS -----------------------------------------------------
+	--------------------------------------------------------------------------------------------------------------
+	camp_follower_units = {
+		{ type = "scar_militia",   	 						numSquads = Util_DifVar({ 5, 6, 9, 12 }), 	pool = pool_tents },
+		{ type = "scar_spearman",  	 						numSquads = Util_DifVar({ 5, 6, 9, 12 }),   pool = pool_tents },
+		{ type = "scar_manatarms", 	 						numSquads = Util_DifVar({ 5, 6, 9, 12 }),   pool = pool_tents },
+		{ type = "scar_archer",    	 						numSquads = Util_DifVar({ 5, 6, 9, 12 }), 	pool = pool_tents },
+		{ type = "scar_crossbowman", 						numSquads = Util_DifVar({ 5, 6, 9, 12 }),   pool = pool_tents },
+		{ type = "scar_manatarms", 	 						numSquads = Util_DifVar({ 5, 6, 9, 12 }), 	pool = pool_home },
+		{ type = "scar_crossbowman", 						numSquads = Util_DifVar({ 5, 6, 9, 12 }),   pool = pool_home },
+		{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, 	numSquads = Util_DifVar({ 0, 0, 1, 1 }), 	pool = pool_home },
+		{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, 	numSquads = Util_DifVar({ 0, 0, 0, 1 }), 	pool = pool_field_west },
+		{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, 	numSquads = Util_DifVar({ 0, 0, 1, 1 }), 	pool = pool_field_east },
+		{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, 	numSquads = Util_DifVar({ 0, 0, 2, 2 }), 	pool = pool_field_south },
+		{ type = "scar_horseman", 	 						numSquads = Util_DifVar({ 5, 6, 9, 12 }), 	pool = pool_field_west },
+		{ type = "scar_horseman", 	 						numSquads = Util_DifVar({ 5, 6, 9, 12 }), 	pool = pool_field_east },
+		{ type = "scar_horseman", 	 						numSquads = Util_DifVar({ 5, 6, 9, 12 }), 	pool = pool_field_south },
+		{ type = "scar_knight", 	 						numSquads = Util_DifVar({ 5, 6, 9, 12 }),  	pool = pool_field_west },
+		{ type = "scar_knight", 	 						numSquads = Util_DifVar({ 4, 5, 8, 10 }),  	pool = pool_field_east },
+		{ type = "scar_knight", 	 						numSquads = Util_DifVar({ 3, 4, 6, 8 }),  	pool = pool_field_south },
+	}
+	camp_leader_units = {
+		{ sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU, numSquads = 1 },
+		{ sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_MASTER_CRU, numSquads = 1 },
+		{ sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_MASTER_CRU, numSquads = 1 },
+	}
+	
+	rounds = {
+		-- 1
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_ram", numSquads = Util_DifVar({ 1, 1, 1, 1 }) },
+				{ type = "scar_militia", numSquads = Util_DifVar({ 5, 8, 12, 17 }) },
+			},
+		},
+		-- 2
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_ram", 	  numSquads = Util_DifVar({ 1, 1, 2, 2 }) },
+				{ type = "scar_spearman", numSquads = Util_DifVar({ 7, 11, 12, 17 }) },
+			},
+		},
+		-- 3
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_trebuchet", numSquads = Util_DifVar({ 1, 1, 2, 2 }) },
+				{ type = "scar_militia",   numSquads = Util_DifVar({ 6, 8, 11, 15 }) },
+				{ type = "scar_archer",    numSquads = Util_DifVar({ 6, 8, 11, 15 }) },
+			},
+		},
+		-- 4
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_ram", numSquads = 	     Util_DifVar({ 1, 2, 2, 2 }) },
+				{ type = "scar_mangonel", numSquads =    Util_DifVar({ 0, 0, 1, 2 }) },
+				{ type = "scar_militia", numSquads =     Util_DifVar({12,18, 0, 0 }) },
+				{ type = "scar_manatarms", numSquads =   Util_DifVar({ 0, 0,12,18 }) },
+				{ type = "scar_crossbowman", numSquads = Util_DifVar({ 5, 5,10,10 }) },
+			},
+		},
+		-- 5
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_trebuchet", numSquads = Util_DifVar({ 1, 1, 2, 3 }) },
+				{ type = "scar_mangonel", numSquads = Util_DifVar({ 0, 1, 2, 3 }) },
+				{ type = "scar_springald", numSquads = Util_DifVar({ 1, 1, 1, 2 }) },
+				{ type = "scar_spearman", numSquads = Util_DifVar({ 12, 15, 19, 24 }) },
+			},
+		},
+		-- 6
+		{ --EASY
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_ram", 	  numSquads = Util_DifVar({ 2,  2,  3, 4 }) },
+				{ type = "scar_horseman", numSquads = Util_DifVar({ 7, 10, 14, 20 }) },
+				{ type = "scar_archer",   numSquads = Util_DifVar({ 7, 10, 14, 20 }) },
+			},
+		},
+		-- 7
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_trebuchet", numSquads = Util_DifVar({ 1,  2,  3,  4 }) },
+				{ type = "scar_manatarms", numSquads = Util_DifVar({ 8, 12, 17, 23 }) },
+				{ type = "scar_knight",    numSquads = Util_DifVar({ 2,  4,  7, 11 }) },
+			},
+		},
+		-- 8
+		{ --EASYISH
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_ram", 	   numSquads = Util_DifVar({ 2, 3, 4, 5 }) },
+				{ type = "scar_manatarms", numSquads = Util_DifVar({14,19,24,30 }) },
+				{ type = "scar_springald", numSquads = Util_DifVar({ 1, 1, 2, 3 }) },
+			},
+		},
+		-- 9
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_trebuchet", numSquads = Util_DifVar({ 1, 2, 3, 4 }) },
+				{ type = "scar_mangonel",  numSquads = Util_DifVar({ 1, 2, 3, 4 }) },
+				{ type = "scar_spearman",  numSquads = Util_DifVar({10,13,18,24}) },
+				{ type = "scar_archer",    numSquads = Util_DifVar({10,13,18,24}) },
+			},
+		},
+		-- 10
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_ram", 		 numSquads = Util_DifVar({ 2, 3, 4, 5 }) },
+				{ type = "scar_knight", 	 numSquads = Util_DifVar({ 8,11,15,20 }) },
+				{ type = "scar_crossbowman", numSquads = Util_DifVar({11,15,20,26 }) },
+			},
+		},
+		-- 11
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_trebuchet",  numSquads = Util_DifVar({ 2, 3, 4, 5 }) },
+				{ type = "scar_springald",  numSquads = Util_DifVar({ 2, 3, 4, 5 }) },
+				{ type = "scar_crossbowman",numSquads = Util_DifVar({11,15,20,26 }) },
+				{ type = "scar_manatarms",  numSquads = Util_DifVar({11,15,20,26 }) },
+			},
+		},
+		-- 12
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_ram",  		numSquads = Util_DifVar({ 2, 3, 4, 5 }) },
+				{ type = "scar_trebuchet",  numSquads = Util_DifVar({ 2, 3, 4, 5 }) },
+				{ type = "scar_knight",  	numSquads = Util_DifVar({ 7, 9,12,16 }) },
+				{ type = "scar_archer",		numSquads = Util_DifVar({11,15,21,30 }) },
+			},
+		},
+		-- 13
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_trebuchet",  numSquads = Util_DifVar({ 2, 3, 4, 5 }) },
+				{ type = "scar_mangonel",  	numSquads = Util_DifVar({ 2, 3, 4, 5 }) },
+				{ type = "scar_knight",		numSquads = Util_DifVar({11,15,20,26 }) },
+			},
+		},
+		-- 14
+		{
+			units = {
+				{ sbp = SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU, numSquads = 1 },
+				{ type = "scar_ram",  		numSquads = Util_DifVar({ 3, 4, 5, 6 }) },
+				{ type = "scar_mangonel",  	numSquads = Util_DifVar({ 3, 4, 5, 6 }) },
+				{ type = "scar_crossbowman",numSquads = Util_DifVar({11,15,21,30 }) },
+				{ type = "scar_spearman",  	numSquads = Util_DifVar({11,15,21,30 }) },
+			},
+		},
+	}
+	local time = INVASION_DELAY_AFTER_TRANSITION
+	for i, round in ipairs(rounds) do
+		round.time = time
+		round.cost = UnitTable_GetResourceCost(round.units, player2)
+		print("Round "..tostring(i).." - "..Util_ConvertIntegerSecondsToStringTime(round.time).." - Cost:"..round.cost)
+		time = time + INVASION_INTERVAL
+		--round.lane = lanes[round.lane]
+	end
+	
+end
+

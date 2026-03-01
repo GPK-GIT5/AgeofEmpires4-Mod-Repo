@@ -1,0 +1,234 @@
+-- 
+-- Miscellanious mission utiltiy scripts
+--    - ending single player missions (with an NIS and Movie if set)
+--
+-- Relic Entertainment 2017
+--
+
+
+--? @group scardoc;Mission
+
+
+--? @shortdesc Ends an SP scenario with a Victory. Waits for no intel events to be playing before it ends the mission.
+--? @extdesc This will play any endNIS and endMovie specified in the g_missionData table. After this is called, the path is set and any subsequent calls to Mission_Complete() or Mission_Fail() are ignored.
+--? @result Void
+function Mission_Complete()
+	
+	if __missionIsEnding == nil then
+		
+		__missionIsEnding = "Complete" 		
+		print("Mission Complete triggered...")
+		
+	
+		
+		Rule_Add(__Mission_Complete_Internal, nil, RuleGroup.Unpausable)
+		
+	end
+	
+end
+
+function __Mission_Complete_Internal()
+
+	if Event_IsAnyRunning() == false then
+		
+		Rule_RemoveMe()
+		
+		if scartype(g_missionData) == ST_TABLE and g_missionData.endNIS ~= nil then
+		
+			Util_StartNIS(g_missionData.endNIS)
+			
+			Rule_AddInterval(__Mission_Complete_SplashScreen, 0.5, nil, RuleGroup.Unpausable)
+			
+		elseif scartype(MissionRecipe) == ST_TABLE and MissionRecipe.outroNIS ~= nil then
+		
+			if _SpeechEvent_AudioMuted ~= true then
+				Sound_Play2D("mute_gameplay_all_speech")
+				_SpeechEvent_AudioMuted = true
+			end
+			Event_StartEx(MissionRecipe.outroNIS, EVENT_NIS, _SpeechEvent_RestoreGameplayAudio) 			-- high priority
+			
+			Rule_AddInterval(__Mission_Complete_SplashScreen, 0.5, nil, RuleGroup.Unpausable)
+			
+		else
+			
+			__Mission_Complete_SplashScreen()
+			
+		end
+
+		
+	end
+end
+
+function Mission_CompleteSkipOutro()
+	if __missionIsEnding == nil then
+		
+		__missionIsEnding = "Complete" 		
+		print("Mission Complete triggered...")
+				
+		Rule_Add(__Mission_Complete_SkipOutro_Internal, nil, RuleGroup.Unpausable)
+		
+	end
+end
+
+function __Mission_Complete_SkipOutro_Internal()
+	if Event_IsAnyRunning() == false then	
+		Rule_RemoveMe()		
+		Rule_AddInterval(__Mission_Complete_Finish, 0.5)
+	end
+end
+
+function __Mission_Complete_SplashScreen()
+
+	if Event_IsAnyRunning() == false then
+		
+		Rule_RemoveMe()
+		
+		local presentationData = {
+			_playerID = Game_GetLocalPlayer(),
+			_endType = Loc_GetString(11161277),		--"VICTORY"
+			_message = "",
+			_videoURI = "stinger_victory",
+			_sound = "XboxVictoryScreen"
+		}
+		
+		if scartype(MissionRecipe) == ST_TABLE and MissionRecipe.victory_message ~= nil then
+			presentationData._endType = Loc_GetString(MissionRecipe.victory_message)
+		end
+		
+		_gameOver_message("", presentationData)
+		
+			
+		--Stop the music and Mission complete stinger 
+		Music_UnlockIntensity()
+		Music_Stop()
+		Music_PlayStinger("CampaignMissionCompleteEvent")
+		
+			
+		Rule_AddOneShot(__Mission_Complete_PlayOutroMovie, 11.5, nil, RuleGroup.Unpausable)
+	
+	end
+	
+end
+
+function __Mission_Complete_PlayOutroMovie()
+	
+	if scartype(g_missionData.endMovie) ~= ST_NIL then		-- If there's an outro movie - play it now
+	
+		local event = function()
+		
+			Util_EnterCinematicMode(DEFAULT_CINEMATIC_HIDDEN_GAME_COMPONENT_FLAGS)
+			
+			CTRL.SitRep_PlayMovie(g_missionData.endMovie)
+			CTRL.WAIT()
+			
+			Util_ExitCinematicMode()
+			
+		end	
+		Event_Start(event, 0)
+
+	end
+	
+	Rule_AddInterval(__Mission_Complete_Finish, 0.5)
+		
+end
+
+function __Mission_Complete_Finish()
+
+	if Event_IsAnyRunning() == false then
+		
+		Rule_RemoveMe()
+		
+		-- TODO: Temporary Victory Stinger
+		Sound_Play2D("t01mus_Victory")
+
+		CardinalMissionData = {
+			report = {
+				win = true,
+				gameLength = World_GetGameTime(),
+			},
+		}
+		
+		Game_RetrieveTableData("CardinalMissionData", true) -- clear out the old store
+		Game_StoreTableData("CardinalMissionData", CardinalMissionData)
+		
+		Game_EndSP(true, WR_OBJECTIVECOMPLETE)
+		
+	end
+	
+end
+
+
+
+--~ --? @shortdesc Called when a Mission Fails (immediately, usually within an intel event).  Will pan to a given target (if any) as well as set the UI to hidden
+--~ --? @args [Position/EGroup/Entity/SGroup/Squad/Marker panTarget]
+function Mission_PreFail(panTarget)
+	
+	Util_FullscreenMode(DEFAULT_FULLSCREEN_HIDDEN_GAME_COMPONENT_FLAGS)
+	
+	if panTarget ~= nil then
+		Camera_PanOverTimeTo(panTarget, 0.5)
+	end
+	
+end
+
+--? @shortdesc Ends an SP scenario with a Failure. Waits for no intel events to be playing before it ends the mission.
+--? @extdesc After this is called, the path is set and any subsequent calls to Mission_Complete() or Mission_Fail() are ignored.
+--? @result Void
+function Mission_Fail()
+	
+	if __missionIsEnding == nil then
+		
+		__missionIsEnding = "Fail" 
+		print("Mission Fail triggered...")
+		
+		Rule_Add(__Mission_Fail_SplashScreen, nil, RuleGroup.Unpausable)
+		
+	end
+	
+end
+
+function __Mission_Fail_SplashScreen()
+
+	if Event_IsAnyRunning() == false then
+		
+		Rule_RemoveMe()
+		
+		local presentationData = {
+			_playerID = Game_GetLocalPlayer(),
+			_endType = Loc_GetString(11184771),		-- "MISSION FAILED"
+			_message = "",
+			_videoURI = "stinger_defeat",
+			_sound = "XboxDefeatScreen"
+		}
+		_gameOver_message("", presentationData)
+		
+		
+		--Mission fail stinger 
+		Music_UnlockIntensity()
+		Music_Stop()
+		Music_PlayStinger("CampaignMissionFailEvent")
+		
+		Rule_AddOneShot(__Mission_Fail_Internal, 11.5, nil, RuleGroup.Unpausable)
+		
+		--want to stop any further speech or triggers firing while the failure banner plays
+		Rule_PauseAll()
+		
+	end
+	
+end
+
+function __Mission_Fail_Internal()
+
+	CardinalMissionData = {
+		report = {
+			win = false,
+			gameLength = World_GetGameTime(),
+		},
+	}
+		
+	Game_RetrieveTableData("CardinalMissionData", true) -- clear out the old store
+	Game_StoreTableData("CardinalMissionData", CardinalMissionData)
+
+	Game_EndSP(false, WR_OBJECTIVEFAILED)
+	
+end

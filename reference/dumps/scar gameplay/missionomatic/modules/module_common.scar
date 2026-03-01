@@ -1,0 +1,172 @@
+AI_MODULE_COMBAT_RANGE = 40
+AI_MODULE_LEASH_BUFFER = 20 --this is added to combatRange to get leashRange
+
+-- Most of the work in this function is for determining combatRange and leashRange, from 10 possible formats for t.
+-- Optional override parameters combatRange
+
+-- When calculating combatRange, this is the priority order for what to use:
+-- 1. combatRange paramater, separate from the target itself. This is an optional override.
+-- 2. if t is a table containing an explicit combatRange, that is used.
+-- 3. if t is a marker or location (containing its own marker), the marker radius is used (if > 0)
+-- 4. if the module has its own combatRange, that is used.
+-- 5. when none of the above are valid, AI_MODULE_COMBAT_RANGE is used
+
+-- When calculating leashRange, this is the priority order for what to use:
+-- 1. leashRange parameter, separate from the target itself. This is an optional override.
+-- 2. if t is a table containing an explicit leashRange, that is used.
+-- 3. if the module has its own leashRange, that is used.
+-- 4. when none of the above are valid, AI_MODULE_LEASH_BUFFER is added to combatRange and used.
+
+-- When calculating direction, this is the priority order for what to use:
+-- 1. direction parameter, separate from the target itself. This is an optional override.
+-- 2. if t is a table containing an explicit direction, that is used.
+-- 3. if t is a marker or contains a marker, the direction is derived from that
+-- 4. when none of the above are valid, direction is left nil
+
+--? @shortdesc Takes a target, fallback, or spawnLocation, which can come in many formats, and converts it to a combatArea.
+--? @args DefendModule/RovingArmyModule module, Position/Marker/Table t[, Real combatRange, Real leashRange, Vector direction, Position idlePosition, Boolean useCustomDirection]
+--? @result Table of format { position, combatRange, leashRange }. If the combatArea was initialized with a marker or sgroup, a reference to that object will also be placed in the table.
+function AI_Module_ResolveCombatArea(module, t, combatRange, leashRange, direction, idlePosition, useCustomDirection)
+	assert(combatRange == nil or (scartype(combatRange) == ST_NUMBER) and combatRange > 0, "Invalid combatRange")
+	assert(leashRange == nil or (scartype(leashRange) == ST_NUMBER) and leashRange > 0, "Invalid leashRange")
+	assert(useCustomDirection == nil or scartype(useCustomDirection) == ST_BOOLEAN, string.format("Invalid useCustomDirection, should be nil or Boolean but is %s", scartype_tostring(useCustomDirection)))
+	local target = {}
+	if scartype(t) == ST_SCARPOS then
+		target.position = t
+		target.combatRange = combatRange or module.combatRange or AI_MODULE_COMBAT_RANGE
+		target.leashRange = leashRange or module.leashRange or target.combatRange + AI_MODULE_LEASH_BUFFER
+		target.direction = direction
+		target.idlePosition = idlePosition or module.idlePosition
+		target.useCustomDirection = useCustomDirection or module.useCustomDirection or false
+		
+	elseif scartype(t) == ST_MARKER then
+		target.marker = t
+		target.position = Marker_GetPosition(t)
+		local marker_range = nil
+		if Marker_GetProximityRadiusOrDefault(t, 0) > 0 then marker_range = Marker_GetProximityRadiusOrDefault(t, 0) end
+		target.combatRange = combatRange or module.combatRange or marker_range or AI_MODULE_COMBAT_RANGE
+		target.leashRange = leashRange or module.leashRange or target.combatRange + AI_MODULE_LEASH_BUFFER
+		target.direction = direction or Marker_GetDirection(t)
+		target.idlePosition = idlePosition or module.idlePosition
+		target.useCustomDirection = useCustomDirection or module.useCustomDirection or false
+		
+	elseif scartype(t) == ST_SGROUP then
+		target.sgroup = t
+		target.position = SGroup_GetPosition(t)
+		target.combatRange = combatRange or module.combatRange or AI_MODULE_COMBAT_RANGE
+		target.leashRange = leashRange or module.leashRange or target.combatRange + AI_MODULE_LEASH_BUFFER
+		target.useCustomDirection = false
+		
+	elseif scartype(t) == ST_TABLE and t.prefabName == "Location" then
+		target = AI_Module_ConvertLocationToCombatArea(module, t, combatRange, leashRange, direction, idlePosition, useCustomDirection or false)
+		
+	elseif scartype(t) == ST_STRING then
+		local location = Location_FromDescriptor(t)
+		assert(scartype(location) == ST_TABLE and location.prefabName == "Location", "target string does not match a known location")
+		target = AI_Module_ConvertLocationToCombatArea(module, location, combatRange, leashRange, direction, idlePosition, useCustomDirection or false)
+		
+	elseif scartype(t) == ST_TABLE then
+		local target_types = 0
+		if scartype(t.position) == ST_SCARPOS 	then target_types = target_types + 1 end
+		if scartype(t.marker) == ST_MARKER 		then target_types = target_types + 1 end
+		if scartype(t.sgroup) == ST_SGROUP 		then target_types = target_types + 1 end
+		if scartype(t.location) == ST_STRING 	then target_types = target_types + 1 end
+		if scartype(t.location) == ST_TABLE 	then target_types = target_types + 1 end
+		assert(target_types == 1, module.descriptor.." target of type ST_TABLE must have exactly 1 of position/marker/sgroup")
+		
+		if scartype(t.position) == ST_SCARPOS then
+			target.position = t.position
+			target.combatRange = combatRange or t.combatRange or module.combatRange or AI_MODULE_COMBAT_RANGE
+			target.leashRange = leashRange or t.leashRange or module.leashRange or target.combatRange + AI_MODULE_LEASH_BUFFER
+			target.direction = direction or t.direction
+			target.idlePosition = idlePosition or t.idlePosition or module.idlePosition
+			target.useCustomDirection = useCustomDirection or t.useCustomDirection or module.useCustomDirection or false
+			
+		elseif scartype(t.marker) == ST_MARKER then
+			target.marker = t.marker
+			target.position = Marker_GetPosition(t.marker)
+			local markerRange = nil
+			if Marker_GetProximityRadiusOrDefault(t.marker, 0) > 0 then markerRange = Marker_GetProximityRadiusOrDefault(t.marker, 0) end
+			target.combatRange = combatRange or t.combatRange or markerRange or module.combatRange or AI_MODULE_COMBAT_RANGE
+			target.leashRange = leashRange or t.leashRange or module.leashRange or target.combatRange + AI_MODULE_LEASH_BUFFER
+			target.direction = direction or t.direction or Marker_GetDirection(t.marker)
+			target.idlePosition = idlePosition or t.idlePosition or module.idlePosition
+			target.useCustomDirection = useCustomDirection or t.useCustomDirection or module.useCustomDirection or false
+			
+		elseif scartype(t.sgroup) == ST_SGROUP then
+			target.sgroup = t.sgroup
+			target.position = SGroup_GetPosition(t.sgroup)
+			target.combatRange = combatRange or t.combatRange or module.combatRange or AI_MODULE_COMBAT_RANGE
+			target.leashRange = leashRange or t.leashRange or module.leashRange or target.combatRange + AI_MODULE_LEASH_BUFFER
+			target.useCustomDirection = false
+			
+		elseif scartype(t.location) == ST_TABLE and t.location.prefabName == "Location" then
+			target = AI_Module_ConvertLocationToCombatArea(module, t.location, combatRange or t.combatRange, leashRange or 
+				t.leashRange, direction or t.direction, idlePosition or t.idlePosition, useCustomDirection or t.useCustomDirection or false)
+			
+		elseif scartype(t.location) == ST_STRING then
+			local location = Location_FromDescriptor(t.location)
+			assert(scartype(location) == ST_TABLE and location.prefabName == "Location", "the target string did not match a known location")
+			target = AI_Module_ConvertLocationToCombatArea(module, location, combatRange or t.combatRange, leashRange or 
+				t.leashRange, direction or t.direction, idlePosition or t.idlePosition, useCustomDirection or t.useCustomDirection or false)
+			
+		else
+			assert(false, module.descriptor.." has an invalid target of type ST_TABLE")
+		end
+
+	else
+		assert(false, module.descriptor.." has an invalid target of type "..scartype_tostring(t))
+	end
+	
+	return target
+end
+
+function AI_Module_ConvertLocationToCombatArea(module, location, combatRange, leashRange, direction, idlePosition, useCustomDirection)
+	assert(scartype(location) == ST_TABLE and location.prefabName == "Location", "invalid location")
+	local locationRange = nil
+	if location.range > 0 then
+		locationRange = location.range
+	end
+	
+	local combatArea = {}
+	combatArea.location = location
+	combatArea.position = location.position
+	combatArea.combatRange = combatRange or locationRange or module.combatRange or AI_MODULE_COMBAT_RANGE 
+	combatArea.leashRange = leashRange or moduleRange or combatArea.combatRange + AI_MODULE_LEASH_BUFFER
+	combatArea.direction = direction or module.direction or location.direction
+	combatArea.idlePosition = idlePosition or module.idlePosition or location.idlePosition
+	combatArea.useCustomDirection = useCustomDirection or module.useCustomDirection or false
+	
+	return combatArea
+end
+
+
+--? @shortdesc Find a AI module that's associated with a squad or sgroup 
+--? @args SquadID/SGroupID/AiEncounterID item
+--? @result ModuleTable
+function AI_Module_FindAssociatedModule(item)
+	if scartype(item) == ST_SQUAD then 
+		for index, module in pairs(t_allModules) do 
+			if SGroup_ContainsSquad(module.sgroup, Squad_GetID(item), true) then 
+				return module
+			end			
+		end
+	elseif scartype(item) == ST_SGROUP then 
+		for index, module in pairs(t_allModules) do 
+			if SGroup_ContainsSGroup(module.sgroup, item, ANY) then 
+				return module
+			end			
+		end
+	end
+end
+
+--? @shortdesc Find a AI module that's associated with a squad or sgroup 
+--? @args AiEncounterID item
+--? @result ModuleTable
+function AI_Module_FindModuleFromScarEncounter(scarEncounter) 
+	for index, module in pairs(t_allModules) do 
+		if module.encounterID == scarEncounter then 
+			return module
+		end			
+	end
+end

@@ -1,0 +1,2438 @@
+-----------------------------------------------------------------------
+--
+-- Core Training Conditions
+--
+-- (c) Relic Entertainment 2018
+--
+-----------------------------------------------------------------------
+
+import("training.scar")
+import("cardinal.scar")
+
+__t_trainingLongInterval = 60
+__t_trainingModerateInterval = 30
+__t_trainingShortInterval = 15
+__t_trainingBriefInterval = 1
+__t_trainingWonderInterval = 15
+__t_trainingHoverInterval = 3		-- how long a player needs to be hovering over an item for the system to recognize that they "know" this
+__t_trainingRadialInterval = 5		-- similar to HoverInterval but used when looking at a radial menu on controller
+__t_trainingLongDistance = 50
+
+
+local _farm_size_offset = 4.0
+local _construct_farm_max_sheep_requirement = 2
+
+function GetNumGatheringSquadsAny()
+	
+	local localPlayer = Game_GetLocalPlayer()
+	return Player_GetNumGatheringSquads(localPlayer, RT_Food)
+		+ Player_GetNumGatheringSquads(localPlayer, RT_Wood)
+		+ Player_GetNumGatheringSquads(localPlayer, RT_Stone)
+		+ Player_GetNumGatheringSquads(localPlayer, RT_Gold)
+end
+
+function GetNumGatheringSquadsFood()
+	
+	local localPlayer = Game_GetLocalPlayer()
+	return Player_GetNumGatheringSquads(localPlayer, RT_Food)
+	
+end
+
+function FindVillagerInSight()
+	local localPlayer = Game_GetLocalPlayer()
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+	local squads = Player_GetSquads(localPlayer)
+	
+	for i = 1, SGroup_Count(squads) do
+		local squad = SGroup_GetSquadAt(squads, i)
+		
+		if Squad_IsIdle(squad) and Squad_GetBlueprint(squad) == villagerBP and Misc_IsSquadOnScreen(squad, 100) then
+			return Squad_GetID(squad)
+		end
+	end
+	
+	return nil
+end
+
+function FindFoodGatheringVillagerInSight()
+	local localPlayer = Game_GetLocalPlayer()
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+	local squads = Player_GetSquads(localPlayer)
+	
+	for i = 1, SGroup_Count(squads) do
+		local squad = SGroup_GetSquadAt(squads, i)
+		
+		if Squad_GetBlueprint(squad) == villagerBP and Misc_IsSquadOnScreen(squad, 100) and Squad_IsGatheringResourceType(squad, RT_Food) then
+			return Squad_GetID(squad)
+		end
+	end
+	
+	return nil
+end
+
+--? @shortdesc Find a food deposit on screen that has visible UI decorators
+--? @extdesc Returns a food deposit entity and a boolean indicating if the entity itself has visible decorators. 
+--?	  If not, the squad has visible decorators.
+--? @result entity, boolean
+function FindDecorableFoodDepositInSight()
+	local localPlayer = Game_GetLocalPlayer()
+	local pos_camera_target = Camera_GetPivot()
+	
+	-- FIXME TrentJ 21/11/2018: 100 was an arbitrary guess to approximate what's on screen. 
+	-- We should probably determine the actual size of the on-screen area and use that
+	local eg_food_deposits = Misc_FindDepositsOfTypeCloseToPosition(RT_Food,
+		Cardinal_ConvertTypeToEntityBlueprint("villager", localPlayer), 
+		pos_camera_target, 
+		100) 
+	
+	for i = 1, EGroup_Count(eg_food_deposits), 1 do
+		local deposit = EGroup_GetEntityAt(eg_food_deposits, i) 
+		if Misc_IsEntityOnScreen(deposit, 1.0) then 
+			if UI_GetDecoratorVisibilityEntity(deposit) == DV_Visible then
+				EGroup_Clear(eg_food_deposits)
+				return deposit, true
+			end
+			-- accept squad entities because they can display tags even if their other decorators aren't currently visible
+			deposit_squad = Entity_GetSquad(deposit) 
+			if deposit_squad ~= nil and UI_GetDecoratorVisibilitySquad(deposit_squad) ~= DV_Hidden then
+				EGroup_Clear(eg_food_deposits)
+				return deposit, false
+			end				
+		end
+	end
+	EGroup_Clear(eg_food_deposits)
+	
+	return nil
+end
+
+function UserHasASquadSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	return SGroup_CountSpawned(sg_currentSelection) > 0
+end
+
+function UserCannotSeeSquadKey(goalSequence)
+	local key = goalSequence.goals[goalSequence.currentGoalIndex].key
+	
+	if scartype(key) == ST_NUMBER then 
+		return not Squad_IsValid(key)
+		or Misc_IsSquadOnScreen(Squad_FromID(key), 100) == false
+	end
+	
+	return false
+end
+
+function UserHasAUnitSelectedPredicate(goalSequence)
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	if SGroup_Count(sg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function UserHasNotSelectedAUnitRecentlyPredicate(goalSequence)
+	
+	if Timer_GetElapsed(goalSequence.timerID) > __t_trainingShortInterval then
+		local squads = Player_GetSquads(Game_GetLocalPlayer())
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			if Squad_IsIdle(squad) and Misc_IsSquadOnScreen(squad, 100) then
+				goalSequence.goals[goalSequence.currentGoalIndex].key = Squad_GetID(squad)
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+function UserIsMovingAnySelectedUnit(goalSequence)
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	local count = SGroup_Count(sg_currentSelection)
+	for i = 1, count do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_IsMoving(squad) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserIsMovingSpecifiedSelectedUnit(goal)
+	
+	if Squad_IsValid(goal.temp.selectedSquad) then
+		return Squad_IsMoving(Squad_FromID(goal.temp.selectedSquad))
+	end
+	
+	return false
+end
+
+function UserHasNotMovedASelectedVisibleUnitRecently(goalSequence)
+	
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > 0 then 
+		Misc_GetSelectedSquads(sg_currentSelection, false)
+		local count = SGroup_Count(sg_currentSelection)
+		for i = 1, count do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			
+			if Squad_IsIdle(squad) 
+			and Misc_IsSquadOnScreen(squad, 100) 
+			then
+				goalSequence.goals[goalSequence.currentGoalIndex].temp.selectedSquad = Squad_GetID(squad)
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+function UserHasNoUnitSelected(goalSequence)
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	local spawnedCount = SGroup_CountSpawned(sg_currentSelection)
+	return spawnedCount == 0
+end
+
+function ABriefPeriodOfTimeHasPassed(goalSequence)
+	return Timer_GetElapsed(goalSequence.timerID) > __t_trainingBriefInterval
+end
+
+-- Temporary for the View Landmark Requirements hint
+function ASlightPeriodOfTimeHasPassed(goalSequence)
+	return Timer_GetElapsed(goalSequence.timerID) > 7
+end
+
+function AShortPeriodOfTimeHasPassed(goalSequence)
+	return Timer_GetElapsed(goalSequence.timerID) > __t_trainingShortInterval
+end
+
+function AModeratePeriodOfTimeHasPassed(goalSequence)
+	return Timer_GetElapsed(goalSequence.timerID) > __t_trainingModerateInterval
+end
+
+function ALongPeriodOfTimeHasPassed(goalSequence)
+	return Timer_GetElapsed(goalSequence.timerID) > __t_trainingLongInterval
+end
+
+-- Also used for goalSequence. The two are interchangeable here.
+function UserHasPannedCamera(goal)
+	
+	local targetPos = Camera_GetCurrentTargetPos()
+	if goal.temp.lastTargetPos == nil then
+		goal.temp.lastTargetPos = targetPos
+	end
+	
+	if math.floor(targetPos.x) - math.floor(goal.temp.lastTargetPos.x) ~= 0 
+	or math.floor(targetPos.y) - math.floor(goal.temp.lastTargetPos.y) ~= 0 then
+		return true
+	end
+	
+	return false
+end
+
+function UserIsGathering(goalSequence)
+
+	-- Return number of gathering squads
+	return GetNumGatheringSquadsAny() > 0;
+
+end
+
+function UserIsGatheringFood(goalSequence)
+
+	-- Return number of Food gathering squads
+	return GetNumGatheringSquadsFood() > 0;
+
+end
+
+function AnyGoalKeysAreInvalid(goalSequence)
+	
+	for i, goal in pairs(goalSequence.goals) do
+		local key = goal.key
+		
+		if key == nil then
+			return true
+		end
+		
+		if scartype(key) == ST_NUMBER then
+			if Squad_IsValid(key) and Player_CanSeeSquad(Game_GetLocalPlayer(), Squad_FromID(key), true) then
+				goto next_goal_key
+			end
+			
+			if Entity_IsValid(key) and Player_CanSeeEntity(Game_GetLocalPlayer(), Entity_FromID(key)) then
+				goto next_goal_key
+			end
+			
+			return true
+		end
+		
+		::next_goal_key::
+	end
+	
+	return false
+end
+
+function DistanceBetweenWorldGoalsIsLong(goalSequence)
+	
+	local points = {}
+	for i, goal in pairs(goalSequence.goals) do
+		if scartype(goal.key) == ST_NUMBER then
+			if Entity_IsValid(goal.key) then
+				local point = Entity_GetPosition(Entity_FromID(goal.key))
+				table.insert(points, point)
+			end
+			
+			if Squad_IsValid(goal.key) then
+				local point = Squad_GetPosition(Squad_FromID(goal.key))
+				table.insert(points, point)
+			end
+		end
+	end
+	
+	for i, point in pairs(points) do
+		for j, otherPoint in pairs(points) do
+			if World_DistancePointToPoint(point, otherPoint) > __t_trainingLongDistance then
+				return true
+			end
+		end
+	end
+	
+end
+
+function GatherGoalsAreInvalid(goalSequence)
+	
+	return AnyGoalKeysAreInvalid(goalSequence) or DistanceBetweenWorldGoalsIsLong(goalSequence)
+end
+
+function TimeHasPassedWithoutGathering(goalSequence)
+	
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingShortInterval then
+		-- Check if any squads are gathering Food. Note: To make generic use GetNumGatheringSquadsAny()
+		if GetNumGatheringSquadsFood() == 0 then
+			local localPlayer = Game_GetLocalPlayer()
+			local squads = Player_GetSquads(localPlayer)
+			local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+			
+			for i = 1, SGroup_Count(squads) do
+				
+				local squad = SGroup_GetSquadAt(squads, i)
+				
+				if Squad_IsIdle(squad) and Squad_GetBlueprint(squad) == villagerBP and Misc_IsSquadOnScreen(squad, 100) then
+					
+					-- Assign Villager as goal sequence key
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					
+					-- Find Deposits close the Villager
+					Misc_FindDepositsCloseToSquad(eg_nearbyDeposits, squad, __t_trainingLongDistance)
+					
+					print(string.format("DEPOSIT COUNT %d", EGroup_Count(eg_nearbyDeposits)))
+					
+					-- If deposit(s) were found
+					if EGroup_Count(eg_nearbyDeposits) > 0 then
+
+						-- Store resource deposit entities
+						local berryDeposits = {}
+						--local treeDeposits = {}
+						--local stoneDeposits = {}
+						--local goldDeposits = {}
+						
+						-- Loop through deposits
+						for x = 1, EGroup_Count(eg_nearbyDeposits) do
+							
+							-- Get deposit entity
+							local deposit = EGroup_GetEntityAt(eg_nearbyDeposits, x)
+							
+							-- If player can see deposit
+							if Player_CanSeeEntity(localPlayer, deposit) then
+									
+								-- If entity is a Berry Bush
+								if (Entity_IsOfType(deposit, "forage_bush")) then
+									
+									-- Add Berry Bush entity to berryDeposits table
+									table.insert(berryDeposits, deposit)
+								
+								--[[ Note: This functionality supports a generic Gather hint that prioritizes Food > Wood > Stone > Gold. 
+								-- If entity is a Tree
+								elseif (Entity_IsOfType(deposit, "tree")) then
+									
+									-- Add Tree entity to treeDeposits table
+									table.insert(treeDeposits, deposit)
+									
+								-- If entity is a Stone deposit
+								elseif (Entity_IsOfType(deposit, "stone")) then
+									
+									-- Add Stone entity to stoneDeposits table
+									table.insert(stoneDeposits, deposit)	
+								
+								-- If entity is a Gold deposit
+								elseif (Entity_IsOfType(deposit, "gold")) then
+									
+									-- Add Gold entity to goldDeposits table
+									table.insert(goldDeposits, deposit)
+								--]]
+								end
+							end
+						end
+						
+						-- Store training hint
+						trainingHint = nil
+						
+						-- Store deposit entity and blueprint
+						local pos = nil
+						local bp = nil
+						
+						-- If at least one Berry Bush was found
+						if (#berryDeposits > 0) then
+							
+							-- Get position of first Berry Bush
+							pos = Entity_GetPosition(berryDeposits[1])
+							-- Create invisible hint point
+							--trainingHint = HintPoint_Add(berryDeposits[1], true, "", 0, nil, nil, nil, nil, "TrainingHintPointTemplate")
+							
+							local berryPos = Entity_GetPosition(berryDeposits[1])
+							
+							goalSequence.goals[2].key = berryPos
+						
+						--[[ Note: This functionality supports a generic Gather hint that prioritizes Food > Wood > Stone > Gold.
+						-- If at least one Tree was found
+						elseif (#treeDeposits > 0) then
+															
+							-- Get position of first Tree
+							pos = Entity_GetPosition(treeDeposits[1])
+							-- Create invisible hint point
+							trainingHint = HintPoint_Add(pos, true, "", 0, HPAT_Hint, nil, nil, nil, "TrainingHintPointTemplate")
+
+							
+						-- If at least one Stone deposit was found				
+						elseif (#stoneDeposits > 0) then
+															
+							-- Get position of first Stone deposit
+							pos = Entity_GetPosition(stoneDeposits[1])
+							-- Create invisible hint point
+							trainingHint = HintPoint_Add(pos, true, "", 0, nil, nil, nil, nil, "TrainingHintPointTemplate")
+						
+							-- If at least one Gold deposit was found				
+						elseif (#goldDeposits > 0) then
+							
+							-- Get position of first Gold deposit
+							pos = Entity_GetPosition(goldDeposits[1])
+							-- Create invisible hint point
+							trainingHint = HintPoint_Add(pos, true, "", 0, nil, nil, nil, nil, "TrainingHintPointTemplate")
+						--]]
+						end
+						
+						-- Set the Training Hint Point as the goal's key
+						--goalSequence.goals[2].key = "TrainingHintPoint"
+												
+						-- Return true
+						return true
+						
+					end
+				end
+			end
+		end
+	end
+	
+	return false
+end
+
+function UserHasSelectedAVillager(goal)
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", Game_GetLocalPlayer())
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_GetBlueprint(squad) == villagerBP then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasSelectedAScout(goal)
+	local scoutBP = Cardinal_ConvertTypeToSquadBlueprint("scar_scout", Game_GetLocalPlayer())
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_GetBlueprint(squad) == scoutBP and Squad_GetID(squad) == goal.key then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasIssuedAGather(goal)
+	
+	-- If any of the player's units are gathering
+	if GetNumGatheringSquadsFood() > 0 then
+		
+		
+		--[[NOTE: This functionality is used specifically for the gatherGoalSequence. Ideally, the HintPoint is stored as the goal.key so HintPoints can be removed generically.]]--
+		-- If the key for this goal is the TrainingHintPoint
+		--if goal.key == "TrainingHintPoint" then
+			
+			---- Remove Hint Point
+			--HintPoint_Remove(trainingHint)
+			
+			return true
+			
+		--end
+	end
+	
+	return false
+end
+
+function UserIsBuildingAVillager(goalSequence)
+	local localPlayer = Game_GetLocalPlayer()
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+	
+	Player_GetAll(localPlayer)
+	EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	local aTownCenterExists = EGroup_Count(eg_allentities) > 0
+
+	if aTownCenterExists then
+		local townCenter = EGroup_GetEntityAt(eg_allentities, 1)
+	
+		if Entity_IsProducingSquad(townCenter, villagerBP) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function TimeHasPassedWithoutBuildingAVillager(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingModerateInterval then
+		local localPlayer = Game_GetLocalPlayer()
+		local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+		
+		Player_GetAll(localPlayer)
+		EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+		EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+		local aTownCenterExists = EGroup_Count(eg_allentities) > 0
+
+		if aTownCenterExists then
+			local townCenter = EGroup_GetEntityAt(eg_allentities, 1)
+		
+			if not Misc_IsEntityOnScreen(townCenter, 100) then
+				return
+			end
+		
+			local villagerCost = Player_GetSquadBPCost(localPlayer, villagerBP)
+			local foodResources = Player_GetResource(localPlayer, RT_Food)
+			
+			if foodResources >= villagerCost.food
+			and Player_GetCurrentPopulation(localPlayer, CT_Personnel) < Player_GetCurrentPopulationCap(localPlayer, CT_Personnel) then
+				goalSequence.goals[1].key = Entity_GetID(townCenter)
+				goalSequence.goals[2].key = villagerBP
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+function UserHasOnlyTownCenterSelected(goal)
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+	if EGroup_Count(eg_currentSelection) == 1 then
+		local entity = EGroup_GetEntityAt(eg_currentSelection, 1)
+		if Entity_GetID(entity) == goal.key then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function SelectedTCHasStartedToBuildAVillager(goal)
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", Game_GetLocalPlayer())
+	
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+	if EGroup_Count(eg_currentSelection) == 1 then
+		local townCenter = EGroup_GetEntityAt(eg_currentSelection, 1)
+		return Entity_IsProducingSquad(townCenter, villagerBP)
+	end
+	
+	return false
+end
+
+function TimeHasPassedWithoutBuildingAHouse(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingShortInterval then
+		local localPlayer = Game_GetLocalPlayer()
+		
+		-- If player is not at max pop cap
+		if Player_GetPopulationPercentage(localPlayer, CT_Personnel) < 1 then
+			return false
+		end
+		
+		local houseBP = Cardinal_ConvertTypeToEntityBlueprint("house", localPlayer)
+		
+		if houseBP ~= nil 
+		and training_currentConstructionBlueprint == nil 
+		and Player_CanConstruct(localPlayer, houseBP) then
+			if(UI_IsXboxKBMUI()) then
+				goalSequence.goals[3].key = houseBP
+			else
+				goalSequence.goals[2].key = houseBP
+			end
+			
+			local villager = FindVillagerInSight(goalSequence)
+			if villager ~= nil then
+				goalSequence.goals[1].key = villager
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+function UserIsGoingToBuildBuildingType(typeString)
+	local localPlayer = Game_GetLocalPlayer()
+	local buildingBP = Cardinal_ConvertTypeToEntityBlueprint(typeString, localPlayer)
+	
+	if training_currentConstructionBlueprint == buildingBP then
+		return true
+	end
+	
+	return false
+end
+
+-- Also used with a goalSequence
+function UserHasStartedToBuildABuilding(typeString)
+	local localPlayer = Game_GetLocalPlayer()
+	local buildingBP = Cardinal_ConvertTypeToEntityBlueprint(typeString, localPlayer)
+	
+	if training_previousConstructionBlueprint == buildingBP then
+		return true
+	end
+	
+	return false
+end
+
+function UserIsGoingToBuildAHouse(goal)
+	return UserIsGoingToBuildBuildingType("house")
+end
+
+function UserIsGoingToBuildAFarm(goal)
+	if training_currentConstructionBlueprint == goal.key then
+		return true
+	end
+	
+	return false
+end
+
+function UserIsGoingToBuildPalisade(goal)
+	return UserIsGoingToBuildBuildingType("palisade_wall_bastion")
+end
+
+function UserIsGoingToBuildABarracks(goal)
+	return UserIsGoingToBuildBuildingType("barracks")
+end
+
+function UserIsGoingToBuildDropOff(goal)
+	if Player_GetRaceName(Game_GetLocalPlayer()) == "mongol" then
+					
+		return UserIsGoingToBuildBuildingType("ger")
+		
+	else
+	
+		return UserIsGoingToBuildBuildingType("lumber_camp")
+	
+	end
+end
+
+function UserHasStartedToBuildDropOff(goal)
+	local buildingBP = nil
+	local localPlayer = Game_GetLocalPlayer()
+	
+	if Player_GetRaceName(Game_GetLocalPlayer()) == "mongol" then
+						
+		buildingBP = Cardinal_ConvertTypeToEntityBlueprint("ger", localPlayer)
+		
+	else
+	
+		buildingBP = Cardinal_ConvertTypeToEntityBlueprint("lumber_camp", localPlayer)
+	
+	end
+	
+	if training_previousConstructionBlueprint == buildingBP then
+		return true
+	end
+	
+	return false
+end
+
+-- Also used with a goalSequence
+function UserHasStartedToBuildAHouse(goal)
+	return UserHasStartedToBuildABuilding("house")
+end
+
+-- Also used with a goalSequence
+function UserHasStartedToBuildAFarm(goal)
+	-- The Player has no Farms in construction or completed
+	local localPlayer = Game_GetLocalPlayer()
+	Player_GetAll(localPlayer)
+	EGroup_Filter(eg_allentities, "farm", FILTER_KEEP)
+	local aFarmExistsOrIsUnderConstruction = EGroup_Count(eg_allentities) > 0
+	if aFarmExistsOrIsUnderConstruction then
+		if goal.dummyEntity ~= nil then
+			Entity_DeSpawn(goal.dummyEntity)
+		end
+		
+		return true
+	end
+	
+	return false
+end
+
+function UserHasStartedToBuildPalisade(goal)
+	return UserHasStartedToBuildABuilding("palisade_wall_bastion")
+end
+
+function UserHasStartedToBuildABarracks(goal)
+	return UserHasStartedToBuildABuilding("barracks")
+end
+
+function OnConstructionPhaseChange(blueprint, phase, queueCount)
+	if phase == TP_Position or phase == TP_Facing then
+		training_currentConstructionBlueprint = blueprint
+		training_currentConstructionPhase = "PLACING"
+	elseif phase == TP_Issued then
+		training_currentConstructionBlueprint = nil
+		training_currentConstructionPhase = nil
+		training_previousConstructionBlueprint = blueprint
+	else
+		training_currentConstructionBlueprint = nil
+		training_currentConstructionPhase = nil
+	end
+end
+
+function OnAbilityPhaseChange(blueprint, phase, queueCount)
+	
+	if phase == TP_Position or phase == TP_Facing then	--ability has entered the targetting phase
+		training_currentAbilityBlueprint = blueprint
+		training_currentAbilityPhase = "PLACING"
+	elseif phase == TP_Issued then						--ability has been issued
+		training_currentAbilityBlueprint = nil
+		training_currentAbilityPhase = nil
+		training_previousAbilityBlueprint = blueprint
+	else												--ability has been cancelled
+		training_currentAbilityBlueprint = nil
+		training_currentAbilityPhase = nil
+	end
+end
+
+function OnHoverChange(blueprint)
+	training_currentHoverBlueprint = blueprint
+end
+
+function UserCanBuildAWonder(goalSequence)
+	local localPlayer = Game_GetLocalPlayer()
+	local wonderBPTable = Cardinal_ConvertTypeToEntityBlueprint("wonder", localPlayer, true)
+	
+	for i, wonderBP in pairs(wonderBPTable) do
+		if Player_CanConstruct(localPlayer, wonderBP) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function TimeHasPassedAndUserCannotBuildAWonder(goalSequence)
+	local landmark_types = { "wonder_dark_age", "wonder_feudal_age", "wonder_castle_age" }
+	local localPlayer = Game_GetLocalPlayer()
+	local current_age = Player_GetCurrentAge(localPlayer)
+	local maximum_age = Player_GetMaximumAge(localPlayer)
+	
+		if current_age < maximum_age then
+		local currentTime = Timer_GetElapsed(goalSequence.timerID)
+			if currentTime > __t_trainingWonderInterval --[[and not UserCanBuildAWonder(goalSequence) ]]then
+				local villager = FindVillagerInSight(goalSequence)
+				if villager ~= nil then
+					goalSequence.goals[1].key = villager
+					
+					if(UI_IsXboxKBMUI()) then
+						goalSequence.goals[3].key = "WondersDataTemplate"
+					else
+						goalSequence.goals[2].key = "WondersDataTemplate"
+					end
+					return true
+				end
+			end
+		end
+		
+	return false
+end
+
+function UserHasLookedAtWonderRequirements(goal)
+	local currentTime = Timer_GetElapsed(goal.timerID)
+	if goal.temp.lastTimeWithoutLooking == nil then 
+		goal.temp.lastTimeWithoutLooking = 0 
+	end
+
+	local localPlayer = Game_GetLocalPlayer()
+	local wonderBPTable = Cardinal_ConvertTypeToEntityBlueprint("wonder", localPlayer, true)
+	
+	for i, wonderBP in pairs(wonderBPTable) do
+		if training_currentHoverBlueprint == wonderBP then
+			if currentTime - goal.temp.lastTimeWithoutLooking > __t_trainingBriefInterval then 
+				return true
+			end
+			
+			return false
+		end
+	end
+	
+	goal.temp.lastTimeWithoutLooking = currentTime
+	return false
+end
+
+function TimeHasPassedAndUserCanBuildAWonder_Xbox(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	
+	if UserCanBuildAWonder(goalSequence) then
+		local wonderBlueprint = nil
+		local localPlayer = Game_GetLocalPlayer()
+		local wonderBPTable = Cardinal_ConvertTypeToEntityBlueprint("wonder", localPlayer, true)
+		
+		for i, wonderBP in pairs(wonderBPTable) do
+			if Player_CanConstruct(localPlayer, wonderBP) then
+				wonderBlueprint = wonderBP
+				break
+			end
+		end
+		if currentTime > __t_trainingShortInterval then
+			local villager = FindVillagerInSight(goalSequence)
+			if villager ~= nil then
+				goalSequence.goals[1].key = villager
+				goalSequence.goals[2].key = villager
+				return true
+			end
+		end
+	end
+end
+
+function TimeHasPassedAndUserCanBuildAWonder(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	
+	--if UserCanBuildAWonder(goalSequence) and goalSequence.temp.timeWhenCouldNotBuildAWonder ~= nil then
+		--if currentTime - goalSequence.temp.timeWhenCouldNotBuildAWonder > __t_trainingModerateInterval then
+	if UserCanBuildAWonder(goalSequence) then
+		local wonderBlueprint = nil
+		local localPlayer = Game_GetLocalPlayer()
+		local wonderBPTable = Cardinal_ConvertTypeToEntityBlueprint("wonder", localPlayer, true)
+		
+		for i, wonderBP in pairs(wonderBPTable) do
+			if Player_CanConstruct(localPlayer, wonderBP) then
+				wonderBlueprint = wonderBP
+				break
+			end
+		end
+		if currentTime > __t_trainingShortInterval then
+			local villager = FindVillagerInSight(goalSequence)
+			if villager ~= nil then
+				goalSequence.goals[1].key = villager
+				
+				if(UI_IsXboxKBMUI()) then
+					goalSequence.goals[3].key = "WondersDataTemplate"
+				else
+					goalSequence.goals[2].key = "WondersDataTemplate"
+				end
+				
+				return true
+			end
+		end
+	--else
+		--goalSequence.temp.timeWhenCouldNotBuildAWonder = currentTime
+	end
+end
+
+function HasAttachedScoutAndDropOffTownCenter(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+
+	local localPlayer = Game_GetLocalPlayer()
+	local scoutBP = Cardinal_ConvertTypeToSquadBlueprint("scar_scout", localPlayer)
+	local squads = Player_GetSquads(localPlayer)
+	
+	if goalSequence.goals[1].key ~= nil then
+		goalSequence.goals[1].lastKey = goalSequence.goals[1].key
+	end
+	
+	goalSequence.goals[1].key = nil
+	goalSequence.goals[2].key = nil
+	
+	for i = 1, SGroup_Count(squads) do
+		local squad = SGroup_GetSquadAt(squads, i)
+		
+		if squad ~= nil and Squad_GetBlueprint(squad) == scoutBP then
+			if Squad_HasEntityWithNInteractors(squad, "food_generation", 3) and Squad_IsIdle(squad) and Player_CanSeeSquad(localPlayer, squad, ANY) then
+				goalSequence.goals[1].key = Squad_GetID(squad)
+				
+				if goalSequence.goals[1].key ~= goalSequence.goals[1].lastKey then
+					goalSequence.goals[1].lastActiveTime = currentTime
+				end
+				
+				break
+			end
+		end
+	end
+	
+	if goalSequence.goals[1].key == nil or goalSequence.goals[1].lastActiveTime == nil then
+		goalSequence.goals[1].lastActiveTime = currentTime
+	end
+	
+	Player_GetAll(localPlayer)
+	EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	local aTownCenterExists = EGroup_Count(eg_allentities) > 0
+
+	if aTownCenterExists then
+		local townCenter = EGroup_GetEntityAt(eg_allentities, 1)
+		goalSequence.goals[2].key = townCenter
+	end
+	local timeSinceActive = currentTime - goalSequence.goals[1].lastActiveTime
+	if goalSequence.goals[1].key ~= nil and goalSequence.goals[2].key ~= nil and timeSinceActive > __t_trainingModerateInterval then
+		return true
+	end
+
+	return false
+end
+
+function UserIsGoingToBuildAWonder(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	local wonderBPTable = Cardinal_ConvertTypeToEntityBlueprint("wonder", localPlayer, true)
+	
+	for i, wonderBP in pairs(wonderBPTable) do
+		if training_currentConstructionBlueprint == wonderBP then
+			return true
+		end
+	end
+	
+	return false
+	
+end
+
+function UserIsBuildingAWonder(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	local wonderBPTable = Cardinal_ConvertTypeToEntityBlueprint("wonder", localPlayer, true)
+	
+	for i, wonderBP in pairs(wonderBPTable) do
+		if training_previousConstructionBlueprint == wonderBP then
+			return true
+		end
+	end
+	
+	return false
+	
+end
+
+function UserHasAgedUp()
+	return Player_HasUpgrade(Game_GetLocalPlayer(), BP_GetUpgradeBlueprint("feudal_age"))
+end
+
+function UserKnowsHowToBuildWonders(goal)
+	return UserHasAgedUp() or UserIsBuildingAWonder(goal)
+end
+
+function UserDropOffIssued(goal)
+	return goal.key == nil
+end
+
+ function UserHasIssuedADropOff(goalSequence)
+	if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+		return false
+	end
+	
+	if Squad_IsValid(goalSequence.goals[1].key) then
+		local localPlayer = Game_GetLocalPlayer()
+		local squad = Squad_FromID(goalSequence.goals[1].key)
+		
+		if not Squad_HasEntityWithNInteractors(squad, "food_generation", 1) then
+			goalSequence.goals[1].key = nil
+			goalSequence.goals[2].key = nil
+			return true
+		end
+	end
+		return false
+end
+
+function ScoutReturnsSheepGoalsAreInvalid(goalSequence)
+	if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+		return true
+	end
+	
+	if Squad_IsValid(goalSequence.goals[1].key) then
+		local localPlayer = Game_GetLocalPlayer()
+		local squad = Squad_FromID(goalSequence.goals[1].key)
+		return AnyGoalKeysAreInvalid(goalSequence) or not Squad_HasEntityWithNInteractors(squad, "food_generation", 3)
+	else
+		return true
+	end
+end
+
+function ShouldBuildDropOff(goalSequence)
+	local localPlayer = Game_GetLocalPlayer()
+	-- Check if player is Templar
+	if Player_GetRaceName(localPlayer) == "templar" then
+		-- They can't build lumber camps
+		return false
+	end
+	
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingModerateInterval then
+		local goal_offset = 0
+		if UI_IsXboxKBMUI() then -- Additional goal in sequence for Xbox KBM
+			goal_offset = 1
+		end
+		
+		Player_GetAll(localPlayer)
+		
+		EGroup_Filter(eg_allentities, {"lumber_camp"}, FILTER_KEEP)
+		local dropOffExistsOrIsUnderConstruction = EGroup_Count(eg_allentities) > 0
+		
+		if dropOffExistsOrIsUnderConstruction then
+			return false	
+		end
+		
+		local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+		local squads = Player_GetSquads(localPlayer)
+		
+		local distanceThreshold = 20.0
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2 + goal_offset].key = nil
+		
+		local gatheringWood = false
+		
+		for i = 1, SGroup_Count(squads) do
+			
+			local squad = SGroup_GetSquadAt(squads, i)
+			
+			if Squad_GetBlueprint(squad) == villagerBP and Squad_GetMaxEntityDropOffDistance(squad) > distanceThreshold then
+				
+				if Squad_IsGatheringResourceType(squad, RT_Wood) then
+				
+					local buildingBP = nil
+					buildingBP = Cardinal_ConvertTypeToEntityBlueprint("lumber_camp", localPlayer)
+			
+					if buildingBP ~= nil and training_currentConstructionBlueprint == nil and Player_CanConstruct(localPlayer, buildingBP) then
+						goalSequence.goals[1].key = Squad_GetID(squad)
+						goalSequence.goals[2 + goal_offset].key = buildingBP
+						break
+					end
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil and goalSequence.goals[2 + goal_offset].key ~= nil then
+			return true		
+		end
+	end
+	
+	return false
+end
+
+function HasScoutCarryingFoodAndDropOffTownCenter(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingShortInterval then	
+		local localPlayer = Game_GetLocalPlayer()
+		Player_GetAll(localPlayer)
+		local upgradeBP = BP_GetUpgradeBlueprint("upgrade_scout_forester")
+		local scoutBP = Cardinal_ConvertTypeToSquadBlueprint("scar_scout", localPlayer)
+		local squads = Player_GetSquads(localPlayer)
+		
+		-- Stop function if player does not have Scout Hunting upgrade
+		if Player_HasUpgrade(localPlayer, upgradeBP) == false then
+			return false
+		end
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			
+			if squad ~= nil and Squad_GetBlueprint(squad) == scoutBP then
+				local entity = Squad_GetFirstEntity(squad)
+				if Entity_GetStateModelInt(entity, "pickup_attachments_count") > 0 then
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[2].firstGoalKey = goalSequence.goals[1].key
+					break
+				end
+			end
+		end
+		
+		-- Stop function if carrying scout was not found
+		if goalSequence.goals[1].key == nil then
+			return false
+		end
+		
+		Player_GetAll(localPlayer)
+		EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+		EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+		local aTownCenterExists = EGroup_Count(eg_allentities) > 0
+	
+		if aTownCenterExists then
+			local townCenter = EGroup_GetEntityAt(eg_allentities, 1)
+			goalSequence.goals[2].key = townCenter
+		end
+		
+		if goalSequence.goals[1].key ~= nil and goalSequence.goals[2].key ~= nil then
+			return true
+		end
+	end
+	
+	return false
+end
+
+ function UserHasIssuedADeerDropOff(goalSequence) -- This was always returning true and bypassing scout drop-off goal sequence. No longer being referenced.
+	if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+		return true
+	end
+	
+	return DeerDropOffIssued(goalSequence.goals[2])
+end
+
+ function DeerDropOffIssued(goal)
+	
+	if goal.firstGoalKey == nil or scartype(goal.firstGoalKey) ~= ST_NUMBER then
+		return true
+	end
+	
+	if Squad_IsValid(goal.firstGoalKey) then
+		local localPlayer = Game_GetLocalPlayer()
+		Player_GetAll(localPlayer)
+		local keySquad = Squad_FromID(goal.firstGoalKey)
+		
+		local isCarrying = false
+		
+		local entity = Squad_GetFirstEntity(keySquad)
+		if Entity_GetStateModelInt(entity, "pickup_attachments_count") > 0 then
+			isCarrying = true
+		end
+		
+		if not isCarrying then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasSelectedAnIdleVillager(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+	local squads = Player_GetSquads(localPlayer)
+	
+	if goal.idleVillagers ~= nil then
+		RemoveTagsFromElements(goal.idleVillagers)
+	end
+	
+	goal.idleVillagers = {}
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_GetBlueprint(squad) == villagerBP and Squad_IsIdle(squad) then
+			return true
+		end
+	end
+	
+	for i = 1, SGroup_Count(squads) do
+		local squad = SGroup_GetSquadAt(squads, i)
+		
+		if Squad_IsIdle(squad) and Squad_GetBlueprint(squad) == villagerBP then
+			goal.idleVillagers[i] = {}
+			goal.idleVillagers[i].element = squad
+			goal.idleVillagers[i].id = 0
+		end
+	end
+	
+	if goal.idleVillagers.length then
+		return true
+	end
+	
+	return false
+end
+
+function SelectNextIdleIfVillagersIdle(goalSequence)
+	local villagerIsIdle = false
+	local localPlayer = Game_GetLocalPlayer()
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+	local squads = Player_GetSquads(localPlayer)
+	
+	goalSequence.goals[1].idleVillagers = {}
+	
+	for i = 1, SGroup_Count(squads) do
+		local squad = SGroup_GetSquadAt(squads, i)
+		
+		if Squad_IsIdle(squad) and Squad_GetBlueprint(squad) == villagerBP then
+			villagerIsIdle = true
+			break
+		end
+	end
+	
+	if villagerIsIdle then
+		if Timer_IsPaused(goalSequence.timerID) then
+			Timer_Resume(goalSequence.timerID)
+		end
+	else
+		if not Timer_IsPaused(goalSequence.timerID) then
+			Timer_Pause(goalSequence.timerID)
+		end
+	end
+	
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingLongInterval and villagerIsIdle then
+		goalSequence.goals[1].key = "PopulationButton"
+		return true
+	end
+	
+	goalSequence.goals[1].key = nil
+	return false
+end
+
+function AddTagsToElements(elements)
+	for key,value in pairs(elements) do 
+	    elements[key].id = HintPoint_Add(value.element, true, "")
+	end
+end
+
+function RemoveTagsFromElements(elements)
+	for key,value in pairs(elements) do 
+	    HintPoint_Remove(value.id)
+	end
+end
+
+function NoIdleVillagers(goalSequence)
+	local villagerIsIdle = false
+	local localPlayer = Game_GetLocalPlayer()
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+	local squads = Player_GetSquads(localPlayer)
+	
+	for i = 1, SGroup_Count(squads) do
+		local squad = SGroup_GetSquadAt(squads, i)
+		
+		if Squad_IsIdle(squad) and Squad_GetBlueprint(squad) == villagerBP then
+			villagerIsIdle = true
+			break
+		end
+	end
+	
+	return not villagerIsIdle
+end
+
+-- Trigger for Scout revealing fog of war - Disabled
+--function HasScoutAndSheepInFogOfWar(goalSequence)
+	---- Checking for time passed
+	--local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	--if currentTime > __t_trainingModerateInterval then
+		---- Get local player
+		--local localPlayer = Game_GetLocalPlayer()
+		---- Get player's units
+		--local sg_player_units = Player_GetSquads(localPlayer)
+		---- Reset key
+		--goalSequence.goals[1].key = nil
+		---- Store scout position if found
+		--local pos_scout
+		
+		---- For every player unit
+		--for i = 1, SGroup_Count(sg_player_units) do
+			---- Get squad
+			--local squad = SGroup_GetSquadAt(sg_player_units, i)
+			---- If squad is an idle scout on screen
+			--if Squad_IsOfType(squad, "scout") and Squad_IsIdle(squad) and Misc_IsSquadOnScreen(squad, 100) then
+				---- Assign key to scout
+				--goalSequence.goals[1].key = Squad_GetID(squad)
+				---- Get scout's position
+				--pos_scout = Squad_GetPosition(squad)
+				
+			--end
+		
+			---- If the first key was not assigned to a scout
+			--if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER  then
+				---- Trigger not satisfied
+				--return false
+			--end
+					
+			--local sg_sheep = SGroup_CreateIfNotFound("sg_sheep")
+			--World_GetSquadsNearPoint(localPlayer, sg_sheep, pos_scout, 100, OT_Neutral)
+			--SGroup_Filter(sg_sheep, "herdable", FILTER_KEEP)
+			
+			---- For every sheep
+			--for i = 1, SGroup_Count(sg_sheep) do
+				---- Get sheep squad
+				--local squad = SGroup_GetSquadAt(sg_sheep, i)
+				---- Get sheep position
+				--local sheepPos = Squad_GetPosition(squad)
+				
+				---- If sheep is not visible and on screen
+				--if not Player_CanSeePosition(localPlayer, sheepPos) then
+					
+					--goalSequence.goals[2].key = sheepPos
+					
+					---- Trigger was satisfied
+					--return true
+				--end	
+			--end
+		--end
+	
+		---- Trigger was not satisfied
+		--return false
+	--end
+--end
+
+-- Checking to see player has revealed area near where we asked, i.e. is the selected scout near the position - Disabled
+-- should probably check for idle
+--function UserHasMovedNearLocation(goalSequence)
+	
+	---- Get selected squads
+	--Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	---- Get player units to judge if unit is nearby
+	---- local localPlayer = Game_GetLocalPlayer()
+	---- local squads = Player_GetSquads(localPlayer)
+	
+	---- check to see selected unit is near marker
+	--if Prox_AreSquadsNearMarker(sg_currentSelection, goalSequence.key, ANY, 25) then
+				
+		--return true
+				
+	--end
+--end
+		
+
+function HasUnAttachedScoutAndDeerInSight(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingShortInterval then
+		local localPlayer = Game_GetLocalPlayer()
+		local scoutBP = Cardinal_ConvertTypeToSquadBlueprint("scar_scout", localPlayer)
+		local squads = Player_GetSquads(localPlayer)
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			
+			if squad ~= nil and Squad_GetBlueprint(squad) == scoutBP then
+				if Squad_IsIdle(squad) then
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+			return false
+		end
+		
+		if Squad_IsValid(goalSequence.goals[1].key) and Squad_IsIdle(Squad_FromID(goalSequence.goals[1].key)) then 
+			local deer_squad = FindDeerInSightIfNoneUnderAttack()
+			if deer_squad ~= nil then
+				goalSequence.goals[2].key = Squad_GetID(deer_squad)
+				
+				if Squad_IsValid(goalSequence.goals[2].key) then
+					goalSequence.goals[2].data.scout = goalSequence.goals[1].key
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+function FindDeerInSightIfNoneUnderAttack()
+	local localPlayer = Game_GetLocalPlayer()
+	local deerBP = BP_GetSquadBlueprint("gaia_huntable_deer")
+	local pos_camera_target = Camera_GetPivot()
+
+	local eg_food_deposits = Misc_FindDepositsOfTypeCloseToPosition(RT_Food,
+		Cardinal_ConvertTypeToEntityBlueprint("villager", localPlayer), 
+		pos_camera_target, 
+		100)
+		
+	local returnSquad = nil
+	
+	for i = 1, EGroup_Count(eg_food_deposits), 1 do
+		local deposit = EGroup_GetEntityAt(eg_food_deposits, i) 
+		if Misc_IsEntityOnScreen(deposit, .5) then 
+			deposit_squad = Entity_GetSquad(deposit) 
+			if deposit_squad ~= nil and Squad_IsAlive(deposit_squad) and Squad_GetBlueprint(deposit_squad) == deerBP then
+				if not Squad_IsUnderAttack(deposit_squad, 1) and Player_CanSeeSquad(localPlayer, deposit_squad, ANY) then
+					returnSquad = deposit_squad
+				else
+					EGroup_Clear(eg_food_deposits)
+					return nil
+				end
+			end				
+		end
+	end
+	EGroup_Clear(eg_food_deposits)
+	
+	return returnSquad
+end
+
+function UserHasIssuedAttack(goal)
+	if goal.data.scout == nil or scartype(goal.data.scout) ~= ST_NUMBER then
+		return false
+	end
+	
+	if not Squad_IsValid(goal.data.scout) then
+		return false
+	end
+	
+	local deerBP = BP_GetSquadBlueprint("gaia_huntable_deer")
+	local localPlayer = Game_GetLocalPlayer()
+	local squads = Player_GetSquads(localPlayer)
+	local scoutSquad = Squad_FromID(goal.data.scout)
+	Squad_GetAttackTargets(scoutSquad, squads)
+	for i = 1, SGroup_Count(squads) do
+		local sgroupSquad = SGroup_GetSquadAt(squads, i)
+		if sgroupSquad ~= nil and Squad_GetBlueprint(sgroupSquad) == deerBP then
+			return true
+		end
+	end
+	return false
+end
+
+function AnySquadKeyInvalidOrOffscreen(goalSequence)
+	for i, goal in pairs(goalSequence.goals) do
+		local key = goal.key
+		if key == nil then
+			return true	
+		end
+		
+		if scartype(key) == ST_NUMBER then 
+			if not Squad_IsValid(key) or Misc_IsSquadOnScreen(Squad_FromID(key), 100) == false then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function AnySquadKeyInvalid(goalSequence)
+	for i, goal in pairs(goalSequence.goals) do
+		local key = goal.key
+		if key == nil then
+			return true	
+		end
+		
+		if scartype(key) == ST_NUMBER then 
+			if not Squad_IsValid(key) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function SuggestBuildFarmCriteriaMet(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingModerateInterval then
+		local localPlayer = Game_GetLocalPlayer()
+		local farmBP = nil
+		local farmBPTable = Cardinal_ConvertTypeToEntityBlueprint("farm", localPlayer,true)
+
+		for i, ebp in pairs(farmBPTable) do 
+			
+		    if Entity_IsEBPOfType(ebp, "farm") then
+				local bpName = BP_GetName(ebp)
+				if Entity_IsEBPOfType(ebp, "pasture_mon_ha_gol") == false then
+					if (string.find(bpName, "test") == nil) then
+						if(string.find(bpName, "lith") == nil) then
+							farmBP = ebp
+						end
+					end
+				end
+			end
+		end
+				
+		if farmBP ~= nil and training_currentConstructionBlueprint == nil then
+			
+			if UI_IsXboxKBMUI() then
+				goalSequence.goals[3].key = farmBP
+			else
+				goalSequence.goals[2].key = farmBP
+			end
+			
+			--Instructions appear above a Villager gathering Food
+			local villager = FindVillagerInSight(goalSequence)
+			if villager ~= nil then
+				-- The Player has no Farms in construction or completed
+				Player_GetAll(localPlayer)
+				EGroup_Filter(eg_allentities, "farm", FILTER_KEEP)
+				local aFarmExistsOrIsUnderConstruction = EGroup_Count(eg_allentities) > 0
+				if aFarmExistsOrIsUnderConstruction then
+					return false
+				end
+				
+				Player_GetAll(localPlayer)
+				EGroup_Filter(eg_allentities, {"town_center","mill"}, FILTER_KEEP)
+				EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+				local aDropOffExists = EGroup_Count(eg_allentities) > 0
+			
+				if aDropOffExists then
+					
+					-- Ensure the player has enough wood
+					local farmCost = Player_GetEntityBPCost(localPlayer, farmBP)
+					if Player_GetResource(localPlayer, RT_Wood) < farmCost.wood then
+						
+						return false
+						
+					end
+					
+					---- Ensure The Player has some Villagers gathering Wood
+					--if Player_GetNumGatheringSquads(localPlayer, RT_Wood) == 0 then
+						--return false
+					--end
+					
+					
+					--Get the closest drop off
+					local villagerSquad = Squad_FromID(villager)
+					local villagerPos = Squad_GetPosition(villagerSquad)
+					local closestDropOff = EGroup_GetClosestEntity(eg_allentities, villagerPos)
+					local closestDropOffPos = Entity_GetPosition(closestDropOff)
+					
+					 -- There are no more than 2 Sheep (alive) within 10 Meters of the drop off
+					local eg_close_food_deposits = Misc_FindDepositsOfTypeCloseToPosition(RT_Food,
+						Cardinal_ConvertTypeToEntityBlueprint("villager", localPlayer), 
+						closestDropOffPos, 
+						10)
+						
+					local sheepBP = BP_GetSquadBlueprint("gaia_herdable_sheep")
+					local sheepCount = 0
+					
+					if EGroup_Count(eg_close_food_deposits) ~= 0 then
+						for i = 1, EGroup_Count(eg_close_food_deposits), 1 do
+							local deposit = EGroup_GetEntityAt(eg_close_food_deposits, i) 
+							local deposit_squad = Entity_GetSquad(deposit) 
+							if deposit_squad ~= nil and Squad_GetBlueprint(deposit_squad) == sheepBP then
+								sheepCount = sheepCount + 1
+							end		
+							
+							if sheepCount > _construct_farm_max_sheep_requirement then
+								EGroup_Clear(eg_close_food_deposits)
+								return false
+							end
+						end
+						EGroup_Clear(eg_close_food_deposits)
+					end
+					
+					-- There are no Berry Bushes within 50 meters of any drop off
+					local eg_food_deposits = Misc_FindDepositsOfTypeCloseToPosition(RT_Food,
+						Cardinal_ConvertTypeToEntityBlueprint("villager", localPlayer), 
+						closestDropOffPos,
+						50)
+						
+					if EGroup_Count(eg_food_deposits) ~= 0 then
+						for i = 1, EGroup_Count(eg_food_deposits), 1 do
+							local deposit = EGroup_GetEntityAt(eg_food_deposits, i) 
+							local bp = Entity_GetBlueprint(deposit)
+							local bpName = BP_GetName(bp)
+							
+							if (string.find(bpName, "dummy") ~= nil) then
+								EGroup_Clear(eg_food_deposits)
+								return false
+							end				
+						end
+						EGroup_Clear(eg_food_deposits)
+					end
+					
+				else
+					return false
+				end
+				
+				-- The Player has some Villagers harvesting food
+				goalSequence.goals[1].key = villager
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+-- 'trigger' for bandbox select (multiple units selected) tip
+function UserHasMultipleUnitsOnScreen(goalSequence)
+	
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingShortInterval then
+		-- Get Local Player
+		local localPlayer = Game_GetLocalPlayer()
+		-- Get Local Player's units
+		local sg_player_units = Player_GetSquads(localPlayer)
+		-- Track number of idle units on screen
+		local idleOnScreenUnitCount = 0
+				
+		-- For every player unit
+		for i = 1, SGroup_Count(sg_player_units) do
+			-- Get squad from sgroup
+			local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+				-- If military unit is idle and on screen
+				if Squad_IsOfType(squad, "military") and not Squad_IsOfType(squad, "scout") and Squad_IsIdle(squad) and Misc_IsSquadOnScreen(squad, 100) then 
+					
+					-- Increment idle on screen unit count
+					idleOnScreenUnitCount = idleOnScreenUnitCount + 1
+					
+					-- Assign unit as goal sequence key
+					goalSequence.goals[1].key = Squad_GetID(squad)
+				
+			end
+			
+		end
+		
+		-- If there are more than one idle units on screen
+		if (idleOnScreenUnitCount > 1) then
+			
+			return true
+			
+		else
+			
+			return false
+			
+		end
+	end
+end
+
+-- NEW Predicate for Control Group tip
+function UserHasMultipleUnitsForCtrlGroupOnScreen(goalSequence)
+	
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingShortInterval then
+		-- Get Local Player
+		local localPlayer = Game_GetLocalPlayer()
+		-- Get Local Player's units
+		local sg_player_units = Player_GetSquads(localPlayer)
+		-- Track number of idle units on screen
+		local idleOnScreenUnitCount = 0
+				
+		-- For every player unit
+		for i = 1, SGroup_Count(sg_player_units) do
+			-- Get squad from sgroup
+			local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+				-- If military unit is idle and on screen
+				if Squad_IsOfType(squad, "military") and not Squad_IsOfType(squad, "scout") and Squad_IsIdle(squad) and Misc_IsSquadOnScreen(squad, 100) then 
+					
+					-- Increment idle on screen unit count
+					idleOnScreenUnitCount = idleOnScreenUnitCount + 1
+					
+					-- Assign unit as first goal sequence key
+					goalSequence.goals[1].key = Squad_GetID(squad)
+				
+					--Assign unit as second goal sequence key
+					--goalSequence.goals[2].key = Squad_GetID(squad)
+				
+			end
+			
+		end
+		
+		-- If there are more than one idle units on screen
+		if (idleOnScreenUnitCount > 1) then
+			
+			return true
+			
+		else
+			
+			return false
+			
+		end
+	end
+end
+
+-- 'isComplete' for bandbox select (user selecting multiple units (also used for bypass))
+function UserHasSelectedMultipleMilitaryUnits(goal)
+	
+	-- Get selected squads
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Track unit count
+	local idleUnitCount = 0
+	
+	-- For every unit selected
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		
+		-- Get squad from sgroup
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+			-- Increment unit count
+			idleUnitCount = idleUnitCount + 1
+			
+		end
+	
+	-- If more than 1 unit was selected
+	if idleUnitCount > 1 then
+		
+		-- Goal was met
+		return true
+		
+	else
+		-- Goal was not met
+		return false
+	end
+end
+ 
+-- 'trigger' for Control Groups (creating a specific control group)
+function UserHasSelectedMultipleMilitaryUnitsPredicate(goalSequence)
+				
+	-- Get selected squads
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Track unit count
+	local idleUnitCount = 0
+	
+	-- For every unit selected
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		
+		-- Get squad from sgroup
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- If military unit is idle and on screen
+		if Squad_IsOfType(squad, "military") and not Squad_IsOfType(squad, "scout") and Squad_IsIdle(squad) and Misc_IsSquadOnScreen(squad, 100) then 
+		
+			-- Increment unit count
+			idleUnitCount = idleUnitCount + 1
+				
+			-- Assign unit as goal sequence key
+			goalSequence.goals[1].key = Squad_GetID(squad)
+		
+		end
+	end
+				
+	-- If more than 1 unit was selected
+	if idleUnitCount > 1 then
+		
+		-- Trigger was met
+		return true
+		
+	else
+		-- Trigger was not met
+		return false
+	end
+end
+
+-- 'isComplete' for Control Groups
+function UserHasCreatedControlGroup(goal)
+	
+	-- Create squad/entity groups if they do not exist
+	local sg_control_group = SGroup_CreateIfNotFound("sg_control_group")
+	local eg_control_group = EGroup_CreateIfNotFound("eg_control_group")
+	
+	-- For all possible control groups
+	--for i = 0, 9 do
+		
+		-- Returns contents of first control group
+		Misc_GetControlGroupContents(1, sg_control_group, eg_control_group)
+	
+		-- If any units are in control group
+		if SGroup_Count(sg_control_group) > 0 then
+			return true
+		end
+	
+		--if SGroup_Count(sg_control_group) > 0 then
+	
+			--return true
+		
+		--end
+		
+	--end
+	
+	return false
+end
+
+-- Attack Action goal completion criteria - Disabled
+--function UserHasSelectedAnIdleMilitaryUnit(goal)
+	
+	--local localPlayer = Game_GetLocalPlayer()
+	--local sg_player_units = Player_GetSquads(localPlayer)
+	
+	--Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	----if sg_currentSelection ~= nil then
+		
+		--for i = 1, SGroup_Count(sg_currentSelection) do
+			--local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+				
+				--if Squad_IsOfType(squad, "scar_military") then 
+					
+					---- Player has selected an idle military unit
+					--return true
+					
+				--end
+		--end
+	----end
+	--return false
+--end
+
+---- Attack Action goal completion critiera - Disabled
+--function UserHasIssuedAttackOnEnemy(goal)
+	--local localPlayer = Game_GetLocalPlayer()
+	--local sg_player_units = Player_GetSquads(localPlayer)
+	---- local selected = Misc_GetSelectedSquads(sg_currentSelection, false)
+ 
+	
+	--if SGroup_IsDoingAttack(sg_player_units, ANY, 5) == true then
+			
+	---- Need to filter down to only the squads that are attacking (so can check attack targets)
+		
+		
+	---- Player has issued attack on enemy unit or building
+	--return true
+		
+	--end
+	
+	--return false
+--end
+
+-- Attack Action trigger - Disabled
+--function HasEnemyUnitsInSightPredicate(goalSequence)
+
+	---- Get local player and units
+	--local localPlayer = Game_GetLocalPlayer()
+	--local sg_player_units = Player_GetSquads(localPlayer)
+
+		
+	---- For every player
+	--for i = 1, World_GetPlayerCount() do
+		---- Get target player
+		--local targetPlayer = World_GetPlayerAt(i)
+		
+		---- If the target player is an enemy
+		--if Player_ObserveRelationship(localPlayer, targetPlayer) == R_ENEMY then
+			---- Get enemy units 
+			--local sg_enemy_units = Player_GetSquads(targetPlayer)
+			---- Get enemy buildings
+			--local eg_enemy_buildings = Player_GetEntities(targetPlayer)
+			
+			---- If enemy's units are near player's units
+			--if (Prox_SquadsInProximityOfSquads(sg_player_units, sg_enemy_units, 50, ANY)) then
+				
+				---- For every enemy unit
+				--for j = 1, SGroup_Count(sg_enemy_units) do
+					---- Get squad
+					--local squad = SGroup_GetSquadAt(sg_enemy_units, j)
+					
+					---- Check for military squads on screen
+					--if Misc_IsSquadOnScreen(squad, 100) then
+						
+						---- Assign key to enemy military unit
+						--goalSequence.goals[2].key = Squad_GetID(squad)
+						
+					--end
+				--end
+			--end
+			
+			---- If a unit was not found
+			--if not (scartype(goalSequence.goals[2].key) == ST_NUMBER) then
+				
+				----Remove stone defenses
+				--EGroup_Filter(eg_enemy_buildings, "defensive_structure", FILTER_REMOVE)
+				
+				---- If enemy's building is near player's units
+				--if (Prox_SquadsInProximityOfEntities(sg_player_units, eg_enemy_buildings, 50, ANY)) then
+					
+					---- For every enemy building
+					--for j = 1, EGroup_Count(eg_enemy_buildings) do
+						
+						---- Get entity
+						--local entity = EGroup_GetEntityAt(eg_enemy_buildings, j)
+						
+						---- Check for enemy buildings on screen
+						--if Misc_IsEntityOnScreen(entity, 100) then
+							
+							---- Assign key to enemy building
+							--goalSequence.goals[2].key = Entity_GetID(entity)
+							
+						--end
+					--end
+				--end
+			--end
+		--end
+	--end
+	
+	---- For every local player unit
+	--for i = 1, SGroup_Count(sg_player_units) do
+		---- Get Squad
+		--local squad = SGroup_GetSquadAt(sg_player_units, i)
+		
+		---- Check for idle military squads on screen
+		--if Squad_IsOfType(squad, "scar_military") and not Squad_IsOfType(squad, "scout") and not Squad_IsOfType(squad, "siege") then
+
+			---- Assign key to idle military unit
+			--goalSequence.goals[1].key = Squad_GetID(squad)
+			
+		--end
+	--end
+	
+	---- If keys were found
+	--if scartype(goalSequence.goals[1].key) == ST_NUMBER and scartype(goalSequence.goals[2].key) == ST_NUMBER then
+			
+			--return true
+		
+	--end
+	
+	---- Predicate was not satisfied
+	--return false
+--end
+
+-- Attack Action hint trigger with delay - Disabled
+--function HasEnemyUnitsInSightWithDelayPredicate(goalSequence)
+	--local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	
+	--if currentTime > __t_trainingModerateInterval then
+		---- Get local player and units
+		--local localPlayer = Game_GetLocalPlayer()
+		--local sg_player_units = Player_GetSquads(localPlayer)
+		
+		---- For every local player unit
+		--for i = 1, SGroup_Count(sg_player_units) do
+			---- Get Squad
+			--local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+			---- Check for military squads on screen
+			--if Squad_IsOfType(squad, "scar_military") and not Squad_IsOfType(squad, "scout") and not Squad_IsOfType(squad, "khan") and not Squad_IsOfType(squad, "siege") and Misc_IsSquadOnScreen(squad, 100) and not Squad_IsUnderAttack(squad, 10) then
+				
+				---- Assign key to military unit
+				--goalSequence.goals[1].key = Squad_GetID(squad)
+				
+			--end
+		--end
+		
+		---- If a military unit was not found
+		--if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+			---- End function
+			--return false
+		--end
+		
+		---- For every player
+		--for i = 1, World_GetPlayerCount() do
+			---- Get target player
+			--local targetPlayer = World_GetPlayerAt(i)
+			
+			---- If the target player is an enemy
+			--if Player_ObserveRelationship(localPlayer, targetPlayer) == R_ENEMY then
+				---- Get enemy units 
+				--local sg_enemy_units = Player_GetSquads(targetPlayer)
+				---- Get enemy buildings
+				--local eg_enemy_buildings = Player_GetEntities(targetPlayer)
+				
+				---- If enemy's units are near player's units
+				--if (Prox_SquadsInProximityOfSquads(sg_player_units, sg_enemy_units, 50, ANY)) then
+					---- For every enemy unit
+					--for j = 1, SGroup_Count(sg_enemy_units) do
+						---- Get squad
+						--local squad = SGroup_GetSquadAt(sg_enemy_units, j)
+						
+						---- Check for idle military squads on screen
+						--if Misc_IsSquadOnScreen(squad, 100) then
+							
+							---- Assign key to enemy military unit
+							--goalSequence.goals[2].key = Squad_GetID(squad)
+							---- End function
+							--return true
+							
+						--end
+					--end
+				--end
+					
+				---- If a unit was not found
+				--if not (scartype(goalSequence.goals[2].key) == ST_NUMBER) then
+					
+					----Remove stone defenses
+					--EGroup_Filter(eg_enemy_buildings, "defensive_structure", FILTER_REMOVE)
+					
+					---- If enemy's building is near player's units
+					--if (Prox_SquadsInProximityOfEntities(sg_player_units, eg_enemy_buildings, 50, ANY)) then
+						
+						---- For every enemy building
+						--for j = 1, EGroup_Count(eg_enemy_buildings) do
+							
+							---- Get entity
+							--local entity = EGroup_GetEntityAt(eg_enemy_buildings, j)
+							
+							---- Check for idle military squads on screen
+							--if Misc_IsEntityOnScreen(entity, 100) then
+								
+								---- Assign key to enemy building
+								--goalSequence.goals[2].key = Entity_GetID(entity)
+								---- End function
+								--return true
+								
+							--end
+						--end
+					--end
+				--end
+			--end
+		--end
+	--end
+	
+	---- Predicate was not satisfied
+	--return false
+--end
+
+-- Attack Move goal completion criteria - Disabled
+--function UserHasSelectedMilitaryUnits(goal)
+	
+	--local localPlayer = Game_GetLocalPlayer()
+	--local sg_player_units = Player_GetSquads(localPlayer)
+	--local player_unit_count = 0
+	
+	--Misc_GetSelectedSquads(sg_currentSelection, false)
+		
+		---- Check player units
+		--for i = 1, SGroup_Count(sg_currentSelection) do
+			--local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+				
+				--if Squad_IsOfType(squad, "scar_military") then 
+					
+					---- Player has selected a military unit
+					--player_unit_count = player_unit_count + 1
+
+				--end
+		
+			--if player_unit_count >= 2 then
+			
+				---- Player has selected multiple military units
+				--return true
+			
+			--end
+		
+		--end
+	
+	--return false
+--end
+
+-- Attack Move goal completion criteria - Disabled
+--function UserHasIssuedAttackMove(goal)
+	--local localPlayer = Game_GetLocalPlayer()
+	--local sg_player_units = Player_GetSquads(localPlayer)
+	
+	--Misc_GetSelectedSquads(sg_currentSelection, false)
+		
+		--for i = 1, SGroup_Count(sg_currentSelection) do
+			--local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			
+			--if Squad_IsOfType(squad, "scar_military") then
+			
+				--if Squad_IsAttackMoving(squad) then 
+					
+					--return true
+					
+				--end
+			--end
+		--return false
+		--end
+	
+	--return false
+	
+--end
+
+-- Setup Siege Unit trigger
+function HasSiegeUnitPredicate(goalSequence)
+local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	
+	if currentTime > __t_trainingModerateInterval then
+		
+		local localPlayer = Game_GetLocalPlayer()
+		local sg_player_units = Player_GetSquads(localPlayer)
+		
+		-- Check player units
+		for i = 1, SGroup_Count(sg_player_units) do
+			
+			local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+			-- Check for idle siege unit on screen
+			if Squad_IsOfType(squad, "scar_mangonel") or Squad_IsOfType(squad, "scar_trebuchet_cw") or Squad_IsOfType(squad, "scar_trebuchet_traction") then
+				
+				if Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) then
+						
+					-- Assign key to idle springald, mangonel, or trebuchet
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					return true
+				end
+			end
+		end
+		
+		-- If an idle siege unit was not found
+		if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+			-- End function
+			return false
+		end
+		
+	end
+	
+end
+
+-- Setup Siege Unit goal completion criteria
+function UserHasSelectedAnIdleSiegeUnit(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+		
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+				
+			if Squad_IsOfType(squad, "scar_springald") or Squad_IsOfType(squad, "scar_mangonel") or Squad_IsOfType(squad, "scar_trebuchet_cw") or Squad_IsOfType(squad, "scar_trebuchet_traction") then 
+					
+				-- Player has selected a springald, mangonel, or trebuchet
+				return true
+
+			end
+		
+		end
+	
+	return false
+	
+end
+
+-- Setup Siege Unit goal completion criteria
+function UserHasSetupSiegeUnit(goal)
+	-- Get local player
+	local localPlayer = Game_GetLocalPlayer()
+	-- Get local player's units
+	local sg_player_units = Player_GetSquads(localPlayer)
+	
+	-- For every player unit
+	for i = 1, SGroup_Count(sg_player_units) do
+		-- Get squad
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		
+		if Squad_IsOfType(squad, "siege_range") then
+			
+			-- Get entity from squad
+			local entity = Squad_GetFirstEntity(squad) 
+			-- Check entity state model bool for siege setup
+			if Entity_GetStateModelBool(entity, "siege_is_setup") == true then	
+				
+				return true
+				
+			end
+			
+		end
+
+	end
+	
+	return false
+	
+end
+
+-- Setup Siege Unit ignore
+function UserHasSetupSiegeUnitInSight(goal)
+	-- Get local player
+	local localPlayer = Game_GetLocalPlayer()
+	-- Get local player's units
+	local sg_player_units = Player_GetSquads(localPlayer)
+	
+	-- For every player unit
+	for i = 1, SGroup_Count(sg_player_units) do
+		-- Get squad
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		
+		-- Check if squad is in sight
+		if Squad_IsOfType(squad, "siege_range") and Misc_IsSquadOnScreen(squad, 100) then
+			
+			-- Get entity from squad
+			local entity = Squad_GetFirstEntity(squad) 
+			-- Check entity state model bool for siege setup
+			if Entity_GetStateModelBool(entity, "siege_is_setup") == true then	
+				
+				return true
+				
+			end
+		end
+	end
+	
+	return false
+end
+
+---- Rotate Camera Predicate
+--function RotateCameraPredicate(goalSequence)
+	--local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	
+	--if currentTime > __t_trainingModerateInterval then
+			
+		--return true
+	--end
+	
+	--return false
+--end
+
+-- User has rotated the camera from the default position
+function UserHasRotatedCamera(goal)
+	
+	-- Get camera's current orbit
+	local cameraOrbit = Camera_GetOrbit()
+	
+	-- If camera's orbit hasn't been stored in the goal
+	if scartype(goal.cameraOrbit) ~= ST_NUMBER then
+		
+		-- Store in goal
+		goal.cameraOrbit = cameraOrbit
+		
+	-- If camera's orbit has been stored in goal as a number
+	elseif scartype(goal.cameraOrbit) == ST_NUMBER then
+		
+		-- Get diff between first orbit stored and current orbit
+		local diff = goal.cameraOrbit - cameraOrbit
+		
+		-- Check if degree of rotation is significant
+		if diff >= 10 or diff <= -10 then
+			
+			return true
+		end
+	end
+	
+	return false
+end
+
+-- Shift Queue Orders Predicate - Disabled
+--function ShiftQueuePredicate(goalSequence)
+--local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	--if currentTime > __t_trainingModerateInterval then
+		--local localPlayer = Game_GetLocalPlayer()
+		--local houseBP = Cardinal_ConvertTypeToEntityBlueprint("house", localPlayer)
+			
+		---- Check if player has enough resources to build two Houses
+		--if Player_GetResource(localPlayer, RT_Wood) >= 200 then
+			
+		--local popCapMax = Player_GetCurrentPopulationCap(localPlayer, CT_Personnel)
+		--local popCapThreshold = Player_GetPopulationPercentage(localPlayer, CT_Personnel)
+			
+			----Check if player would benefit  from building multiple Houses
+			--if popCapMax >= 20 and popCapThreshold >= 0.9 then
+				
+				---- Find Villager and assign keys
+				--local villager = FindVillagerInSight(goalSequence)
+				--if villager ~= nil then
+					--goalSequence.goals[1].key = villager
+					--goalSequence.goals[2].key = houseBP
+					--return true
+				--end
+			--end
+		--end
+	--end
+	
+	--return false
+--end
+
+-- Shift Queue Orders ignore - Disabled
+--function UserHasNotEnoughWood(goalSequence)
+	--local localPlayer = Game_GetLocalPlayer()
+		
+	---- Check if player has enough resources to build two Houses
+	--if Player_GetResource(localPlayer, RT_Wood) <= 200 then
+		
+			--return true
+	--end
+	
+	--return false
+--end
+
+-- Shift Queue Orders goal - Disabled
+--function UserHasShiftQueued(goal)
+	---- Get local player
+	--local localPlayer = Game_GetLocalPlayer()
+	---- Get local player's entities
+	--local eg_under_construction = Player_GetEntities(localPlayer)
+	
+	--EGroup_FilterUnderConstruction(eg_under_construction, FILTER_KEEP)
+	
+	--local numUnderConstruction = EGroup_Count(eg_under_construction)
+	
+	--if numUnderConstruction >= 2 then
+		
+		--return true	
+	--end
+
+	--return false
+--end
+
+-- Control Group Selection Predicate
+function UserHasControlGroup(goalSequence)
+local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	--if currentTime > __t_trainingShortInterval then
+	-- Create squad/entity groups if they do not exist
+	local sg_control_group = SGroup_CreateIfNotFound("sg_control_group")
+	local eg_control_group = EGroup_CreateIfNotFound("eg_control_group")
+	-- For all possible control groups
+		for i = 0, 9 do
+		-- Returns contents of specific control groups
+		Misc_GetControlGroupContents(i, sg_control_group, eg_control_group)
+			-- If any units are in control group
+			if SGroup_Count(sg_control_group) > 0 then
+				-- Create a callback that listens for control group selection
+				UI_SetControlGroupSelectedCallback(ControlGroupSelectedCallback)
+				-- Listen for completion (so we can clear callback after)
+				Training_AddCallbacksToGoal(goalSequence.goals[1], nil, OnControlGroupSelectedComplete)
+				-- Assign key to control group 1 icon
+				goalSequence.goals[1].key = "ControlGroupButton1Tag"
+				return true 
+			end
+		end
+	--end
+return false
+end
+
+--Callback that listens for control group selection
+function ControlGroupSelectedCallback(controlGroupIndex)
+	--If control group that was selected was 1
+	if controlGroupIndex == 1 then
+		
+		user_has_selected_control_group_1 = true
+		
+	end
+	
+end
+
+-- Run when Control Group Selection goal is completed
+function OnControlGroupSelectedComplete(completeReason)
+	--Removes callback that listens for control group selection (perf)
+	UI_ClearControlGroupSelectedCallback()
+	
+end
+
+-- Control Group Selection goal completion
+function UserHasSelectedControlGroup(goal)
+	-- If the player has selected control group 1
+	if user_has_selected_control_group_1 == true then
+		
+		return true
+		
+	end
+end
+
+-- Ignore function
+function ControlGroupDoesNotExist()
+	--Create squad/entity groups if they do not exist
+	local sg_control_group = SGroup_CreateIfNotFound("sg_control_group")
+	local eg_control_group = EGroup_CreateIfNotFound("eg_control_group")
+		
+		-- Returns contents of first control group
+		Misc_GetControlGroupContents(1, sg_control_group, eg_control_group)
+	
+		-- If no units are in the control group
+		if SGroup_Count(sg_control_group) == 0 then
+			return true
+		end
+	
+	return false
+end
+
+function UserHasCreatedAnyControlGroup(goal)
+	
+	-- Create squad/entity groups if they do not exist
+	local sg_control_group = SGroup_CreateIfNotFound("sg_control_group")
+	local eg_control_group = EGroup_CreateIfNotFound("eg_control_group")
+	
+	-- For all possible control groups
+	for i = 0, 9 do
+		
+		-- Returns contents of first control group
+		Misc_GetControlGroupContents(1, sg_control_group, eg_control_group)
+	
+		-- If any units are in control group
+		if SGroup_Count(sg_control_group) > 0 then
+			return true
+		end
+		
+	end
+	
+	return false
+end
+
+-- Build Drop-off ignore
+function UserCannotBuildDropoff(goal)
+		
+	local localPlayer = Game_GetLocalPlayer()
+	local woodResources = Player_GetResource(localPlayer, RT_Wood)
+	
+	-- Check if player is Mongol
+	if Player_GetRaceName(Game_GetLocalPlayer()) == "mongol" then
+		-- Set Ger cost
+		local woodRequired = 100			
+		
+		-- Check if player has enough Wood to build a Ger
+		if woodResources < woodRequired then
+			return true
+		end
+		
+	else
+	
+		-- Set Lumber Camp cost
+		local woodRequired = 50
+		
+		-- Check if player has enough Wood to build a Lumber Camp
+		if woodResources < woodRequired then
+			return true
+		end
+	end
+	return false
+end
+
+-- Only relevant when UI_IsXboxControllerUI() == true
+function UserHasOpenedContextualRadial(goal)
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu
+end
+
+function UserHasClosedContextualRadial(goal)
+	return UI_GetActiveRadialMenuType() == RMT_Invalid
+end
+
+function UserHasOpenedDPadRightRadial(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and UI_GetActiveRelicRadialMenuDirection() == RMD_Right 
+end
+
+
+-- Only relevant when UI_IsXboxControllerUI() == true, also works with Xbox KBM landmark menu
+function UserHasOpenedLandmarkRadial(goal)
+	return UI_XboxIsLandmarkRadialOpen()
+end
+
+
+-- helper function to return cursor or reticle based on input type
+function ReturnCursorOrReticle()
+	if UI_IsXboxControllerUI() then
+		return "LooseReticle"
+	else
+		return "Cursor"
+	end
+end
+
+function UserHasCommandsCommandCardTabOpen(goal)
+	return UI_GetXboxCommandCardTab() == XCCT_Command
+end
+
+function UserHasEconomicCommandCardTabOpen(goal)
+	return UI_GetXboxCommandCardTab() == XCCT_Economic
+end
+
+function UserHasMilitaryCommandCardTabOpen(goal)
+	return UI_GetXboxCommandCardTab() == XCCT_Military
+end
+
+function UserHasVillagerCommandsCardTabOpen(goal)
+	return UserHasSelectedAVillager(goal) and UI_GetXboxCommandCardTab() == XCCT_Command
+end
+
+function UserHasVillagerEconomicCardTabOpen(goal)
+	return UserHasSelectedAVillager(goal) and UI_GetXboxCommandCardTab() == XCCT_Economic
+end
+
+function UserHasVillagerMilitaryCardTabOpen(goal)
+	return UserHasSelectedAVillager(goal) and UI_GetXboxCommandCardTab() == XCCT_Military
+end

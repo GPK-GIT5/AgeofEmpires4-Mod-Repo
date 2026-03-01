@@ -1,0 +1,341 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("MissionOMatic/MissionOMatic.scar")
+import("cardinal.scar")
+import("training_sal_chp2_womanswork.scar")
+import("obj_villagers.scar")
+import("obj_grow.scar")
+import("obj_officials.scar")
+import("obj_scout.scar")
+
+function Mission_OnGameSetup()
+	
+	player1 = World_GetPlayerAt(1) -- player (normans)
+	produced_villagers = 0
+	
+	Setup_SetPlayerName(player1, "$999303") -- Mathilde
+	
+	
+end
+
+function Mission_OnInit()
+	
+	-- Dynamic training is key to this tutorial mission
+	Training_SetForceEnableTraining(true)
+	
+	-- Force enable HUD widgets that are explained in the tutorial
+	UI_SetTutorializedWidgetsRequired(true)
+end
+
+function Mission_SetupVariables()
+	
+	intro_skipped = false
+	
+	-- Init the objectives
+	VillagersWork_InitObjectives()
+	GrowTown_InitObjectives()
+	CommandOfficials_InitObjectives()
+	Scout_InitObjectives()
+	
+	-- DESIGNER ENCOUNTER VARIABLES
+	-- Make unit production a bit quicker
+	Modify_PlayerProductionRate(player1, 2)
+	local construction_rate_multiplier = 0.5
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE, construction_rate_multiplier)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_ECON_FOOD_CONTROL_FRE, construction_rate_multiplier)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_ECON_WOOD_CONTROL_FRE, construction_rate_multiplier)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_ECON_MINING_CAMP_CONTROL_FRE, construction_rate_multiplier)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_RESOURCE_FARM_FRE, construction_rate_multiplier)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_LANDMARK_AGE1_CASERNES_CENTRALES_FRE, construction_rate_multiplier)
+	
+	Modify_FoodGatherRate( sg_starting_villagers, 2, MUT_Multiplication) 
+	
+	-- Number of items to build in objective
+	num_houses = 2
+	num_farms = 3
+	
+	-- Used in tracker for spawning squads
+	i_last_units = 0
+	
+	Player_AddResource(player1, RT_Wood, 300)
+	Player_AddResource(player1, RT_Food, 140)
+	
+	local function SetRes(egroupid, itemindex, itemid)
+		Entity_SetRemainingResourceDepositAmount(itemid, 75)
+		return false -- continue
+	end
+
+	EGroup_ForEach(eg_berries, SetRes)
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads,"villager",FILTER_KEEP)
+	starting_villagers = SGroup_Count(sg_allsquads)
+	starting_sheep = SGroup_Count(sg_sheep)
+	
+	--IntroGroups
+	sg_starting_villagers = SGroup_CreateIfNotFound("sg_starting_villagers")
+	sg_intro_villagers = SGroup_CreateIfNotFound("sg_intro_villagers")
+	sg_start_intro_villager_01 = SGroup_CreateIfNotFound("sg_start_intro_villager_01")
+	sg_start_intro_villager_02 = SGroup_CreateIfNotFound("sg_start_intro_villager_02")
+	sg_start_intro_villager_03 = SGroup_CreateIfNotFound("sg_start_intro_villager_03")
+	sg_start_intro_villager_04 = SGroup_CreateIfNotFound("sg_start_intro_villager_04")
+	sg_intro_william = SGroup_CreateIfNotFound("sg_intro_william")
+	sg_intro_cavalry_a = SGroup_CreateIfNotFound("sg_intro_cavalry_a")
+	sg_intro_cavalry_b = SGroup_CreateIfNotFound("sg_intro_cavalry_b")
+	sg_intro_scout = SGroup_CreateIfNotFound("sg_intro_scout")
+	
+	sg_herded = SGroup_CreateIfNotFound("sg_herded") -- group is used later for training goals
+	
+	
+	
+	-- table used to keep track of construction phases used for training tips
+	g_training_log = {
+		phase = "no phase",
+		BP = "none",
+		blueprint_name = "none"
+	}
+
+	
+	
+end
+
+function Mission_SetRestrictions()
+	
+	-- Remove access to certain units/buildings/upgrades
+	
+	Player_SetConstructionMenuAvailability(player1, "fre_age4", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age3_wonders", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age3", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age2_wonders", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age2", ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_ECON_FOOD_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_ECON_WOOD_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_ECON_MINING_CAMP_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_RESOURCE_FARM_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_INFANTRY_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_NAVAL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_OUTPOST_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_PALISADE_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_PALISADE_GATE_FRE, ITEM_REMOVED)
+	
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_VILLAGER_1_FRE, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_SCOUT_1_FRE, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_HORSEMAN_2_FRE, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_KNIGHT_2_FRE, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_FOOD_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_VILLAGER_HUNTING_GEAR_1, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_SCOUT_FORESTER, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_FELL_RATE_1, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_GOLD_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_STONE_HARVEST_RATE_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_VILLAGER_HEALTH, ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_LANDMARK_AGE1_CASERNES_CENTRALES_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_LANDMARK_AGE1_CHAMBER_OF_COMMERCE_FRE, ITEM_REMOVED)
+
+	-- Hide abilities
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("combat_unit_hold_position"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_xbox_auto_train_villager"), ITEM_REMOVED)
+
+	-- Hide Formations
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_line"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_spread"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_wedge"), ITEM_REMOVED)
+	-- Hide Death
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_unit_death"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_building_scuttle"), ITEM_REMOVED)
+	
+end
+
+function Mission_Preset()
+	
+	if Music_UnlockIntensity then
+        Sound_SetForceMusic(false)
+    else
+        Sound_SetForceMusic(true)
+    end
+	
+	Music_LockIntensity(MUSIC_EXPLORE)
+	
+	--set the callback we use to keep track of construction phases for training tips
+	UI_SetModalConstructionPhaseCallback(Salisbury3_TrainingContructionCallback)
+	
+	-- make everything build faster
+	ChangeBuildTimes()
+	
+end
+
+function Mission_Start()
+	
+	-- Mission-o-Matic handles playing the intro
+	Player_SetResource( player1, RT_Gold, 200) -- boost starting gold to reduce chance of being short at the end of the mission
+	
+	Rule_AddInterval(Mission_Start_WaitForSpeechToFinish, 0.5)
+	
+	-- re-enable xbox UI but not the following elements that will be unlocked across this mission and the next two
+	Cardinal_EnablePartialXboxUI(true, {
+			VF_XboxUIFindMenu, 
+			VF_XboxUIMinimapFocus, 
+			VF_XboxUISiteMenu, 
+			VF_XboxUIVillagerPriorities,
+			VF_XboxUISelectAllOnScreen})
+
+end
+
+function Mission_Start_WaitForSpeechToFinish()
+	
+	if not Event_IsAnyRunning() then
+		
+		Rule_RemoveMe()
+		hptc = HintPoint_Add(eg_player_tc, true, "$11119069", 7)
+		Objective_Start(OBJ_VillagersWork, true, true)
+
+		FOW_UnExploreAll()
+		
+	end
+	
+end
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+-- Mission-o-Matic Recipe
+function GetRecipe()
+
+	local recipe = {
+		
+		introNIS = EVENTS.WomansWork_Intro,
+		
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_angevin_rebellion",
+				title = "$999307",
+				date = "$1000626",
+			},
+		},
+		
+	}
+			
+	return recipe
+
+end
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+function Spawn_Intro()
+	
+	UnitEntry_DeploySquads(player1, sg_intro_william, {{sbp = SBP.CAMPAIGN.UNIT_DUKE_WILLIAM_CMP_SAL, numSquads = 1}}, mkr_william_intro_spawn)
+	
+	
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_a, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_01)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_a, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_03)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_a, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_05)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_a, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_07)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_a, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_09)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_a, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_11)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_a, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_13)
+	
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_b, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_02)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_b, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_04)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_b, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_06)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_b, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_08)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_b, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_10)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_b, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_12)
+	UnitEntry_DeploySquads(player1, sg_intro_cavalry_b, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 1}}, mkr_william_intro_army_spawn_14)
+	
+	
+	UnitEntry_DeploySquads(player1, sg_intro_scout, {{sbp = SBP.FRENCH.UNIT_SCOUT_1_FRE, numSquads = 1}}, mkr_scout_intro_spawn)
+	
+	
+	UnitEntry_DeploySquads(player1, sg_intro_villagers, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 1}}, mkr_villager_intro_spawn_01)
+	UnitEntry_DeploySquads(player1, sg_intro_villagers, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 1}}, mkr_villager_intro_spawn_02)
+	UnitEntry_DeploySquads(player1, sg_intro_villagers, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 1}}, mkr_villager_intro_spawn_03)
+	UnitEntry_DeploySquads(player1, sg_intro_villagers, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 1}}, mkr_villager_intro_spawn_04)
+	UnitEntry_DeploySquads(player1, sg_intro_villagers, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 1}}, mkr_villager_intro_spawn_05)
+	UnitEntry_DeploySquads(player1, sg_intro_villagers, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 1}}, mkr_villager_intro_spawn_06)
+	UnitEntry_DeploySquads(player1, sg_intro_villagers, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 1}}, mkr_villager_intro_spawn_07)
+	UnitEntry_DeploySquads(player1, sg_intro_villagers, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 1}}, mkr_villager_intro_spawn_08)
+	
+end
+
+function Intro_Parade()
+	
+	Cmd_MoveToAndDeSpawn(sg_intro_william, mkr_william_intro_dest_01)
+	
+	Cmd_MoveToAndDeSpawn(sg_intro_cavalry_a, mkr_william_intro_army_dest_01a)
+	Cmd_MoveToAndDeSpawn(sg_intro_cavalry_b, mkr_william_intro_army_dest_01b)
+	
+	Modify_UnitSpeed(sg_intro_cavalry_a, 0.6)
+	Modify_UnitSpeed(sg_intro_cavalry_b, 0.6)
+	Modify_UnitSpeed(sg_intro_william, 0.8)
+	
+end
+
+function Intro_Villager_Cheer()
+	
+	SGroup_EnableCheering(sg_intro_villagers, true, 15)
+	
+end
+
+function Intro_Scout_Move()
+	
+	SGroup_FormationWarpToMarker(sg_intro_scout, mkr_scout_intro_teleport)
+	Cmd_Move(sg_intro_scout, mkr_scout_intro_dest_01)
+	
+end
+
+function Intro_Villagers_Move()
+	
+	Cmd_Move(sg_start_intro_villager_01, mkr_villager_intro_dest_01)
+	Cmd_Move(sg_start_intro_villager_02, mkr_villager_intro_dest_02)
+	Cmd_Move(sg_start_intro_villager_03, mkr_villager_intro_dest_03)
+	Cmd_Move(sg_start_intro_villager_04, mkr_villager_intro_dest_04)
+	
+end
+
+function Intro_Destroy_Squads()
+	
+	SGroup_DestroyAllSquads(sg_intro_villagers)
+	SGroup_DestroyAllSquads(sg_intro_william)
+	SGroup_DestroyAllSquads(sg_intro_cavalry_a)
+	SGroup_DestroyAllSquads(sg_intro_cavalry_b)
+	
+end
+
+function Intro_Skip()
+	
+	SGroup_DestroyAllSquads(sg_intro_villagers)
+	SGroup_DestroyAllSquads(sg_intro_william)
+	SGroup_DestroyAllSquads(sg_intro_cavalry_a)
+	SGroup_DestroyAllSquads(sg_intro_cavalry_b)
+	
+	SGroup_FormationWarpToMarker(sg_intro_scout, mkr_scout_intro_dest_01)
+	
+	SGroup_FormationWarpToMarker(sg_start_intro_villager_01, mkr_villager_intro_dest_01)
+	SGroup_FormationWarpToMarker(sg_start_intro_villager_02, mkr_villager_intro_dest_02)
+	SGroup_FormationWarpToMarker(sg_start_intro_villager_03, mkr_villager_intro_dest_03)
+	SGroup_FormationWarpToMarker(sg_start_intro_villager_04, mkr_villager_intro_dest_04)
+	
+end
+
+
+function ChangeBuildTimes()
+	
+	--disable garrison
+	Entity_SetExtEnabled(EGroup_GetEntityAt(eg_player_tc, 1), "hold_ext", false)
+
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_ECON_FOOD_CONTROL_FRE, 0.5)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_ECON_WOOD_CONTROL_FRE, 0.5)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_ECON_MINING_CAMP_CONTROL_FRE, 0.5)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE, 0.5)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_RESOURCE_FARM_FRE, 0.75)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_LANDMARK_AGE1_CASERNES_CENTRALES_FRE, 0.25)	
+	Modify_EntityBuildTime(player1, EBP.FRENCH.UNIT_VILLAGER_1_FRE, 0.5)
+	
+	-- for some reason this modifies research speed (so more if faster) rather than research time (so less is faster)
+	Modify_UpgradeBuildTime(player1, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1, 2) 
+	
+end

@@ -1,0 +1,139 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+---------------------
+--PRISON CAMP LOGIC--
+---------------------
+----------------
+--INIT PRISONS-- -- INITALISE VARIABLES TO BE USED FOR EACH PRISON CAMP VIA THE PRISONS TABLE AND SETS IT ALL IN MOTION. THE PRE-INITILASATION, IF YOU WILL.
+----------------
+function Init_Prisons()
+		
+	prisons = {
+		{
+			assignVillagersFunction = AssignVillagersToStone,
+			mkr_prisoners = mkr_prisoners1,
+			units_prisoners = {{type = "scar_villager", numSquads = 5}},
+			mkr_guards = mkr_prison_guards1,
+			units_guards = {{type = "scar_manatarms", numSquads = t_difficulty.prisoner_guardAmount}},
+			base_resource_amount = 2400,
+			eg_deposits = eg_stone_camp_stone,
+			hpid_index = 1,
+		},
+		
+		{
+			assignVillagersFunction = AssignVillagersToBerries, 
+			mkr_prisoners = mkr_prisoners2,                   
+			units_prisoners = {{type = "scar_villager", numSquads = 5}},
+			mkr_guards = mkr_prison_guards2,
+			units_guards = {{type = "scar_manatarms", numSquads = t_difficulty.prisoner_guardAmount}},
+			base_resource_amount = 350,
+			eg_deposits = eg_berries,
+			hpid_index = 2,     
+		},								
+		
+		{
+			assignVillagersFunction = AssignVillagersToGold,
+			mkr_prisoners = mkr_prisoners3,
+			units_prisoners = {{type = "scar_villager", numSquads = 5}},
+			mkr_guards = mkr_prison_guards3,
+			units_guards = {{type = "scar_manatarms", numSquads = t_difficulty.prisoner_guardAmount}},
+			base_resource_amount = 8000,
+			eg_deposits = eg_gold_camp_gold_big,
+			hpid_index = 3,
+		},
+	}	
+	for i, prison in ipairs(prisons) do
+		Prisoner_Init(prison) -- USE THE ABOVE FOR EACH PRISON CAMP TO INITIALISE THEM ON THE MAP AND THEIR LOGIC
+	end
+	
+	Rule_AddInterval(Prisons_Monitor, 1)
+	Rule_AddInterval(Prisons_RefreshResources, 10)
+end
+
+function Prisoner_Init(prison)
+	
+	prison.guardsAreDead = false -- ESTABLISHES THAT THE GUARDS ARE ALIVE FOR "PRISONERS FREED" DETECTION PURPOSES
+	prison.sg_prisoners = SGroup_CreateUniqueWithPrefix("sg_prisoners") --
+	
+	CreateUnits(player3, prison.units_prisoners, prison.mkr_prisoners, prison.sg_prisoners)
+	
+	if prison.assignVillagersFunction ~= nil then
+		prison.assignVillagersFunction(prison.sg_prisoners, false, false) -- INIT THE PRISONERS SGROUP & UNITS AND ASSIGNS THEM TO THEIR RESOURCE IF THERE IS ONE. 
+	end
+	
+	prison.sg_guards = SGroup_CreateUniqueWithPrefix("sg_guards")
+	CreateUnits(player8, prison.units_guards, prison.mkr_guards, prison.sg_guards)  -- INIT THE PRISON GUARDS SGROUP & UNITS
+	
+	prison.eg_towers = EGroup_CreateUniqueWithPrefix("eg_towers")
+	Player_GetAllEntitiesNearMarker(player2, prison.eg_towers, prison.mkr_prisoners, 60)
+	EGroup_Filter(prison.eg_towers, "outpost", FILTER_KEEP) -- CHECK FOR THE TOWERS NEARBY, ADD THEM TO THE "PRISONERS FREED" CRITERIA
+	
+	prison.eg_dropoff = EGroup_CreateUniqueWithPrefix("eg_dropoff")
+	Player_GetAllEntitiesNearMarker(player3, prison.eg_dropoff, prison.mkr_prisoners, 30)
+	EGroup_Filter(prison.eg_dropoff, "economy_building", FILTER_KEEP) -- CHECK FOR THE RESOURCE DROP-OFF BUILDING, NOT ONLY FOR THE PRISONERS TO USE IT BUT ALSO 
+end																	  -- FOR THE CONVERSION TO PLAYER-OWNED WHEN THEY'RE FREED, AS WELL.
+
+function Prisons_Monitor(context, data)  -- BEGIN MONITORING THE PRISON CAMPS FOR ACTIVITY
+	
+	for i, prison in ipairs(prisons) do
+		
+		if prison.guardsAreDead == false and SGroup_CountSpawned(prison.sg_guards) == 0 and EGroup_CountSpawned(prison.eg_towers) == 0 then
+			prison.guardsAreDead = true
+			
+			if SGroup_CountSpawned(prison.sg_prisoners) > 0 then
+				Util_SetPlayerOwner(prison.sg_prisoners, player1)
+			end
+			
+			if EGroup_CountSpawned(prison.eg_dropoff) > 0 then
+				Util_SetPlayerOwner(prison.eg_dropoff, player1)
+			end
+			
+			i_prisonsFreed = i_prisonsFreed + 1    -- INCREMENT PRISONS FREED. AT == 1, FAMAGUSTA BECOMES INVOLVED IN THE MISSION.
+			
+			Objective_SetCounter(OBJ_Prisoners, i_prisonsFreed, i_prisonsFreedCounterMax)
+			
+			if #hpid_prisons >= prison.hpid_index then
+				Objective_RemoveUIElements(OBJ_Prisoners, hpid_prisons[prison.hpid_index])
+			end
+			
+			if i_prisonsFreed == i_prisonsFreedCounterMax then
+				AllPrisonersRescued()
+			end
+			
+			-- Narrative
+			if VOPlayed_CaptivesFreed == false then
+				if i_prisonsFreed == 1 then
+					VOPlayed_CaptivesFreed = true
+					Util_StartIntel(EVENTS.CaptivesFreed)
+				end
+			end
+		end
+	end
+end
+
+function Prisons_RefreshResources(context, data)
+	
+	for i, prison in ipairs(prisons) do
+		if prison.guardsAreDead == false and prison.eg_deposits ~= nil then
+			Entity_SetRemainingResourceDepositAmount(EGroup_GetEntityAt(prison.eg_deposits, 1), prison.base_resource_amount)
+		end
+	end
+end
+
+function Gold_Camp_Monitor()
+	if Player_AreSquadsNearMarker(player2, mkr_prisoners3) == false then
+		Rule_RemoveMe()
+		b_isLowGold = true
+	end -- THIS DETECTS IF THERE'S NO ENEMY UNITS NEAR THE MARKER AND ACTIVATES THE FILTERED TABLES IN CYPRUS.SCAR TO REDUCE UNIT NUMBERS
+end		-- DOESN'T SEEM NECESSARY TO ADD THE TOWERS HERE AS THE FUNCTIONALITY REMAINS THE SAME AND THEY NEED TO BE DESTROYED FOR THE OBJECTIVE ANYWAY
+
+function Wood_Camp_Monitor()
+	if Player_AreSquadsNearMarker(player2, mkr_prisoners2) == false then
+		Rule_RemoveMe()	
+		b_isLowWood = true
+	end -- THIS DETECTS IF THERE'S NO ENEMY UNITS NEAR THE MARKER AND ACTIVATES THE FILTERED TABLES IN CYPRUS.SCAR TO REDUCE UNIT NUMBERS
+end		-- DOESN'T SEEM NECESSARY TO ADD THE TOWERS HERE AS THE FUNCTIONALITY REMAINS THE SAME AND THEY NEED TO BE DESTROYED FOR THE OBJECTIVE ANYWAY
+
+function AllPrisonersRescued() -- ONCE THIS IS CALLED IN PRISONS_MONITOR, THE OBJECTIVE IS COMPLETED.
+	Objective_Complete(OBJ_Prisoners, true, true)
+end

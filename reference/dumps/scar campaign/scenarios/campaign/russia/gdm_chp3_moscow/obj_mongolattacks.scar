@@ -1,0 +1,288 @@
+function MongolAttacks_InitializeObjectives()
+	
+	OBJ_HoldAgainstTheHorde = {
+	
+		Title = Loc_GetString(11176784), --Hold Against the Horde
+		Type = OT_Primary,
+
+		SetupUI = function()
+			Objective_AddPing(OBJ_HoldAgainstTheHorde, mkr_location_moscow)			
+		end,
+		
+		OnStart = MongolAttacks_OnStart,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.MongolFinalFight_Part1)
+			Music_StopMedium()
+		end,
+
+	}
+	
+	Objective_Register(OBJ_HoldAgainstTheHorde)
+
+		
+	b_MongolBreachInfoPlayed = false
+	
+
+end
+
+-----------------------
+--OBJECTIVE FUNCTIONS--
+-----------------------
+
+function MongolAttacks_OnStart()
+	
+	Sound_SetMinimumMusicCombatIntensity(801, 0)
+	
+	i_originalEntityCountOuterCity = MongolAttacks_CountBuildingsInOuterCity()	
+	
+	Rule_AddInterval(MongolAttacks_OuterCityBreached, 1)
+
+	Init_MongolInvasion()
+	--Util_StartIntel(EVENTS.MongolDrums)
+	Rule_AddInterval(NewMongolArmy, t_difficulty.mongolFrequency)
+	Rule_AddInterval(Mongols_CTA, 1)
+	
+	Rule_AddInterval(MongolAttacks_CheckLastWaveFinished, 1)	
+	Rule_AddInterval(MongolAttacks_HalfwayThere, 1)
+end
+
+-- when the mongols breach the outer city, update the objective (if it hasn't already)
+function MongolAttacks_OuterCityBreached()
+	
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_outercity_target)
+	local mongolsCount = SGroup_CountSpawned(sg_temp)
+	
+	local _QueryInCity = function(gid, idx, sid)
+		if World_GetMetadataLayerBoolean("outercity_triggerLayer", Squad_GetPosition(sid).x, Squad_GetPosition(sid).z) then
+			return true
+		end
+	end
+	
+	if mongolsCount > 0 then
+		if SGroup_ForEachAllOrAny(sg_temp, ANY, _QueryInCity) then
+			Rule_RemoveMe()
+			if b_MongolBreachInfoPlayed == false then 
+				Util_StartIntel(EVENTS.OuterCityBreached)
+				Rule_Add(MongolAttacks_OuterCityBreached_PartB)
+			end
+			b_outerCityBreached = true
+			Rule_AddInterval(MongolAttacks_OuterCityDestroyed, 1)
+			Rule_AddOneShot(Dip_Remind, 20)
+		end
+	end
+end
+
+function Dip_Remind()
+	if Game_GetSPDifficulty() <= GD_HARD and b_endofMission == false then
+		Player_GetAll(player1)
+		SGroup_Filter(sg_allsquads, "military", FILTER_KEEP)
+		if SGroup_CountSpawned(sg_allsquads) < 80 then
+			Tribute_Intel()
+			
+			if UI_IsXboxUI() == false then
+				Diplomacy_ShowDiplomacyUI(true)
+			end
+		else
+			Rule_AddOneShot(Dip_Remind, 10)
+		end
+	end
+end
+
+function MongolAttacks_OuterCityBreached_PartB()
+
+	if Event_IsAnyRunning() == false then
+		b_MongolBreachInfoPlayed = true
+		Rule_RemoveMe()
+	end
+	
+end
+
+
+-- when enough of the outer city has been destroyed, move the relevant attack modules to directly attacking the Kremlin
+function MongolAttacks_OuterCityDestroyed()
+	
+	if MongolAttacks_CountBuildingsInOuterCity() <= i_originalEntityCountOuterCity * 0.6 then 
+		
+		Rule_RemoveMe()
+		
+		b_outerCity_Destroyed = true
+		
+	end	
+end
+
+function MongolAttacks_CheckLastWaveFinished() --Checks if Hold Against the Horde is complete
+		
+	Player_GetAll(player2)
+	Sgroup_FilterUnfinishedRams(sg_allsquads)
+	currentMongolCount = SGroup_CountSpawned(sg_allsquads)
+	
+	--Objective_SetCounter(OBJ_HoldAgainstTheHorde, t_difficulty.totalMongols+currentMongolCount, maxTotalMongols)
+	if Obj_GetProgressVisible(OBJ_HoldAgainstTheHorde.ID) ~= true then
+		Obj_SetProgressVisible(OBJ_HoldAgainstTheHorde.ID, true)
+	end
+	Obj_SetProgress(OBJ_HoldAgainstTheHorde.ID, 1-((t_difficulty.totalMongols+currentMongolCount)/maxTotalMongols))
+	
+	if currentMongolCount < 1 and t_difficulty.totalMongols <= 0 then
+		Objective_Complete(OBJ_HoldAgainstTheHorde)
+	end
+end
+
+function MongolAttacks_HalfwayThere()
+	if (maxTotalMongols/2) >= t_difficulty.totalMongols+currentMongolCount then
+		Rule_RemoveMe()
+		Util_StartIntel(EVENTS.Halfway)
+	end
+end
+
+function MongolRetreat()
+	Objective_Complete(OBJ_HoldAgainstTheHorde)
+end
+
+function Mongols_CTA()
+	--Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_outer_southeast_gate, 30)
+	if Player_CanSeeSGroup(player1, sg_mongols1, ANY) then
+		Rule_RemoveMe()
+		EventCues_CallToAction(11176783, CTA_ALARM, EVENTS.MongolsAttack, nil, sg_mongols1, 20, "icons/cta/illustrations/12_mongols_charging") --"The Mongols have arrived!"
+		Sound_Play2D("mus_stinger_campaign_alert")
+		Sound_Play2D("sfx_campaign_scripted_medium_group_fear")
+	end
+end
+
+---------------------------------
+--End of Mission Mongol Attacks--
+---------------------------------
+function DeclareFinalMongols() --Sets up the random tables for the ending section
+	t_finalmongolSpawns = {mkr_enemyspawn1, mkr_enemyspawn2, mkr_enemyspawn5, mkr_enemyspawn6}
+	khan = {
+		{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 8 },
+		{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 2 },
+		{sbp = SBP.MONGOL.UNIT_KHAN_2_MON, numSquads = 1 },
+	}
+	
+	mangonel = {
+		{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 6 },
+		{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 4 },
+		{sbp = SBP.MONGOL.UNIT_MANGONEL_3_MON, numSquads = 2 },
+	}
+	
+	treb = {
+		{sbp = SBP.MONGOL.UNIT_ARCHER_2_MON, numSquads = 6 },
+		{sbp = SBP.MONGOL.UNIT_MANATARMS_3_MON, numSquads = 4 },
+		{sbp = SBP.MONGOL.UNIT_TREBUCHET_4_TR_MON, numSquads = 1 },
+	}
+	
+	t_units = {khan, mangonel, treb}
+end
+
+function FinalMongols() --Loop to see if new Mongols should spawn.
+	Player_GetAll(player2)
+	SGroup_RemoveGroup(sg_allsquads, sg_khansarmy)
+	mongolsSpawned = SGroup_CountSpawned(sg_allsquads)
+	local mongolCap = 20
+	local mongolDelay = 5
+	
+	if b_EndingComplete == false then
+		mongolCap = mongolCap+(refugeesSpawned/10)
+		mongolDelay = mongolDelay*(1-(refugeesSpawned/500))
+	else
+		mongolCap = 50
+		mongolDelay = 1
+	end
+	
+	if Game_GetSPDifficulty() <= GD_EASY then --Soften the crashing wave of Mongol attacker on Story Mode
+		mongolCap = 20
+		mongolDelay = 15
+	end
+	
+	if mongolsSpawned < mongolCap then
+		Infinite_Mongols()
+	end
+	Rule_AddOneShot(FinalMongols, mongolDelay)
+end
+
+function Infinite_Mongols() --Spawn a new Mongol skirmish force.
+	mongolNum = mongolNum or 1
+	
+	local moduleData = {
+		descriptor = "FinalMongols_"..mongolNum, 				
+		type = "RovingArmy",
+		player = player2,
+		
+		attackMove = attackMoveStyle_attackEverything,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {mkr_innercity_target},
+		units = Table_GetRandomItem(t_units),
+		onDeathDissolve = true,
+		spawnLocation = Util_GetRandomPosition(Table_GetRandomItem(t_finalmongolSpawns), true),
+	}
+	
+	local myNewModule = RovingArmy_Init(moduleData)
+	mongolNum = mongolNum+1
+end
+
+function BeginTheEnd() --Sets up all the different pieces of the ending section.
+	if t_difficulty.timeTillFailure < 45 then t_difficulty.timeTillFailure = 45 end
+	Init_KhansArmy()
+	khanCineSpeed = Modify_UnitSpeed(sg_khansarmy, 0.33)
+	Cmd_FormationAttackMove(sg_khansarmy, mkr_outercity_target)
+	FOW_PlayerRevealSGroup(player1, sg_khansarmy, 20, -1)
+	ThreatArrow_CreateGroup("khansarmy_threat", sg_khansarmy)
+	EventCues_CallToAction("$11195680", CTA_ALARM, EVENTS.MongolFinalFight_Part2, nil, sg_khansarmy, 20) --"Overwhelming Mongol Forces"
+	Sound_Play2D("mus_stinger_campaign_alert")
+	Sound_Play2D("sfx_campaign_scripted_medium_group_fear")
+	DeclareFinalMongols()
+	FinalMongols()
+end
+
+function Init_KhansArmy() --Sets up the massive doom army.
+		sg_khansarmy = SGroup_CreateIfNotFound("sg_khansarmy")
+		--local moduleData = {
+		--descriptor = "KhansArmy", 				
+		--type = "RovingArmy",
+		--player = player2,
+		--sgroup = sg_khansarmy,
+		--attackMove = attackMoveStyle_attackEverything,
+		--targetingType = ARMY_TARGETING_DISCARD,
+		--targets = {mkr_outercity_target},
+		--units = {
+			--{sbp = SBP.MONGOL.UNIT_MANATARMS_3_MON, numSquads = 30 },
+			--{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 65 },
+			--{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 55 },
+			--{sbp = SBP.MONGOL.UNIT_KHAN_2_MON, numSquads = 1 },
+			--{sbp = SBP.MONGOL.UNIT_MANGONEL_3_MON, numSquads = 14 },
+			--{sbp = SBP.MONGOL.UNIT_RAM_3_MON, numSquads = 4},
+			--{sbp = SBP.MONGOL.UNIT_TREBUCHET_4_TR_MON, numSquads = 13 },
+			--{sbp = SBP.MONGOL.UNIT_SIEGE_TOWER_3_MON, numSquads = 4 },
+		--},
+		--onDeathDissolve = true,
+		--spawnLocation = mkr_enemyspawn6,
+	--}
+	
+	local units = {
+		{sbp = SBP.MONGOL.UNIT_MANATARMS_3_MON, numSquads = 50 },
+		{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 65 },
+		{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 55 },
+		{sbp = SBP.MONGOL.UNIT_KHAN_2_MON, numSquads = 1 },
+		{sbp = SBP.MONGOL.UNIT_MANGONEL_3_MON, numSquads = 10 },
+		{sbp = SBP.MONGOL.UNIT_RAM_3_MON, numSquads = 4},
+		{sbp = SBP.MONGOL.UNIT_TREBUCHET_4_TR_MON, numSquads = 7 },
+		{sbp = SBP.MONGOL.UNIT_SIEGE_TOWER_3_MON, numSquads = 4 },
+	}
+	
+	UnitEntry_DeploySquads(player2, sg_khansarmy, units, mkr_enemyspawn6)
+	
+	--local myNewModule = RovingArmy_Init(moduleData)
+end
+
+function Sgroup_FilterUnfinishedRams(targetSgroup)
+	local _IsBuilt = function(gid, index, sid)
+		if Squad_IsOfType(sid, "scar_ram") then
+			if Entity_GetBuildingProgress(Squad_GetFirstEntity(sid)) < 1 then
+				SGroup_Remove(targetSgroup, sid)
+			end
+		end
+	end
+	SGroup_ForEach(targetSgroup, _IsBuilt)
+end

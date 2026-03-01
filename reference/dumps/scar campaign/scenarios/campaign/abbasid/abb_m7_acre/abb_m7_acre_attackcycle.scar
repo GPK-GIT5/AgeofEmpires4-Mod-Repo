@@ -1,0 +1,68 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("gameplay/event_cues.scar")
+
+function COUNTER_ATTACK()	
+	local chosenArmies = {}
+	
+	for i, army in ipairs(All_Army_Distance_Sorted) do
+		if SGroup_IsEmpty(army.sgroup) == false then
+			table.insert(chosenArmies, army)
+		end
+		if #chosenArmies >= math.floor(counterAttackAmount) then
+			break
+		end
+	end
+	
+	local warning = "$11251764" --"The Franks are counter attacking!"
+	if #chosenArmies > 0 then 
+		for ii, army in ipairs(chosenArmies) do
+			Army_SetTarget(army, mkr_siege_camp)
+		end
+		local targetSgroup = chosenArmies[1].sgroup
+		if SGroup_CountSpawned(targetSgroup) > 0 then
+			if VOPlayed_FirstBarrage_CTA == false and bBarrageUsed == true then
+				VOPlayed_FirstBarrage_CTA = true
+				Sound_Play2D("mus_stinger_campaign_warning")
+				EventCues_CallToAction(warning, CTA_ALARM, EVENTS.FirstBarrage_CTA, EVENTS.FirstBarrage_CTA_OnClick, targetSgroup, 45, "icons/cta/illustrations/announce_incoming_attack_land")
+			elseif VOPlayed_FirstBarrage_CTA == false and bBarrageUsed == false then
+				VOPlayed_FirstBarrage_CTA = true
+				Sound_Play2D("mus_stinger_campaign_warning")
+				EventCues_CallToAction(warning, CTA_ALARM, EVENTS.FirstBarrage_CTA_OnClick, nil, targetSgroup, 45, "icons/cta/illustrations/announce_incoming_attack_land")
+			else
+				Sound_Play2D("mus_stinger_campaign_warning")
+				EventCues_CallToAction(warning, CTA_ALARM, nil, nil, targetSgroup, 45, "icons/cta/illustrations/announce_incoming_attack_land")
+			end				
+		end
+	end
+
+	counterAttackAmount = counterAttackAmount + t_difficulty.enemyMods.COUNTER_ATTACK_RAMP_AMOUNT
+	lastCounterAttackTime = World_GetGameTime()
+	
+	Loop_EnemyReinforcementSpawn(math.floor(counterAttackAmount/5))
+end
+
+function _Monitor_Barrage_Used(context, data)
+	if context.ability == ABILITY_BARRAGE or context.ability == ABILITY_SMALL_BARRAGE then
+		bBarrageUsed = true
+		Rule_RemoveEGroupEvent(_Monitor_Barrage_Used, eg_siegecamp)
+		EGroup_SetAnimatorState(eg_siegecamp, "projectile_vis_state", "off")
+		EGroup_SetAnimatorState(eg_siegecamp, "gold_workers_default_state", "on")
+		--Rule_AddOneShot(COUNTER_ATTACK, 12)
+		Rule_AddOneShot(_Monitor_Barrage_Refreshed, 60)
+	end
+end
+
+function _Monitor_Barrage_Refreshed()
+	EGroup_SetAnimatorState(eg_siegecamp, "projectile_vis_state", "on")
+	EGroup_SetAnimatorState(eg_siegecamp, "gold_workers_default_state", "off")
+	Rule_AddEGroupEvent(_Monitor_Barrage_Used, eg_siegecamp, GE_AbilityExecuted)
+end
+
+function Loop_EnemyReinforcementSpawn(timesToLoop)
+	local runCount = 0
+	while runCount <= timesToLoop do
+		_Monitor_Enemy_Replacements()
+		runCount = runCount+1
+	end
+end

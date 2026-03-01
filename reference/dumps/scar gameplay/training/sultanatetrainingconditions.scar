@@ -1,0 +1,267 @@
+-----------------------------------------------------------------------
+--
+-- Sultanate Training Conditions
+--
+-- (c) Relic Entertainment 2019
+--
+-----------------------------------------------------------------------
+
+import("training.scar")
+import("cardinal.scar")
+
+
+function HasActiveUpgradeWithLowScholarCount(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingModerateInterval then	
+		local localPlayer = Game_GetLocalPlayer()
+		Player_GetAll(localPlayer)
+		local mosqueBP = Cardinal_ConvertTypeToEntityBlueprint("monastery", localPlayer)
+		local entities = Player_GetEntities(localPlayer)
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, EGroup_Count(entities) do
+			local entity = EGroup_GetEntityAt(entities, i)
+			
+			if entity ~= nil and Entity_GetBlueprint(entity) == mosqueBP then
+				if Misc_IsEntityOnScreen(entity, 100) and Player_GetStateModelInt(localPlayer, "scholar_availability_level_sul") == 1 and Player_GetStateModelInt(localPlayer, "buildings_researching_sul") >= 1 then
+					goalSequence.goals[1].key = Entity_GetID(entity)
+					goalSequence.goals[2].key = BP_GetSquadBlueprint("unit_monk_2_sul")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasSelectedMosque(goal)
+	local mosqueBP =Cardinal_ConvertTypeToEntityBlueprint("monastery", Game_GetLocalPlayer())
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+	for i = 1, EGroup_Count(eg_currentSelection) do
+		local entity = EGroup_GetEntityAt(eg_currentSelection, i)
+		if Entity_GetBlueprint(entity) == mosqueBP then
+			Training_ResetTimers()
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasViewedScholar(goal)
+	if _g_tempScholarTimer == nil then
+		_g_tempScholarTimer = Training_GetNewTimerID()
+		Timer_Start(_g_tempScholarTimer, 3)
+	else
+		local currentTime = Timer_GetRemaining(_g_tempScholarTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_tempScholarTimer)
+			_g_tempScholarTimer = nil
+			return true	
+		end
+	end
+end
+
+function HasActiveUpgradeWithNoScholarCount(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingModerateInterval then	
+		local localPlayer = Game_GetLocalPlayer()
+		Player_GetAll(localPlayer)
+		local mosqueBP = Cardinal_ConvertTypeToEntityBlueprint("monastery", localPlayer)
+		local entities = Player_GetEntities(localPlayer)
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, EGroup_Count(entities) do
+			local entity = EGroup_GetEntityAt(entities, i)
+			
+			if entity ~= nil and Entity_GetBlueprint(entity) == mosqueBP then
+				if Player_GetStateModelInt(localPlayer, "scholar_availability_level_sul") == 0 and Player_GetStateModelInt(localPlayer, "buildings_researching_sul") >= 1 then
+					goalSequence.goals[1].key = Entity_GetID(entity)
+					goalSequence.goals[2].key = BP_GetSquadBlueprint("unit_monk_2_sul")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function HasIdleScholarWithMosque(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingModerateInterval then	
+		local localPlayer = Game_GetLocalPlayer()
+		Player_GetAll(localPlayer)
+		local mosqueBP = Cardinal_ConvertTypeToEntityBlueprint("monastery", localPlayer)
+		local entities = Player_GetEntities(localPlayer)
+		local scholarBP = BP_GetSquadBlueprint("unit_monk_2_sul")
+		local squads = Player_GetSquads(localPlayer)
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			if squad ~= nil and Squad_GetBlueprint(squad) == scholarBP and Squad_IsInHoldEntity(squad) == false then
+				if Misc_IsSquadOnScreen(squad, 100) --[[and Squad_IsIdle(squad) ]]then -- Issue with idle check not passing causing hint to not appear at all
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					break
+				end
+			end
+		end
+		
+		for i = 1, EGroup_Count(entities) do
+			local entity = EGroup_GetEntityAt(entities, i)
+			if entity ~= nil and Entity_GetBlueprint(entity) == mosqueBP then
+				goalSequence.goals[2].key = Entity_GetID(entity)
+				break
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil and goalSequence.goals[2].key ~= nil then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasSelectedScholar(goal)
+	local scholarBP = BP_GetSquadBlueprint("unit_monk_2_sul")
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_GetBlueprint(squad) == scholarBP and Squad_IsInHoldEntity(squad) == false then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasIssuedGarrison(goal)
+	local scholarBP = BP_GetSquadBlueprint("unit_monk_2_sul")
+	local entityID = nil
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_GetBlueprint(squad) == scholarBP and (Squad_IsMoving(squad) or Squad_IsInHoldEntity(squad)) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function HasIdleScholarWithMilitaryBuilding(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingModerateInterval then	
+		local localPlayer = Game_GetLocalPlayer()
+		--[[Player_GetAll(localPlayer)]]
+		local militaryBuildingBP = Cardinal_ConvertTypeToEntityBlueprint("military_only_production", localPlayer)
+		local entities = Player_GetEntities(localPlayer)
+		local scholarBP = BP_GetSquadBlueprint("unit_monk_2_sul")
+		local squads = Player_GetSquads(localPlayer)
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		if Player_GetStateModelBool(localPlayer, "khilji_mosque_tier_2_sul") == false then
+			return false
+		end
+		
+		EGroup_Filter(entities, {"military_only_production"}, FILTER_KEEP)
+		local militaryBuildingNotPresnt = EGroup_Count(entities) <= 0
+		
+		if militaryBuildingNotPresnt then
+			return false	
+		end
+			
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			if squad ~= nil and Squad_GetBlueprint(squad) == scholarBP and Squad_IsInHoldEntity(squad) == false and Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) then
+				goalSequence.goals[1].key = Squad_GetID(squad)
+				break
+			end
+		end
+		
+		for i = 1, EGroup_Count(entities) do
+			local entity = EGroup_GetEntityAt(entities, i)
+			if entity ~= nil then
+				goalSequence.goals[2].key = Entity_GetID(entity)
+				break
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil and goalSequence.goals[2].key ~= nil then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function HasIdleVillagerWithoutGristmill(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingModerateInterval then	
+		local localPlayer = Game_GetLocalPlayer()
+		Player_GetAll(localPlayer)
+		local gristmillBP = Cardinal_ConvertTypeToEntityBlueprint("gristmill", localPlayer)
+		local entities = Player_GetEntities(localPlayer)
+		local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+		local squads = Player_GetSquads(localPlayer)
+		
+		EGroup_Filter(entities, {"mill"}, FILTER_KEEP)
+		local dropOffExistsOrIsUnderConstruction = EGroup_Count(entities) > 0
+		
+		if dropOffExistsOrIsUnderConstruction then
+			return false	
+		end
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			if squad ~= nil and Squad_GetBlueprint(squad) == villagerBP and Squad_IsInHoldEntity(squad) == false and Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) then
+				goalSequence.goals[1].key = Squad_GetID(squad)
+				goalSequence.goals[2].key = gristmillBP
+				break
+			end
+		end
+		
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasViewedGristmill(goal)
+	if _g_tempGristmillTimer == nil then
+		_g_tempGristmillTimer = Training_GetNewTimerID()
+		Timer_Start(_g_tempGristmillTimer, 3)
+	else
+		local currentTime = Timer_GetRemaining(_g_tempGristmillTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_tempGristmillTimer)
+			return true	
+		end
+	end
+end
+

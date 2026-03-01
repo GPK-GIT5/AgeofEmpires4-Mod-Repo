@@ -1,0 +1,603 @@
+--
+-- Bayeux - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+
+local palings = "palings"
+local fogofwar = "fogofwar"
+local attackMove = "attackMove"
+local blacksmith = "blacksmith"
+local siegeengineer = "siegeengineer"
+local rams = "rams"
+
+local goal_sequence_height = "height_enabled"
+local goal_sequence_attackmove = "attack_move_enabled"
+local goal_sequence_blacksmith = "blacksmith_enabled"
+local goal_sequence_rams = "rams_enabled"
+
+sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+eg_currentSelection = SGroup_CreateIfNotFound("eg_currentSelection")
+
+function MissionTutorial_Init()	-- called from the mission's Mission_Start() function, so post-intro
+	
+	
+end
+
+function Ram_TutorialBranch()
+	MissionTutorial_Blacksmith()
+	
+	if UI_IsXboxControllerUI() then
+		MissionTutorial_SiegeEngineer_Xbox()
+	else
+		MissionTutorial_SiegeEngineer()
+	end
+	
+	MissionTutorial_Ram()
+end
+
+------------------------------------------
+-- Palings Tutorial--
+------------------------------------------
+
+_PalingsDeployed = function(gid, index, sid)
+	if Entity_GetStateModelBool(Squad_GetFirstEntity(sid), "archer_palings_deployed") == true then
+		return true
+	end
+end
+
+_PalingsNotDeployed = function(gid, index, sid)
+	if Entity_GetStateModelBool(Squad_GetFirstEntity(sid), "archer_palings_deployed") == false then
+		return true
+	end
+end
+
+function MissionTutorial_Palings()
+	local selectArcher = Training_Goal("Squad", {Message = UI_PickIDForInputMode(11191533, 1000594), DataTemplate="LeftClickTrainingDataTemplate"}, Palings_ArcherIsSelected) --DOUBLE LEFT CLICK to select all your Archers.
+	local usePalings = Training_Goal("PBG", {Message = UI_PickIDForInputMode(11191534, 11256335), DataTemplate="LeftClickTrainingDataTemplate"}, Palings_PalingsUsed) --Use palings to defend against cavalry.
+	
+	palingsSequence = Training_GoalSequence(palings, 1, 0, Palings_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil , Palings_BypassPredicate, true, {selectArcher, usePalings})
+	
+	Training_AddGoalSequence(palingsSequence)
+	Training_EnableGoalSequenceByID(palingsSequence, true)
+end
+
+function Palings_TriggerPredicate(goalSequence)
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_player_a1)
+	SGroup_RemoveGroup(sg_temp, sg_player_archers_setup)
+	
+	if SGroup_CountSpawned(sg_temp) > 5 then
+		if SGroup_ForEachAllOrAny(sg_player_archers, ANY, _PalingsNotDeployed) then
+			goalSequence.goals[1].key = Squad_GetID(SGroup_GetSquadAt(sg_player_archers, 1))
+			if UI_IsXboxControllerUI() then
+				goalSequence.goals[2].key = Squad_GetID(SGroup_GetSquadAt(sg_player_archers, 1))
+			else
+				goalSequence.goals[2].key = BP_GetAbilityBlueprint("deploy_palings")
+			end
+			return true
+		end
+	end
+end
+
+function Palings_BypassPredicate(goalSequence)
+	return SGroup_ForEachAllOrAny(sg_player_archers, ANY, _PalingsDeployed)
+end
+
+function Palings_ArcherIsSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Filter(sg_currentSelection, "scar_archer", FILTER_KEEP)
+	
+	if SGroup_CountSpawned(sg_currentSelection) > 0 and SGroup_ForEachAllOrAny(sg_currentSelection, ANY, _PalingsNotDeployed) then
+		return true
+	end
+	
+	return false
+end
+
+function Palings_PalingsUsed(goal)
+	return SGroup_ForEachAllOrAny(sg_player_archers, ANY, _PalingsDeployed)
+end
+
+------------------------------------------
+-- Fog of War Tutorial--
+------------------------------------------
+--function _DelayModerateTimeElapsed(goal)
+	--local currentTime = Timer_GetElapsed(goal.timerID)
+	
+	--if currentTime >= __t_trainingModerateInterval then
+		--return true
+	--end
+--end
+
+--function MissionTutorial_FogOfWar()
+	--local fogLocation = Training_Goal("Position", {Message = "$11191535", DataTemplate="GenericTrainingDataTemplate"}, FogOfWar_Explored) --Fog of War covers unexplored terrain. Move units to the area to explore it.
+	--local shroudLocation = Training_Goal("Position", {Message = "$11191536", DataTemplate="GenericTrainingDataTemplate"}, _DelayModerateTimeElapsed) --"Shroud of War covers explored terrain that you can no longer see."
+	--fowSequence = Training_GoalSequence(fogofwar, 1, 0, FogOfWar_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, nil, false, {fogLocation, shroudLocation})
+	
+	--Training_AddGoalSequence(fowSequence)
+	--Training_EnableGoalSequenceByID(fowSequence, true)
+--end
+
+--function FogOfWar_TriggerPredicate(goalSequence)
+	--goalSequence.goals[1].key = Util_GetPosition(mkr_training_height_1)
+	--return true
+--end
+
+--function FogOfWar_Explored(goal)
+	--if Player_CanSeePosition(player1, Util_GetPosition(mkr_training_height_1)) then
+		--fowSequence.goals[2].key = Get_ClosestUnSeenPos(mkr_player_reinforce, mkr_training_height_1)
+		----fowSequence.goals[2].data.Message = LOC("Shroud of War covers explored terrain that you can no longer see.")
+		----Training_DestroyTag(fowSequence.goals[2])
+		----Training_CreateTag(fowSequence.goals[2], "sfx_ui_event_learning_hint_play")
+		--return true
+	--end
+--end
+
+--function Get_ClosestUnSeenPos(start, destination)
+	
+	--local source = Util_GetPosition(start)
+	--local terminus = Util_GetPosition(destination)
+	--local spot = source
+	
+	--repeat
+		--spot = Util_GetPositionFromAtoB(spot, terminus, 1)
+	--until Player_CanSeePosition(player1, spot) or World_DistancePointToPoint(spot, terminus) <= 2
+	--return Util_GetPositionFromAtoB(spot, start, 15)
+--end
+
+------------------------------------------
+-- ATTACK MOVE --
+------------------------------------------
+
+function MissionTutorial_AttackMove()
+	local selectUnits = Training_Goal("Squad", {Message = UI_PickIDForInputMode(11191537, 1000594), DataTemplate="LeftClickTrainingDataTemplate"}, AttackMove_UnitsSelected) --DOUBLE LEFT CLICK to select all archers
+	local attackMovedUnits = Training_Goal("Squad", {Message = UI_PickIDForInputMode(11197297, 1001162), DataTemplate="LeftClickTrainingDataTemplate"}, AttackMove_AttackMoveUsed) --LEFT CLICK Attack Move, then LEFT CLICK on the ground near an enemy.
+	
+	attackMoveSequence = Training_GoalSequence(attackMove, 1, 0, AttackMove_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, nil, true, {selectUnits, attackMovedUnits})
+	
+	Training_AddGoalSequence(attackMoveSequence)
+	Training_EnableGoalSequenceByID(attackMoveSequence, true)
+end
+
+function AttackMove_TriggerPredicate(goalSequence)
+	SGroup_Duplicate(sg_player_army, sg_temp)
+	SGroup_Filter(sg_temp, "scar_archer", FILTER_KEEP)
+	
+	Player_GetAll(player2)
+	if Player_CanSeeSGroup(player1, sg_allsquads, ANY) 
+		and SGroup_IsOnScreen(player1, sg_temp, ANY, 0.9) 
+			and SGroup_IsOnScreen(player1, sg_allsquads, ANY, 0.9) then
+		goalSequence.goals[1].key = Squad_GetID(SGroup_GetSquadAt(sg_temp, 1))
+		--goalSequence.goals[2].key = BP_GetAbilityBlueprint("attack_move")
+		goalSequence.goals[2].key = Squad_GetID(SGroup_GetSquadAt(sg_temp, 1))
+		return true
+	end
+end
+
+function AttackMove_UnitsSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	
+	local count = SGroup_Count(sg_currentSelection)
+	for i = 1, count do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_GetID(squad) == goal.key then
+			return true
+		end
+	end
+	
+	return false
+
+end
+
+function Query_AttackMoving(gid, index, sid)
+	if Squad_IsAttackMoving(sid) then
+		return true
+	end
+end
+
+function AttackMove_AttackMoveUsed(goal)
+
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		return SGroup_ForEachAllOrAny(sg_currentSelection, ANY, Query_AttackMoving)	
+	end
+
+end
+
+------------------------------------------
+-- HEIGHT ADVANTAGE--
+------------------------------------------
+function MissionTutorial_HeightAdvantage()
+			
+		local GoalUI = {
+			Message = "$11191539", --Units gain increased vision from elevation. 
+			DataTemplate="GenericTrainingDataTemplate",
+		}
+		local GoalHeight = Training_Goal(
+			"Position", 
+			GoalUI, 
+			AShortPeriodOfTimeHasPassed
+		)
+		local GoalSequenceHeight = Training_GoalSequence(
+			goal_sequence_height, 								-- id
+			2, 													-- repeatMax
+			2, 													-- remindMax
+			Predicate_UserIsNotUsingHeightInCombat, 			-- trigger
+			CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+			nil,										 		-- remind
+			nil, --Predicate_UnitsUsingHeight, 				     -- bypass
+			false, 												-- canRegress
+			{GoalHeight}										-- goals
+		)
+		Training_AddGoalSequence(GoalSequenceHeight)
+	
+	Training_EnableGoalSequenceByID(goal_sequence_height, true)
+	
+end
+
+--Start when:
+function Predicate_UserIsNotUsingHeightInCombat(goalSequence)
+	 if Player_CanSeePosition(player1, Util_GetPosition(mkr_training_height_1)) or 
+			Player_CanSeePosition(player1, Util_GetPosition(mkr_training_height_2)) or 
+			Player_CanSeePosition(player1, Util_GetPosition(mkr_training_height_3)) or 
+			Player_CanSeePosition(player1, Util_GetPosition(mkr_training_height_4)) then 
+		local heightCount = 0
+		local hill = nil
+		if Misc_IsPosOnScreen(Util_GetPosition(mkr_training_height_1), 0.9) then
+			hill = mkr_training_height_1
+		elseif Misc_IsPosOnScreen(Util_GetPosition(mkr_training_height_2), 0.9) then
+			hill = mkr_training_height_2
+		elseif Misc_IsPosOnScreen(Util_GetPosition(mkr_training_height_3), 0.9) then
+			hill = mkr_training_height_3
+		elseif Misc_IsPosOnScreen(Util_GetPosition(mkr_training_height_4), 0.9) then
+			hill = mkr_training_height_4
+		end
+		
+		if hill ~= nil then 
+			goalSequence.goals[goalSequence.currentGoalIndex].key = Util_GetPosition(hill)
+			return true
+		else
+			return false
+		end
+	else
+		return false
+	end
+end
+------------------------------------------
+-- Blacksmith Tutorial--
+------------------------------------------
+function MissionTutorial_Blacksmith()
+
+	local selectVillager = Training_Goal("Squad", {Message = "$11193895", DataTemplate="LeftClickTrainingDataTemplate"}, Blacksmith_VillagerIsSelected) --"Select a villager to build a Blacksmith."
+	
+	local goal_OpenRadial = Training_Goal(
+		"OpenContextualRadial",
+		{
+			ID = "goal_OpenRadial",
+			Message = "$999532", -- Press RT to show the Villager Radial Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		Blacksmith_UserHasOpenedContextualRadial
+	)
+	
+	local goal_OpenMilitaryPage = Training_Goal(
+		"RadialDPadRight",
+		{
+			ID = "goal_OpenMilitaryPage",
+			Message = "$1000655", -- Press D-pad right to access Military building options.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		Blacksmith_UserHasOpenedDPadRightRadial
+	)
+	
+	local goal_OpenEconomicTab = Training_Goal(
+		"EconomicCommandCardTab",
+		{
+			ID= "Open the economic tab", 
+			Message= 1001507, 
+			DataTemplate="LeftClickTrainingDataTemplate"
+		},
+		UserHasEconomicCommandCardTabOpen)
+	
+	local isGoingToBuildBlacksmith = Training_Goal(EBP.ENGLISH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_ENG, {Message = "$11193896", DataTemplate="LeftClickTrainingDataTemplate"}, Blacksmith_PlayerIsGoingToBuild) --"Select the Blacksmith."
+	local hasBuiltBlacksmith = Training_Goal(ReturnCursorOrReticle(), {Message = "$11193897", DataTemplate="LeftClickTrainingDataTemplate"}, Blacksmith_IsBuilt) --"Place the Blacksmith in an open location"
+	
+	-- set the goals table for the sequence based on what input type this is
+	-- xbox gets a few extra steps
+	local goals_table = {selectVillager, isGoingToBuildBlacksmith, hasBuiltBlacksmith	}
+	if UI_IsXboxControllerUI() then
+		goals_table = {selectVillager, goal_OpenRadial, goal_OpenMilitaryPage, isGoingToBuildBlacksmith, hasBuiltBlacksmith	}
+	elseif UI_IsXboxKBMUI() then -- Xbox KBM needs the correct command card to be selected to build a blacksmith
+		goals_table = {selectVillager, goal_OpenEconomicTab, isGoingToBuildBlacksmith, hasBuiltBlacksmith}
+	end
+	
+	blacksmithSequence = Training_GoalSequence(blacksmith, 1, 0, Blacksmith_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, Blacksmith_BlacksmithExists, true, goals_table)
+	
+	Training_AddGoalSequence(blacksmithSequence)
+	Training_EnableGoalSequenceByID(blacksmithSequence, true)
+	
+end
+
+function Blacksmith_TriggerPredicate(goalSequence)
+	local blacksmithBP = Cardinal_ConvertTypeToEntityBlueprint("blacksmith", player1)
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+
+	if SGroup_CountSpawned(sg_allsquads) > 0 
+		and	blacksmithBP ~= nil 
+		and Player_CanConstruct(player1, blacksmithBP) then
+			local squad = SGroup_GetSquadAt(sg_allsquads, 1)
+			goalSequence.goals[1].key = Squad_GetID(squad)
+			return true
+	end
+end
+
+function Blacksmith_VillagerIsSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Filter(sg_currentSelection, "scar_villager", FILTER_KEEP)
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function Blacksmith_UserHasOpenedContextualRadial(goal)
+	-- return true if the correct radial is open OR if we are in the modal to place the blacksmith (to prevent regressing in that case)
+	return UserHasOpenedContextualRadial() or IsEntityBeingPlacedOrBuilt (EBP.ENGLISH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_ENG)
+end
+
+function Blacksmith_UserHasOpenedDPadRightRadial(goal)
+	-- return true if the correct radial is open OR if we are in the modal to place the blacksmith (to prevent regressing in that case)
+	return UserHasOpenedDPadRightRadial() or IsEntityBeingPlacedOrBuilt (EBP.ENGLISH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_ENG)
+end
+
+function Blacksmith_PlayerIsGoingToBuild(goal)
+	return IsEntityBeingPlacedOrBuilt (EBP.ENGLISH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_ENG) 
+end
+
+function Blacksmith_IsBuilt(goal)
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.ENGLISH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_ENG, FILTER_KEEP)
+	return EGroup_CountSpawned(eg_allentities) > 0	
+end
+
+function Blacksmith_BlacksmithExists(goalSequence)
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.ENGLISH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_ENG, FILTER_KEEP)
+	return EGroup_CountSpawned(eg_allentities) > 0
+end
+
+------------------------------------------
+-- Siege Engineer Tutorial--
+------------------------------------------
+function MissionTutorial_SiegeEngineer_Xbox()
+	
+	--Select the Blacksmith to purchase the siege engineer upgrade
+	local selectBlacksmith = Training_Goal(
+		"Entity", {
+			Message = "$11193898", 
+			DataTemplate="GenericTrainingDataTemplate"
+		}, 
+		SiegeEngineer_BlacksmithIsSelected
+	)
+	
+	--Open the radial menu
+	local openRadial = Training_Goal(
+		"OpenContextualRadial", {
+			ID = "Hold RT to see Blacksmith technologies.",
+			Message = "$11248536",
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SiegeEngineer_UserHasOpenedBlacksmithRadial
+	)
+	
+	--"Select Siege Engineer."
+	local highlightSiegeEngineer = Training_Goal(
+		"PBG", {
+			Message = "$11193899", 
+			DataTemplate="RadialTrainingDataTemplate"
+		}, 
+		SiegeEngineer_HasUpgrade
+	) 
+	
+	siegeengineerSequence = Training_GoalSequence(
+		siegeengineer, 
+		1, 0, 
+		SiegeEngineer_TriggerPredicate_Xbox, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		SiegeEngineer_BypassPredicate, 
+		true, 
+		{selectBlacksmith, openRadial, highlightSiegeEngineer}
+	)
+	
+	Training_AddGoalSequence(siegeengineerSequence)
+	Training_EnableGoalSequenceByID(siegeengineerSequence, true)
+	
+end
+
+function MissionTutorial_SiegeEngineer()
+
+	local selectBlacksmith = Training_Goal("Entity", {Message = "$11193898", DataTemplate="LeftClickTrainingDataTemplate"}, SiegeEngineer_BlacksmithIsSelected) --Select the Blacksmith to purchase the siege engineer upgrade
+	local highlightSiegeEngineer = Training_Goal("PBG", {Message = "$11193899", DataTemplate="LeftClickTrainingDataTemplate"}, SiegeEngineer_HasUpgrade) --"Select Siege Engineer."
+	
+	siegeengineerSequence = Training_GoalSequence(siegeengineer, 1, 0, SiegeEngineer_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, SiegeEngineer_BypassPredicate, true, {selectBlacksmith, highlightSiegeEngineer})
+	
+	Training_AddGoalSequence(siegeengineerSequence)
+	Training_EnableGoalSequenceByID(siegeengineerSequence, true)
+	
+end
+
+function SiegeEngineer_UserHasOpenedBlacksmithRadial(goal)
+	
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	EGroup_Filter(eg_currentSelection, "blacksmith", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu
+	end
+	
+	return false
+end
+
+function SiegeEngineer_TriggerPredicate_Xbox(goalSequence)
+	local siegeengineerBP = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "blacksmith", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+
+	if EGroup_CountSpawned(eg_allentities) > 0 
+		and	siegeengineerBP ~= nil then
+			local entity = EGroup_GetEntityAt(eg_allentities, 1)
+			goalSequence.goals[1].key = Entity_GetID(entity)
+			goalSequence.goals[2].key = Entity_GetID(entity)
+			goalSequence.goals[3].key = siegeengineerBP
+			return true
+	end
+end
+
+function SiegeEngineer_TriggerPredicate(goalSequence)
+	local siegeengineerBP = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "blacksmith", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+
+	if EGroup_CountSpawned(eg_allentities) > 0 
+		and	siegeengineerBP ~= nil then
+			local entity = EGroup_GetEntityAt(eg_allentities, 1)
+			goalSequence.goals[1].key = Entity_GetID(entity)
+			goalSequence.goals[2].key = siegeengineerBP
+			return true
+	end
+end
+
+function SiegeEngineer_BlacksmithIsSelected(goal)
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	EGroup_Filter(eg_currentSelection, "blacksmith", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function SiegeEngineer_HasUpgrade(goal)
+	local siegeengineerBP = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "blacksmith", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	local _IsSiegeEngineer = function(gid, index, eid)
+		local queueSize = Entity_GetProductionQueueSize(eid)
+		if queueSize > 0 then
+			for i = 0, queueSize - 1 do
+				if Entity_GetProductionQueueItem(eid, i) == siegeengineerBP then
+					return true
+				end
+			end
+		end
+	end
+	
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		return EGroup_ForEachAllOrAny(eg_allentities, ANY, _IsSiegeEngineer)
+	end
+	
+end
+
+function SiegeEngineer_BypassPredicate(goalSequence)
+	return Player_HasUpgrade(player1, BP_GetUpgradeBlueprint("upgrade_siege_engineers"))
+end
+
+------------------------------------------
+-- Ram Tutorial--
+------------------------------------------
+function MissionTutorial_Ram()
+
+	local selectUnits = Training_Goal("Squad", {Message = "$11193900", DataTemplate="LeftClickTrainingDataTemplate"}, Rams_UnitsSelected) --Select infantry to build rams
+
+	local goal_OpenRadial = Training_Goal(
+		"OpenContextualRadial",
+		{
+			ID = "goal_OpenRadial",
+			Message = "$999532", -- Press RT to show the Villager Radial Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		UserHasOpenedContextualRadial
+	)
+	
+	local goal_OpenFieldPage = Training_Goal(
+		"RadialDPadRight",
+		{
+			ID = "goal_OpenFieldPage",
+			Message = "$1000655", -- Press D-pad right to access Military building options.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		UserHasOpenedDPadRightRadial
+	)
+	
+
+	local ramsBuilt = Training_Goal(EBP.ENGLISH.UNIT_RAM_3_ENG, {Message = "$11193901", DataTemplate="LeftClickTrainingDataTemplate"}, Rams_RamsBuilt) --Build the Ram
+	
+	-- set the goals table for the sequence based on what input type this is
+	-- xbox gets a few extra steps
+	local goals_table = {selectUnits, ramsBuilt	}
+	if UI_IsXboxControllerUI() then
+		goals_table = {selectUnits, goal_OpenRadial, goal_OpenFieldPage, ramsBuilt	}
+	end
+	
+	ramSequence = Training_GoalSequence(rams, 1, 0, Rams_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, Rams_RamsBuilt, true, goals_table)
+	
+	Training_AddGoalSequence(ramSequence)
+	Training_EnableGoalSequenceByID(ramSequence, true)
+	
+end
+
+function Rams_TriggerPredicate(goalSequence)
+	local siegeengineerBP = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "infantry", FILTER_KEEP)
+	
+	if SGroup_CountSpawned(sg_allsquads) > 0 
+		and	Player_HasUpgrade(player1, siegeengineerBP) then
+			local squad = SGroup_GetSquadAt(sg_allsquads, 1)
+			goalSequence.goals[1].key = squad
+			return true
+	end
+end
+
+function Rams_UnitsSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Filter(sg_currentSelection, "infantry", FILTER_KEEP)
+	
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+
+end
+
+function Rams_RamsBuilt(goal)
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_ram", FILTER_KEEP)
+	return SGroup_CountSpawned(sg_allsquads) > 0
+end
+
+-- simple check to see if the contextual radial is open
+function IsRadialOpen(goal)
+	
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu
+end
+
+
+
+function IsMilitaryPageOpen(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and UI_GetActiveRelicRadialMenuDirection() == RMD_Right 
+end
+
+
+
+
+

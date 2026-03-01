@@ -1,0 +1,133 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("obj_muster.scar")
+
+function OrganiseSpearmen_InitObjectives()
+
+	OBJ_OrganiseSpearmen = {
+		Title = "$999473", --Organise the Spearmen
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.SelectSpearmenStart,
+
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_OrganiseSpearmen, ALL)
+		end,
+	}
+
+	SOBJ_SelectSpearmen = {
+		Title = "$999474", --Select all of the Spearmen
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_OrganiseSpearmen,
+		StartAlongsideParent = true,
+		SetupUI = SelectSpearmen_UI,
+		OnStart = SelectSpearmen_Start,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_MoveSpearmen, false, true)
+		end,
+	}
+
+	SOBJ_MoveSpearmen = {
+		Title = "$999476", --March the Spearmen to the Marker
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_OrganiseSpearmen,
+		StartAlongsideParent = false,
+		SetupUI = MoveSpearmen_UI,
+		OnStart = MoveSpearmen_Start,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_CreateRegiment, false, true)
+		end,
+	}
+
+	SOBJ_CreateRegiment = {
+		Title = "$999478", --Create a Regiment for the Spearmen
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_OrganiseSpearmen,
+		StartAlongsideParent = false,
+		SetupUI = CreateRegiment_UI,
+		OnStart = CreateRegiment_Start,
+		Intel_Start = EVENTS.CreateRegimentStart,
+
+		OnComplete = function()
+			Objective_Start(OBJ_MusterForces, true, true)
+			
+		end,
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_OrganiseSpearmen)
+	Objective_Register(SOBJ_SelectSpearmen)
+	Objective_Register(SOBJ_MoveSpearmen)
+	Objective_Register(SOBJ_CreateRegiment)
+end
+
+-- ///// SelectSpearmen //////////////////////////////////////////////
+function SelectSpearmen_UI()
+	
+end
+
+function SelectSpearmen_Start()
+
+	Goals_SelectAllSpearmen()
+	Rule_Add(SelectSpearmen_Monitor)
+end
+
+function SelectSpearmen_Monitor()
+
+	if Misc_IsSGroupSelected(sg_starting_spearmen, true) then
+
+		Objective_Complete(SOBJ_SelectSpearmen, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// MoveSpearmen //////////////////////////////////////////////
+function MoveSpearmen_UI()
+	
+	Objective_AddGroundReticule(SOBJ_MoveSpearmen, mkr_obj_1b, Marker_GetProximityRadiusOrDefault(mkr_obj_1b, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+end
+
+function MoveSpearmen_Start()
+
+	Goals_MoveSpearmen()
+	Rule_Add(MoveSpearmen_Monitor)
+end
+
+function MoveSpearmen_Monitor()
+
+	if Prox_AreSquadsNearMarker(sg_starting_spearmen, mkr_obj_1b, true, 10) then
+
+		Objective_Complete(SOBJ_MoveSpearmen, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// CreateRegiment //////////////////////////////////////////////
+function CreateRegiment_UI()
+	
+end
+
+function CreateRegiment_Start()
+
+	Game_SetVisibility(VF_XboxUIControlGroups, true)
+	Goals_CreateRegiment()
+	Rule_Add(CreateRegiment_Monitor)
+end
+
+function CreateRegiment_Monitor()
+
+	-- Check all spearmen are placed into at least one control group, not all have to be in the same group
+	all_in_group = SGroup_ForEachAllOrAny(
+		sg_starting_spearmen,
+		true,
+		function(sgroupid, itemindex, squadID)
+			return Misc_GetSquadControlGroup(squadID) ~= -1
+		end)
+		
+	if all_in_group and not Misc_IsSGroupSelected(sg_starting_spearmen, false) then
+
+		Objective_Complete(SOBJ_CreateRegiment, false, true)
+		Rule_RemoveMe()
+	end
+end

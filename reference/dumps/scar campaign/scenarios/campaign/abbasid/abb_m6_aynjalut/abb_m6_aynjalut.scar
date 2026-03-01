@@ -1,0 +1,600 @@
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well	
+import("cardinal.scar")
+import("missionomatic/missionomatic_upgrades.scar")
+import("abb_m6_aynjalut_data.scar")
+import("abb_m6_aynjalut_objectives.scar")
+import("abb_m6_aynjalut_forces.scar")
+import("abb_m6_aynjalut_automated.scar")
+
+MissionOMatic_UpdateHolyOrderFlags()
+
+function Mission_SetupPlayers()
+	content_pack = CONTENT_PACK_ABBASID_CAMPAIGN
+	
+	PlayerColour_Enable()		
+	-- turn on custom colour configuration for this session
+	player1 = Missionomatic_InitPlayer(1, { name = "$11253300",   currentAge = AGE_CASTLE, color = COLOR_BLUE }) --Mamluks
+	player2 = Missionomatic_InitPlayer(2, { name = "$11253299",  currentAge = AGE_CASTLE, color = COLOR_RED }) --Kitbuqua
+	player3 = Missionomatic_InitPlayer(3, { name = "$11250539", currentAge = AGE_CASTLE, color = COLOR_ORANGE }) --Franks
+	player5 = Missionomatic_InitPlayer(5, { name = "$11253298",     currentAge = AGE_CASTLE, color = COLOR_YELLOW })  --Afula
+	
+	-- team 1 alliances - players 1, 5	
+	Player_SetRelationship(player1, player5, R_ALLY)
+	Player_SetRelationship(player5, player1, R_ALLY)
+	-- team 2 alliances - players 2, 3
+	Player_SetRelationship(player2, player3, R_ALLY)
+	Player_SetRelationship(player3, player2, R_ALLY)
+	-- team 1 vision
+	World_EnableSharedLineOfSight(player1, player5, true)
+	--team 2 vision
+	World_EnableSharedLineOfSight(player2, player3, true)
+end
+
+function Mission_SetupVariables()	-- create any extra sgroups, egroups, and mission variables in here
+	AynJalut_InitData1()
+end
+
+function Mission_Preset()	-- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)	
+	AynJalut_InitData2()
+	
+	InitResources()
+	ModifyVision()
+	
+	TechTree_GiveUnitUpgrades(player1, 3)
+	TechTree_GiveUnitUpgrades(player2, 3)
+	TechTree_GiveUnitUpgrades(player3, 3)
+	TechTree_GiveUnitUpgrades(player5, 3)
+	TechTree_GiveMilitaryUpgrades(player5, 3)
+	
+	if Game_GetSPDifficulty() <= 2 then
+		Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_RANGED_DAMAGE_I)
+		Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_DAMAGE_I)
+	end
+	if Game_GetSPDifficulty() <= 1 then
+		Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_RANGED_DAMAGE_II)
+		Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_DAMAGE_II)
+	end
+	if Game_GetSPDifficulty() <= 0 then
+		Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_RANGED_DAMAGE_II)
+		Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_DAMAGE_III)
+		Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_RANGED_INCENDIARY)
+	end
+	
+	Player_CompleteUpgrade(player1, UPG.ABBASID.UPGRADE_MAMELUKE_DAMAGE_ABB) -- archer attack speed
+	Player_CompleteUpgrade(player1, UPG.ABBASID.UPGRADE_CAMEL_ARCHER_COMP_BOW_ABB) -- spearman range
+	Player_CompleteUpgrade(player1, UPG.AYYUBID_CMP.UPGRADE_MIL_PARTHIAN_TACTICS_AYY)
+	
+	Player_CompleteUpgrade(player5, UPG.COMMON.UPGRADE_UNIT_RELIGIOUS_HERBAL_MEDICINE_4)
+	
+	MakeEGroupAttackable(nil, { egroup = eg_afula_buildings, is_attackable = false })
+	MakeEGroupAttackable(nil, { egroup = eg_ally_1, is_attackable = false })
+	MakeEGroupAttackable(nil, { egroup = eg_ally_2, is_attackable = false })
+	MakeEGroupAttackable(nil, { egroup = eg_outposts, is_attackable = false })
+	
+	Player_ModifyAyyubidMilitaryBuildTimes(player1, Util_DifVar({ 0.5, 0.75, 1, 1 }))
+	PlayerUpgrades_ApplyHealthBonuses(player1)
+	
+	Entity_SetExtEnabled(EGroup_GetEntityAt(eg_tc, 1), "hold_ext", false)
+	
+	Healers_Init()
+	
+	AutoTest_OnInit()
+	
+	UI_EnableUIEventCueType(UIE_AllyAttacked, false)
+end
+
+function Mission_PreStart()
+	AynJalut_InitObjectives()
+	SpawnAllyVillagers()
+end
+
+function Mission_Start()	
+	QueueCohorts()
+
+	StartInitialObjectives()
+	Util_StartIntel(EVENTS.BaybarsArrives)
+
+	Rule_Add(MonitorForwardVillagers)
+	Rule_Add(MonitorFleeingVillagers)
+	Rule_AddInterval(PerSecond, 1)
+	--Rule_AddInterval(debug_kill, 1)
+	Rule_AddGlobalEvent(OnSquadDeath, GE_SquadKilled)
+	Rule_AddGlobalEvent(OnEntityDamaged, GE_DamageReceived)
+	Rule_AddOneShot(SpawnEnemyScout, 7)
+	Rule_AddOneShot(ScoutCTA, 25) -- orig 13
+	Rule_AddOneShot(ShowMinimapPath, 15)
+	Rule_AddOneShot(AdvanceScout, ROUNDS_BEGIN + 224)
+	
+	--after intro cinematic is over
+	local modifier = Modifier_Create(MAT_EntityType, "health_maximum_modifier", MUT_Set, true, 100, EBP.AYYUBID_CMP.UNIT_VILLAGER_AYY)
+	Modifier_ApplyToPlayer(modifier, player5, 0)
+
+	afula_ui_element = Objective_AddUIElements(OBJ_Dummy, eg_tc, true, "$11253297", true, nil, nil, nil) --Afula
+end
+
+function PerSecond(context, data)
+	mission_seconds[1] = mission_seconds[1] + 1
+end
+
+----------------------------------------------------------------
+--------------------- Initialization ---------------------------
+----------------------------------------------------------------
+
+function SpawnAllyVillagers()
+	sg_ally_villagers = SGroup_CreateUniqueWithPrefix("sg_ally_villagers")
+	for i = 1, EGroup_CountSpawned(eg_farms) do
+		local building = EGroup_GetEntityAt(eg_farms, i)
+		local pos = Entity_GetPosition(building)
+		SGroup_Clear(sg_temp)
+		CreateUnits(player5, {{  type = "scar_villager", numSquads = 1}}, pos, sg_temp)
+		SGroup_AddGroup(sg_ally_villagers, sg_temp)
+		AssignVillagersToFarms(sg_temp)
+		StartTrackingForwardVillagers(sg_temp)
+	end
+	for i = 1, EGroup_CountSpawned(eg_lumber_camps) do
+		local building = EGroup_GetEntityAt(eg_lumber_camps, i)
+		local pos = Building_GetSpawnPosition(building)
+		SGroup_Clear(sg_temp)
+		CreateUnits(player5, {{  type = "scar_villager", numSquads = 4}}, pos, sg_temp)
+		SGroup_AddGroup(sg_ally_villagers, sg_temp)
+		AssignVillagersToWood(sg_temp, true, true)
+		StartTrackingForwardVillagers(sg_temp)
+	end
+	for i = 1, EGroup_CountSpawned(eg_mining_camps_stone) do
+		local building = EGroup_GetEntityAt(eg_mining_camps_stone, i)
+		local pos = Building_GetSpawnPosition(building)
+		SGroup_Clear(sg_temp)
+		CreateUnits(player5, {{  type = "scar_villager", numSquads = 4}}, pos, sg_temp)
+		SGroup_AddGroup(sg_ally_villagers, sg_temp)
+		AssignVillagersToStone(sg_temp, true, false)
+		StartTrackingForwardVillagers(sg_temp)
+	end
+	for i = 1, EGroup_CountSpawned(eg_mining_camps_gold) do
+		local building = EGroup_GetEntityAt(eg_mining_camps_gold, i)
+		local pos = Building_GetSpawnPosition(building)
+		SGroup_Clear(sg_temp)
+		CreateUnits(player5, {{  type = "scar_villager", numSquads = 4}}, pos, sg_temp)
+		SGroup_AddGroup(sg_ally_villagers, sg_temp)
+		AssignVillagersToGold(sg_temp, true, false)
+		StartTrackingForwardVillagers(sg_temp)
+	end
+	Modify_UnitSpeed(sg_ally_villagers, 3.5, nil, MUT_Set)
+	Player_GetAllSquadsNearMarker(player5, sg_afula_villagers, mkr_afula_villagers)
+	SGroup_Filter(sg_afula_villagers, "scar_villager", FILTER_KEEP)
+	print(SGroup_CountSpawned(sg_afula_villagers).." villagers in afula")
+end
+
+function ModifyVision()
+	Player_GetAll(player5)
+	Modify_SightRadius(sg_allsquads, 1)
+	
+	Modify_SightRadius(eg_allentities, 1)
+	Modify_SightRadius(eg_outpost_1, 1.1)
+	Modify_SightRadius(eg_outpost_2, 1.1)
+	Modify_SightRadius(eg_outpost_3, 1.5)
+	Modify_SightRadius(sg_baibars, 1)
+end
+
+function InitResources()
+	Player_SetResource(player1, RT_Food, 0)
+	Player_SetResource(player1, RT_Wood, 0)
+	Player_SetResource(player1, RT_Stone, 0)
+	Player_SetResource(player1, RT_Gold, 0)
+	UI_SetPlayerDataContext(player1, { PopulationCapOn = false })
+end
+
+--------------------------------------------------------
+--------------------- Runtime --------------------------
+--------------------------------------------------------
+
+function SpawnEnemyScout(context, data)
+	sg_enemy_scout = SGroup_CreateUniqueWithPrefix("sg_enemy_scout")
+	CreateUnits(player2, {{ type = "scar_scout", numSquads = 1 }}, mkr_spawn_road, sg_enemy_scout)
+	local lane = CreateLane("road", 1, 10)
+	for _, marker in ipairs(lane) do
+		SGroup_AttackMove(sg_enemy_scout, marker, true)
+	end
+	Modify_UnitSpeedWhenNotInCombat(sg_enemy_scout, WALK_SPEED, MUT_Set)
+end
+
+function ScoutCTA(context, data)
+	local event = nil
+	local func = nil
+	EventCues_CallToAction("$11253296", CTA_ALARM, EVENTS.MongolVanguardArrives_CTA, nil, sg_enemy_scout, 30, "icons/cta/illustrations/12_mongols_charging") --The Mongols have arrived!
+	Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_high")
+end
+
+function AdvanceScout(context, data)
+	local lane = CreateLane("road", 11, 18)
+	for _, marker in ipairs(lane) do
+		SGroup_AttackMove(sg_enemy_scout, marker, true)
+	end
+end
+
+function OnSquadDeath(context, data)
+	if SGroup_ContainsSquad(sg_afula_villagers, Squad_GetID(context.victim), true) then
+		UpdateAfulaVillagerCount()
+		
+		-- VO: when villagers are first attacked inside Afula
+		if VOPlayed_AfulaAttacked == false then
+			local deadpos = Squad_GetPosition(context.victim)
+			if Util_GetDistance(deadpos, mkr_afula_boundary) <= 70 then		
+				VOPlayed_AfulaAttacked = true
+				Util_StartIntel(EVENTS.AfulaAttacked)
+			end
+		end
+		
+		
+	elseif SGroup_ContainsSquad(sg_vanguard, Squad_GetID(context.victim), true) then
+		vanguard_killed = vanguard_killed + 1
+	elseif Squad_GetPlayerOwner(context.victim) == player2 or Squad_GetPlayerOwner(context.victim) == player3 then
+		enemies_killed = enemies_killed + 1
+		
+		-- VO: When a few of the Mongol Vanguard have been killed
+		if VOPlayed_MongolVanguardAttacked == false then
+			if enemies_killed >= 5 then
+				VOPlayed_MongolVanguardAttacked = true
+				Util_StartIntel(EVENTS.MongolVanguardAttacked)
+			end
+		end
+		
+	end
+end
+
+
+
+function OnEntityDamaged(context, data)
+	if Entity_IsPartOfSquad(context.victim) then
+		local squad = Entity_GetSquad(context.victim)	
+		if SGroup_ContainsSquad(sg_afula_villagers, Squad_GetID(squad), true) then
+			AfulaVillagerAttacked(squad)
+		end
+	end
+end
+
+function AfulaVillagerAttacked(squad)
+	local position = Squad_GetPosition(squad)
+	for _, alert in ipairs(active_alerts) do
+		if World_DistanceSquaredPointToPoint(alert.position, position) <= 625 then
+			return
+		end
+	end
+	if World_GetGameTime() - last_event_que_at >= 60 then
+		UI_CreateEventCue("$11257137", Loc_Empty(), "high_priority", "", "", ECV_Title)
+		Sound_PlayOnSquad("sfx_campaign_scripted_attack_horn_under_attack_high", squad)
+		last_event_que_at = World_GetGameTime()
+	end
+	UI_CreateMinimapBlip(squad, 12, "threat_group")
+	local alert = { position = position }
+	table.insert(active_alerts, alert)
+	Rule_AddOneShot(RemoveAlert, 12, { alert = alert })
+end
+
+
+function RemoveAlert(context, data)
+	Table_RemoveFirstItem(active_alerts, data.alert)
+end
+
+function StartTrackingForwardVillagers(sgroup)
+	if Marker_InProximity(mkr_afula_villagers, SGroup_GetAvgPosition(sgroup)) == false then
+		for i = 1, SGroup_CountSpawned(sgroup) do
+			local villager = SGroup_GetSquadAt(sgroup, i)
+			
+			forward_villager_index = forward_villager_index or 0
+			forward_villager_index = forward_villager_index + 1
+			if forward_villager_index > 8 then
+				forward_villager_index = 1
+			end
+			local sg_forward_villagers = forward_villager_sgroups[forward_villager_index]
+			SGroup_Add(sg_forward_villagers, villager)
+		end
+	end
+end
+
+function MonitorForwardVillagers()
+	forward_villager_index = forward_villager_index or 0
+	forward_villager_index = forward_villager_index + 1
+	if forward_villager_index > 8 then
+		forward_villager_index = 1
+	end
+	local sg_forward_villagers = forward_villager_sgroups[forward_villager_index] 
+
+	if SGroup_CountSpawned(sg_forward_villagers) > 0 then
+		Player_GetAll(player2, sg_all_enemies)
+		Player_GetAll(player3, sg_blah)
+		SGroup_AddGroup(sg_all_enemies, sg_blah)
+		
+		for i = SGroup_CountSpawned(sg_forward_villagers), 1, -1 do
+			local villager = SGroup_GetSquadAt(sg_forward_villagers, i)
+			
+			SGroup_Clear(sg_temp)
+			SGroup_AddGroup(sg_temp, sg_all_enemies)
+			SGroup_FilterByProximity(sg_temp, Squad_GetPosition(villager), FILTER_KEEP, 30) --was 20
+			
+			if SGroup_CountSpawned(sg_temp) > 0 then
+				local is_left = Marker_InProximity(mkr_left_fields, Squad_GetPosition(villager))
+				SGroup_Remove(sg_forward_villagers, villager)
+				VillagerFlee(villager, is_left)
+			end
+		end
+	end
+end
+
+function VillagerFlee(villager, is_left)
+	SGroup_Single(sg_single, villager)
+	if is_left then
+		SGroup_Add(sg_fleeing_villagers_left, villager)
+		local waypoint_1 = Util_GetRandomPosition(mkr_villager_waypoint_left_1)
+		local waypoint_2 = Util_GetRandomPosition(mkr_villager_waypoint_left_2)
+		local waypoint_3 = Util_GetRandomPosition(mkr_villager_waypoint_left_3)
+		SGroup_Move(sg_single, waypoint_1, false)
+		SGroup_Move(sg_single, waypoint_2, true)
+		SGroup_Move(sg_single, waypoint_3, true)
+		SGroup_Move(sg_single, mkr_villager_flee_left, true)
+	else
+		SGroup_Add(sg_fleeing_villagers_right, villager)
+		local waypoint_1 = Util_GetRandomPosition(mkr_villager_waypoint_right_1)
+		local waypoint_2 = Util_GetRandomPosition(mkr_villager_waypoint_right_2)
+		local waypoint_3 = Util_GetRandomPosition(mkr_villager_waypoint_right_3)
+		SGroup_Move(sg_single, waypoint_1, false)
+		SGroup_Move(sg_single, waypoint_2, true)
+		SGroup_Move(sg_single, waypoint_3, true)
+		SGroup_Move(sg_single, mkr_villager_flee_right, true)
+	end
+end
+
+function MonitorFleeingVillagers()
+	for i = SGroup_CountSpawned(sg_fleeing_villagers_left), 1, -1 do
+		local villager = SGroup_GetSquadAt(sg_fleeing_villagers_left, i)
+		if Marker_InProximity(mkr_villager_flee_left, Squad_GetPosition(villager)) then
+			VillagerStopFleeing(villager)
+		end
+	end
+	for i = SGroup_CountSpawned(sg_fleeing_villagers_right), 1, -1 do
+		local villager = SGroup_GetSquadAt(sg_fleeing_villagers_right, i)
+		if Marker_InProximity(mkr_villager_flee_right, Squad_GetPosition(villager)) then
+			VillagerStopFleeing(villager)
+		end
+	end
+end
+
+function VillagerStopFleeing(villager)
+	SGroup_Remove(sg_fleeing_villagers_left, villager)
+	SGroup_Add(sg_afula_villagers, villager)
+	AssignVillagersToWood(SGroup_Single(sg_single, villager), false, false)
+	UpdateAfulaVillagerCount()
+end
+
+function debug_kill(context, data)
+	debug_index = debug_index or 0
+	debug_index = debug_index + 1
+	if debug_index > 3 then
+		debug_index = 1
+	end
+	
+	Player_GetAllSquadsNearMarker(player5, sg_temp, mkr_debug_kill)
+	SGroup_Kill(sg_temp)
+end
+
+function MakeAllyBuildingsAttackable()
+	MakeEGroupAttackable(nil, { egroup = eg_ally_1, is_attackable = true })
+	MakeEGroupAttackable(nil, { egroup = eg_ally_2, is_attackable = true })
+end
+
+function MakeAllyBuildingsImmune()
+	MakeEGroupAttackable(nil, { egroup = eg_ally_1, is_attackable = false })
+	MakeEGroupAttackable(nil, { egroup = eg_ally_2, is_attackable = false })
+end
+
+------------------------------------------------------------------------
+------------------------------ REINFORCE ------------------------------
+------------------------------------------------------------------------
+
+function Reinforcement_Init(reinforcement)
+	reinforcement.cost = 0
+	for _, battalion in ipairs(reinforcement.battalions) do
+		battalion.reinforcement = reinforcement
+		battalion.cost = 0
+		for _, unitRow in ipairs(battalion.units) do
+			if unitRow.type then
+				unitRow.sbp = Cardinal_ConvertTypeToSquadBlueprint(unitRow.type, player1)
+				unitRow.type = nil
+			end
+			battalion.cost = battalion.cost + TotalCost(Player_GetSquadBPCost(player1, unitRow.sbp)) * unitRow.numSquads
+		end
+		reinforcement.cost = reinforcement.cost + battalion.cost	
+	end
+end
+
+function Reinforcement_Queue(reinforcement)
+	PrintReport("Before Reinforcements  -")
+	print("Reinforcement_Queue")
+	local ratio = GetReinforcementRatio()
+	for i, battalion in ipairs(reinforcement.battalions) do
+		if battalion.delay == 0 then
+			Battalion_Queue(nil, { battalion = battalion, ratio = ratio })
+		else
+			local is_last = i == #reinforcement.battalions 
+			Rule_AddOneShot(Battalion_Queue, battalion.delay, { battalion = battalion, ratio = ratio, is_last = is_last })
+		end
+	end
+end
+
+function Battalion_Queue(context, data)
+	local battalion = data.battalion
+	local is_last = data.is_last
+	local ratio = data.ratio
+	
+	local reinforcement = battalion.reinforcement
+	local units = Clone(battalion.units)
+	for _, unitRow in ipairs(units) do
+		unitRow.numSquads = Math_Round(unitRow.numSquads * ratio)
+		unitRow.numSquads = math.max(unitRow.numSquads, 1)
+	end
+	print("ratio: "..ratio.."  original: "..UnitTable_CountUnits(battalion.units).."  modified: "..UnitTable_CountUnits(units))
+	battalion.sgroup = CreateUnits(player1, units, battalion.spawn, "sg_battalion")
+	if units[1].sbp == SBP.AYYUBID_CMP.UNIT_LEADER_QUTUZ_AYY then
+		LeaderTent_RegisterLeader(SGroup_GetSquadAt(battalion.sgroup, 1))
+	end
+	for _, target in ipairs(battalion.targets) do
+		SGroup_AttackMove(battalion.sgroup, target, true)
+	end
+	
+	if battalion == reinforcement.battalions[1] then
+		UI_CreateMinimapBlip(battalion.sgroup, 14, "general")
+		Sound_Play2D("sfx_campaign_scripted_large_group_celebrate")
+
+		if VOCue_WaveNum == 1 then
+			EventCues_CallToAction("$11253295", CTA_CELEBRATE, EVENTS.ReinforcementsArrive, nil, battalion.sgroup, 12, "icons/cta/illustrations/player_reinforcement_arrived") --Reinforcements have arrived!
+		elseif VOCue_WaveNum == 5 then
+			EventCues_CallToAction("$11253294", CTA_CELEBRATE, EVENTS.QutuzArrives, EVENTS.HandcannonsArrive, battalion.sgroup, 30, "icons/cta/illustrations/player_leader_has_arrived") --Sultan Qutuz has arrived!
+		else
+			EventCues_CallToAction("$11253295", CTA_CELEBRATE, nil, nil, battalion.sgroup, 12, "icons/cta/illustrations/player_reinforcement_arrived") --Reinforcements have arrived!
+		end
+		
+		VOCue_WaveNum = VOCue_WaveNum + 1
+	end
+
+	if battalion == reinforcement.battalions[#reinforcement.battalions] then	
+		if reinforcement.onComplete then
+			reinforcement.onComplete()
+		end
+	end
+	if is_last then
+		PrintReport("After Reinforcements  -")
+	end
+end
+
+------------------------------------------------------------------------
+------------------------------- MISC -----------------------------------
+------------------------------------------------------------------------
+
+function MakeEGroupAttackable(context, data)
+	if data.is_attackable then
+		EGroup_SetInvulnerable(data.egroup, false)
+		EGroup_SetTargetingType(data.egroup, Targeting_Automatic)		
+	else
+		EGroup_SetInvulnerable(data.egroup, true)
+		EGroup_SetTargetingType(data.egroup, Targeting_None)	
+	end
+end
+
+------------------------------------------------------------------------
+-------------------------- MinimapPaths --------------------------------
+------------------------------------------------------------------------
+
+function ShowMinimapPath()
+	local minimap_markers = AllMarkers_FromName("mkr_minimap_arrows", "")
+	local pathInterval = 1
+	local offset = pathInterval - 0.125
+	for i = 1, 8 do
+		Rule_AddOneShot(Minimap_AnimateArrowPath, pathInterval * i - offset, { path = minimap_markers })
+	end
+end
+
+
+function Minimap_AnimateArrowPath(context, data)
+	local path = data.path
+	local iconSpacing = 50
+	local iconSize = 0.25
+	local iconName = "icons\\minimap\\military_route_enemy"
+	local iconDuration = 0.75
+	local iconInterval = 0.125
+
+	local data = {
+		path = path,
+		iconSpacing = iconSpacing,
+		iconSize = iconSize,
+		iconName = iconName,
+		progress = {
+			distanceSoFar = 0,
+			pointIndex = 1,
+			distanceBetweenPoints = Util_GetDistance(path[1], path[2]),
+		},
+		blipIDs = {},
+	}
+	Rule_AddInterval(Minimap_AnimateArrowPath_AddBlip, {interval = iconInterval}, data)
+	Rule_AddInterval(Minimap_AnimateArrowPath_RemoveBlip, {delay = iconDuration, interval = iconInterval}, data)
+end
+
+function Minimap_AnimateArrowPath_AddBlip(context, data)
+	-- get the position between the current point and the next point
+	local pointA = Util_GetPosition(data.path[data.progress.pointIndex])
+	local pointB = Util_GetPosition(data.path[data.progress.pointIndex + 1])
+	local position = Util_GetPositionFromAtoB(pointA, pointB, math.max(data.progress.distanceSoFar, 1))		-- distances less than 1 are taken as percentages, so round up if we're under that threshold
+	
+	-- create the arrow at that position
+	local blipID = MapIcon_CreatePosition(position, data.iconName, data.iconSize, 255, 255, 255, 255)
+	MapIcon_SetFacingPosition(blipID, pointB)
+	table.insert(data.blipIDs, blipID)
+	
+	-- step forward the iconSpacing amount
+	data.progress.distanceSoFar = data.progress.distanceSoFar + data.iconSpacing
+	while data.progress.distanceSoFar > data.progress.distanceBetweenPoints do 	
+		data.progress.pointIndex = data.progress.pointIndex + 1
+		local newIndex = data.progress.pointIndex
+		if newIndex >= #data.path then 
+			Rule_RemoveMe()		-- we've reached the end of the path, so remove the rule and stop the while loop
+			break
+		else
+			data.progress.distanceSoFar = data.progress.distanceSoFar - data.progress.distanceBetweenPoints
+			data.progress.distanceBetweenPoints = Util_GetDistance(data.path[newIndex], data.path[newIndex + 1])
+		end
+	end	
+end
+
+function Minimap_AnimateArrowPath_RemoveBlip(context, data)
+	local blipID = data.blipIDs[1]
+	table.remove(data.blipIDs, 1)
+	MapIcon_Destroy(blipID)
+	if #data.blipIDs == 0 then 
+		Rule_RemoveMe()
+	end
+end
+
+function Healers_Init()
+	healers = {}
+	for _, marker in ipairs(AllMarkers_FromName("mkr_healer", "")) do
+		local healer = { marker = marker, sgroup = SGroup_CreateUniqueWithPrefix("sg_healer") }
+		CreateUnits(player5, {{ type = "scar_monk" }}, marker, healer.sgroup)
+		SGroup_AddGroup(sg_afula_villagers, healer.sgroup)
+		table.insert(healers, healer)
+	end
+	Rule_Add(Healers_Monitor)
+end
+
+function Healers_Monitor(context, data)
+	for _, healer in ipairs(healers) do
+		if SGroup_CountSpawned(healer.sgroup) > 0 then
+			local healer_heading = Squad_GetHeading(SGroup_GetSquadAt(healer.sgroup, 1))
+			local marker_direction = Marker_GetDirection(healer.marker)
+			if healer_heading ~= marker_direction then
+				if SGroup_IsIdle(healer.sgroup, ANY) then
+					SGroup_MoveAndFace(healer.sgroup, healer.marker)	
+				end
+			end
+		end
+	end
+end
+
+function PrintReport(prefix)
+	Player_GetAll(player1, sg_allsquads)
+	local militaryCost = SGroup_GetResourceCost(sg_allsquads)
+	print(prefix.."  PlayerMilitaryCost: "..militaryCost.."  PlayerMilitaryCount:"..SGroup_CountSpawned(sg_allsquads))
+end
+
+function GetReinforcementRatio()
+	Player_GetAll(player1, sg_allsquads)
+	SGroup_Filter(sg_allsquads, "scar_leader", FILTER_REMOVE)
+	local militaryCost = SGroup_GetResourceCost(sg_allsquads)
+	militaryCost = math.max(militaryCost, PLAYER_MILITARY_COST_FLOOR)
+	militaryCost = math.min(militaryCost, PLAYER_MILITARY_COST_CEIL)
+	local ratio = militaryCost - PLAYER_MILITARY_COST_FLOOR
+	ratio = ratio / (PLAYER_MILITARY_COST_CEIL - PLAYER_MILITARY_COST_FLOOR)
+	ratio = REINFORCEMENT_RATIO_MAX + ratio * (REINFORCEMENT_RATIO_MIN - REINFORCEMENT_RATIO_MAX)
+	return ratio
+end
+
+function Math_Round(float)
+	return math.floor(float + 0.5)
+end

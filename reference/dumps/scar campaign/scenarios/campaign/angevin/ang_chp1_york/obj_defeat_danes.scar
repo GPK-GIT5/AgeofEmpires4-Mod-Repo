@@ -1,0 +1,239 @@
+--
+-- York 1069 - Defeat Danes
+--
+
+function RepelAttack_TimerComplete()
+	
+	if initial_dane_raid_complete == false then
+		
+		York_TriggerDaneWithdraw()
+		Objective_Fail(OBJ_RepelAttack)
+	end
+end
+
+function DefeatDanes_InitObjectives()
+	
+	OBJ_RepelAttack = {
+		
+		Title = "$11184575", -- Repel the Danish raid
+		Type = ObjectiveType_Battle,
+		Intel_Complete = EVENTS.PayTribute,
+		Intel_Fail = EVENTS.PayTribute_Fail,
+		PreStart = York_PlayDaneRaidSounds,
+		OnStart = function()
+			Obj_SetProgressVisible(OBJ_RepelAttack.ID, true)
+			Obj_SetProgress(OBJ_RepelAttack.ID, 0)
+			
+			Rule_AddGlobalEvent(DefeatDanes_OnSquadKilled, GE_SquadKilled)
+			
+			Objective_StartTimer(OBJ_RepelAttack, COUNT_DOWN, t_difficulty.danes_initRaid_Countdown, 0)
+			Rule_AddOneShot(RepelAttack_TimerComplete, t_difficulty.danes_initRaid_Countdown)
+			
+			Sound_SetMinimumMusicCombatIntensity(801, 0) 
+
+		end,
+		OnComplete = function()
+			if not Objective_IsComplete(OBJ_StopDaneRaids) then
+				Objective_Start(OBJ_StopDaneRaids)
+			end
+		end,
+		OnFail = function()
+			if not Objective_IsComplete(OBJ_StopDaneRaids) then
+				Objective_Start(OBJ_StopDaneRaids)
+			end
+		end,
+	}
+	
+	OBJ_StopDaneRaids = {
+		
+		Title = "$11186860", -- Optional: Stop the Danish raids
+		Type = ObjectiveType_Optional,
+		PreStart = function()
+			if Objective_IsStarted(OBJ_DestroyCampAlt) then
+				Objective_Complete(OBJ_DestroyCampAlt, false, false)
+			end
+		end,
+		OnStart = function()
+			Objective_Start(SOBJ_PayTribute, false)
+			Objective_Start(SOBJ_DestroyCamp, false)
+		end,
+		OnComplete = function()
+			Rule_AddOneShot(StopDaneRaids_Complete, 5)
+			
+			York_HideTributeMenu()
+			_userHasOpenedDiplomacyMenu = true
+			TrainingGoal_DisableSendGold()
+		end,
+	}
+	
+	SOBJ_PayTribute = {
+		
+		Title = "$11172035", -- Send Gold tribute to the Danes
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_StopDaneRaids,
+		OnStart = PayTribute_Start,
+		OnComplete = PayTribute_Complete,
+	}
+	SOBJ_DestroyCamp = {
+		
+		Title = "$11172036", -- OR destroy the Dane camp
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_StopDaneRaids,
+		Intel_Complete = EVENTS.DaneCampDestroy,
+		OnStart = function()
+			Objective_SetProgressBar(SOBJ_DestroyCamp, 0)
+			hpid_camp = Objective_AddUIElements(SOBJ_DestroyCamp, mkr_kp_dane_camp, true, 11172037, false) -- Dane Camp
+		end,
+		OnComplete = function()
+			Util_AutoSave()
+			
+			Music_UnlockIntensity()
+			Objective_Complete(OBJ_StopDaneRaids)
+			
+			dane_current_state = "defending"
+			
+			Rule_Remove(York_SpawnDaneRaiders)
+			Rule_Remove(York_CheckDaneArrival)
+			Rule_AddOneShot(York_AddPatrolTargets, t_difficulty.rebels_attackStartDelay)
+		end,
+	}
+	
+	OBJ_DestroyCampAlt = {
+		
+		Title = "$11196164", -- Optional: Destroy the Dane camp
+		Type = ObjectiveType_Optional,
+		Intel_Start = EVENTS.DaneCampReveal,
+		Intel_Complete = EVENTS.DaneCampDestroy,
+		OnStart = function()
+			Objective_SetProgressBar(OBJ_DestroyCampAlt, 0)
+			hpid_camp = Objective_AddUIElements(OBJ_DestroyCampAlt, mkr_kp_dane_camp, true, 11172037, false) -- Dane Camp
+		end,
+		OnComplete = function()
+			Rule_AddOneShot(York_AddPatrolTargets, t_difficulty.rebels_attackStartDelay)
+			Util_AutoSave()
+		end,
+	}
+	
+	Objective_Register(OBJ_RepelAttack)
+	
+	Objective_Register(OBJ_StopDaneRaids)
+	Objective_Register(SOBJ_PayTribute)
+	Objective_Register(SOBJ_DestroyCamp)
+	
+	Objective_Register(OBJ_DestroyCampAlt)
+	
+	Rule_AddInterval(DefeatDanes_CheckBuildings, 1)
+	
+end
+
+function DefeatDanes_OnSquadKilled(context)
+
+	if not World_OwnsSquad(context.victim) then
+	
+		if Squad_GetPlayerOwner(context.victim) == playerDanes then
+			
+			local squadCount = SGroup_CountSpawned(sg_dane_attackers)
+			local killedCount = dane_init_count - squadCount
+			local progress = killedCount / dane_init_count
+			progress = progress * 1.35
+			if progress > 1 then progress = 1 end
+			
+			Obj_SetProgress(OBJ_RepelAttack.ID, progress)
+			
+		end
+	end
+end
+
+
+--function DefeatDaneRaid_Start()
+	--Music_LockIntensity(MUSIC_COMBAT)
+--end
+
+function StopDaneRaids_Complete()
+	Objective_Start(SOBJ_BreachGates)
+	
+	if UI_IsXboxControllerUI() then
+		TrainingGoal_AddBuildBarracks_Xbox()
+	else
+		TrainingGoal_AddBuildBarracks()
+	end
+end
+
+function PayTribute_Start()
+	
+	Objective_SetCounter(SOBJ_PayTribute, 0, t_difficulty.danes_goldAmount)
+	Obj_SetProgressVisible(SOBJ_PayTribute.ID, true)
+	
+	York_ShowTributeMenu()
+	TrainingGoal_EnableBuildPalisade()
+	TrainingGoal_EnableSendGold()
+end
+
+function PayTribute_Complete()
+	
+	Objective_RemoveUIElements(SOBJ_DestroyCamp, hpid_camp)
+	Objective_Complete(OBJ_StopDaneRaids)
+	
+	York_TriggerDaneWithdraw()
+	
+	Rule_Remove(York_SpawnDaneRaiders)
+	Rule_Remove(York_CheckDaneArrival)
+	Rule_AddOneShot(York_AddPatrolTargets, t_difficulty.rebels_attackStartDelay)
+	
+	York_SpawnDaneGold()
+	
+	Util_StartIntel(EVENTS["PayTributeComplete"])
+	
+end
+
+function DefeatDanes_CheckBuildings()
+	
+	local buildingCount = EGroup_CountSpawned(eg_danehouses) + EGroup_CountSpawned(eg_daneoutposts)
+	
+	if buildingCount == 0 then
+		
+		initial_dane_raid_complete = true
+		dane_camp_destroyed = true
+		
+		if Objective_IsStarted(OBJ_DestroyCampAlt) then
+			Objective_Complete(OBJ_DestroyCampAlt)
+		end
+		
+		if Objective_IsStarted(SOBJ_DestroyCamp) then
+			Objective_Complete(SOBJ_DestroyCamp, false)
+		end
+		Rule_RemoveMe()
+	end
+	
+	local buildingDestroyedCount = 7 - buildingCount
+	local progress = buildingDestroyedCount / 7
+	
+	if Objective_IsStarted(OBJ_DestroyCampAlt) then
+		Objective_SetProgressBar(OBJ_DestroyCampAlt, progress)
+	end
+	
+	if Objective_IsStarted(SOBJ_DestroyCamp) then
+		Objective_SetProgressBar(SOBJ_DestroyCamp, progress)
+	end
+	
+end
+
+function York_PlayDaneRaidSounds()
+	
+	Music_LockIntensity(MUSIC_COMBAT, 30)
+	
+	local speech = EVENTS.DaneRaidRegular
+	local speech_interact = EVENTS.DaneRaidRegular_Interact
+	
+	if danes_discovered then
+		speech = EVENTS.DaneRaidDiscovered
+		speech_interact = nil
+	end
+	
+	Sound_Play2D("mus_stinger_campaign_warning")
+	EventCues_CallToAction("$11180134", CTA_ALARM, speech, speech_interact, sg_dane_attackers, 20)
+
+	Sound_PlayOnSquad("sfx_campaign_scripted_horn_attack_Play", sg_dane_attackers)
+	Sound_PlayOnSquad("sfx_campaign_scripted_walla_engage_dane_attack_Play", sg_dane_attackers)
+	
+end

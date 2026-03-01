@@ -1,0 +1,253 @@
+--
+-- Kalka River - 1223 - Defeat enclosed Rus
+--
+
+
+
+function DefeatEnclosedRus_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+
+	
+	SOBJ_KillAllEnclosedRus = {
+	
+		Title = "$11172121", --Defeat the enclosed Rus
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyTheRusUltimate,
+		StartAlongsideParent = false, 
+		
+		SetupUI = KillAllEnclosedRus_UI,
+		
+		OnStart = KillAllEnclosedRus_Start,
+		
+		PreStart = KillAllEnclosedRus_PreStart,
+		
+		OnComplete = KillAllEnclosedRus_OnComplete,
+	}
+	
+	Objective_Register(SOBJ_KillAllEnclosedRus)
+
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug CompleteKalka"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Player_GetAll(player2)
+			SGroup_DestroyAllSquads(sg_allsquads)
+			EGroup_SetPlayerOwner(eg_allentities, player1)
+			World_SetInteractionStage(2)
+
+			DefeatRusUltimate_OnComplete()
+			end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)
+	
+end
+
+
+function KillAllEnclosedRus_UI()
+	
+	hpid_enclosedRus = Objective_AddUIElements(SOBJ_KillAllEnclosedRus, mkr_cart_stockade,true,"$11172121", true, 4, nil, nil, "icons/objectives/capture_objective", "CaptureObjectiveTemplate")
+
+	Objective_SetProgressBar(SOBJ_KillAllEnclosedRus, 0)
+	Objective_Stop(SOBJ_MeetTheRus)
+	Objective_Stop(SOBJ_GetRusToAmbushPt)
+end
+
+function KillAllEnclosedRus_PreStart()
+	World_SetInteractionStage(2)
+end
+
+function KillAllEnclosedRus_Start()
+	
+	local actionContext = {}
+	local actionContext2 = {}
+	
+	local actionDataStockadeDefend = {
+		module = "stockade_defend",
+		spawnLocation = mkr_cart_stockade,
+		units = {
+			{ sbp = SBP.RUS.UNIT_SPEARMAN_2_RUS, numSquads = i_TroopsPlayer2Enclosed, tag = "RusEnclosed", spawn = mkr_rus_staggered_1_spawn}, --50
+		},
+	}
+	Action_SpawnUnitsToModule_Do(actionDataStockadeDefend, actionContext)
+	
+	units01a = { 
+		{ sbp = SBP.RUS.UNIT_SPEARMAN_2_RUS, numSquads = i_TroopsPlayer2Enclosed, tag = "RusEnclosed", spawn = mkr_cart_stockade_Spearman_02a}, --10
+	}
+	SpawnUnitsToModule(units01a, "stockade_defend02",mkr_cart_stockade_Spearman_02a )
+
+	units02 = { 
+		{ type = "scar_archer", numSquads = i_TroopsPlayer2Enclosed, tag = "RusEnclosed", spawn = mkr_cart_stockade_Spearman_02}, --10
+	}
+	SpawnUnitsToModule(units02, "stockade_defend_archers",mkr_cart_stockade )
+		
+	Rule_AddGlobalEvent(EnemyKilledStockadeDefEvent,GE_SquadKilled)
+	
+	Rule_Add(KillAllEnclosedRus_Monitor)
+	FOW_PlayerExploreAll(player2)
+	
+--	Rule_AddOneShot(constructWall,2)
+	
+end
+
+function CheckMongolApproaching()
+
+	Player_GetAll(player1, sg_allsquads)
+	
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_cart_stockade_musictrigger, ANY, 75) == true then 
+		Music_PlayStinger("mus_camp_cust_mongol_drum_short_finalbattle_dry")
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, g_leaderSubutai.sgroup)
+			
+	    Rule_RemoveMe()
+	end
+	
+end
+
+function constructWall()
+	
+	Player_GetAll(player2,sg_RusVillager)
+	SGroup_Filter(sg_RusVillager,SBP.RUS.UNIT_VILLAGER_1_RUS,FILTER_KEEP)
+	
+	Modify_UnitSpeed(sg_RusVillager,15)
+	Util_ApplyModifier(sg_RusVillager, "construction_rate", true, 9999 , MUT_Multiplication, nil, false, nil)
+
+	LocalCommand_PlayerSquadConstructFence(player2,sg_RusVillager,BP_GetEntityBlueprint("building_defense_palisade_rus"), Marker_GetPosition(mkr_rus_build_wall03),Marker_GetPosition(mkr_rus_build_wall04),true)
+	LocalCommand_PlayerSquadConstructFence(player2,sg_RusVillager,BP_GetEntityBlueprint("building_defense_palisade_rus"), Marker_GetPosition(mkr_rus_build_wall05),Marker_GetPosition(mkr_rus_build_wall06),true)
+	LocalCommand_PlayerSquadConstructFence(player2,sg_RusVillager,BP_GetEntityBlueprint("building_defense_palisade_rus"), Marker_GetPosition(mkr_rus_build_wall07),Marker_GetPosition(mkr_rus_build_wall08),true)
+	LocalCommand_PlayerSquadConstructFence(player2,sg_RusVillager,BP_GetEntityBlueprint("building_defense_palisade_rus"), Marker_GetPosition(mkr_rus_build_wall01),Marker_GetPosition(mkr_rus_build_wall02),true)
+	
+end
+
+function EnemyKilledStockadeDefEvent(context)
+	
+	local victim = context.victim	
+	if Objective_IsComplete(SOBJ_KillAllEnclosedRus) == true then
+		Rule_RemoveMe()
+	else
+		if MissionOMatic_SquadHasTag(victim, "RusEnclosed") then 
+		
+			i_deathRusEnclosed = i_deathRusEnclosed + 1
+			
+			if i_deathRusEnclosed <= i_amountOfEnclosedRus then
+				
+				Objective_SetProgressBar(SOBJ_KillAllEnclosedRus, (i_deathRusEnclosed / i_amountOfEnclosedRus))
+			end
+		end
+	end
+end
+
+-- function checks if squad at position A
+function KillAllEnclosedRus_Monitor()
+	
+--	local numberCounted = Objective_GetCounter(SOBJ_KillAllEnclosedRus)
+	
+	if i_deathRusEnclosed >= i_amountOfEnclosedRus then 
+		Objective_Complete(SOBJ_KillAllEnclosedRus,false,true)
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE,sg_mon_horsearchers )
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE,sg_ambush_group_2 )
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE,sg_ambush_group_3 )
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE,sg_ambush_group_4 )
+		Objective_RemoveUIElements(SOBJ_KillAllEnclosedRus,hpid_enclosedRus)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function KillAllEnclosedRus_OnComplete()
+	
+	-- Achievement tracking for Achievement #17 - Twinkle Hooves - Don't lose any Horse Archers
+	if horseArchersKilled == false then
+	
+		Game_SendCustomChallengeEvent(player1, CE_ACHIEVHORSEARCHERSSURVIVE, 1)
+	end
+	
+	Objective_Complete(OBJ_DestroyTheRusUltimate)
+
+end
+
+
+function Mongol_prepare_outro()
+	------remove
+	World_SetInteractionStage(2)
+	FOW_RevealAll()
+	---
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_cart_stockade, 100)
+	SGroup_DestroyAllSquads(sg_temp)
+	
+	Player_GetAll(player2)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	EGroup_SetPlayerOwner( eg_allentities, player1)
+
+	-- Mongols on the hill
+	UnitEntry_DeploySquads(player1, sg_subutai_outro, {sbp = BP_GetSquadBlueprint("unit_subutai_3_cmp_mon"), numSquads = 1}, mkr_mongol_khan_outro_spawn)
+	UnitEntry_DeploySquads(player1, sg_unit01_outro, {sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 7}, mkr_mongol_unit_outro_spawn02)
+	UnitEntry_DeploySquads(player1, sg_unit03_outro, {sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 8}, mkr_mongol_unit_outro_spawn04)
+		
+	-- Mongols run around the camp
+	UnitEntry_DeploySquads(player1, sg_unit02_outro, {type = "scar_horsearcher", numSquads = 6}, mkr_mongol_unit_outro_spawn01)
+	UnitEntry_DeploySquads(player1, sg_unit04_outro, {type = "scar_horsearcher", numSquads = 4}, mkr_mongol_unit_outro_spawn01)
+	
+	-- Mongol units run through camp
+	UnitEntry_DeploySquads(player1, sg_unit05_outro, {type = "scar_horsearcher", numSquads = 3}, mkr_mongol_unit_outro_spawn05)
+	UnitEntry_DeploySquads(player1, sg_unit06_outro, {type = "scar_horsearcher", numSquads = 2}, mkr_mongol_unit_outro_spawn06)
+	
+	
+	-- Dead bodies	
+	Util_CorpseField(BP_GetSquadBlueprint("unit_spearman_2_rus_infinite_corpse"), mkr_outro_dead_bodies_01)
+	Util_CorpseField(BP_GetSquadBlueprint("unit_spearman_2_rus_infinite_corpse"), mkr_outro_dead_bodies_02)
+	--Util_CorpseField(BP_GetSquadBlueprint("unit_spearman_2_rus_infinite_corpse"), mkr_outro_dead_bodies_03)
+	
+	-- Burning stuff
+	local function _Burn (gid, index, iid)
+        if Entity_IsAlive(iid) then
+            Entity_SetHealth(iid, (World_GetRand(1,3)/10))
+            if Entity_IsBurning(iid) ~= true then
+                Entity_SetOnFire(iid)
+            end 
+        end
+    end
+    
+    EGroup_ForEach(eg_outro_burn, _Burn)
+	
+	Rule_AddOneShot(delayedSpawnedOutroCam,0.1)
+end
+
+function delayedSpawnedOutroCam()
+		
+	Rule_AddOneShot(Mongol_StartOutroMovement, 0.2 )
+	Rule_AddOneShot(Khan_OutroMovement, 22) --was 23
+end
+
+function Mongol_StartOutroMovement(context, data)
+	
+	MarkerPaths_MoveSGroupAlongPath(sg_unit02_outro,"mkr_spline_runDown02")
+	MarkerPaths_MoveSGroupAlongPath(sg_unit04_outro,"mkr_spline_runDown02")
+	
+	Cmd_FormationMove(sg_unit05_outro, mkr_mongol_khan_outro_target)
+	Cmd_FormationMove(sg_unit06_outro, mkr_mongol_khan_outro_target)
+	
+end
+
+function Khan_OutroMovement()
+	
+	Cmd_FormationMove(sg_subutai_outro, mkr_mongol_khan_outro_target)
+	Rule_AddOneShot(KhanHenchmen01_OutroMovement, 0.5 )
+	
+end
+
+function KhanHenchmen01_OutroMovement()
+	
+	Cmd_FormationMove(sg_unit01_outro, mkr_mongol_khan_outro_target)
+	Rule_AddOneShot(KhanHenchmen02_OutroMovement, 0.25 )
+
+end
+
+function KhanHenchmen02_OutroMovement()
+	
+	Cmd_FormationMove(sg_unit03_outro, mkr_mongol_khan_outro_target)
+
+end

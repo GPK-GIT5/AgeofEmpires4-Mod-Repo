@@ -1,0 +1,503 @@
+import("cardinal_encounter.scar")
+
+
+function DefendPlan_RegisterPlan()
+	
+	local defendPlan = {
+		name = "Defend",
+		
+		phases = {
+			Idle = {
+				startFunction = DefendPlan_IdlePhase_Start,
+				endFunction = DefendPlan_IdlePhase_End,
+			},
+			Main = {
+				startFunction = DefendPlan_MainPhase_Start,
+				aiNotificationFunction = DefendPlan_MainPhase_Notification,
+				endFunction = DefendPlan_MainPhase_End,
+			},
+		},
+		
+		start = DefendPlan_Start,
+		preprocessGoalData = DefendPlan_ProcessGoalData,
+		
+		defaultGoalData = {
+			target = REQUIRED,		-- not exactly a value, but this will throw an error if the user leaves this out
+			
+			startIdle = false,
+			idleReactionTime = 0,
+			
+			triggerOnSight = true,
+			triggerOnEngage = true,
+			triggerOnUnderAttack = true,
+			triggerOnZoneEntered = false,
+			
+			triggerReactionTime = 0,
+			
+			attackMove = false,
+			
+			maxIdleTime = nil,
+			archerRepositioning = nil, 		-- how many seconds after triggering the archer repositioning tactic will it wait before considering it again. A value of nil disables this tactic
+			cavalryCanBuildRams = true, 	-- by default, cavalry can build rams to take down stone walls, to turn this off, set this to false
+			shouldHoldWhileWaiting = false,	-- by default, units waiting at their target position will aggro as normal, set to True to make them Hold Position
+			tactics = {},
+			fallback = {}
+		},		
+	}
+	
+	Encounter_RegisterPlan(defendPlan)
+end
+
+
+function DefendPlan_ProcessGoalData(goal, encounter)
+	if goal.combatRange == nil or goal.combatRange == 0 then
+		assert(false, CoreEncounter_GetVerboseDebugName(encounter).. " - has an invalid combatRange")
+	end
+	if goal.leashRange == nil or goal.leashRange == 0 then
+		assert(false, CoreEncounter_GetVerboseDebugName(encounter).." - has an invalid leashRange")
+	end
+	
+	if goal.attackMove == true then 
+		goal.attackMove = attackMoveStyle_attackEverything
+	elseif goal.attackMove == false or goal.attackMove == nil then 
+		goal.attackMove = attackMoveStyle_ignoreEverything
+	end
+
+	if goal.archerRepositioning == false then 
+		goal.archerRepositioning = 0				-- this disables the tactic altogether
+	elseif goal.archerRepositioning == true then
+		goal.archerRepositioning = nil				-- this should use the default from the AE
+	end
+end
+
+
+function DefendPlan_Start(encounter)		-- decide which phase to start this encounter in
+	local goal = encounter.goal 
+
+	if goal.startIdle == true  then																						-- we're staring idle
+		_Encounter_TransitionToPhase(encounter, "Idle")		
+	else
+		_Encounter_TransitionToPhase(encounter, "Main")		
+	end
+end
+
+----
+---- Idle Phase
+----
+function DefendPlan_IdlePhase_Start(encounter, options)
+	local goal = encounter.goal 
+	
+	encounter.scratchpad = {
+		ruleID = Rule_AddInterval(DefendPlan_IdlePhase_Monitor, 0.5, {encounter = encounter}),
+	}
+	
+	if goal.triggerOnSight == true then 
+		encounter.scratchpad.spottedRuleID = Event_EncounterCanSeePlayerSquads(DefendPlan_IdlePhase_SpottedPlayer, {encounter = encounter}, encounter.sgroup, World_GetPlayerAt(1), 0)
+	end
+end
+
+function DefendPlan_IdlePhase_SpottedPlayer(data)
+	local scratchpad = data.encounter.scratchpad
+	
+	scratchpad.canSeeEnemy = true
+end
+
+function DefendPlan_IdlePhase_Monitor(context, data)
+	local encounter = data.encounter 
+	local scratchpad = encounter.scratchpad
+	local goal = encounter.goal 
+	
+	if scratchpad.alreadyTriggered ~= true then 
+	
+		if SGroup_CountSpawned(encounter.sgroup) == 0 then 
+		
+			_Encounter_Finish(encounter, true, "fail")		
+			
+		elseif (goal.triggerOnUnderAttack == true and SGroup_IsUnderAttack(encounter.sgroup, ANY, 1))
+			or (goal.triggerOnEngage == true and SGroup_IsDoingAttack(encounter.sgroup, ANY, 1))
+			or scratchpad.canSeeEnemy == true then 	
+			
+			Rule_AddOneShot(DefendPlan_IdlePhase_DelayedReaction, goal.idleReactionTime, {encounter = encounter})
+			scratchpad.alreadyTriggered = true 
+			
+		end
+		
+	end
+	
+end
+	
+function DefendPlan_IdlePhase_DelayedReaction(context, data)
+
+	local encounter = data.encounter 
+	local goal = encounter.goal 
+		
+	if SGroup_CountSpawned(encounter.sgroup) == 0 or 
+	   (scartype(goal.target) == ST_SGROUP and SGroup_CountSpawned(goal.target) == 0) or
+	   (scartype(goal.target) == ST_EGROUP and EGroup_CountSpawned(goal.target) == 0) then 
+		
+		_Encounter_Finish(encounter, true, "fail")
+		
+	else
+		_Encounter_TransitionToPhase(encounter, "Main")
+	end			
+		
+end
+
+function DefendPlan_IdlePhase_End(encounter)
+	local scratchpad = encounter.scratchpad
+
+	Rule_RemoveWithID(scratchpad.ruleID)
+	
+	if scratchpad.spottedRuleID ~= nil then 
+		Rule_RemoveWithID(scratchpad.spottedRuleID)
+		scratchpad.spottedRuleID = nil 
+	end
+end
+
+--
+-- Main Phase
+--
+function DefendPlan_MainPhase_Start(encounter, options)
+	if encounter.enableDebug == true or _b_debugEncounterPlans == true then 
+		print(CoreEncounter_GetVerboseDebugName(encounter).." starting with "..SGroup_CountSpawned(encounter.sgroup).." units")
+	end
+	
+	local goal = encounter.goal
+	
+	if goal.combatRange == nil or goal.combatRange == 0 then
+		assert(false, CoreEncounter_GetVerboseDebugName(encounter).." - has an invalid combatRange")
+	end
+	if goal.leashRange == nil or goal.leashRange == 0 then
+		assert(false, CoreEncounter_GetVerboseDebugName(encounter).." - has an invalid leashRange")
+	end
+	
+	-- create empty tuning override tables (these are defined and passed in by type)
+	local sgroupTunings = {}
+	local egroupTunings = {}
+	local positionTunings = {}
+	local markerTunings = {}
+	local entitytypesTunings = {}
+	local coordinatorPbgTunings = {}
+	local booleanTunings = {}
+	local floatTunings = {}
+	local integerTunings = {}
+	
+	--
+	-- now to fill in those override tables!
+	--
+	
+	-- assign units to this encounter
+	sgroupTunings.ai_best_available_squads = encounter.sgroup							-- squads to execute the encounter
+	
+	-- set the form up position
+	if SGroup_CountSpawned(encounter.sgroup) > 1 then
+		local clusterSeparation = SGroup_CalculateClusterSeparation(encounter.sgroup, true, 2) -- spawned squads, 2 clusters
+		if clusterSeparation <= 20 then 
+			local formUpPosition = Util_GetPosition(encounter.sgroup)
+			if SGroup_CountSpawned(encounter.sgroup) >= 1 then 									-- try and find a spawnable position
+				local squad = SGroup_GetSpawnedSquadAt(encounter.sgroup, 1)
+				if Squad_Count(squad) >= 1 then 
+					local entity = Squad_GetFirstEntity(squad)
+					formUpPosition = World_GetSpawnablePosition(formUpPosition, entity)
+				end
+			end	
+			positionTunings.ai_best_formup_targets = {formUpPosition}
+		end	
+	end
+	
+	-- set the target area and the range
+	if scartype(goal.target) == ST_SCARPOS or scartype(goal.target) == ST_MARKER then 
+		local position = Util_GetPosition(goal.target)
+		positionTunings.ai_best_military_targets = {position}
+		local idlePosition = goal.idlePosition
+		if scartype(idlePosition) == ST_MARKER then
+			idlePosition = Marker_GetPosition(idlePosition)
+		end
+		positionTunings.ai_idle_at_end_targets = {idlePosition}
+		if goal.direction ~= nil and goal.useCustomDirection == true then
+			positionTunings.ai_best_face_targets = {World_GetOffsetPosition(idlePosition or position, goal.direction, OFFSET_FRONT, 10)}
+		end
+	elseif scartype(goal.target) == ST_SGROUP then 
+		sgroupTunings.ai_best_military_targets = goal.target
+	elseif scartype(goal.target) == ST_EGROUP then 
+		egroupTunings.ai_best_military_targets = goal.target
+	end
+	
+	local formationDimension = Formation_GetDimensionsAndOffset(encounter.sgroup) -- the exact formation dimensions when this SGroup is put into a formation (note: "z" is offset from centre along Y)
+		
+	floatTunings.ai_phase_encounter_combat_leash = goal.leashRange
+	floatTunings.ai_phase_encounter_combat_leash_enroute = goal.leashRange	
+	floatTunings.ai_phase_encounter_destination_combat_area = goal.combatRange	-- when they transition from "en route" to "engage target"
+	floatTunings.ai_phase_encounter_combat_area = 30 -- once a fight has started atTarget, the AI will continue attacking until all enemies in this area are dead
+	floatTunings.ai_phase_encounter_combat_area_enroute = 30 -- once a fight has started enRoute, the AI will continue attacking until all enemies in this area are dead
+	floatTunings.ai_phase_encounter_destination_area =  math.max(0.5 * formationDimension.x, 0.5 * formationDimension.y + math.abs(formationDimension.z))	-- when they finish "engage target", they transition to "near destination" and move to this distance before completing the encounter
+	floatTunings.ai_phase_encounter_cached_path_update_interval_secs = 5 -- if you don't set this, they will not pathfind
+	
+	local attackMoveEnRoute = nil
+	if goal.attackMoveEnRoute ~= nil then
+		attackMoveEnRoute = goal.attackMoveEnRoute.enRoute
+	elseif goal.attackMove ~= nil then
+		attackMoveEnRoute = goal.attackMove.enRoute
+	else
+		assert(false, CoreEncounter_GetVerboseDebugName(encounter).." - has no attackMoveEnRoute or attackMove")
+	end
+	
+	local attackMoveAtTarget = nil
+	if goal.attackMoveAtTarget ~= nil then
+		attackMoveAtTarget = goal.attackMoveAtTarget.atTarget
+	elseif goal.attackMove ~= nil then
+		attackMoveAtTarget = goal.attackMove.atTarget
+	else
+		assert(false, CoreEncounter_GetVerboseDebugName(encounter).." - has no attackMoveAtTarget or attackMove")
+	end
+	
+	coordinatorPbgTunings.ai_phase_encounter_coordinator_bag = attackMoveAtTarget.formationCoordinatorAtTarget
+	coordinatorPbgTunings.ai_phase_encounter_coordinator_bag_enroute = attackMoveEnRoute.formationCoordinatorEnRoute
+	
+	-- set the encounter exit conditions
+	booleanTunings.ai_phase_encounter_exit_on_path_blocker_detected = true
+	booleanTunings.ai_phase_encounter_clear_enemy_squads = true
+	booleanTunings.ai_phase_encounter_clear_enemy_squads_enroute = true
+	booleanTunings.ai_phase_encounter_clear_enemy_buildings = attackMoveAtTarget.attackBuildings
+	booleanTunings.ai_phase_encounter_clear_enemy_buildings_enroute = attackMoveEnRoute.attackBuildings
+		
+	-- set the fallback conditions 
+	floatTunings.ai_phase_encounter_fallback_combat_rating = goal.fallback.combatRating
+	floatTunings.ai_phase_encounter_fallback_squad_health_threshold = goal.fallback.healthThreshold
+	floatTunings.ai_phase_encounter_fallback_squad_health_percent = goal.fallback.percentUnderHealthThreshold
+	floatTunings.ai_phase_encounter_fallback_squads_remaining_percent = goal.fallback.squadsRemainingPercent
+	
+	-- add tunings for attackmove style 
+	floatTunings.ai_phase_encounter_enemy_scan_range_enroute = attackMoveEnRoute.scanRange
+	floatTunings.ai_phase_encounter_enemy_scan_range = goal.combatRange
+	floatTunings.ai_phase_encounter_combat_fitness_threshold = 0
+	-- NOTE: The following two "allow_attack_move" tunables are currently only hooked up to the ArtOfWar StateTree.
+	-- AI-TODO: hook the "allow_attack_move" tunables to the Campaign StateTree as well (if necessary).
+	booleanTunings.ai_phase_encounter_allow_attack_move = attackMoveAtTarget.allowAttackMove -- if False, use Forced Attack.
+	booleanTunings.ai_phase_encounter_allow_attack_move_enroute = attackMoveEnRoute.allowAttackMove
+	
+	if floatTunings.ai_phase_encounter_enemy_scan_range == 0 then
+		booleanTunings.ai_phase_encounter_clear_enemy_squads = false
+	end
+	if floatTunings.ai_phase_encounter_enemy_scan_range_enroute == 0 then
+		booleanTunings.ai_phase_encounter_clear_enemy_squads_enroute = false
+	end
+	if floatTunings.ai_phase_encounter_enemy_scan_range_enroute == 0 then
+		floatTunings.ai_phase_encounter_combat_fitness_threshold = -1	
+	end
+	
+	entitytypesTunings.ai_phase_encounter_exclude_unit_types = attackMoveAtTarget.excludedBuildings
+	entitytypesTunings.ai_phase_encounter_exclude_unit_types_enroute = attackMoveEnRoute.excludedBuildings
+	
+	-- add other behaviour/tactic tunings
+	floatTunings.ai_phase_encounter_archer_reposition_time_interval = goal.archerRepositioning
+	floatTunings.ai_phase_encounter_open_path_length_to_look_for_siege_path = goal.openPathThreshold or 120
+	floatTunings.ai_phase_encounter_destroyed_wall_opening_ignore_radius = goal.brokenWallThreshold
+	booleanTunings.ai_phase_encounter_disable_cavalry_build_rams = not goal.cavalryCanBuildRams
+	booleanTunings.ai_phase_encounter_should_hold_position = goal.shouldHoldWhileWaiting
+
+	-- add the encounter ID and callback ID so the notification callback works correctly
+	integerTunings.ai_phase_encounter_override_encounter_id = encounter.encounterID
+	integerTunings.ai_phase_encounter_notify_rule_id = encounter.callbackID	
+	integerTunings.ai_phase_encounter_ram_max_passenger_count = goal.ramPassengerCount
+	integerTunings.ai_phase_encounter_siege_tower_max_passenger_count = goal.siegeTowerPassengerCount
+	integerTunings.ai_phase_encounter_ram_number_to_build = goal.ramCount
+	
+	
+	--
+	-- now create the state tree controller with these tunings
+	--
+	
+	Cardinal_CreateAIEncounterWithStateModelTunings(
+		encounter.player,
+		"campaign_encounters\\scar_encounters\\AttackDefault",
+		false,
+		BP_GetAIStateModelTuningsBlueprint("campaign_defend_default"),
+		sgroupTunings,
+		egroupTunings,
+		positionTunings,
+		markerTunings,
+		entitytypesTunings,
+		coordinatorPbgTunings,
+		booleanTunings,
+		floatTunings,
+		integerTunings		
+	)
+	
+end
+
+
+function DefendPlan_MainPhase_Notification(encounter, context)
+
+	if context.notificationType == AIEncounterNotification_StateTreeExit then
+		local identifier = CoreEncounter_GetVerboseDebugName(encounter)
+		
+		if encounter.enableDebug == true or _b_debugEncounterPlans == true then 
+			print("   - Reason "..context.encounterStage.." ("..AIFormationPhaseEncounter_EndReason_ToString(context.encounterStage)..")")
+		end
+		
+		if context.encounterStage == AIFormationPhaseEncounter_EndReason_AtDestination then -- no targets to clear, area successful
+		  
+			-- this can be a valid exit for siege towers 
+			-- Check if remaining squads are siege towers and allow that case.
+			local allSiegeTowersRemaining = true
+			for i = 1, SGroup_CountSpawned(encounter.sgroup) do
+				local squad = SGroup_GetSquadAt(encounter.sgroup, i)
+				if not Squad_IsOfType(squad, "siege_tower") then
+					allSiegeTowersRemaining = false
+					break
+				end
+			end
+
+			if allSiegeTowersRemaining then
+				_Encounter_Finish(encounter, true, "fail")
+			else
+				
+				if (SGroup_CountSpawned(encounter.sgroup) > 0) then
+					if encounter.enableDebug == true or _b_debugEncounterPlans == true then
+						for j = 1, SGroup_CountSpawned(encounter.sgroup) do
+							local dbgS = SGroup_GetSquadAt(encounter.sgroup, j)
+							print(" squad "..Squad_GetID(dbgS))
+						end
+					end
+					-- in rare cases, where the target was never a position, defend encounters 
+					-- can end if their target is destroyed (squad or entity). do not assert
+					-- for these but assert for other cases of defend encounters exiting (as
+					-- they should never end)
+				if encounter.goal.target == nil or scartype(encounter.goal.target) == ST_SGROUP then
+						_Encounter_Finish(encounter, true, "success")
+					else
+						cardinal_encounter_fatal(identifier.." - ended with Success with reason "..context.encounterStage..". This should never happen, talk to a programmer.")
+						_Encounter_Finish(encounter, true, "success")
+					end
+				else
+					print("Encounter finishing because it has no squads but has a different end reason")
+					_Encounter_Finish(encounter, true, "fail")
+				end
+			end
+			
+			
+		elseif context.encounterStage == AIFormationPhaseEncounter_EndReason_EnemiesAtTargetCleared or 				-- at destination, no enemies present
+		   context.encounterStage == AIFormationPhaseEncounter_EndReason_Timeout or 					-- preset timer has expired
+		   context.encounterStage == AIFormationPhaseEncounter_EndReason_CombatThreshold then 			-- AI has determined that the remaining squads are too easy to worry about. return as success.
+			if (SGroup_CountSpawned(encounter.sgroup) > 0) then
+				cardinal_encounter_fatal(identifier.." - ended with Success with reason "..context.encounterStage..". This should never happen, talk to a programmer.")
+				_Encounter_Finish(encounter, true, "success")			
+			else
+			    print("Encounter finishing because it has no squads but has a different end reason")
+				_Encounter_Finish(encounter, true, "fail")
+			end
+			
+			
+		elseif context.encounterStage == AIFormationPhaseEncounter_EndReason_ShouldFallback then		-- fallback triggered according to user-set conditions
+			
+			cardinal_encounter_fatal(identifier.." - ended with ShouldFallback. This should never happen, talk to a programmer.")
+			_Encounter_Finish(encounter, true, "fallback")
+
+		elseif context.encounterStage == AIFormationPhaseEncounter_EndReason_SelfSquadsEmpty then	
+
+			if SGroup_CountSpawned(encounter.sgroup) == 0 or not Player_OwnsSGroup(encounter.player, encounter.sgroup, ANY) then 
+				_Encounter_Finish(encounter, true, "fail")
+			else
+				-- Siege towers are automatically removed from encounters once finished dropping off units.
+				-- Check if remaining squads are siege towers and allow that case.
+				local allSiegeTowersRemaining = true
+				for i = 1, SGroup_CountSpawned(encounter.sgroup) do
+					local squad = SGroup_GetSquadAt(encounter.sgroup, i)
+					if not Squad_IsOfType(squad, "siege_tower") then
+						allSiegeTowersRemaining = false
+						break
+					end
+				end
+
+				if allSiegeTowersRemaining == false then
+					cardinal_encounter_fatal(identifier.." - ended with SelfSquadsEmpty BUT it still has units. This should never happen, talk to a programmer.")
+					if encounter.enableDebug == true or _b_debugEncounterPlans == true then 
+						print("     ...but encounter wasn't dead")
+					end
+				end
+				_Encounter_Finish(encounter, true, "fail")
+			end
+			
+		elseif context.encounterStage == AIFormationPhaseEncounter_EndReason_CannotReachDestination then	
+			_Encounter_Finish(encounter, true, "blocked")			
+				
+		else
+			cardinal_encounter_fatal(identifier.." - ended with Invalid Reason "..context.encounterStage..". This should never happen, talk to a programmer.")
+			if encounter.enableDebug == true or _b_debugEncounterPlans == true then 
+				print("   - no specific code path to handle this encounterStage / end reason")
+			end
+			_Encounter_Finish(encounter, true, "fail")
+			
+		end
+		
+	elseif context.notificationType == AIEncounterNotification_Success then
+		cardinal_encounter_fatal(identifier.." - ended with Non-Statetree Success. This should never happen, talk to a programmer.")
+		_Encounter_Finish(encounter, true, "success")
+		
+	elseif context.notificationType == AIEncounterNotification_Failure then
+		cardinal_encounter_fatal(identifier.." - ended with Non-Statetree Failure. This should never happen, talk to a programmer.")
+		_Encounter_Finish(encounter, true, "fail")
+		
+	elseif context.notificationType == AIEncounterNotification_SquadAdded_Count then
+		-- Check if entry already exists (it shouldn't if statetree data is set up correctly).
+		local existingEntry = false
+		for addedInfoIndex, addedInfo in ipairs(t_cardinalEncounters_allAddedSquadsInfo) do
+			if addedInfo._callbackID == context.encounterID then
+				existingEntry = true
+			end
+		end
+		
+		if not existingEntry then
+			-- The "Count" notification comes before the individual "Squad ID" notifications.
+			local squadAddInfo = {
+				_callbackID = context.encounterID,
+				_addCount = context.encounterStage, -- this value is added squads total count
+				_addedSquadIDs = {}
+			}
+			
+			table.insert(t_cardinalEncounters_allAddedSquadsInfo, squadAddInfo)
+		else
+			print("WARNING: Duplicate AIEncounterNotification_SquadAdded_Count was received on callbackID:"..context.encounterID..". Check StateTree setup.")
+		end
+		
+	elseif context.notificationType == AIEncounterNotification_SquadAdded_ID then
+		local entryFound = false
+		for index, info in ipairs(t_cardinalEncounters_allAddedSquadsInfo) do
+			if info._callbackID == context.encounterID then
+				table.insert(info._addedSquadIDs, context.encounterStage) -- this value is added squad ID
+				
+				-- Check if all squad added notifications have been received.
+				if info._addCount == #info._addedSquadIDs then
+					-- Add to the SCAR encounter SGroup the newly added AI squads (e.g. field constructed rams).
+					for index2, squadID in ipairs(info._addedSquadIDs) do
+						SGroup_Add(encounter.sgroup, Squad_FromID(squadID))
+					end
+					-- Done handling this batch of added squads. Clean up temporary stored info.
+					table.remove(t_cardinalEncounters_allAddedSquadsInfo, index)
+				end
+				
+				entryFound = true
+				break
+			end
+		end
+		
+		if not entryFound then
+			print("WARNING: AIEncounterNotification_SquadAdded_Count was not received in the correct order, on callbackID:"..context.encounterID..". Check StateTree setup.")
+		end	
+		
+	end	
+end
+
+
+function DefendPlan_MainPhase_End(encounter)
+
+	-- clean up (remove rules, etc)
+	
+	Cardinal_CleanupAIEncounter(encounter)
+	
+end
+		
+
+
+

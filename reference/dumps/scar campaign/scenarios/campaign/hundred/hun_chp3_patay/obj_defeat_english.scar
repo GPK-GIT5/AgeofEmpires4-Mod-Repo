@@ -1,0 +1,209 @@
+--
+-- Patay - Defeat English
+--
+
+
+function DefeatEnglish_InitObjectives()
+	
+	OBJ_DefendPatay = {
+		Title = "$11180126", -- ("The Town Center in Patay must survive"),
+		Type = ObjectiveType_Information,
+		Intel_Start = EVENTS.Patay_Under_Attack,
+		OnStart = function()
+			EventCues_CallToAction("$11197563", CTA_ALARM, nil, nil, mkr_patay_trigger, 20) --Patay is under attack!
+			--Objective_AddUIElements(OBJ_DefendPatay, mkr_patay_center, true, 11156660, false)
+		end,
+	}
+	OBJ_DefeatEnglish = {
+		
+		Title = "$11180120", -- ("Defeat the English on the road to Patay"),
+		Type = ObjectiveType_Primary,
+		OnStart = function()
+			Music_LockIntensity(MUSIC_TENSE_RARE, 60)
+			Rule_AddOneShot(Patay_CombatIntensityIntro, 60)
+		end,
+	}
+	
+	OBJ_ClearRoad = {
+		Title = "$11180121", -- ("Clear the blocked road"),
+		Type = ObjectiveType_Battle,
+		Intel_Start = EVENTS.Clear_Road,
+		Intel_Complete = EVENTS.Road_Cleared,
+		PreStart = function()
+			hint_palings = HintPoint_Add(mkr_palings,  true, 11180119, 2, nil, nil, nil, true, nil)
+			FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_barricade1), 20, -1)
+		end,
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_ClearRoad, mkr_barricade1, true, 11180180, false)
+			Objective_SetProgressBar(OBJ_ClearRoad, 0)
+		end,
+		PreComplete = function()
+			Music_StopMedium()
+			Rule_AddOneShot(Patay_RestartMusic, 30)
+			if hint_palings ~= nil then HintPoint_Remove(hint_palings) end
+		end,
+		OnComplete = function()
+			FOW_PlayerUnRevealArea(player1, Util_GetPosition(mkr_barricade1))
+		end,
+	}
+	
+	OBJ_ClearStSigmund = {
+		Title = "$11180122", -- ("Clear the English from St. Sigmund"),
+		Type = ObjectiveType_Battle,
+		Intel_Start = EVENTS.StSigmund_Started,
+		Intel_Complete = EVENTS.StSigmund_Cleared,
+		SetupUI = function()
+			FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_sigmund_trigger_center), 40, -1)
+			Objective_AddUIElements(OBJ_ClearStSigmund, mkr_sigmund_trigger_center, true, 11180179, false)
+			Objective_SetProgressBar(OBJ_ClearStSigmund, 0)
+		end,
+		OnStart = function()
+			Rule_AddInterval(Patay_CheckSigmundTrigger, 1)
+		end,
+		PreComplete = function()
+			if Objective_IsComplete(OBJ_ClearRoad) then
+				Music_StopMedium()
+				Rule_AddOneShot(Patay_RestartMusic, 15)
+			end
+		end,
+		OnComplete = function()
+			FOW_PlayerUnRevealArea(player1, Util_GetPosition(mkr_sigmund_trigger_center))
+			Rule_AddOneShot(Patay_StartDefeatArmy, 3)
+			
+			Util_AutoSave()
+		end,
+	}
+	
+	OBJ_DefeatArmy = {
+		Title = "$11180124", -- ("Defeat the English blockade"),
+		Type = ObjectiveType_Battle,
+		Intel_Start = EVENTS.ReliefArmyArrive,
+		Intel_Complete = EVENTS.ReliefArmy_Cleared,
+		OnStart = function()
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+		end,
+		SetupUI = function()
+			hpid_army = Objective_AddUIElements(OBJ_DefeatArmy, mkr_main_battle_center, true, 11180181, false) -- English Blockade
+			Objective_SetProgressBar(OBJ_DefeatArmy, 0)
+			FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_main_battle_center), 35, -1)
+		end,
+		PreComplete = function()
+			Music_StopMedium()
+			--Rule_AddOneShot(Patay_RestartMusicCombat, 35)
+			Patay_SpawnJoanCav()
+		end,
+		OnComplete = function()
+			
+			Player_SetRelationship(playerEnglish, playerAllies, R_ENEMY)
+			Player_SetRelationship(playerAllies, playerEnglish, R_ENEMY)
+			
+			FOW_PlayerUnRevealArea(player1, Util_GetPosition(mkr_main_battle_center))
+			
+			if Objective_IsComplete(OBJ_ClearRegiments) then
+				-- if we are going to end the mission, clear the rule looking to trigger Patay ownership and VO
+				if Rule_Exists(Patay_CheckPatayTrigger) then
+					Rule_Remove(Patay_CheckPatayTrigger)
+				end
+				Rule_AddOneShot(Patay_TriggerOutro, 2)
+			else
+				Diplomacy_ShowDiplomacyUI(false)
+				EventCues_CallToAction("$11180136", CTA_CELEBRATE, nil, nil, MissionOMatic_GetSGroupForTaggedUnit("General"), 20)
+				Rule_AddOneShot(Patay_StartClearRegiments, 1)
+				Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+				Sound_Play2D("mus_stinger_campaign_triumph_short")
+				Util_AutoSave(true)	
+			end
+
+		end,
+	}
+	
+	OBJ_ClearRegiments = {
+		Title = "$11180125", -- ("Eliminate the remaining English regiments"),
+		Type = ObjectiveType_Battle,
+		Intel_Start = EVENTS.Eliminate_Regiments,
+		OnStart = function()
+
+			Objective_Start(SOBJ_ClearRegiment1, false)
+			Objective_Start(SOBJ_ClearRegiment2, false)
+			Objective_Start(SOBJ_ClearRegiment3, false)
+			Objective_Start(OBJ_TakePatay)			
+		end,
+		OnComplete = function()
+			if Objective_IsComplete(OBJ_DefeatArmy) then
+				-- if we are going to end the mission, clear the rule looking to trigger Patay ownership and VO
+				if Rule_Exists(Patay_CheckPatayTrigger) then
+					Rule_Remove(Patay_CheckPatayTrigger)
+				end
+				Music_StopMedium()
+				Rule_AddOneShot(Patay_TriggerOutro, 2)
+			end
+		end,
+	}
+	SOBJ_ClearRegiment1 = {
+		Title = "$11194949", -- ("Eliminate the eastern regiment"),
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ClearRegiments,
+		SetupUI = function()
+			--HintPoint_Add(sg_regiment1, true, "$11197045", 2, nil, nil, nil, true, "BattleObjectiveTemplate")
+			hpid_reg1 = Objective_AddUIElements(SOBJ_ClearRegiment1, sg_regiment1, true, "$11182825", false)
+			Objective_SetProgressBar(SOBJ_ClearRegiment1, 0)
+		end,
+	}
+	SOBJ_ClearRegiment2 = {
+		Title = "$11194948", -- ("Eliminate the central regiment"),
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ClearRegiments,
+		SetupUI = function()
+			--HintPoint_Add(sg_regiment2, true, "$11197046", 2, nil, nil, nil, true, "BattleObjectiveTemplate")
+			hpid_reg2 = Objective_AddUIElements(SOBJ_ClearRegiment2, sg_regiment2, true, "$11182825", false)
+			Objective_SetProgressBar(SOBJ_ClearRegiment2, 0)
+		end,
+	}
+	SOBJ_ClearRegiment3 = {
+		Title = "$11194947", -- ("Eliminate the western regiment"),
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ClearRegiments,
+		SetupUI = function()
+			--HintPoint_Add(sg_regiment3, true, "$11197047", 2, nil, nil, nil, true, "BattleObjectiveTemplate")
+			hpid_reg3 = Objective_AddUIElements(SOBJ_ClearRegiment3, sg_regiment3, true, "$11182825", false)
+			Objective_SetProgressBar(SOBJ_ClearRegiment3, 0)
+		end,
+	}
+	
+	OBJ_TakePatay = {
+		
+		Title = "$11194955", -- ("Take control of Patay),
+		Type = ObjectiveType_Optional,
+		Intel_Start = EVENTS.TakePatay_Start,
+		Intel_Complete = EVENTS.Patay_to_Player,
+		OnStart = function()
+			patay_start_time = World_GetGameTime()
+			
+			if hint_patay ~= nil then HintPoint_Remove(hint_patay) end
+			hpid_patay = Objective_AddUIElements(OBJ_TakePatay, mkr_patay_trigger, true, "$11156660", true)
+			Rule_AddInterval(Patay_CheckPatayTrigger, 2)
+		end,
+		OnComplete = function()
+			patayIsPlayerOwned = true
+		end,
+	}
+	
+	Objective_Register(OBJ_DefendPatay)
+	Objective_Register(OBJ_DefeatEnglish)
+	Objective_Register(OBJ_ClearRoad)
+	Objective_Register(OBJ_ClearStSigmund)
+	Objective_Register(OBJ_DefeatArmy)
+	
+	Objective_Register(OBJ_ClearRegiments)
+	Objective_Register(SOBJ_ClearRegiment1)
+	Objective_Register(SOBJ_ClearRegiment2)
+	Objective_Register(SOBJ_ClearRegiment3)
+	
+	Objective_Register(OBJ_TakePatay)
+	
+end
+
+function DefeatEnglish_StartStSigmund()
+	Objective_Start(OBJ_ClearStSigmund)
+end
+

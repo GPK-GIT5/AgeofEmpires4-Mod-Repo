@@ -1,0 +1,182 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("training_sal_chp1_rebellion.scar")
+
+function Spearmen_InitObjectives()
+	
+	OBJ_Spearmen = {
+		Title = "$999466", --Find Your Spearmen
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.MoveStart,	
+		IsComplete = function() 
+		    return Objective_AreSubObjectivesComplete(OBJ_Spearmen, ALL)
+        end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.MissionEnd)
+			Mission_Complete()
+		end,
+	}
+	
+	SOBJ_SelectWilliam = {
+        Title = "$999467", --Select Guillaume
+		Type = ObjectiveType_Primary,
+        Parent = OBJ_Spearmen,
+        StartAlongsideParent = true,
+		OnStart = SelectWilliam_Start,
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_MoveWilliam, false, true)
+		end,
+    }
+	
+	SOBJ_MoveWilliam = {
+        Title = "$999469", --Move Guillaume
+		Type = ObjectiveType_Primary,
+        Parent = OBJ_Spearmen,
+        StartAlongsideParent = false,
+		SetupUI = MoveWilliam_UI,
+		OnStart = MoveWilliam_Start,
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_FollowMarkers, false, true)
+		end,
+    }
+	
+	SOBJ_FollowMarkers = {
+        Title = "$999471", --Follow the Markers
+		Type = ObjectiveType_Primary,
+        Parent = OBJ_Spearmen,
+        StartAlongsideParent = false,
+		SetupUI = FollowMarkers_UI,
+		PreStart = FollowMarkers_Start,
+		Intel_Start = EVENTS.FollowStart, 
+		
+		OnComplete = function()
+			SGroup_SetSelectable(sg_william, false)
+		end,
+    }
+	
+	-- Register all objectives
+	Objective_Register(OBJ_Spearmen) 
+	Objective_Register(SOBJ_SelectWilliam)
+	Objective_Register(SOBJ_MoveWilliam)
+	Objective_Register(SOBJ_FollowMarkers)
+	
+end
+
+-- ///// Select William  //////////////////////////////////////////////
+function SelectWilliam_Start()
+	
+	Goals_SelectWilliam()
+	SGroup_SetSelectable(sg_william, true)
+	Rule_Add(SelectWilliam_Monitor)
+	
+end
+
+function SelectWilliam_Monitor()
+	
+	if Misc_IsSGroupSelected(sg_william, true) then
+		
+		Objective_Complete(SOBJ_SelectWilliam, false, true)
+		Rule_RemoveMe()
+	end
+	
+end
+
+-- ///// Move William  //////////////////////////////////////////////
+function MoveWilliam_UI()
+	
+	Objective_AddUIElements(SOBJ_MoveWilliam, mkr_move_william_obj_2b, true, "$999469", true, 5)
+	Objective_AddGroundReticule(SOBJ_MoveWilliam, mkr_move_william_obj_2b, Marker_GetProximityRadiusOrDefault(mkr_move_william_obj_2b, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+	
+end
+
+function MoveWilliam_Start()
+	
+	Goals_MoveWilliam()
+	Rule_Add(MoveWilliam_Monitor)
+	
+end
+
+function MoveWilliam_Monitor()
+	-- complete the objective if the user goes to the indicated marker OR if they go past it to the first gate (rectangle marker) in the next objective
+	if  Prox_AreSquadsNearMarker(sg_william, mkr_move_william_obj_2b, true, 5) or Prox_AreSquadsNearMarker(sg_william, mkr_follow_marker_a_obj_2c, true) then
+		
+		World_SetInteractionStage(1)
+		Objective_Complete(SOBJ_MoveWilliam, false, true)
+		Rule_RemoveMe()
+	end
+	
+end
+
+-- ///// Follow Markers  //////////////////////////////////////////////
+function FollowMarkers_UI()
+	
+end
+
+function FollowMarkers_Start()
+	
+	Goals_FOW()
+	-- if this triggers with the player at mkr_follow_marker_a_obj_2c (first marker in the FollowMarkers objective) then highlight the second marker in that chain
+	-- if not, then highlight the first marker as normal
+	if Prox_AreSquadsNearMarker(sg_william, mkr_follow_marker_a_obj_2c, true) then
+		second_marker_ui = Objective_AddUIElements(SOBJ_FollowMarkers, mkr_follow_marker_b_obj_2c, true, "$999471", true, 5)
+		second_marker_aura = Objective_AddGroundReticule(SOBJ_FollowMarkers, mkr_follow_marker_b_obj_2c, Marker_GetProximityRadiusOrDefault(mkr_follow_marker_b_obj_2c, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+		Rule_Add(FollowMarkersB_Monitor)
+	else
+		first_marker_ui = Objective_AddUIElements(SOBJ_FollowMarkers, mkr_follow_marker_a_obj_2c, true, "$999471", true, 5)
+		first_marker_aura = Objective_AddGroundReticule(SOBJ_FollowMarkers, mkr_follow_marker_a_obj_2c, Marker_GetProximityRadiusOrDefault(mkr_follow_marker_a_obj_2c, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+		Rule_Add(FollowMarkersA_Monitor)
+	end
+	
+end
+
+
+
+function FollowMarkersA_Monitor()
+	
+	if Prox_AreSquadsNearMarker(sg_william, mkr_follow_marker_a_obj_2c, true) then
+		Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		Objective_RemoveUIElements(SOBJ_FollowMarkers, first_marker_ui)
+		Objective_RemoveGroundReticule(SOBJ_FollowMarkers, first_marker_aura)
+		second_marker_ui = Objective_AddUIElements(SOBJ_FollowMarkers, mkr_follow_marker_b_obj_2c, true, "$999471", true, 5)
+		second_marker_aura = Objective_AddGroundReticule(SOBJ_FollowMarkers, mkr_follow_marker_b_obj_2c, Marker_GetProximityRadiusOrDefault(mkr_follow_marker_b_obj_2c, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+		Rule_Add(FollowMarkersB_Monitor)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function FollowMarkersB_Monitor()
+	
+	if Prox_AreSquadsNearMarker(sg_william, mkr_follow_marker_b_obj_2c, true) then
+
+		Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		
+		Objective_RemoveUIElements(SOBJ_FollowMarkers, second_marker_ui)
+		Objective_RemoveGroundReticule(SOBJ_FollowMarkers, second_marker_aura)
+		Objective_AddUIElements(SOBJ_FollowMarkers, mkr_follow_marker_c_obj_2c, false, "$1000619", true, 5)
+		Objective_AddGroundReticule(SOBJ_FollowMarkers, mkr_follow_marker_c_obj_2c, Marker_GetProximityRadiusOrDefault(mkr_follow_marker_c_obj_2c, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+		Rule_Add(FollowMarkersC_Monitor)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function FollowMarkersC_Monitor()
+	
+	if Prox_AreSquadsNearMarker(sg_william, mkr_follow_marker_c_obj_2c, true) then
+		
+		EGroup_SetPlayerOwner(eg_campTents, player1)
+		SGroup_SetPlayerOwner(sg_spearmen, player1)
+		SGroup_EnableCheering(sg_spearmen, true)		
+		SGroup_SetSelectable (sg_spearmen, false) -- this is here so the player doesn't accidentally order around the cheering spearmen
+		
+		Objective_Complete(SOBJ_FollowMarkers, false, true)
+		Rule_RemoveMe()
+	end
+	
+end

@@ -1,0 +1,194 @@
+--
+-- Juyong 1213 - Primary Objectives Phase 2
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_juyong_phase3.scar")
+
+--? @shortdesc Initializes the main objectives for Great Wall
+function Juyong_InitObjectives_Phase2()
+
+	OBJ_Zhangjiakou = { Title = "$11180864", -- Destroy the Keep at Zhangjiakou
+		Type = ObjectiveType_Battle,
+		
+		PreStart = function()
+			Sound_SetMinimumMusicCombatIntensity(801,0)
+			Util_AutoSave()
+		end,
+		
+		OnStart = function()
+			Util_StartIntel(EVENTS.MongolArmy_Arrival02)
+			
+			if UI_IsXboxControllerUI() then
+				MissionTutorial_JuyongLeaderAura_Xbox()
+			else
+				MissionTutorial_JuyongLeaderAura()
+			end
+			
+			MissionTutorial_JuyongRaiding()
+			Rule_AddInterval(Juyong_CheckZhangjiakouEntered, 2)
+		end,
+		
+		IsComplete = function()
+			return EGroup_Count(eg_zhangjiakou_keep) <= 0
+		end,
+		
+		PreComplete = function()
+			Objective_RemoveUIElements(OBJ_Zhangjiakou, hint_Zhangjiakou)
+			Juyong_RetreatZhangjiakou()
+			Juyong_BurnZhangjiakou()
+			-- on console, restore the VPS at this point
+			if UI_IsXboxControllerUI() then
+				Game_SetVisibility (VF_XboxUIVillagerPriorities, true)
+			end				
+			Action_SpawnUnits_Do({
+				player = g_playerMongol,
+				sgroup = sg_mon_reinforcements,
+				spawnLocation = start_mongol,
+				units = {
+					{ type = "scar_villager", numSquads = Util_DifVar({14, 10, 10, 10}), },
+					{ type = "scar_archer", numSquads = 16, },
+					{ type = "scar_spearman", numSquads = 16, },
+					{ sbp = BP_GetSquadBlueprint("building_town_center_capital_moving_mon"), numSquads = 1, spawn = start_mongol_1, sgroup = sg_mon_tc},
+					{ sbp = BP_GetSquadBlueprint("building_house_moving_mon"), numSquads = 1, spawn = start_mongol_2, },
+					{ sbp = BP_GetSquadBlueprint("building_unit_infantry_moving_mon"), numSquads = 1, spawn = start_mongol_3, },
+					{ sbp = BP_GetSquadBlueprint("building_pasture_moving_mon"), numSquads = 1, spawn = start_mongol_4, },
+					{ sbp = BP_GetSquadBlueprint("building_pasture_moving_mon"), numSquads = 1, spawn = start_mongol_5, },
+				},
+			})
+			
+			Juyong_UpdateMonTC()
+		end,
+		OnComplete = function()
+			Sound_PlayWallaCelebrateOnSGroup(sg_mon_army)
+			Util_StartIntel(EVENTS["Burn_Z_Keep"])
+		end,
+		
+		IsFailed = Juyong_CheckTotalFailure,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Zhangjiakou)
+	
+	Sound_SetMinimumMusicCombatIntensity(0,0)
+end
+
+
+function Juyong_MongolReinforcementOnClick()
+	
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, g_leaderGenghisKhan.sgroup) -- Walla for the reinforcement
+	
+end
+
+
+--? @shortdesc Used to burn down Zhangjiakou, making it quicker for the player to take over
+function Juyong_BurnZhangjiakou()
+
+	--Remove all the old, super-buffing modifiers
+	Player_GetAllEntitiesNearMarker(g_playerJin, eg_temp, base_zhangjiakougate, 80)
+	EGroup_Filter(eg_temp, {"wall", "tower"}, FILTER_REMOVE, eg_zhangjiakou_wall)
+	
+	Modify_ReceivedDamage(eg_zhangjiakou_wall, 100)
+	Modify_OnFireDamagePerTick(eg_zhangjiakou_wall, MUT_Multiplication, 100)
+	
+	--Disable their weapons3
+	local weaponsOff = Modifier_Create(MAT_Weapon, "enable_weapon_modifier", MUT_Enable, false, -1, "hardpoint_01")
+	-- Set towers on fire
+	local _SetOnFire = function(gid, idx, eid)
+		-- Randomizing health helps things burn down out of sync
+		Entity_SetHealth(eid, World_GetRand(15, 24) / 100)
+		Entity_SetOnFire(eid)
+		Modifier_ApplyToEntity(weaponsOff, eid, 0)
+	end
+	
+	EGroup_ForEach(eg_zhangjiakou_defenses, _SetOnFire)
+	-- Make them burn faster
+	Modify_OnFireDamagePerTick(eg_zhangjiakou_defenses, MUT_Multiplication, 8.0)
+	--Disable their weapons
+	Modify_WeaponEnabled(eg_zhangjiakou_defenses, "hardpoint_01", false)
+	
+	
+	eg_zhangjiakou_gate = EGroup_CreateIfNotFound("eg_zhangjiakou_gate")
+	Player_GetAllEntitiesNearMarker(g_playerJin, eg_zhangjiakou_gate, base_zhangjiakou, 100)
+	EGroup_Filter(eg_zhangjiakou_gate, "wall", FILTER_KEEP)
+	EGroup_SetPlayerOwner(eg_zhangjiakou_gate, g_playerMongol)
+	
+	EGroup_Filter(eg_zhangjiakou_gate, "gate", FILTER_KEEP)
+	Missionomatic_SetGateLock(eg_zhangjiakou_gate, false)
+end
+
+function Juyong_CheckZhangjiakouEntered()
+	Player_GetAll(g_playerMongol)
+	if Prox_AreSquadsNearMarker(sg_allsquads,base_zhangjiakou, ANY) then
+		Music_PlayStinger("mus_camp_cust_mongol_drum_short_cavalry_dry")	
+		Sound_PlayWallaChargeOnSGroup(sg_mon_army)
+		
+		DissolveModuleIntoModule("ZhangjiakouArchersNorth1", "ZhangjiakouDefend")
+		DissolveModuleIntoModule("ZhangjiakouArchersNorth2", "ZhangjiakouDefend")
+		DissolveModuleIntoModule("ZhangjiakouArchersNorth3", "ZhangjiakouDefend")
+		DissolveModuleIntoModule("ZhangjiakouArchersNorth4", "ZhangjiakouDefend")
+		DissolveModuleIntoModule("ZhangjiakouArchersSouth1", "ZhangjiakouDefend")	
+		DissolveModuleIntoModule("ZhangjiakouArchersSouth2", "ZhangjiakouDefend")	
+		DissolveModuleIntoModule("ZhangjiakouArchersSouth3", "ZhangjiakouDefend")	
+		DissolveModuleIntoModule("ZhangjiakouArchersSouth4", "ZhangjiakouDefend")	
+		DissolveModuleIntoModule("ZhangjiakouRetreaters", 	"ZhangjiakouDefend")
+		DissolveModuleIntoModule("JinPostZhangjiakou1", 	"ZhangjiakouDefend")
+		Rule_RemoveMe()
+	end
+end
+
+function Juyong_RetreatZhangjiakou()
+	-- Convert Zhangjiakou defenders into RovingArmies and send them to reinforce the Midfield defend module. Not just transferring the group, because rallying is janky.
+	
+	local g_evacuatingArmies = 0
+	
+	local function _SendToMidfield(moduleName)
+		-- Pick the module to go after
+		local module = MissionOMatic_FindModule(moduleName)
+		if module ~= nil then 
+			
+			---- Now create an attack module
+			local moduleData = {
+				descriptor = "Retreating "..tostring(g_evacuatingArmies),
+				type = "RovingArmy",
+				target = mkr_midfield,
+				targetingType = ARMY_TARGETING_DISCARD,
+				player = g_playerJin,
+				attackmove = attackMoveStyle_aggressive,
+				onDeathDissolve = true,
+				onCompleteModule = "MidfieldDefend",
+			}
+			
+			local retreatingModule = RovingArmy_Init(moduleData)
+			
+			TransferModuleIntoModule(module, retreatingModule)
+			
+			-- Increment the ID for the module
+			g_evacuatingArmies = g_evacuatingArmies + 1
+		end
+	end
+	
+	_SendToMidfield("ZhangjiakouDefend")
+	_SendToMidfield("ZhangjiakouArchersNorth1")
+	_SendToMidfield("ZhangjiakouArchersNorth2")
+	_SendToMidfield("ZhangjiakouArchersNorth3")
+	_SendToMidfield("ZhangjiakouArchersNorth4")
+	_SendToMidfield("ZhangjiakouArchersSouth1")
+	_SendToMidfield("ZhangjiakouArchersSouth2")
+	_SendToMidfield("ZhangjiakouArchersSouth3")
+	_SendToMidfield("ZhangjiakouArchersSouth4")
+	_SendToMidfield("JinPostZhangjiakou1")
+	_SendToMidfield("JinPostZhangjiakou2")
+	
+end

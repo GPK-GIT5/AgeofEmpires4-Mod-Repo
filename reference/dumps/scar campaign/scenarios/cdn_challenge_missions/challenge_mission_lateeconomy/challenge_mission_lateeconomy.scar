@@ -1,0 +1,1627 @@
+-----------------------------------------------------------------------
+--
+-- Challenge Mission - Late Economy
+--
+-- The player must build a booming economy and advance to the Imperial Age.
+--
+-- (c) Relic Entertainment 2019
+-- (c) Forgotten Empires 2020
+--
+-----------------------------------------------------------------------
+
+import("Cardinal.scar")
+import("training/coretraininggoals.scar")
+import("challenge_mission_lateeconomy_training.scar")
+import("challenge_mission_lateeconomy_preintro.scar")
+
+-----------------------------------------------------------------------
+-- Data
+----------------------------------------------------------------------- 
+
+
+_challenge = {
+	ftue = false,
+	startingResources = {
+		food = 400.0,
+		wood = 560.0,
+		gold = 100.0,
+		stone = 400.0,				
+	},
+	victory = {},
+	secondary = {
+		currentTechnologies = 0
+	},
+	icons = {
+		victoryObjective = "icons\\races\\common\\victory_conditions\\victory_condition_settlements",
+		noMedalObjective = "icons\\fe\\medal_no.png",
+		bronzeMedalObjective = "icons\\fe\\medal_bronze.png",
+		silverMedalObjective = "icons\\fe\\medal_silver.png",
+		goldMedalObjective = "icons\\fe\\medal_gold.png",
+	},
+	timer = "ChallengeTimer",
+	benchmarks = {
+		unplaced = {
+			name = "Time Elapsed",
+			goal_m = nil,
+			goal_s = nil,
+			time = nil,
+			objective = {},
+		},
+		bronze = {
+			goal_m = 19, -- 19 minutes
+			goal_s = 30, -- 30 seconds
+			time = 19*60+30,
+			objective = {},
+		},
+		silver = {
+			goal_m = 15, -- 15 minutes
+			goal_s = 30, -- 30 seconds
+			time = 15*60+30,
+			objective = {},
+		},
+		gold = {
+			goal_m = 10, -- 10 minutes
+			goal_s = 30, -- 30 seconds
+			time = 10*60+30,
+			objective = {},
+		},
+	},
+	annihilation = {
+		type_map = {	
+			town_center 	= "villager",
+			barracks		= "spearman",
+			archery_range 	= "archer",
+			stable 			= "horseman",
+			siege_workshop 	= "springald",
+			monastery 		= "monk", 
+		},
+		cue = {						-- event cue shown when player is eliminated 
+			title = Loc_Empty(),
+			desc = Loc_Empty(),
+			sfx = "sfx_ui_event_queue_high_priority_play",
+			icon = "icons\\event_queue_high_priority_large",
+			template = "high_priority", 
+			style = ECV_Queue | ECV_Title,
+		},
+	},
+}
+
+	
+
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+
+
+-- Called when Mission loads
+function Mission_OnInit()
+	
+	Game_FadeToBlack(FADE_OUT, 0)
+	
+	if UI_IsXboxUI() then
+		_challenge.benchmarks.bronze = {
+			goal_m = 20, -- 20 minutes
+			goal_s = 0, -- 0 seconds
+			time = 20*60+0,
+			objective = {},
+		}
+		_challenge.benchmarks.silver = {
+			goal_m = 16, -- 16 minutes
+			goal_s = 0, -- 0 seconds
+			time = 16*60+0,
+			objective = {},
+		}
+		_challenge.benchmarks.gold = {
+			goal_m = 10, -- 10 minutes
+			goal_s = 45, -- 45 seconds
+			time = 10*60+45,
+			objective = {},
+		}
+	end
+	
+	-- Setup Victory Objectives
+	_challenge.victory.objectiveVictory = {
+				-- Set Objective Title
+				Title = "$11202274", -- Build a booming economy
+				-- Set Objective Type
+				Type = OT_Primary,
+				-- Completed when sub objectives are all complete
+				IsComplete = function()
+					return Objective_AreSubObjectivesComplete(_challenge.victory.objectiveVictory, ALL)
+				end,
+				-- Function called when Objective is complete
+				OnComplete = ChallengeMission_OnComplete,
+				}
+	_challenge.victory.objectiveVillagers = {
+				-- Set Objective Title
+				Title = "$11202275", -- Train Additional Villagers
+				-- Set Objective Type
+				Type = OT_Secondary,
+				Parent = _challenge.victory.objectiveVictory,
+				}	
+	_challenge.victory.objectiveTraders = {
+				-- Set Objective Title
+				Title = "$11202276", -- Train Additional Traders
+				-- Set Objective Type
+				Type = OT_Secondary,
+				Parent = _challenge.victory.objectiveVictory,
+				}	
+	_challenge.victory.objectiveLandmark = {
+			-- Set Objective Title
+			Title = "$11202277", -- Build a Landmark and advance to the Imperial Age
+			-- Set Objective Type
+			Type = OT_Secondary,
+			Parent = _challenge.victory.objectiveVictory,
+			}
+	
+	_challenge.victory.villagerRequirement = 80 -- 60
+	_challenge.victory.traderRequirement = 30 -- 40
+	_challenge.victory.constructionRequirement = "wonder_imperial_age"
+	_challenge.secondary.townCenterRequirement = 4
+	_challenge.secondary.marketRequirement = 4
+	_challenge.secondary.farmRequirement = 20
+	_challenge.secondary.technologyRequirement = 3
+	_challenge.secondary.populationPercentage = 0.85
+	
+	-- Setup Secondary Objectives
+	_challenge.secondary.objectiveVictory = {
+				-- Set Objective Title
+				Title = "$11200775", --"Expand your base"
+				-- Set Objective Type
+				Type = OT_Secondary,
+				-- Completed when sub objectives are all complete
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(_challenge.secondary.objectiveVictory, ALL)
+		end
+		,
+		}
+	_challenge.secondary.objectiveSecondTownCenter = {
+		
+				-- Set Objective Title
+				Title = "$11200776", -- "Build a second Town Center"
+				-- Set Objective Type
+				Type = OT_Secondary,
+				Parent = _challenge.secondary.objectiveVictory,
+				}
+	_challenge.secondary.objectiveAddTownCenters = {
+		
+				-- Set Objective Title
+				Title = "$11200777", -- "Build additional Town Centers"
+				-- Set Objective Type
+				Type = OT_Secondary,
+				Parent = _challenge.secondary.objectiveVictory,
+				}
+	_challenge.secondary.objectiveAddMarkets = {
+		
+				-- Set Objective Title
+				Title = "$11200778", -- "Build additional Markets"
+				-- Set Objective Type
+				Type = OT_Secondary,
+				Parent = _challenge.secondary.objectiveVictory,
+				}
+	_challenge.secondary.objectiveAddHouses = {
+		
+				-- Set Objective Title
+				Title = "$11200779", -- "Build additional Houses"
+				-- Set Objective Type
+				Type = OT_Secondary,
+				Parent = _challenge.secondary.objectiveVictory,
+				}
+	_challenge.secondary.objectiveAddFarms = {
+		
+				-- Set Objective Title
+				Title = "$11200780", -- "Build additional Farms"
+				-- Set Objective Type
+				Type = OT_Secondary,
+				Parent = _challenge.secondary.objectiveVictory,
+				}
+	_challenge.secondary.objectiveResearchTechs = {
+		
+				-- Set Objective Title
+				Title = "$11200781", -- "Research economic technologies"
+				-- Set Objective Type
+				Type = OT_Secondary,
+				Parent = _challenge.secondary.objectiveVictory,
+				}
+	
+	
+	-- Setup Benchmark Objectives
+	_challenge.benchmarks.unplaced.objective = {
+				-- Set Objective Title
+				Title = "$11166938", -- "Time Elapsed"
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.noMedalObjective,
+				}
+	_challenge.benchmarks.bronze.objective = {
+				-- Set Objective Title
+				Title = Loc_FormatText("$11200672", _challenge.benchmarks.bronze.goal_m, _challenge.benchmarks.gold.goal_s), -- "Bronze Medal (Goal %1TIME_REQUIREMENT%m %2TIME_REQUIREMENT%s) - "
+				TelemetryTitle = "TimeRequired_BronzeMedal",
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.bronzeMedalObjective,
+				}
+	_challenge.benchmarks.silver.objective = {
+				-- Set Objective Title
+				Title = Loc_FormatText("$11200673", _challenge.benchmarks.silver.goal_m, _challenge.benchmarks.gold.goal_s), -- "Silver Medal (Goal %1TIME_REQUIREMENT%m %2TIME_REQUIREMENT%s) - "
+				TelemetryTitle = "TimeRequired_SilverMedal",
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.silverMedalObjective,
+				}
+	_challenge.benchmarks.gold.objective = {
+				-- Set Objective Title
+				Title = Loc_FormatText("$11200674", _challenge.benchmarks.gold.goal_m, _challenge.benchmarks.gold.goal_s), -- "Gold Medal (Goal %1TIME_REQUIREMENT%m %2TIME_REQUIREMENT%s) - "
+				TelemetryTitle = "TimeRequired_GoldMedal",
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.goldMedalObjective,
+				}
+	
+	--Cache the cost of the cheapest unit that can be made from each type of building.
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- Setup table to store cheapest squad
+			player._annihilation = {cheapest_squad_cost = {}}
+			
+			
+			for entity_type, squad_type in pairs(_challenge.annihilation.type_map) do 
+				
+				local sbp = Cardinal_ConvertTypeToSquadBlueprint(squad_type, player.id)
+				
+				if sbp == nil then
+					
+					print(string.format("Annihilation_OnInit() - No squad blueprint found for %s %s", player.raceName, squad_type))
+					
+				else
+					
+					player._annihilation.cheapest_squad_cost[entity_type] = Player_GetSquadBPCost(player.id, sbp)
+					
+				end
+			end
+		end
+	end
+end
+
+-----------------------------------------------------------------------
+-- Mission Functions
+-----------------------------------------------------------------------
+
+-- Mission Preset
+function Mission_Preset()
+	
+	-- Setup Game and Players
+	ChallengeMission_OnGameSetup()
+	ChallengeMission_SetupPlayer()
+	
+	-- Add unit and upgrade restrictions
+	ChallengeMission_SetRestrictions()
+	
+	--Audio Considerations	
+	--Allow silence system working in music 
+	if Music_UnlockIntensity then
+		Sound_SetForceMusic(false)
+	else
+		Sound_SetForceMusic(true)
+	end
+	
+end
+
+-- Called before Mission Start
+function Mission_PreStart()
+	
+	-- Get map resources
+	ChallengeMission_FindAllResources()
+	-- Add Starting Upgrades
+	ChallengeMission_InitStartingUpgrades()
+	
+	-- Play intro Intel
+	
+	EarlyEconomy_PreIntro_Setup_Scenes()
+	Util_StartIntel(EVENTS.LateEconomy_PreIntro)
+	
+	-- Check for end of Event
+	Rule_AddInterval(Mission_PreStart_IntroNISFinished, 0.125)
+	-- Hold off on starting the mission until cinematic finishes
+	StartMission_Hold()
+end
+
+-- Called at Mission Start
+function Mission_Start()
+	
+	-- Setup Challenge Mission
+	ChallengeMission_SetupChallenge()
+	
+	-- Initialize Objectives
+	ChallengeMission_InitializeObjectives()
+	
+	-- First VO line to get the player started
+	Util_StartIntel(EVENTS.Narr_Start)
+	
+	-- Register callbacks for global events
+	Rule_AddGlobalEvent(ChallengeMission_OnUpgradeComplete, GE_UpgradeComplete)
+	Rule_AddGlobalEvent(ChallengeMission_OnConstructionComplete, GE_ConstructionComplete)
+	Rule_AddGlobalEvent(ChallengeMission_OnDestruction, GE_EntityKilled)
+	
+	-- Check the player's progress
+	Rule_AddInterval(ChallengeMission_NarrativeHintSecondTownCenter, 0.5)
+	Rule_AddInterval(ChallengeMission_NarrativeHintMarkets, 0.5)
+	Rule_AddInterval(ChallengeMission_NarrativeHintHouses, 3)
+	Rule_AddInterval(ChallengeMission_NarrativeHintFarms, 0.5)
+	Rule_AddInterval(ChallengeMission_NarrativeHintTechnologies, 0.5)
+	Rule_AddInterval(ChallengeMission_CheckAgingUp, 0.5)
+	Rule_AddInterval(ChallengeMission_CheckUnitCount, 0.5)
+	
+	-- Update Objectives and check for Victory
+	Rule_AddInterval(ChallengeMission_Update, 0.125)
+	
+	-- Add hintpoints for trading posts
+	eg_tradingPosts = EGroup_CreateIfNotFound("eg_tradingPosts")
+	World_GetAllNeutralEntities(eg_tradingPosts)
+	EGroup_Filter(eg_tradingPosts, "settlement", FILTER_KEEP)	-- building_trade_post_east
+	HintPoint_Add(eg_tradingPosts, true, "$11202314") -- Send your Traders to this Trading Post to generate Gold.
+	--hintPoint_tradingPosts = Objective_AddUIElements(_challenge.victory.objectiveVictory, eg_tradingPosts , false, "Send your Trade Carts to this Trading Post to generate Gold.", true, 2 ) --
+		
+end
+
+-- Checks if intro Event is running
+function Mission_PreStart_IntroNISFinished()
+	
+	-- If the event has finished running
+	if not Event_IsAnyRunning() then  
+		
+		-- Release hold on mission start
+		StartMission_ReleaseHold()		
+		
+	-- Set starting resources
+	Player_SetResource(localPlayer, RT_Food, _challenge.startingResources.food)
+	Player_SetResource(localPlayer, RT_Wood, _challenge.startingResources.wood)
+	Player_SetResource(localPlayer, RT_Gold, _challenge.startingResources.gold)
+	Player_SetResource(localPlayer, RT_Stone, _challenge.startingResources.stone)
+		
+		-- Remove this rule
+		Rule_RemoveMe()
+	end
+	
+end
+
+-----------------------------------------------------------------------
+-- Functions
+-----------------------------------------------------------------------
+
+-- Setup functionality for mission
+function ChallengeMission_OnGameSetup()
+	
+	-- Create player references
+	localPlayer = World_GetPlayerAt(1) --Player
+	
+end
+
+-- Configure Players
+function ChallengeMission_SetupPlayer()
+	
+	-- Set Player Age
+	Setup_SetPlayerName(localPlayer, "$11202313") -- Rus
+	Player_SetCurrentAge(localPlayer, AGE_CASTLE)
+	
+	-- Enable Wonder construction
+	Player_SetStateModelBool(localPlayer, "is_wonder_construction_enabled", true)
+	
+end
+
+-- Restrict upgrades and units
+function ChallengeMission_SetRestrictions()
+	
+	-- Remove buildings
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_unit_infantry_control_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_unit_ranged_control_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_unit_cavalry_control_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_unit_siege_control_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_defense_keep_control_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_defense_palisade_gate_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_defense_palisade_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_defense_tower_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_defense_wall_gate_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_defense_wall_rus"), ITEM_REMOVED)
+	--Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_defense_wooden_fort_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_tech_unit_ranged_control_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_unit_religious_control_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_unit_naval_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_tech_university_control_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_tech_unit_infantry_control_rus"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_wonder_age4_saint_basils_cathedral_control_rus"), ITEM_REMOVED)
+	
+	-- Remove units
+	Player_SetSquadProductionAvailability(localPlayer, BP_GetSquadBlueprint("unit_naval_combat_ship_2_rus"), ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(localPlayer, BP_GetSquadBlueprint("unit_naval_fireship_3_rus"), ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(localPlayer, BP_GetSquadBlueprint("unit_naval_transport_ship_2_rus"), ITEM_REMOVED)
+	
+	-- Remove upgrades
+	Player_SetUpgradeAvailability(localPlayer, BP_GetUpgradeBlueprint("upgrade_naval_role_chainshot_rus"), ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, BP_GetUpgradeBlueprint("upgrade_naval_role_firearrows_rus"), ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, BP_GetUpgradeBlueprint("upgrade_naval_role_firestation_rus"), ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, BP_GetUpgradeBlueprint("upgrade_wooden_castle_arrowslits_rus"), ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, BP_GetUpgradeBlueprint("upgrade_wooden_castle_springald_rus"), ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, BP_GetUpgradeBlueprint("upgrade_wooden_castle_turret_rus"), ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, BP_GetUpgradeBlueprint("upgrade_wooden_castle_watch_rus"), ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, BP_GetUpgradeBlueprint("upgrade_villager_health"), ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, BP_GetUpgradeBlueprint("upgrade_tech_university_murder_holes_4"), ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(localPlayer, UPG.RUS.UPGRADE_SPRINGALD_RANGE_RUS, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.RUS.UPGRADE_SIEGE_IMPROVEMENTS_RUS, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.RUS.UPGRADE_SIEGE_CREW_TRAINING_RUS, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.RUS.UPGRADE_SIEGE_FINED_TUNED_GUNS_RUS, ITEM_REMOVED)
+	
+end
+
+
+-- Initialize starting upgrades
+function ChallengeMission_InitStartingUpgrades()
+	local bp_hunting_gear = BP_GetUpgradeBlueprint("upgrade_econ_villager_hunting_gear_1")
+	Player_CompleteUpgrade(localPlayer, bp_hunting_gear)
+end
+
+
+-- Get all resources on map
+function ChallengeMission_FindAllResources()
+	
+	-- Create egroups
+	eg_allNeutral = EGroup_CreateIfNotFound("eg_allNeutral")
+	eg_allWoodResources = EGroup_CreateIfNotFound("eg_allWoodResources")
+	eg_allStoneResources = EGroup_CreateIfNotFound("eg_allStoneResources")
+	eg_allGoldResources = EGroup_CreateIfNotFound("eg_allGoldResources")
+	
+	-- Get all neutral entities
+	World_GetAllNeutralEntities(eg_allNeutral)
+	
+	-- Filter out resources
+	EGroup_Filter(eg_allNeutral, "tree", FILTER_REMOVE, eg_allWoodResources)
+	EGroup_Filter(eg_allNeutral, "stone", FILTER_REMOVE, eg_allStoneResources)
+	EGroup_Filter(eg_allNeutral, "gold", FILTER_REMOVE, eg_allGoldResources)
+
+end
+
+-- Initialize Additional Starting Units
+function ChallengeMission_InitStartingUnits()
+	
+	-- Get unit blueprints
+	local sbp_villager_rus = BP_GetSquadBlueprint("unit_villager_1_rus")
+	--local sbp_fishingboat_rus = BP_GetSquadBlueprint("unit_naval_fishing_boat_2_rus")
+	local sbp_tradecart_rus = BP_GetSquadBlueprint("unit_trade_cart_rus")
+	local sbp_scout_rus = BP_GetSquadBlueprint("unit_scout_1_rus")
+	
+	--[[ PLAYER UNITS ]]--
+	
+	-- Create SGroups
+	sg_player_farmer = SGroup_CreateIfNotFound("sg_player_farmer")
+	sg_player_fisherman = SGroup_CreateIfNotFound("sg_player_fisherman")
+	sg_player_forester = SGroup_CreateIfNotFound("sg_player_forester")
+	sg_player_goldminer = SGroup_CreateIfNotFound("sg_player_goldminer")
+	sg_player_stoneminer = SGroup_CreateIfNotFound("sg_player_stoneminer")
+	--sg_player_gatherer = SGroup_CreateIfNotFound("sg_player_gatherer")
+	sg_player_hunter = SGroup_CreateIfNotFound("sg_player_hunter")
+	sg_player_deer = SGroup_CreateIfNotFound("sg_player_deer")
+	sg_player_first_traders = SGroup_CreateIfNotFound("sg_player_first_traders")
+	sg_player_second_traders = SGroup_CreateIfNotFound("sg_player_second_traders")
+	--sg_player_fishingboat = SGroup_CreateIfNotFound("sg_player_fishingboat")
+	
+	-- Create EGroups
+	eg_player_market = EGroup_CreateIfNotFound("eg_player_market")
+	
+	-- Spawn units
+	UnitEntry_DeploySquads(localPlayer, sg_player_farmer, {{sbp = sbp_villager_rus, numSquads = 2 }}, mkr_player_first_farmer_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_farmer, {{sbp = sbp_villager_rus, numSquads = 2 }}, mkr_player_second_farmer_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_fisherman, {{sbp = sbp_villager_rus, numSquads = 1 }}, mkr_player_fisherman_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_forester, {{sbp = sbp_villager_rus, numSquads = 7 }}, mkr_player_forester_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_goldminer, {{sbp = sbp_villager_rus, numSquads = 2 }}, mkr_player_goldminer_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_stoneminer, {{sbp = sbp_villager_rus, numSquads = 2 }}, mkr_player_stoneminer_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_hunter, {{sbp = sbp_villager_rus, numSquads = 4 }}, mkr_player_hunter_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_deer, {{sbp = BP_GetSquadBlueprint("gaia_huntable_deer"), numSquads = 1 }}, mkr_player_deer_spawn)
+	--UnitEntry_DeploySquads(localPlayer, sg_player_gatherer, {{sbp = sbp_villager_rus, numSquads = 3 }}, mkr_player_gatherer_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_first_traders, {{sbp = sbp_tradecart_rus, numSquads = 2, creator = eg_player_market}}, mkr_player_trader_spawn1)
+	UnitEntry_DeploySquads(localPlayer, sg_player_second_traders, {{sbp = sbp_tradecart_rus, numSquads = 2, creator = eg_player_market}}, mkr_player_trader_spawn2)
+	--UnitEntry_DeploySquads(localPlayer, sg_player_fishingboat, {{sbp = sbp_fishingboat_rus, numSquads = 1 }}, mkr_player_fishingboat_spawn)
+	UnitEntry_DeploySquads(localPlayer, sg_player_startingscouts, {{sbp = sbp_scout_rus, numSquads = 1 }}, mkr_player_startingscout_spawn)
+	
+	-- Spawn minimap icons
+	Util_CreateEntities(nil, eg_minimap, BP_GetEntityBlueprint("gaia_deer_dummy_minimap_icon"), mkr_player_deer_spawn, 1, nil, true, true)
+	
+end
+
+-- Assign units to resources
+function ChallengeMission_AssignUnitsToResources()
+	
+	-- Get Player farms (they are cleared from scenario egroup after pre-intro assignment)
+	eg_farms = Player_GetEntitiesFromType(localPlayer, "farm")
+	
+	-- Assign units
+	local function _AssignFarmer(gid, idx, sid)
+		SGroup_Single(sg_single, sid)
+		local e_closest_farm = EGroup_GetClosestEntity(eg_farms, Util_GetPosition(sid))
+		if e_closest_farm ~= nil then
+			EGroup_Single(eg_single, e_closest_farm)
+			LocalCommand_SquadEntity(localPlayer, sg_single, SCMD_Gather, eg_single, false)
+			EGroup_Remove(eg_farms, e_closest_farm)
+		else
+			print("Could not find farm to assign villager to")
+		end
+	end
+	
+	local function _AssignFisherman(gid, idx, sid)
+		
+		SGroup_Single(sg_single, sid)
+		local e_closest_fish = EGroup_GetClosestEntity(eg_shore_fish, Util_GetPosition(sid))
+		if e_closest_fish ~= nil then
+			EGroup_Single(eg_single, e_closest_fish)
+			LocalCommand_SquadEntity(localPlayer, sg_single, SCMD_Gather, eg_single, false)
+			EGroup_Remove(eg_shore_fish, e_closest_fish)
+		else
+			print("Could not find fish to assign villager to")
+		end
+		
+	end
+	
+	local function _AssignForester(gid, idx, sid)
+
+		SGroup_Single(sg_single, sid)
+		local entity_tree = EGroup_GetClosestEntity(eg_allWoodResources, Util_GetPosition(sid))
+		if entity_tree ~= nil then
+			EGroup_Single(eg_single, entity_tree)
+			LocalCommand_SquadEntity(localPlayer, sg_single, SCMD_Gather, eg_single, false)
+			EGroup_Remove(eg_allWoodResources, entity_tree)
+		else
+			print("Could not find a tree to assign villager to")
+		end
+		
+	end
+	
+	local function _AssignGoldminer(gid, idx, sid)
+
+		SGroup_Single(sg_single, sid)
+		LocalCommand_SquadEntity(localPlayer, sg_single, SCMD_Gather, eg_gold_deposit, false)
+		
+	end
+	
+	local function _AssignStoneminer(gid, idx, sid)
+
+		SGroup_Single(sg_single, sid)
+		LocalCommand_SquadEntity(localPlayer, sg_single, SCMD_Gather, eg_stone_deposit, false)
+		
+	end
+	
+	local function _AssignGatherer(gid, idx, sid)
+		
+		SGroup_Single(sg_single, sid)
+		local e_closest_berry = EGroup_GetClosestEntity(eg_berry_bushes, Util_GetPosition(sid))
+		if e_closest_berry ~= nil then
+			EGroup_Single(eg_single, e_closest_berry)
+			LocalCommand_SquadEntity(localPlayer, sg_single, SCMD_Gather, eg_single, false)
+			EGroup_Remove(eg_berry_bushes, e_closest_berry)
+		else
+			print("Could not find berries to assign villager to")
+		end
+		
+	end
+	
+	local function _AssignHunter(gid, idx, sid)
+		
+		-- There are no more than 2 deer (alive) within 15 Meters of the drop off
+		local eg_close_food_deposits = Misc_FindDepositsOfTypeCloseToPosition(RT_Food,
+			Cardinal_ConvertTypeToEntityBlueprint("villager", localPlayer), 
+			Squad_GetPosition(sid),
+			120)
+		
+		local genericDeerBp = BP_GetSquadBlueprint("gaia_huntable_deer")
+		local sg_deer = SGroup_CreateUnique("")
+		
+		
+		if EGroup_Count(eg_close_food_deposits) ~= 0 then
+			for i = 1, EGroup_Count(eg_close_food_deposits), 1 do
+				local deposit = EGroup_GetEntityAt(eg_close_food_deposits, i) 
+				local deposit_squad = Entity_GetSquad(deposit)
+				if deposit_squad ~= nil then
+					local squadBP = Squad_GetBlueprint(deposit_squad)
+					if squadBP == genericDeerBp then
+						SGroup_Add(sg_deer, deposit_squad)
+					end
+				end
+			end
+			EGroup_Clear(eg_close_food_deposits)
+		end
+		
+		-- Assign!
+		if SGroup_Count(sg_deer) > 0 then
+			local sg_targetDeer = SGroup_CreateUnique("")
+
+			SGroup_Single(sg_single, sid)
+			local sacrificialDeer = SGroup_GetClosestSquad(sg_deer, Util_GetPosition(sid))
+			if sacrificialDeer ~= nil then
+				SGroup_Single(sg_targetDeer, sacrificialDeer)
+				LocalCommand_SquadSquad(localPlayer, sg_single, SCMD_Gather, sg_targetDeer, false)
+			end
+		end
+		
+	end
+	
+	local function _AssignFishingboat(gid, idx, sid)
+		
+		SGroup_Single(sg_single, sid)
+		local e_closest_fish = EGroup_GetClosestEntity(eg_deepwater_fish, Util_GetPosition(sid))
+		if e_closest_fish ~= nil then
+			EGroup_Single(eg_single, e_closest_fish)
+			LocalCommand_SquadEntity(localPlayer, sg_single, SCMD_Gather, eg_single, false)
+			EGroup_Remove(eg_deepwater_fish, e_closest_fish)
+		else
+			print("Could not find fish to assign villager to")
+		end
+		
+	end
+	
+	-- For every sgroup
+	SGroup_ForEach(sg_player_farmer, _AssignFarmer)
+	SGroup_ForEach(sg_player_fisherman, _AssignFisherman)
+	SGroup_ForEach(sg_player_forester, _AssignForester)
+	SGroup_ForEach(sg_player_goldminer, _AssignGoldminer)
+	SGroup_ForEach(sg_player_stoneminer, _AssignStoneminer)
+	--SGroup_ForEach(sg_player_gatherer, _AssignGatherer)
+	SGroup_ForEach(sg_player_hunter, _AssignHunter)
+	--SGroup_ForEach(sg_player_fishingboat, _AssignFishingboat)
+	
+end
+
+-- Positions player's starting units for intro cinematic
+function ChallengeMission_PositionStartingUnits()
+	
+	-- Create groups
+	sg_player_startingunits = SGroup_CreateIfNotFound("sg_player_startingunits")
+	sg_player_startingvillagers = SGroup_CreateIfNotFound("sg_player_startingvillagers")
+	sg_player_startingscouts = SGroup_CreateIfNotFound("sg_player_startingscouts")
+	
+	-- Get all units near starting point
+	Player_GetAllSquadsNearMarker(localPlayer, sg_player_startingunits, mkr_player_startingvillager_rally, 20)
+	local sg_playerUnits = Player_GetSquads(localPlayer)
+	
+	-- Filter out villagers/scouts
+	SGroup_Filter(sg_player_startingunits, "villager", FILTER_REMOVE, sg_player_startingvillagers)
+	SGroup_Filter(sg_playerUnits, "scout", FILTER_REMOVE, sg_player_startingscouts)
+
+	-- Warp to "spawn" positions
+	SGroup_WarpToMarker(sg_player_startingvillagers, mkr_player_startingvillager_spawn)
+	SGroup_WarpToMarker(sg_player_startingscouts, mkr_player_startingscout_spawn)
+	
+end
+
+
+-- Move starting units to starting position
+function ChallengeMission_RallyStartingUnits()
+	
+	-- Rally
+	Cmd_FormationMove(sg_player_startingvillagers, mkr_player_startingvillager_rally, false, false, mkr_player_startingvillager_rally)
+	Cmd_FormationMove(sg_player_startingscouts, mkr_player_startingscout_rally, false, false, mkr_player_startingscout_direction)
+	
+end
+
+-- Assigns trader to settlement
+function ChallengeMission_AssignTrader()
+	
+	-- Assign to settlement
+	LocalCommand_SquadEntity(localPlayer, sg_player_first_traders, SCMD_Trade, eg_settlement_south, false)
+	LocalCommand_SquadEntity(localPlayer, sg_player_second_traders, SCMD_Trade, eg_settlement_south, false)
+	
+end
+
+-- Setup Challenge Mission
+function ChallengeMission_SetupChallenge()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- Add a challenge table to player table
+			player._challenge = {
+				-- Add victory objective variable
+				hasObjectiveVictory = false,
+				-- Add sub objective variable
+				hasObjectiveVillagers = false,
+				-- Add sub objective variable
+				hasObjectiveTraders = false,
+				-- Add sub objective variable
+				hasObjectiveLandmark = false,
+				
+				-- Add victory objective variable
+				hasObjectiveSecondary = false,
+				-- Add sub objective variable
+				hasObjectiveSecondTownCenter = false,
+				-- Add sub objective variable
+				hasObjectiveAddTownCenters = false,
+				-- Add sub objective variable
+				hasObjectiveAddMarkets = false,
+				-- Add sub objective variable
+				hasObjectiveAddHouses = false,
+				-- Add sub objective variable
+				hasObjectiveAddFarms = false,
+				-- Add sub objective variable
+				hasObjectiveResearchTechs = false,
+				
+				-- Add KPI objective variable
+				hasKpiObjective = false,
+				-- Add current benchmark
+				currentBenchmark = nil,
+				-- Add timer variable
+				timer = string.format("challengeTimer_%d", player.index),
+				-- Store timer start time (relative to World_GetGameTime)
+				startTime = World_GetGameTime(),
+				-- Store completion time
+				completionTime = nil
+			}
+			
+			-- Hide Building Scuttle
+			-- Player_SetAbilityAvailability(player.id, BP_GetAbilityBlueprint("core_building_scuttle"), ITEM_REMOVED)
+			
+		end
+	end
+end
+
+-- Add new objectives
+function ChallengeMission_InitializeObjectives()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-----------------------------------------------------------------------
+			-- Victory Objective
+			
+			-- Register Primary objective
+			Objective_Register(_challenge.victory.objectiveVictory, player.id)
+			-- Start objective
+			Objective_Start(_challenge.victory.objectiveVictory, true, false)
+			-- Player has victory objective
+			player._challenge.hasObjectiveVictory = true;
+			
+			-----------------------------------------------------------------------
+			-- Sub Victory Objective(s)
+			
+			-- Register Villager objective
+			Objective_Register(_challenge.victory.objectiveVillagers, player.id)
+			-- Start objective
+			Objective_Start(_challenge.victory.objectiveVillagers, false, false)			
+			-- Add Counter to track Villager count
+			Objective_SetCounter(_challenge.victory.objectiveVillagers, 0, _challenge.victory.villagerRequirement)
+			-- Player has objective
+			player._challenge.hasObjectiveVillagers = true;
+			
+			-- Register Trader objective
+			Objective_Register(_challenge.victory.objectiveTraders, player.id)
+			-- Start objective
+			Objective_Start(_challenge.victory.objectiveTraders, false, false)
+			-- Add Counter to track Trader count
+			Objective_SetCounter(_challenge.victory.objectiveTraders, 0, _challenge.victory.traderRequirement)
+			-- Player has objective
+			player._challenge.hasObjectiveTraders = true;
+			
+			-- Register Age Up objective
+			Objective_Register(_challenge.victory.objectiveLandmark, player.id)
+			-- Start objective
+			Objective_Start(_challenge.victory.objectiveLandmark, false, false)
+			-- Player has objective
+			player._challenge.hasObjectiveLandmark = true;
+			
+			-----------------------------------------------------------------------
+			-- Secondary Objective
+			
+			-- Register Secondary objective
+			Objective_Register(_challenge.secondary.objectiveVictory, player.id)
+			-- Start objective
+			--Objective_Start(_challenge.secondary.objectiveVictory, false, false)
+			-- Player has secondary objective 
+			player._challenge.hasObjectiveSecondary = true;
+			
+			-----------------------------------------------------------------------
+			-- Sub Secondary Objective(s)
+			
+			-- Register Second Town Center objective
+			Objective_Register(_challenge.secondary.objectiveSecondTownCenter, player.id)	
+			
+			-- Register Town Centers objective
+			Objective_Register(_challenge.secondary.objectiveAddTownCenters, player.id)		
+			
+			-- Register Markets objective
+			Objective_Register(_challenge.secondary.objectiveAddMarkets, player.id)		
+			
+			-- Register Houses objective
+			Objective_Register(_challenge.secondary.objectiveAddHouses, player.id)		
+			
+			-- Register Farms objective
+			Objective_Register(_challenge.secondary.objectiveAddFarms, player.id)	
+			
+			-- Register Researches objective
+			Objective_Register(_challenge.secondary.objectiveResearchTechs, player.id)	
+			
+			-----------------------------------------------------------------------
+			-- Medal Objective
+			
+			-- Get time elapsed since start time (end of cinematic)
+			local timeElapsed = World_GetGameTime() - player._challenge.startTime
+			
+			-- Register Medal objective
+			Objective_Register(_challenge.benchmarks.gold.objective, player.id)
+			-- Start objective
+			Objective_Start(_challenge.benchmarks.gold.objective, false, false)
+			-- Player has kpi objective
+			player._challenge.hasKpiObjective = true;
+			
+			-- If timer does not already exist
+			if not Timer_Exists(player._challenge.timer) then 
+				
+				-- Start timer
+				Timer_Start(player._challenge.timer, _challenge.benchmarks.gold.time)
+				
+			end
+			
+			-- Update timer display (incrementing)
+			Objective_StartTimer(_challenge.benchmarks.gold.objective, COUNT_UP, timeElapsed, 10)
+			
+			-- Set player's current benchmark as Gold
+			player.currentBenchmark = _challenge.benchmarks.gold
+			
+		end
+	end
+end
+
+-- Global event callback for GE_UpgradeComplete
+function ChallengeMission_OnUpgradeComplete(context)
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			-- If the player advanced to the imperial age and has not completed the corresponding sub objective
+			if context.upgrade == BP_GetUpgradeBlueprint("imperial_age") and not Objective_IsComplete(_challenge.victory.objectiveLandmark) then
+				-- Complete sub objective
+				Objective_Complete(_challenge.victory.objectiveLandmark)
+				-- Remove rule
+				Rule_RemoveMe()
+			end
+			
+			--not context.upgrade == BP_GetUpgradeBlueprint("imperial_age") and 
+			if BP_IsUpgradeOfType(context.upgrade, "economic_upgrade") then
+				_challenge.secondary.currentTechnologies = _challenge.secondary.currentTechnologies + 1
+			end
+			
+			if Objective_IsStarted(_challenge.secondary.objectiveResearchTechs) then
+				if _challenge.secondary.currentTechnologies >= _challenge.secondary.technologyRequirement then
+					Objective_Complete(_challenge.secondary.objectiveResearchTechs)
+					player._challenge.hasObjectiveResearchTechs = false
+				end
+			end
+		end
+	end	
+end
+
+function ChallengeMission_OnConstructionComplete(context)
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- Creates an egroup and adds all of the player's town centers to it
+			local eg_playerTownCenters = Player_GetEntitiesFromType(localPlayer, "town_center")
+			EGroup_FilterUnderConstruction(eg_playerTownCenters, FILTER_REMOVE)
+			-- Returns the number of town centers in the group
+			local townCenterCount = EGroup_Count(eg_playerTownCenters)
+			
+			-- Creates an egroup and adds all of the player's houses to it
+			local eg_playerHouses = Player_GetEntitiesFromType(localPlayer, "house")
+			EGroup_FilterUnderConstruction(eg_playerHouses, FILTER_REMOVE)
+			-- Returns the number of houses in the group
+			local houseCount = EGroup_Count(eg_playerHouses)
+			
+			-- Creates an egroup and adds all of the player's markets to it
+			local eg_playerMarkets = Player_GetEntitiesFromType(localPlayer, "trade_post")
+			EGroup_FilterUnderConstruction(eg_playerMarkets, FILTER_REMOVE)
+			-- Returns the number of markets in the group
+			local marketCount = EGroup_Count(eg_playerMarkets)
+			
+
+			if Entity_IsOfType(context.entity, "town_center") then
+				if townCenterCount == 2 then
+					
+					-- Complete build second town center objective
+					if Objective_IsStarted(_challenge.secondary.objectiveSecondTownCenter) then
+						Objective_Complete(_challenge.secondary.objectiveSecondTownCenter, false, false)
+						player._challenge.hasobjectiveSecondTownCenter = false
+					end
+					
+					-- Startsbuild additional town centers objective
+					if not player._challenge.hasObjectiveAddTownCenters then				
+						Util_StartIntel(EVENTS.Narr_TownCenterComplete)
+						--Objective_Start(_challenge.secondary.objectiveAddTownCenters, false, false)
+						player._challenge.hasObjectiveAddTownCenters = true
+					end
+				end
+				if townCenterCount >= _challenge.secondary.townCenterRequirement then
+					
+					-- Complete build addtional town centers objective
+					if player._challenge.hasObjectiveAddTownCenters then
+						Objective_Complete(_challenge.secondary.objectiveAddTownCenters, false, false)
+						player._challenge.hasObjectiveAddTownCenters = false
+					end
+				end
+			end
+			
+			if Objective_IsStarted(_challenge.secondary.objectiveAddMarkets) then
+				if Entity_IsOfType(context.entity, "trade_post") then
+					if marketCount >= _challenge.secondary.marketRequirement then
+						Objective_Complete(_challenge.secondary.objectiveAddMarkets, false, false)
+						player._challenge.hasobjectiveAddMarkets = false
+					end
+				end
+			end
+			
+			if Objective_IsStarted(_challenge.secondary.objectiveAddHouses) then
+				if Entity_IsOfType(context.entity, "house") then
+					
+					local popCapThreshold = Player_GetPopulationPercentage(localPlayer, CT_Personnel)
+					
+					if popCapThreshold < _challenge.secondary.populationPercentage then
+						Objective_Complete(_challenge.secondary.objectiveAddHouses, false, false)
+						player._challenge.hasobjectiveAddHouses = false
+					end
+				end
+			end
+			
+			if player._challenge.hasobjectiveAddFarms then
+				if Entity_IsOfType(context.entity, "farm") then
+					if farmCount >= _challenge.secondary.farmRequirement then
+						Objective_Complete(_challenge.secondary.objectiveAddFarms, false, false)
+						hasobjectiveAddFarms = false
+					end
+				end
+			end
+		end
+	end
+end
+
+
+-- Update Objectives - Called by a rule every simtic
+function ChallengeMission_Update()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If player is local (not one of the AI players)
+		if player.isLocal then
+			-----------------------------------------------------------------------
+			-- Objective Logic
+			
+			-- Creates an sgroup and adds all of the player's units to it
+			local sg_playerVillagers = Player_GetSquads(localPlayer)
+			
+			-- Takes the group with all of the player's units and filters out everything except for the type villager
+			SGroup_Filter(sg_playerVillagers, "villager", FILTER_KEEP)
+			-- Returns the number of units remaining in the sgroup (only villagers)
+			local villagerCount = SGroup_Count(sg_playerVillagers)
+			
+			-- Creates an sgroup and adds all of the player's units to it
+			local sg_playerTraders = Player_GetSquads(localPlayer)
+			
+			-- Takes the group with all of the player's units and filters out everything except for the type villager
+			SGroup_Filter(sg_playerTraders, "trade_cart", FILTER_KEEP)
+			-- Returns the number of units remaining in the sgroup (only villagers)
+			local traderCount = SGroup_Count(sg_playerTraders)
+			
+			player._challenge.villagercurrent = villagerCount
+			player._challenge.tradercurrent = traderCount
+			player._challenge.foodGathered = Player_GetResource(player.id, RT_Food)
+			player._challenge.goldGathered = Player_GetResource(player.id, RT_Gold)
+			player._challenge.woodGathered = Player_GetResource(player.id, RT_Wood)
+			player._challenge.stoneGathered = Player_GetResource(player.id, RT_Stone)
+			
+			
+			-- If player no longer has the Villagers sub Objective
+			if (villagerCount < _challenge.victory.villagerRequirement) and Objective_IsComplete(_challenge.victory.objectiveVillagers) then
+				Objective_Stop(_challenge.victory.objectiveVillagers, false, false)
+				Objective_Start(_challenge.victory.objectiveVillagers, false, false)
+				
+			end
+			
+			-- If player has the Villagers Sub Objective
+			if (Objective_IsStarted(_challenge.victory.objectiveVillagers) and not Objective_IsComplete(_challenge.victory.objectiveVillagers)) then
+				
+				
+				-- If Villagers count meets or exceeds requirement
+				if (villagerCount >= _challenge.victory.villagerRequirement) then
+					
+					-- Set Villagers Trained to requirement for clean objective update (20/20 vs 21/20)
+					player._challenge.villagercurrent = _challenge.victory.villagerRequirement
+					-- Mark Objective as Complete
+					Objective_Complete(_challenge.victory.objectiveVillagers, false, false)
+					
+				end
+				
+				-- Update Objective Counter
+				Objective_SetCounter(_challenge.victory.objectiveVillagers, player._challenge.villagercurrent, _challenge.victory.villagerRequirement)
+				
+			end
+			
+			-- If player no longer has the Traders sub Objective
+			if (traderCount < _challenge.victory.traderRequirement) and Objective_IsComplete(_challenge.victory.objectiveTraders) then
+				Objective_Stop(_challenge.victory.objectiveTraders, false, false)
+				Objective_Start(_challenge.victory.objectiveTraders, false, false)
+			end
+			
+			-- If player has the Traders Sub Objective
+			if (Objective_IsStarted(_challenge.victory.objectiveTraders) and not Objective_IsComplete(_challenge.victory.objectiveTraders)) then
+				
+				
+				-- If Traders count meets or exceeds requirement
+				if (traderCount >= _challenge.victory.traderRequirement) then
+					
+					-- Set Traders Trained to requirement for clean objective update (20/20 vs 21/20)
+					player._challenge.tradercurrent = _challenge.victory.traderRequirement
+					-- Mark Objective as Complete
+					Objective_Complete(_challenge.victory.objectiveTraders, false, false)
+					
+				end
+				
+				-- Update Objective Counter
+				Objective_SetCounter(_challenge.victory.objectiveTraders, player._challenge.tradercurrent, _challenge.victory.traderRequirement)
+				
+			end
+			
+			-----------------------------------------------------------------------
+			-- Medal Logic
+			
+			-- If victory objective is complete
+			if (Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+				
+				-- Store completion time
+				local completionSeconds = World_GetGameTime() - player._challenge.startTime
+				player._challenge.completionTime = completionSeconds / 60
+				
+				-- Package completion time for Data Store
+				local trialInformation = {kpi = completionSeconds}
+				
+				-- Provide completion time to Stats system via Data Store
+				Game_StoreTableData("trial", trialInformation)
+				
+				print(string.format("CHALLENGE COMPLETED IN %f MINUTES", player._challenge.completionTime))
+				
+				-- Pause objective timer
+				Objective_PauseTimer(player.currentBenchmark.objective)
+				
+				-- Remove Rule
+				Rule_RemoveMe()
+			end
+			
+			-- Get time elapsed since start time (end of cinematic)
+			local timeElapsed = World_GetGameTime() - player._challenge.startTime
+			
+			--print(timeElapsed)
+			
+			-- If time elapsed meets the time requirement for Gold
+			if timeElapsed < _challenge.benchmarks.gold.time then
+				
+				-- If player's current Benchmark is not set to Gold
+				if player.currentBenchmark ~= _challenge.benchmarks.gold then
+					
+					-- Register objective
+					Objective_Register(_challenge.benchmarks.gold.objective, player.id)
+					-- Start objective
+					Objective_Start(_challenge.benchmarks.gold.objective, false, false)
+					
+					-- If objective timer already exists
+					if Timer_Exists(player._challenge.timer) then
+						
+						-- End objective timer
+						Timer_End(player._challenge.timer)
+						
+					end	
+					
+					-- Start timer
+					Timer_Start(player._challenge.timer, _challenge.benchmarks.gold.time)
+					
+					-- Update timer display (incrementing)
+					Objective_StartTimer(_challenge.benchmarks.gold.objective, COUNT_UP, timeElapsed, 10)
+					
+					-- Set player's current benchmark as Gold
+					player.currentBenchmark = _challenge.benchmarks.gold
+					
+				end
+				
+				-- If time elapsed meets the time requirement for Silver
+			elseif timeElapsed < _challenge.benchmarks.silver.time then
+				
+				-- If player's current Benchmark is not set to Silver
+				if player.currentBenchmark ~= _challenge.benchmarks.silver then
+					
+					-- Remove kpi objective
+					Objective_Fail(_challenge.benchmarks.gold.objective, false, false)
+					
+					-- Register objective
+					Objective_Register(_challenge.benchmarks.silver.objective, player.id)
+					-- Start objective
+					Objective_Start(_challenge.benchmarks.silver.objective, false, false)
+					
+					-- If objective timer already exists
+					if Timer_Exists(player._challenge.timer) then
+						
+						-- End objective timer
+						Timer_End(player._challenge.timer)
+						
+					end
+					
+					-- Start timer
+					Timer_Start(player._challenge.timer, _challenge.benchmarks.silver.time)
+					
+					-- Update timer display (incrementing)
+					Objective_StartTimer(_challenge.benchmarks.silver.objective, COUNT_UP, timeElapsed, 10)
+					
+					-- Set player's current benchmark as Silver
+					player.currentBenchmark = _challenge.benchmarks.silver
+					
+					--play failed bronze dialogue
+					Rule_AddOneShot(ChallengeMission_MissedGold, 1.2)
+					
+				end
+				
+				-- If time elapsed meets the time requirement for Bronze
+			elseif timeElapsed < _challenge.benchmarks.bronze.time then		
+				
+				-- If player's current Benchmark is not set to Bronze
+				if player.currentBenchmark ~= _challenge.benchmarks.bronze then
+					
+					-- Remove kpi objective
+					Objective_Fail(_challenge.benchmarks.silver.objective, false, false)
+					
+					-- Register objective
+					Objective_Register(_challenge.benchmarks.bronze.objective, player.id)
+					-- Start objective
+					Objective_Start(_challenge.benchmarks.bronze.objective, false, false)
+					
+					-- If objective timer already exists
+					if Timer_Exists(player._challenge.timer) then
+						
+						-- End objective timer
+						Timer_End(player._challenge.timer)
+						
+					end
+					
+					-- Start timer
+					Timer_Start(player._challenge.timer, _challenge.benchmarks.bronze.time)
+					
+					-- Update timer display (incrementing)
+					Objective_StartTimer(_challenge.benchmarks.bronze.objective, COUNT_UP, timeElapsed, 10)
+					
+					-- Set player's current benchmark as Bronze
+					player.currentBenchmark = _challenge.benchmarks.bronze
+					
+					--play failed bronze dialogue
+					Rule_AddOneShot(ChallengeMission_MissedSilver, 1.2)
+					
+				end
+				
+				-- If time elapsed exceeds the time requirement for Bronze
+			else
+				
+				-- If player's current Benchmark is not set to Unplaced
+				if player.currentBenchmark ~= _challenge.benchmarks.unplaced then
+					
+					-- Remove kpi objective
+					Objective_Fail(_challenge.benchmarks.bronze.objective, false, false)
+					
+					-- Register objective
+					Objective_Register(_challenge.benchmarks.unplaced.objective, player.id)
+					-- Start objective
+					Objective_Start(_challenge.benchmarks.unplaced.objective, false, false)
+					
+					-- If objective timer already exists
+					if Timer_Exists(player._challenge.timer) then
+						
+						-- End objective timer
+						Timer_End(player._challenge.timer)
+						
+					end	
+					
+					-- Start timer
+					Timer_Start(player._challenge.timer, timeElapsed)
+					
+					-- Update timer display (incrementing)
+					Objective_StartTimer(_challenge.benchmarks.unplaced.objective, COUNT_UP, timeElapsed)
+					
+					-- Set player's current benchmark as Unplaced
+					player.currentBenchmark = _challenge.benchmarks.unplaced
+					
+					--play failed bronze dialogue
+					Rule_AddOneShot(ChallengeMission_MissedBronze, 1.2)
+					
+				end
+			end
+		end
+	end
+end
+
+function ChallengeMission_MissedGold()
+	if(not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+		Util_StartIntel(EVENTS.Narr_MissedGold)
+	end
+end
+
+function ChallengeMission_MissedSilver()
+	if(not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+		Util_StartIntel(EVENTS.Narr_MissedSilver)
+	end
+end
+
+function ChallengeMission_MissedBronze()
+	if(not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+		Util_StartIntel(EVENTS.Narr_MissedBronze)
+	end
+end
+
+-- Global event callback for destruction
+function ChallengeMission_OnDestruction(context)
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			-- If player has the Victory Objective and it hasn't been completed
+			if (player._challenge.hasObjectiveVictory and not Objective_IsComplete(_challenge.victory.objectiveVictory)) then
+				
+				-- Check if local player is annihilated
+				ChallengeMission_CheckAnnihilation(context)
+				
+			end
+		end
+	end
+end
+
+-- Check if player has enough food and gold to construct the Landmark and gives the player a message if this is the case.
+function ChallengeMission_CheckAgingUp()
+	
+	
+	local eg_player_units = Player_GetEntities(localPlayer)
+	-- Check player entities
+	for i = 1, EGroup_Count(eg_player_units) do
+		
+		local entity = EGroup_GetEntityAt(eg_player_units, i)
+		-- Check for unit on screen
+		if (Entity_IsOfType(entity, "wonder_castle_age")) then
+			if not Objective_IsComplete(_challenge.victory.objectiveLandmark) then
+				if not (Objective_IsComplete(_challenge.victory.objectiveVillagers) and Objective_IsComplete(_challenge.victory.objectiveTraders)) then
+					
+					Util_StartIntel(EVENTS.Narr_ConstructingLandmark)
+					Rule_RemoveMe()
+					
+				end
+			end
+		end
+	end
+	
+	
+	
+	
+end
+
+-- Check if player has enough villagers and traders.
+function ChallengeMission_CheckUnitCount()
+	
+	if Objective_IsComplete(_challenge.victory.objectiveVillagers) and Objective_IsComplete(_challenge.victory.objectiveTraders) then
+		if not Objective_IsComplete(_challenge.victory.objectiveLandmark) then
+			
+			Util_StartIntel(EVENTS.Narr_EnoughUnits)
+			Rule_RemoveMe()
+			
+		end
+	end
+	
+end
+
+-- Plays a hint when the player can afford a second town center
+function ChallengeMission_NarrativeHintSecondTownCenter()
+	
+		-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			if not player._challenge.hasObjectiveSecondTownCenter then
+				local currentWood = Player_GetResource(player.id, RT_Wood)
+				local currentStone = Player_GetResource(player.id, RT_Stone)
+				
+				local townCenterBP = Cardinal_ConvertTypeToEntityBlueprint("town_center", localPlayer)
+				local townCenterCost = Player_GetEntityBPCost(localPlayer, townCenterBP)
+
+				if currentWood >= townCenterCost.wood and currentStone >= townCenterCost.stone then
+					Util_StartIntel(EVENTS.Narr_BuildTownCenter)
+					--Objective_Start(_challenge.secondary.objectiveSecondTownCenter, false, false)
+					-- Player has objective
+					player._challenge.hasObjectiveSecondTownCenter = true;	
+					Rule_RemoveMe()
+				end
+				
+			end
+		end
+	end
+end
+
+-- Plays a hint when the player should build more markets
+function ChallengeMission_NarrativeHintMarkets()		
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If player is local (not one of the AI players)
+		if player.isLocal then
+			
+			if not player._challenge.hasObjectiveAddMarkets then
+				-- Creates an egroup and adds all of the player's markets to it
+				local eg_playerMarkets = Player_GetEntitiesFromType(localPlayer, "trade_post")
+				-- Returns the number of market in the group
+				local marketCount = EGroup_Count(eg_playerMarkets)
+				local wood = Player_GetResource(player.id, RT_Wood)
+				
+				if ((marketCount < _challenge.secondary.marketRequirement) or wood > 550) and (Player_GetTotalPopulation(localPlayer) >= 35) then
+					Util_StartIntel(EVENTS.Narr_BuildMarkets)
+					--Objective_Start(_challenge.secondary.objectiveAddMarkets, false, false)
+					-- Player has objective
+					player._challenge.hasObjectiveAddMarkets = true;
+				end
+			end
+		end
+	end
+	
+end
+
+-- Plays a hint when the player should build more houses
+function ChallengeMission_NarrativeHintHouses()
+		-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			if not Objective_IsStarted(_challenge.secondary.objectiveAddHouses) or Objective_IsComplete(_challenge.secondary.objectiveAddHouses) then
+				local popCapThreshold = Player_GetPopulationPercentage(localPlayer, CT_Personnel)
+				local maxPopulation = Player_GetCurrentPopulationCap(localPlayer, CT_Personnel)
+				local currentPopulation = Player_GetCurrentPopulation(localPlayer, CT_Personnel)
+				-- Check if player is already at max population
+				if currentPopulation < 200 then
+					-- Check if player needs houses
+					if popCapThreshold >= _challenge.secondary.populationPercentage then
+						Util_StartIntel(EVENTS.Narr_BuildHouses)
+						--Objective_Stop(_challenge.secondary.objectiveAddHouses, false, false)
+						--Objective_Start(_challenge.secondary.objectiveAddHouses, false, false)
+						-- Player has objective
+						player._challenge.hasObjectiveAddHouses = true;	
+						-- Rule_RemoveMe()
+						Rule_ChangeInterval(ChallengeMission_NarrativeHintHouses, 35)
+					else
+						Rule_ChangeInterval(ChallengeMission_NarrativeHintHouses, 0.5)
+					end
+					
+				end
+				
+			end
+		end
+	end
+end
+
+-- Plays a hint when the player should build more farms
+function ChallengeMission_NarrativeHintFarms()
+		-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			if not player._challenge.hasObjectiveAddFarms then
+				local currentFood = Player_GetResource(player.id, RT_Food)
+				-- Creates an egroup and adds all of the player's markets to it
+				local eg_playerFarms = Player_GetEntitiesFromType(localPlayer, "farm")
+				-- Returns the number of farms in the group
+				local farmCount = EGroup_Count(eg_playerFarms)
+				
+				-- Creates an sgroup and adds all of the player's units to it
+				local sg_playerVillagers = Player_GetSquads(localPlayer)
+				
+				-- Takes the group with all of the player's units and filters out everything except for the type villager
+				SGroup_Filter(sg_playerVillagers, "villager", FILTER_KEEP)
+				-- Returns the number of units remaining in the sgroup (only villagers)
+				local villagerCount = SGroup_Count(sg_playerVillagers)
+				
+				
+				if farmCount < _challenge.secondary.farmRequirement and villagerCount >= 25 and currentFood < 500 then
+					Util_StartIntel(EVENTS.Narr_BuildFarms)
+					--Objective_Start(_challenge.secondary.objectiveAddFarms, false, false)
+					-- Player has objective
+					player._challenge.hasObjectiveAddFarms = true;
+					Rule_RemoveMe()
+				end
+			end
+		end
+	end
+end
+
+
+-- Plays a hint when the player should research more technologies
+function ChallengeMission_NarrativeHintTechnologies()
+		
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If player is local (not one of the AI players)
+		if player.isLocal then
+			if not player._challenge.hasObjectiveResearchTechs then
+				local gold = Player_GetResource(player.id, RT_Gold)
+				if Player_GetTotalPopulation(localPlayer) >= 35 or gold > 500 then
+					Util_StartIntel(EVENTS.Narr_Research)
+					--Objective_Start(_challenge.secondary.objectiveResearchTechs, false, false)
+					-- Player has objective
+					player._challenge.hasObjectiveResearchTechs = true;
+					Rule_RemoveMe()
+				end
+			end
+		end
+	end
+	
+end
+
+-- Evaluates whether the player whose unit/building was killed is eliminated.
+function ChallengeMission_CheckAnnihilation(context)		
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			
+			-- If the victim is the local player
+			if context.victimOwner == player.id then
+				
+				-- If player has not been eliminated
+				if not player.isEliminated then	
+					
+					-- Get player squads
+					local squads = Player_GetSquads(player.id)
+					-- Filter out sheep
+					SGroup_Filter(squads, "gaia", FILTER_REMOVE)
+					-- Get number of squads
+					local num_squads = SGroup_CountSpawned(squads)
+					-- Remove sgroup that was just created
+					SGroup_Destroy(squads)
+					
+					-- Check for annihiliation when player has no squads left
+					if num_squads == 0 then
+						
+						-- Get player resources
+						local food = Player_GetResource(player.id, RT_Food)
+						local wood = Player_GetResource(player.id, RT_Wood)
+						local gold = Player_GetResource(player.id, RT_Gold)
+						
+						
+						local has_entity_with_queue = false
+						local has_squads_in_queue = false
+						local has_resources_remaining = false
+						local entities = Player_GetEntities(player.id)
+						
+						-- Check if player has a unit in production or sufficient resources to produce something. 
+						for i = 1, EGroup_CountSpawned(entities) do
+							local entity = EGroup_GetEntityAt(entities, i)					
+							if not Entity_IsBuilding(entity) or Entity_GetBuildingProgress(entity) >= 1.0 then		-- Accounts for both packed Mongol buildings and finished buildings of other civs 
+								if Entity_HasProductionQueue(entity) then
+									local num_items_in_queue = Entity_GetProductionQueueSize(entity)
+									for j = 0, (num_items_in_queue - 1) do
+										if Entity_GetProductionQueueItemType(entity, j) == PITEM_Spawn and not entity == EBP.RUS.BUILDING_LANDMARK_AGE2_MUSCOVY_TRADE_COMPANY_CONTROL_RUS then
+											has_entity_with_queue = true
+											has_squads_in_queue = true
+											break
+										end
+									end
+									if has_squads_in_queue then
+										break
+									end
+								end
+								for entity_type, cost in pairs(player._annihilation.cheapest_squad_cost) do 
+									if Entity_IsOfType(entity, entity_type) then 									
+										has_entity_with_queue = true
+										if food >= cost.food and wood >= cost.wood and gold >= cost.gold then
+											has_resources_remaining = true
+											break
+										end
+									end
+								end
+								if has_entity_with_queue and has_resources_remaining then
+									break
+								end
+							end
+						end
+						EGroup_Destroy(entities)
+						
+						-- Player is annihilated if they have no units alive and either: no buildings that can produce something or no units in production (and no resources to produce anything).
+						if not has_entity_with_queue or (not has_squads_in_queue and not has_resources_remaining) then
+							
+							-- Player is now eliminated
+							player.isEliminated = true
+							
+							-- Silently Fail objectives
+							--Objective_Fail(_challenge.victory.objectiveVictory, true, false)
+							
+							-- Set player as defeated
+							Mission_Fail()
+							
+						end
+					end			
+				end
+			end
+		end
+	end
+end
+
+-- On victory objective completion
+function ChallengeMission_OnComplete()
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+		
+		-- If player is local (not AI)
+		if player.isLocal then 
+			
+			-- Start Camera Outro
+			Util_StartIntel(EVENTS.Camera_Outro)
+			
+		end
+	end
+	
+end
+
+-- End Challenge
+function ChallengeMission_EndChallenge()
+			
+	-- Set player as victorious
+	Core_SetPlayerVictorious(localPlayer, nil, WR_OBJECTIVECOMPLETE)
+	-- Slowdown sim rate for post-match screen
+	Game_SetSimRate(0.5)
+	
+end
+
+-- Defeat Presentation Functions
+function ChallengeMission_DefeatPresentation(playerID)
+		
+	-- For every player
+	for i, player in pairs(PLAYERS) do	
+		
+		-- If player is local (not AI)
+		if player.isLocal then 
+			
+			-- Clear player selection
+			Misc_ClearSelection()
+			-- Set taskbar to invisible
+			Taskbar_SetVisibility(false)
+			
+			-- Set primary end message
+			local endMessage = "$11179828" -- "Challenge Failed"
+			-- Stores a victory message (default = nothing)
+			local defeatMessage = "$11166951"
+			
+			-- Add Victory presentation
+			Rule_AddOneShot(_gameOver_message, GAMEOVER_OBJECTIVE_TIME, {_playerID = playerID, _icon = _challenge.icons.victoryObjective, _endType = endMessage, _message = defeatMessage, _sound = "ConquestDefeatEvent", _videoURI = "stinger_defeat"})
+			
+		end
+	end
+end

@@ -1,0 +1,536 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("obj_organise.scar")
+import("obj_muster.scar")
+import("obj_horsemen.scar")
+import("obj_locate.scar")
+import("obj_archers.scar")
+import("obj_prepare.scar")
+import("obj_defeat.scar")
+import("training_sal_chp1_valesdun.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+
+
+function Mission_OnGameSetup()
+	
+	player1 = World_GetPlayerAt(1) -- player (normans)
+	player2 = World_GetPlayerAt(2) -- enemy (norman rebels)
+	player3 = World_GetPlayerAt(3) -- allies (king henry's french forces)	
+	player4 = World_GetPlayerAt(4) -- holder for greyed out units	
+	
+	
+	Setup_SetPlayerName(player1, "$999292") -- Guillaume de Normandie
+	Setup_SetPlayerName(player2, "$999430") -- Gui de Bourgogne
+	Setup_SetPlayerName(player3, "$999429") -- Henri
+	Setup_SetPlayerName(player4, "$999292") -- Guillaume de Normandie
+
+	
+	
+	
+	-- Controls the size of the golden circles on the ground for objectives
+	marker_aura_size = 5
+end
+
+function Mission_OnInit()
+	
+	-- Dynamic training is key to this tutorial mission
+	Training_SetForceEnableTraining(true)
+	
+	-- Force enable HUD widgets that are explained in the tutorial
+	UI_SetTutorializedWidgetsRequired(true)
+	
+	Player_SetRelationship(player1, player3, R_ALLY)
+	Player_SetRelationship(player3,player1, R_ALLY)
+	
+	Player_SetRelationship(player1, player2, R_ENEMY)
+	Player_SetRelationship(player2,player1, R_ENEMY)
+	Player_SetRelationship(player3, player2, R_ENEMY)
+	Player_SetRelationship(player2,player3, R_ENEMY)
+	
+	-- Set player 4 to be greyed out and neutral to everyone
+	Game_SetPlayerSlotColour(player4, 9)
+	Game_SetPlayerUISlotColour(player4, 9)
+	
+	Player_SetRelationship(player4, player1, R_NEUTRAL)
+	Player_SetRelationship(player1, player4, R_NEUTRAL)
+	Player_SetRelationship(player4, player2, R_NEUTRAL)
+	Player_SetRelationship(player2, player4, R_NEUTRAL)
+	Player_SetRelationship(player4, player3, R_NEUTRAL)
+	Player_SetRelationship(player3, player4, R_NEUTRAL)
+	
+	World_EnableSharedLineOfSight(player1, player3, false)
+	World_EnableSharedLineOfSight(player3, player4, false)
+	World_EnableSharedLineOfSight(player4, player1, false)
+	
+	-- Set player 3 to be yellow
+	Game_SetPlayerSlotColour(player3, 3)
+	Game_SetPlayerUISlotColour(player3, 3)
+	
+end
+
+function Mission_SetupVariables()
+	
+	intro_skipped = false
+	outro_skipped = false
+	
+	-- Init the objectives
+	OrganiseSpearmen_InitObjectives()
+	MusterForces_InitObjectives()
+	CommandHorsemen_InitObjectives()
+	LocateArchers_InitObjectives()
+	CommandArchers_InitObjectives()
+	PrepareForBattle_InitObjectives()
+	DefeatGuy_InitObjectives()
+	
+	target_spearmen = SGroup_Count(sg_starting_spearmen)
+	
+	sg_player_units = SGroup_CreateIfNotFound("sg_player_units")
+	
+	-- DESIGNER ENCOUNTER VARIABLES
+	
+	Modify_EntityMaxHealth(eg_palisade, 0.5, MUT_Multiplication)
+	EGroup_SetInvulnerable(eg_palisade, true)
+	EGroup_SetSelectable(eg_palisade, false)
+	
+	EGroup_SetInvulnerable(eg_cavalry_ambush_gate, true)
+	EGroup_SetSelectable(eg_cavalry_ambush_gate, false)
+	
+	-- Archer Encounter
+	num_allied_horsemen_per_marker = 2
+	num_archers_encounter = 8
+	
+	target_horsemen = num_allied_horsemen_per_marker * 4
+	
+	-- Ambush encounter
+	num_allied_archers_per_marker = 3
+	num_enemy_spearmen_per_marker = 2
+	
+	target_archers = num_allied_archers_per_marker * 4
+	
+	-- Henry's Army
+	num_henry_spearmen_per_marker = 7
+	num_henry_archers_per_marker = 4
+	num_henry_cavalry_per_marker = 3
+	
+	-- Guy's Army
+	num_guy_spearmen_per_marker = 6
+	num_guy_archers_per_marker = 6
+	num_guy_cavalry_per_marker = 5
+	
+	-- UI variables
+	first_marker_ui = nil
+	first_marker_aura = nil
+	second_marker_ui = nil
+	second_marker_aura= nil
+	
+	find_henri_final = false
+	
+	-- variables used for training tips
+	training_snapToOver = false
+	b_spearmen_added = false
+	b_guillaume_added = false
+
+	
+end
+
+function Mission_SetRestrictions()
+
+	Entity_SetInvulnerableMinCap(Squad_GetFirstEntity(SGroup_GetSpawnedSquadAt(sg_william, 1)), 0.75, -1)
+	
+	-- Hide abilities
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("combat_unit_hold_position"), ITEM_REMOVED)
+	
+	-- Hide William ability
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("leader_attack_speed_activated"), ITEM_REMOVED)
+	
+	-- Hide Formations
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_line"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_spread"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_wedge"), ITEM_REMOVED)
+	-- Hide Death
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_unit_death"), ITEM_REMOVED)
+	-- Hide Ram and Siege Tower
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.UNIT_SIEGE_TOWER_3_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.UNIT_RAM_3_FRE, ITEM_REMOVED)
+end
+
+function Mission_Preset()
+	
+	EGroup_SetInvulnerable(eg_archer_houses, true)
+	EGroup_SetInvulnerable(eg_valmeray_buildings, true)
+	EGroup_SetInvulnerable(eg_starting_camp_tents, true)
+	EGroup_SetInvulnerable(eg_lumber_camp, true)
+	EGroup_SetInvulnerable(eg_wagon_forts, true)
+	EGroup_SetInvulnerable(eg_bridges, true)
+	
+	EGroup_SetSelectable(eg_archer_houses, false)
+	EGroup_SetSelectable(eg_valmeray_buildings, false)
+	EGroup_SetSelectable(eg_starting_camp_tents, false)
+	EGroup_SetSelectable(eg_lumber_camp, false)
+	EGroup_SetSelectable(eg_wagon_forts, false)
+	EGroup_SetSelectable(eg_bridges, false)
+	
+	World_SetInteractionStage(0)
+	
+	if Music_UnlockIntensity then
+        Sound_SetForceMusic(false)
+    else
+        Sound_SetForceMusic(true)
+    end
+	
+	
+	--setting mission specific music intensities
+	
+	Sound_ResetMusicIntensityMapping();
+	Sound_AddMusicIntensityMappingPoint(10, 200) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(30, 1250) -- point 2 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(37, 2250) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(45, 3000) -- point 2 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(50, 4000) -- point 2 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(100, 6000) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(150, 9999) -- raw value max to scaled value max 
+
+	
+end
+
+function Mission_Start()
+
+	SGroup_EnableLeaderCrown(sg_william, false)
+	
+	-- Mission-o-Matic handles playing the intro
+	
+	-- Comment out following line and uncomment section after to access battle directly (for designers)
+	Rule_AddInterval(Mission_Start_WaitForSpeechToFinish, 0.5)
+	--disable the Site Menu for this mission
+	Game_SetVisibility(VF_XboxUISiteMenu, false)
+
+
+	--[[-- Battle cheat section (for designers) //////////////////////////////////////
+	Game_FadeToBlack(FADE_IN, 0)
+	sg_horsemen = SGroup_CreateIfNotFound("sg_horsemen")
+	sg_archers = SGroup_CreateIfNotFound("sg_archers")
+	FollowToHenry_UI()
+	SpawnGuyArmy()
+	SGroup_SetPlayerOwner(sg_reinforcements, player1)
+	World_EnableSharedLineOfSight(player1, player3, true)
+	World_SetInteractionStage(5)
+	World_SetInteractionStage(6)
+	FOW_RevealMarker(mkr_fow_reveal_obj3b,-1)
+	SGroup_WarpToMarker( sg_william, mkr_obj_3b3)
+	SGroup_WarpToMarker( sg_starting_spearmen, mkr_obj_3b3) 
+	Rule_Add(HenryMove_Monitor)
+	Objective_Start(OBJ_DefeatGuy, true, true)
+	--]]-- End Battle cheat //////////////////////////////////////////////////////////
+	
+end
+
+function Mission_Start_WaitForSpeechToFinish()
+	
+	if not Event_IsAnyRunning() then
+		Rule_RemoveMe()
+		
+			
+		FOW_RevealMarker(mkr_fow_reveal_start01,0)
+		FOW_RevealMarker(mkr_fow_reveal_start02,0)
+		FOW_RevealMarker(mkr_fow_reveal_start03,0)
+		FOW_RevealMarker(mkr_fow_reveal_start04,0)
+		FOW_RevealMarker(mkr_fow_reveal_start05,0)
+		FOW_RevealMarker(mkr_fow_reveal_start06,0)
+		FOW_RevealMarker(mkr_fow_reveal_start07,0)
+		FOW_RevealMarker(mkr_fow_reveal_start08,0)
+		FOW_RevealMarker(mkr_fow_reveal_start09,0)
+		FOW_RevealMarker(mkr_fow_reveal_start10,0)
+		
+		SGroup_EnableLeaderCrown(sg_william, true)
+		Objective_Start(OBJ_OrganiseSpearmen, true, true)
+		
+		--[[ Test Outro
+		World_SetInteractionStage(5)
+	    World_SetInteractionStage(6)
+		Mission_Complete()
+		--]]
+		
+	end
+end
+
+-- Mission-o-Matic Recipe
+function GetRecipe()
+
+	local recipe = {
+		
+		introNIS = EVENTS.ValesDunes_Intro,
+		outroNIS = EVENTS.ValesDunes_Outro,
+		
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_angevin_rebellion",
+				title = "$1000616",
+				date = "$1000617",
+			},
+		},
+		
+	}
+			
+	return recipe
+
+end
+
+function SpearmenCelebrate()
+		
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_starting_spearmen)
+	
+end
+
+function SetSquadControlGroup(sgroup, control_group_index)
+	
+	for i = 1,  SGroup_CountSpawned(sgroup), 1 do
+		Misc_SetSquadControlGroup(SGroup_GetSpawnedSquadAt(sgroup, i), control_group_index)	
+	end
+end
+
+function SpawnOutro()
+	
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("combat_unit_hold_position"), ITEM_UNLOCKED)
+	STAND_GROUND = BP_GetAbilityBlueprint("combat_unit_hold_position")
+	
+	-- Declare SGroups
+	sg_outro_enemy_01 = SGroup_CreateIfNotFound("sg_outro_enemy_01")
+	sg_outro_enemy_02 = SGroup_CreateIfNotFound("sg_outro_enemy_02")
+	sg_outro_enemy_03 = SGroup_CreateIfNotFound("sg_outro_enemy_03")
+	sg_outro_enemy_04 = SGroup_CreateIfNotFound("sg_outro_enemy_04")
+	sg_outro_enemy_05 = SGroup_CreateIfNotFound("sg_outro_enemy_05")
+	sg_outro_enemy_06 = SGroup_CreateIfNotFound("sg_outro_enemy_06")
+	sg_outro_enemy_07 = SGroup_CreateIfNotFound("sg_outro_enemy_07")
+	sg_outro_enemy_08 = SGroup_CreateIfNotFound("sg_outro_enemy_08")
+	sg_outro_enemy_09 = SGroup_CreateIfNotFound("sg_outro_enemy_09")
+	sg_outro_enemy_10 = SGroup_CreateIfNotFound("sg_outro_enemy_10")
+	sg_outro_enemy_11 = SGroup_CreateIfNotFound("sg_outro_enemy_11")
+	
+	sg_outro_enemy_12 = SGroup_CreateIfNotFound("sg_outro_enemy_12")
+	
+	sg_outro_william = SGroup_CreateIfNotFound("sg_outro_william")
+	
+	sg_outro_archers_01 = SGroup_CreateIfNotFound("sg_outro_archers_01")
+	sg_outro_archers_02 = SGroup_CreateIfNotFound("sg_outro_archers_02")
+	sg_outro_archers_03 = SGroup_CreateIfNotFound("sg_outro_archers_03")
+	sg_outro_archers_04 = SGroup_CreateIfNotFound("sg_outro_archers_04")
+	sg_outro_archers_05 = SGroup_CreateIfNotFound("sg_outro_archers_05")
+	sg_outro_archers_06 = SGroup_CreateIfNotFound("sg_outro_archers_06")
+	sg_outro_archers_07 = SGroup_CreateIfNotFound("sg_outro_archers_07")
+	
+	sg_outro_spearmen_01 = SGroup_CreateIfNotFound("sg_outro_spearmen_01")
+	sg_outro_spearmen_02 = SGroup_CreateIfNotFound("sg_outro_spearmen_02")
+	
+	sg_outro_spearmen_03 = SGroup_CreateIfNotFound("sg_outro_spearmen_03")
+	sg_outro_spearmen_04 = SGroup_CreateIfNotFound("sg_outro_spearmen_04")
+	
+	sg_outro_horsemen_01 = SGroup_CreateIfNotFound("sg_outro_horsemen_01")
+	
+	sg_outro_henri = SGroup_CreateIfNotFound("sg_outro_henri")
+	
+	sg_outro_ally_01 = SGroup_CreateIfNotFound("sg_outro_ally_01")
+	
+	-- Spawn Enemies 
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_01, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_enemy_spawn_01)
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_02, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_enemy_spawn_02)
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_03, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_enemy_spawn_03)
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_04, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_enemy_spawn_04)
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_05, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_enemy_spawn_05)
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_06, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_enemy_spawn_06)
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_07, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_enemy_spawn_07)
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_08, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_enemy_spawn_08)
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_09, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_enemy_spawn_09)
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_10, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_enemy_spawn_10)
+	
+	-- Spawn Guy
+	UnitEntry_DeploySquads(player2, sg_outro_enemy_11, {{sbp = SBP.CAMPAIGN.UNIT_GUYBURGUNDY_CMP_SAL, numSquads = 1 }}, mkr_outro_enemy_spawn_11)
+	SGroup_EnableLeaderCrown(sg_outro_enemy_11, false)
+	
+	-- Increase Damage Recieved So They Die in One Hit
+	Modify_ReceivedDamage(sg_outro_enemy_01, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_02, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_03, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_04, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_05, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_06, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_07, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_08, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_09, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_10, 20)
+	Modify_ReceivedDamage(sg_outro_enemy_11, 20)
+	
+	-- Spawn William and Order him to Hold Position
+	UnitEntry_DeploySquads(player1, sg_outro_william, {{sbp = SBP.CAMPAIGN.UNIT_DUKE_WILLIAM_CMP_SAL, numSquads = 1 }}, mkr_outro_william_spawn)
+	SGroup_AddAbility(sg_outro_william, STAND_GROUND)
+	Cmd_Ability(sg_outro_william, STAND_GROUND)
+	
+	-- Spawn Archers
+	UnitEntry_DeploySquads(player1, sg_outro_archers_01, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_archer_spawn_01)
+	SGroup_AddAbility(sg_outro_archers_01, STAND_GROUND)
+	UnitEntry_DeploySquads(player1, sg_outro_archers_02, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_archer_spawn_02)
+	SGroup_AddAbility(sg_outro_archers_02, STAND_GROUND)
+	UnitEntry_DeploySquads(player1, sg_outro_archers_03, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_archer_spawn_03)
+	SGroup_AddAbility(sg_outro_archers_03, STAND_GROUND)
+	UnitEntry_DeploySquads(player1, sg_outro_archers_04, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_archer_spawn_04)
+	SGroup_AddAbility(sg_outro_archers_04, STAND_GROUND)
+	UnitEntry_DeploySquads(player1, sg_outro_archers_05, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_archer_spawn_05)
+	SGroup_AddAbility(sg_outro_archers_05, STAND_GROUND)
+	UnitEntry_DeploySquads(player1, sg_outro_archers_06, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_archer_spawn_06)
+	SGroup_AddAbility(sg_outro_archers_06, STAND_GROUND)
+	UnitEntry_DeploySquads(player1, sg_outro_archers_07, {{type = "scar_archer", numSquads = 1 }}, mkr_outro_archer_spawn_07)
+	SGroup_AddAbility(sg_outro_archers_07, STAND_GROUND)
+	
+	-- Spawn Spearmen 
+	UnitEntry_DeploySquads(player1, sg_outro_spearmen_01, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_spear_spawn_01)
+	SGroup_AddAbility(sg_outro_spearmen_01, STAND_GROUND)
+	UnitEntry_DeploySquads(player1, sg_outro_spearmen_02, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_spear_spawn_02)
+	SGroup_AddAbility(sg_outro_spearmen_02, STAND_GROUND)
+	
+	-- Spawn Field of Corpses
+	local spear = BP_GetSquadBlueprint("unit_spearman_2_eng_infinite_corpse")
+	local corpses = {
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+		{sbp = spear, numSquads = 2, spawn = mkr_outro_enemy_spawn_20, rad_max = 25, rad_min = 3},
+	}
+	Util_CorpseField(corpses, mkr_outro_enemy_spawn_20)
+	
+	-- Disable Crown for William
+	SGroup_EnableLeaderCrown(sg_outro_william, false)
+	
+end
+
+function InitOutro()
+	
+	-- Order Enemy to Run Across the River
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_01, mkr_outro_enemy_dest_01)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_02, mkr_outro_enemy_dest_02)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_03, mkr_outro_enemy_dest_03)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_04, mkr_outro_enemy_dest_04)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_05, mkr_outro_enemy_dest_05)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_06, mkr_outro_enemy_dest_06)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_07, mkr_outro_enemy_dest_07)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_08, mkr_outro_enemy_dest_08)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_09, mkr_outro_enemy_dest_09)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_10, mkr_outro_enemy_dest_10)
+	Cmd_MoveToAndDeSpawn(sg_outro_enemy_11, mkr_outro_enemy_dest_11)
+	
+	-- Order Archers to Chase then Hold Position and Shoot
+	Cmd_Move(sg_outro_archers_01, mkr_outro_archer_dest_01)
+	Cmd_Ability(sg_outro_archers_01, STAND_GROUND, nil, nil, true)
+	Cmd_Move(sg_outro_archers_02, mkr_outro_archer_dest_02)
+	Cmd_Ability(sg_outro_archers_01, STAND_GROUND, nil, nil, true)
+	Cmd_Move(sg_outro_archers_03, mkr_outro_archer_dest_03)
+	Cmd_Ability(sg_outro_archers_03, STAND_GROUND, nil, nil, true)
+	Cmd_Move(sg_outro_archers_04, mkr_outro_archer_dest_04)
+	Cmd_Ability(sg_outro_archers_04, STAND_GROUND, nil, nil, true)
+	Cmd_Move(sg_outro_archers_05, mkr_outro_archer_dest_05)
+	Cmd_Ability(sg_outro_archers_05, STAND_GROUND, nil, nil, true)
+	Cmd_Move(sg_outro_archers_06, mkr_outro_archer_dest_06)
+	Cmd_Ability(sg_outro_archers_06, STAND_GROUND, nil, nil, true)
+	Cmd_Ability(sg_outro_archers_07, STAND_GROUND, nil, nil, true)
+	
+	-- Order Spearmen to Chase then Hold Position
+	Cmd_Move(sg_outro_spearmen_01, mkr_outro_spear_dest_01)
+	Cmd_Ability(sg_outro_spearmen_01, STAND_GROUND, nil, nil, true)
+	Cmd_Move(sg_outro_spearmen_02, mkr_outro_spear_dest_02)
+	Cmd_Ability(sg_outro_spearmen_02, STAND_GROUND, nil, nil, true)
+	
+end
+
+function OutroPart2()
+	
+	-- Spawn Part 2 Spearmen
+	UnitEntry_DeploySquads(player1, sg_outro_spearmen_03, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_spear_spawn_03)
+	UnitEntry_DeploySquads(player1, sg_outro_spearmen_04, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_spear_spawn_04)
+	UnitEntry_DeploySquads(player1, sg_outro_spearmen_04, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_spear_spawn_05)
+	UnitEntry_DeploySquads(player1, sg_outro_spearmen_04, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_spear_spawn_06)
+	UnitEntry_DeploySquads(player1, sg_outro_spearmen_04, {{type = "scar_spearman", numSquads = 1 }}, mkr_outro_spear_spawn_07)
+	
+	-- Move Spearman into Camera View/Empty Space
+	Cmd_Move(sg_outro_spearmen_03, mkr_outro_spear_dest_03)
+	
+	-- Spawn Henri
+	UnitEntry_DeploySquads(player3, sg_outro_henri, {{sbp = SBP.CAMPAIGN.UNIT_KING_HENRY_CMP_SAL, numSquads = 1 }}, mkr_outro_henri_spawn)
+	
+	-- Spawn Henri Allied Units
+	UnitEntry_DeploySquads(player3, sg_outro_ally_01, {{type = "scar_spearman", numSquads = 6 }}, mkr_outro_ally_spawn_01)
+	UnitEntry_DeploySquads(player3, sg_outro_ally_01, {{type = "scar_archer", numSquads = 8 }}, mkr_outro_ally_spawn_02)
+	UnitEntry_DeploySquads(player3, sg_outro_ally_01, {{type = "scar_horseman", numSquads = 2 }}, mkr_outro_ally_spawn_03)
+	
+	-- Spawn Horsemen
+	UnitEntry_DeploySquads(player1, sg_outro_horsemen_01, {{type = "scar_horseman", numSquads = 2 }}, mkr_outro_horse_spawn_01)
+	
+	-- Enable Cheering
+	SGroup_EnableCheering(sg_outro_spearmen_04, true)
+	SGroup_EnableCheering(sg_outro_ally_01, true)
+	SGroup_EnableCheering(sg_outro_horsemen_01, true)
+	
+	-- Disable Crown for Henri
+	SGroup_EnableLeaderCrown(sg_outro_henri, false)
+	
+end
+
+function OutroPart3()
+	
+	-- Enable cheering on the spearman who has now finished moving
+	SGroup_EnableCheering(sg_outro_spearmen_03, true)
+	
+end
+
+
+-- utility functions used in several objectives
+
+function RecordControlGroups()
+	
+	t_controlGroupsRecord = {}
+	
+	for i = 0,9 do
+		SGroup_Clear(sg_temp)
+		Misc_GetControlGroupContents (i, sg_temp, eg_temp)
+		if SGroup_CountSpawned(sg_temp) > 0 then
+			SGroup_CreateIfNotFound("sg_control_group_"..i)
+			SGroup_AddGroup(SGroup_FromName("sg_control_group_"..i), sg_temp)			
+		end
+	end
+	
+	
+end
+
+function RestoreControlGroups(sgroup_for_first_empty)
+	
+	local first_empty = nil
+	
+	for i= 0,9 do
+		-- if an SGroup exists for a group index, restore those units to that group
+		if SGroup_Exists("sg_control_group_"..i) then
+			SetSquadControlGroup(SGroup_FromName("sg_control_group_"..i), i)
+			SGroup_Clear (SGroup_FromName("sg_control_group_"..i))
+		-- if we haven't yet set first_empty, set it to the current index
+		elseif first_empty == nil then
+			first_empty = i
+		end
+	end
+	
+	-- if we have an empty slot and we've been passed an sgroup, put a new control group with that group there
+	if (first_empty ~= nil) and (sgroup_for_first_empty ~= nil) then 
+		if scartype(sgroup_for_first_empty) == ST_SGROUP then
+			SetSquadControlGroup (sgroup_for_first_empty, first_empty)
+		end
+	end
+	
+end
+

@@ -1,0 +1,143 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")	
+
+
+statusTable = {
+	NotRun = 0,
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3 
+}
+b_introStarted = false
+distance_squared = 30 * 30
+
+function AutoTest_OnInit()
+    if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+        import("test/common.scar")
+        import("test/standard_test.scar")
+        import("test/test_framework.scar")
+        
+        print("CampaignAutoTest parameter detected")
+        debug_IsCampaignAutoTest = true
+        
+        Automated_RegisterCheckpoints()    
+        
+        Game_AIControlLocalPlayer()
+        AI_Enable(player1, true)
+        print("Assuming Direct Control. Player is now AI Driven: "..tostring(AI_IsEnabled(player1)))
+        
+        if Util_GetCommandLineArgument("NoSwoopy") then
+            Rule_AddInterval(AutoTest_SkipAndStart, 1)
+        else
+            Rule_AddInterval(AutoTest_PlayIntro, 1)
+        end          
+    end
+end
+
+function Automated_RegisterCheckpoints()
+    --when play is handed over to the player
+    CampaignAutotest_RegisterCheckpoint("cat_PlayStart", 10)
+    CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable.InProgress)
+    
+    CampaignAutotest_RegisterCheckpoint("cat_BaibarsSignaled", 300)
+    CampaignAutotest_SetCheckpointStatus("cat_BaibarsSignaled", statusTable.NotRun)
+    
+    CampaignAutotest_RegisterCheckpoint("cat_MissionComplete", 600)
+    CampaignAutotest_SetCheckpointStatus("cat_MissionComplete", statusTable.NotRun)        
+end
+
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+    if Event_IsAnyRunning() then
+        Rule_RemoveMe()
+        Game_SkipAllEvents(false)
+		AutomatedMission_Start()
+    end
+	
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+--If this is the first check since the intro event started, then starting checking for the end only after it starts
+    if b_introStarted == false then  
+        if Event_IsAnyRunning() then
+            b_introStarted = true
+        end
+    else
+        if Event_IsAnyRunning() == false then
+            Rule_RemoveMe()
+            AutomatedMission_Start()
+        end
+    end
+end
+
+function AutomatedMission_Start()
+    FOW_RevealAll()    
+    Rule_AddOneShot(Automated_Phase1_Setup, 1)
+
+	Rule_AddOneShot(Automated_WarpSpies, 10)
+end
+
+function Automated_WarpSpies(context, data)
+	SGroup_WarpToMarker(sg_spies, mkr_mid_spy_spawn_01)
+end
+
+function Automated_Phase1_Setup()
+	CampaignAutotest_SetCheckpointStatus("cat_BaibarsSignaled", statusTable.InProgress)
+	Rule_AddInterval(Automated_Phase1_Monitor, 1)
+end
+
+function Automated_Phase1_Monitor()
+    if Objective_IsComplete(OBJ_SendForHelp) then
+        Rule_RemoveMe()
+        CampaignAutotest_SetCheckpointStatus("cat_BaibarsSignaled", statusTable.Pass)
+        Automated_Phase2_Setup()
+		print("Autotest Vanguard Survived Passed")
+    end
+end
+
+function Automated_Phase2_Setup()
+	CampaignAutotest_SetCheckpointStatus("cat_MissionComplete", statusTable.InProgress)
+	
+	Rule_AddInterval(Automated_CheckForTransitionComplete, 1)
+end
+
+function Automated_CheckForTransitionComplete()
+	if Objective_IsStarted(OBJ_DestroyTheHeadquarters) then
+		Rule_RemoveMe()
+		for i, marker in ipairs({ mkr_automated_1, mkr_automated_2, mkr_automated_3, mkr_automated_4 }) do
+			Rule_AddOneShot(Automated_CreateArmy, i * 10, 		{ target = marker, numSquads = 30, type = "scar_crossbowman" })
+			Rule_AddOneShot(Automated_CreateArmy, i * 10 + 3, 	{ target = marker, numSquads = 2, type = "scar_mangonel" })
+			Rule_AddOneShot(Automated_CreateArmy, i * 10 + 7, 	{ target = marker, numSquads = 40, type = "scar_knight" })
+			
+		end
+		Rule_AddInterval(Automated_Phase2_Monitor, 1)
+	end
+end
+
+function Automated_CreateArmy(context, data)
+	local USE_AI = false
+	if USE_AI then
+		local params_main = {
+			player = player1,
+			spawn = mkr_player_base,
+			target = data.target,
+			units = {{ type = data.type, numSquads = data.numSquads }},
+		}
+		Army_Init(params_main)
+	else
+		SGroup_Clear(sg_temp)
+		CreateUnits(player1, {{ type = data.type, numSquads = data.numSquads }}, mkr_player_base, sg_temp, nil, data.target)
+		SGroup_AttackMove(sg_temp, data.target)
+	end
+end
+
+function Automated_Phase2_Monitor()
+    if Objective_IsComplete(OBJ_DestroyTheHeadquarters) then
+        Rule_RemoveMe()
+        CampaignAutotest_SetCheckpointStatus("cat_MissionComplete", statusTable.Pass)
+		print("Autotest MissionComplete Passed")
+    end
+end
+

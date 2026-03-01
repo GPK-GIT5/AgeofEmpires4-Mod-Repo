@@ -1,0 +1,305 @@
+
+----
+--- Mission zero - objective Attack Enemy Cavalry
+---
+----
+
+
+function IntroAttackCavalry_InitObjectives()	
+
+	OBJ_AttackCavalryEncampment = {
+		
+		Title = 11192778, -- Attack the Enemy Cavalry Encampment
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.DestroyedCavalryEncampment_IntelStart,
+		Intel_Complete = EVENTS.DestroyedCavalryEncampment_IntelComplete,
+		
+		OnStart = function ()
+			Objective_Start(SOBJ_AttackMove)
+		end,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete (OBJ_AttackCavalryEncampment, ALL)
+		end,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_CombatVsCavalry) then
+				Objective_Complete(OBJ_Tip_CombatVsCavalry,false,false)
+			end
+		end,
+		
+		OnComplete = AttackCavalryEncampment_OnComplete,
+		
+		Cheat = Cheat_AttackCavalry,
+		
+	}
+	
+	SOBJ_AttackMove = {
+		
+		Title = 11192779, -- Use Attack-Move
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_AttackCavalryEncampment,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.AttackMove_IntelStart,
+		Intel_Complete = EVENTS.AttackMove_IntelComplete,
+		
+		SetupUI = SOBJ_AttackMove_UI,
+		
+		PreStart = SOBJ_AttackMove_PreStart,
+		
+		OnStart = SOBJ_AttackMove_Start,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_AttackMove) then
+				Objective_Complete(OBJ_Tip_AttackMove,false,false)
+			end
+		end,
+		
+		OnComplete = SOBJ_AttackMove_OnComplete,
+	}
+	
+	SOBJ_KillHorsemen = {
+		
+		Title = 11192787, -- Kill the Horsemen at the French encampment.
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_AttackCavalryEncampment,
+		StartAlongsideParent = false, 
+		
+		--Intel_Start = EVENTS.KillHorsemen_IntelStart,
+		Intel_Complete = EVENTS.KillHorsemen_IntelComplete,
+		
+		SetupUI = KillHorsemen_UI,
+		
+		PreStart = function()
+			World_SetInteractionStage(2)
+			FOW_RevealMarker(mkr_horseman_village,-1)
+			Sound_Play2D("mus_stinger_campaign_alert")
+			Sound_Play2D("sfx_campaign_scripted_small_group_din_engage")
+			EventCues_CallToAction(11194649, CTA_UNIQUE_STAKES, EVENTS.KillHorsemen_IntelStart, nil, mkr_horseman_village_lookat, 20) --"Enemy Horsemen!"
+
+		end,
+		
+		OnStart = KillHorsemen_Start,
+		
+		OnComplete = KillHorsemen_OnComplete,
+	}
+	
+	SOBJ_DestroyTheStables = {
+		
+		Title = 11192794, -- Destroy the French Cavalry Encampment's buildings
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_AttackCavalryEncampment,
+		StartAlongsideParent = false, 
+		
+		Intel_Complete = EVENTS.DestroyStables_IntelComplete,
+		
+		SetupUI = DestroyTheStables_UI,
+		
+		OnStart = DestroyTheStables_Start,
+		
+		OnComplete = DestroyTheStables_OnComplete,
+	}
+	
+	Objective_Register(OBJ_AttackCavalryEncampment)
+	Objective_Register(SOBJ_AttackMove)
+	Objective_Register(SOBJ_KillHorsemen)
+	Objective_Register(SOBJ_DestroyTheStables)
+	
+	
+end
+
+function SOBJ_AttackMove_UI()
+	hpid_AttackScout = Objective_AddUIElements(SOBJ_AttackMove, sg_fre_attackMove_scout, true, 11192862,true,3)
+	
+end
+
+function SOBJ_AttackMove_PreStart()
+	
+	SpawnAnotherLonelyUnit()
+	Rule_Add(AttackMove_Monitor)
+	Rule_AddOneShot(AttachIconOnUnit,1)
+	FOW_RevealMarker(mkr_horseman_attackMove_target_destination,-1)
+
+end
+
+function SOBJ_AttackMove_Start()
+	Tutorials_MissionZero_AttackMove()
+
+--	Rule_Add(AttackMove_Monitor)
+	Rule_AddInterval(LonelyUnit_Monitor,1)
+	Objective_Start(OBJ_Tip_AttackMove, false, false)
+	--SpawnAnotherLonelyUnit()
+
+end
+
+function AttackMove_Monitor()
+	
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	local count = SGroup_Count(sg_currentSelection)
+	for i = 1, count do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_IsAttackMoving(squad) and Squad_IsOfType(squad, "scar_spearman") then
+			b_attackMoving = true
+			
+		end
+	end
+
+end
+
+function LonelyUnit_Monitor()
+	if b_attackMoving == true and SGroup_CountSpawned(sg_fre_attackMove_scout) == 0 then
+		
+		Objective_Complete(SOBJ_AttackMove)
+		Rule_RemoveMe()
+		Rule_Remove(AttackMove_Monitor)
+	else 
+		if SGroup_CountSpawned(sg_fre_attackMove_scout) == 0 then
+			SpawnAnotherLonelyUnit()
+			Rule_AddOneShot(AttachIconOnUnit,1)
+
+		end
+	end
+end
+
+function SpawnAnotherLonelyUnit()
+	
+--	SpawnUnitsToModule({{ type = "scar_horseman", numSquads = 1}}, "Cavalry_AttackMove_Scout", mkr_horseman_attackMove_target_spawn)
+	
+	UnitEntry_DeploySquads(player2, sg_fre_attackMove_scout, {{type = "scar_horseman", numSquads = 1 }}, mkr_horseman_attackMove_target_spawn)
+	--by setting this unit to be non-selectable, we prevent the player form issuing direct attack orders on it
+	--this way they must either Attack Move or move and then aggro
+	SGroup_SetSelectable(sg_fre_attackMove_scout, false)	
+	Rule_AddOneShot(MoveUnitAttackMove,1)
+end
+
+function MoveUnitAttackMove()
+	Cmd_Move(sg_fre_attackMove_scout,mkr_horseman_attackMove_target_destination)
+
+	LocalCommand_SquadExt(player2, sg_fre_attackMove_scout, SCMD_HoldPosition, 1, true)
+
+end
+
+function AttachIconOnUnit()
+
+	hpid_AttackScout = Objective_AddUIElements(SOBJ_AttackMove, sg_fre_attackMove_scout, true, 11192862,true,3)
+
+end
+
+
+function SOBJ_AttackMove_OnComplete()
+	
+	Objective_RemoveUIElements(SOBJ_AttackMove,hpid_AttackScout)
+	
+	Objective_Start(SOBJ_KillHorsemen)
+	Objective_Start(SOBJ_DestroyTheStables,false,true)
+end
+
+
+
+function KillHorsemen_UI()
+	
+	i_maxHorsemenKill = SGroup_CountSpawned(sg_horsemanVillage_horseman)
+	Objective_SetCounter(SOBJ_KillHorsemen, 0, i_maxHorsemenKill)
+	hpid_HorsemanTown = Objective_AddUIElements(OBJ_AttackCavalryEncampment, mkr_horseman_village, true,11192804, true,3) --"French Cavalry encampment"
+	
+end
+
+function KillHorsemen_Start()
+	
+	Rule_AddGlobalEvent(CavalryEncampmentDeathEvent,GE_SquadKilled)
+	Rule_AddInterval(Horsemen_CompletionMonitor,1)
+	
+	Rule_AddOneShot(CavalryCombatTip,3)
+end
+
+function CavalryCombatTip()
+	if not Objective_IsComplete(OBJ_AttackCavalryEncampment) then
+		Objective_Start(OBJ_Tip_CombatVsCavalry, false, false)
+	end
+end
+
+function CavalryEncampmentDeathEvent(context)
+	
+	if Squad_GetPlayerOwner(context.victim) == player2 then
+		local victim = context.victim	
+		if Objective_IsComplete(SOBJ_KillHorsemen) == true then
+			Rule_RemoveMe()
+		else
+			if SGroup_ContainsSquad(sg_horsemanVillage_horseman, victim.SquadID, true) then 
+				
+				local amountEnemyKilled = Objective_GetCounter(SOBJ_KillHorsemen) + 1
+				print(amountEnemyKilled)
+				
+				if amountEnemyKilled <= i_maxHorsemenKill then
+					
+					Objective_IncreaseCounter(SOBJ_KillHorsemen, 1)
+					
+					if amountEnemyKilled >= i_maxHorsemenKill then
+						Objective_Complete(SOBJ_KillHorsemen)
+						Rule_RemoveMe()
+					end
+				end
+			end
+		end
+	end
+end
+
+function Horsemen_CompletionMonitor()
+	if SGroup_CountSpawned(sg_horsemanVillage_horseman) == 0 then
+		Objective_Complete(SOBJ_KillHorsemen)
+		Rule_RemoveMe()
+		if Rule_Exists(CavalryEncampmentDeathEvent) == true then
+			Rule_RemoveGlobalEvent(CavalryEncampmentDeathEvent)
+		end
+	end
+end
+
+
+function KillHorsemen_OnComplete()
+	
+end
+
+function DestroyTheStables_UI()
+--	i_amountCavalryBuildings = EGroup_CountSpawned(eg_CavalryEncampment)
+
+--	Objective_SetCounter(SOBJ_DestroyTheStables, 0, i_amountCavalryBuildings)
+	
+end
+
+function DestroyTheStables_Start()
+--	Rule_AddEGroupEvent(DestroyStables_EntityKilled, eg_CavalryEncampment, GE_EntityKilled) --Start watching what gets killed
+	Rule_Add(DestroyTheStables_Monitor)
+end
+
+function DestroyTheStables_Monitor()
+	
+	if EGroup_CountSpawned(eg_CavalryEncampment) == 0 then
+		Objective_Complete(SOBJ_DestroyTheStables)
+		Rule_RemoveMe()
+	end
+end
+
+--function DestroyStables_EntityKilled(context)
+	
+	--local numberBuildingsDestroyed = Objective_GetCounter(SOBJ_DestroyTheStables) + 1
+	--if numberBuildingsDestroyed >= i_amountCavalryBuildings then
+		--Rule_RemoveMe()
+		--Objective_Complete(SOBJ_DestroyTheStables)
+	--else
+		--Objective_IncreaseCounter(SOBJ_DestroyTheStables, 1)
+	--end
+--end
+
+function DestroyTheStables_OnComplete()
+end
+
+function AttackCavalryEncampment_OnComplete()
+	Objective_RemoveUIElements(OBJ_AttackCavalryEncampment,hpid_HorsemanTown)
+	Objective_Start(OBJ_AttackArchersEncampment)
+end
+

@@ -1,0 +1,297 @@
+--
+-- Mission-o-Matic - Audio Trigger
+--
+-- Functions for managing the playing of music and other audio cues based on game events
+--
+
+--? @group MissionOMatic
+
+AUDIO_TRIGGER_AREA = 1
+AUDIO_TRIGGER_CONDITION = 2
+
+g_audioTriggerCounter = 1
+
+--? @shortdesc Sets up a Leader unit's custom Leader behaviour for use in a campaign mission
+--? @args TABLE bare data table
+--? @result TABLE filled data table
+function AudioTrigger_InitAreaTrigger(initData)
+	
+	-- Basic type validation
+	_AudioTrigger_InitCore(initData)
+	
+	-- Case-specific type validation
+	if scartype(initData.marker) ~= ST_MARKER then
+		fatal(_AudioTrigger_ComposeError("marker", initData.marker))
+	elseif scartype(initData.triggeringPlayer) ~= ST_PLAYER then
+		fatal(_AudioTrigger_ComposeError("triggeringPlayer", initData.triggeringPlayer))
+	elseif scartype(initData.startAboveUnitCount) ~= ST_NUMBER then
+		fatal(_AudioTrigger_ComposeError("startAboveUnitCount", initData.startAboveUnitCount))
+	elseif scartype(initData.endBelowUnitCount) ~= ST_NUMBER and scartype(initData.range) ~= ST_NIL then
+		fatal(_AudioTrigger_ComposeError("endBelowUnitCount", initData.endBelowUnitCount))
+	elseif scartype(initData.range) ~= ST_NUMBER and scartype(initData.range) ~= ST_NIL then
+		fatal(_AudioTrigger_ComposeError("range", initData.range))
+	end
+	
+	-- Police logical errors
+	if scartype(initData.endBelowUnitCount) == ST_NUMBER and initData.endBelowUnitCount >= initData.startAboveUnitCount then
+		fatal("Audio shouldn't end at a threshold higher than the threshold at which it starts")
+	end
+	
+	-- Make sure range is correct
+	if scartype(initData.range) ~= ST_NUMBER and scartype(initData.marker) == ST_MARKER then
+		initData.range = Marker_GetProximityRadiusOrDefault(initData.marker, 0)
+	end
+	
+	-- Avoid Lua weirdness around nil
+	local isOneOff = initData.oneOff
+	if isOneOff == nil then isOneOff = true end
+	
+	-- Standardize the data
+	local audioTriggerData = {
+		id = initData.id,
+		category = AUDIO_TRIGGER_AREA,
+		audioCue = initData.audioCue,
+		duration = initData.duration or 0,
+		priority = initData.priority or 0,
+		oneOff = isOneOff,
+		onExit = {
+			exitAudio = initData.onExit.exitAudio or nil,
+			exitAudioDuration = initData.onExit.exitAudioDuration or nil,
+		},
+		
+		marker = initData.marker,
+		triggeringPlayer = initData.triggeringPlayer,
+		startAboveUnitCount = initData.startAboveUnitCount,
+		endBelowUnitCount = initData.endBelowUnitCount or 0,
+		range = initData.range or 10,
+		
+		audioInProgress = false,
+		sgroupVisitors = SGroup_CreateUnique("audio_"..Marker_GetName(initData.marker)),
+		tallyVisitors = 0,
+	}
+
+	-- Setup the checking interval
+	audioTriggerData.monitorRuleID = Rule_AddInterval(AudioTrigger_CheckArea, 0.5, audioTriggerData)
+	-- Return it
+	return audioTriggerData
+	
+end
+
+--? @shortdesc Sets up a Leader unit's custom Leader behaviour for use in a campaign mission
+--? @args TABLE bare data table
+--? @result TABLE filled data table
+function AudioTrigger_InitConditionalTrigger(initData)
+	
+	-- Basic type validation
+	_AudioTrigger_InitCore(initData)
+	
+	-- Pass correct data, or else!
+	if scartype(initData.startCondition) ~= ST_TABLE then
+		fatal(_AudioTrigger_ComposeError("start condition", initData.startCondition))
+	elseif scartype(initData.endCondition) ~= ST_TABLE then
+		fatal(_AudioTrigger_ComposeError("end condition", initData.startCondition))
+	end
+	
+	-- Avoid Lua weirdness around nil
+	local isOneOff = initData.oneOff
+	if isOneOff == nil then isOneOff = true end
+	
+	-- Standardize the data
+	local audioTriggerData = {
+		id = initData.id,
+		category = AUDIO_TRIGGER_AREA,
+		audioCue = initData.audioCue,
+		duration = initData.duration or 0,
+		priority = initData.priority or 0,
+		oneOff = isOneOff,
+		onExit = {
+			exitAudio = initData.onExit.exitAudio or nil,
+			exitAudioDuration = initData.onExit.exitAudioDuration or nil,
+		},
+		
+		startCondition = initData.startCondition,
+		endCondition = initData.endCondition,
+		
+		audioInProgress = false,
+	}
+
+	-- Setup the checking interval
+	audioTriggerData.monitorRuleID = Rule_AddInterval(AudioTrigger_CheckConditional, 0.5, audioTriggerData)
+	-- Return it
+	return audioTriggerData
+	
+end
+
+--? @shortdesc Verifies the basic stuff all Audio Triggers need
+function _AudioTrigger_InitCore(triggerData)
+	
+	-- Add it to the list!
+	if t_allAudioTriggers == nil then
+		t_allAudioTriggers = {}
+	end
+	table.insert(t_allAudioTriggers, triggerData)
+	
+	-- Establish the ID
+	triggerData.id = g_audioTriggerCounter
+	g_audioTriggerCounter = g_audioTriggerCounter + 1
+	
+	-- Make sure all the data is valid
+	if scartype(triggerData.audioCue) ~= ST_STRING then
+		fatal(_AudioTrigger_ComposeError("audioCue", triggerData.audioCue))
+	elseif scartype(triggerData.id) ~= ST_NUMBER then
+		fatal(_AudioTrigger_ComposeError("id", triggerData.id))
+	elseif scartype(triggerData.duration) ~= ST_NUMBER and scartype(triggerData.duration) ~= ST_NIL then
+		fatal(_AudioTrigger_ComposeError("duration", triggerData.duration))
+	elseif scartype(triggerData.priority) ~= ST_NUMBER and scartype(triggerData.priority) ~= ST_NIL then
+		fatal(_AudioTrigger_ComposeError("priority", triggerData.priority))
+	elseif scartype(triggerData.onExit) ~= ST_TABLE and scartype(triggerData.onExit) ~= ST_NIL then
+		fatal(_AudioTrigger_ComposeError("onExit table", triggerData.onExit))
+	end
+	
+	-- Make sure there's a table
+	if triggerData.onExit == nil then triggerData.onExit = {} end
+	
+end
+
+--? @shortdesc Composes an assert message
+function _AudioTrigger_ComposeError(stringName, value)
+	
+	local message = "AudioTrigger - invalid "..tostring(stringName).."! Is "..tostring(Debug_ScartypeToString(value)).." with value "..tostring(value)
+	return message
+	
+end
+
+--? @shortdesc Regularly check an Audio Trigger's conditions and update accordingly
+--? @args TABLE leader data table
+function AudioTrigger_CheckArea(context, triggerData)
+	
+	--Who's nearby?
+	local triggeringUnits = SGroup_CreateUnique("")
+	Player_GetAllSquadsNearMarker(triggerData.triggeringPlayer, triggeringUnits, triggerData.marker)
+	
+	-- Compare the unit counts
+	-- If we're below our unit threshold, log any new units and consider playing the audio
+	if SGroup_Count(triggeringUnits) >= triggerData.startAboveUnitCount then
+
+		-- We need to know how many were in before, to know how many we're adding
+		local countBefore = SGroup_Count(triggerData.sgroupVisitors)
+		
+		-- Add the triggering units to the visitor group!
+		SGroup_AddGroup(triggerData.sgroupVisitors, triggeringUnits)
+		local countAfter = SGroup_Count(triggerData.sgroupVisitors)
+		
+		-- Tally up anyone who wasn't in the group before
+		if (countAfter > countBefore) then
+			triggerData.tallyVisitors = triggerData.tallyVisitors + (countAfter - countBefore)
+		end
+		
+		-- If we're not playing the audio but should be, kick it off
+		if triggerData.audioInProgress == false and AudioTrigger_CanPlay(triggerData) == true then
+			AudioTrigger_Activate(triggerData)
+		end
+	
+	-- If we're playing the audio but shouldn't be anymore, unlock
+	elseif triggerData.audioInProgress == true and SGroup_Count(triggeringUnits) <= triggerData.endBelowUnitCount then
+		
+		-- What's the state of our visitor list versus its total tally?
+		local survivingVisitors = (SGroup_Count(triggerData.sgroupVisitors) / triggerData.tallyVisitors)
+		AudioTrigger_Deactivate(triggerData, survivingVisitors > 0.05)
+		
+	end
+	
+	-- Clear up the SGroup we don't need anymore
+	SGroup_Destroy(triggeringUnits)
+	
+end
+
+--? @shortdesc Regularly check an Audio Trigger's conditions and update accordingly
+--? @args TABLE leader data table
+function AudioTrigger_CheckConditional(context, triggerData)
+	
+	-- Are we looking for a start condition?
+	if scartype(triggerData.startCondition) == ST_TABLE then
+		
+		local startDetected = ConditionList_CheckItem(triggerData.startCondition)
+		if startDetected == true and AudioTrigger_CanPlay(triggerData) == true then
+			triggerData.startCondition = nil
+			AudioTrigger_Activate(triggerData)
+		end
+		
+	elseif scartype(triggerData.endCondition) == ST_TABLE then
+		
+		local endDetected = ConditionList_CheckItem(triggerData.endCondition)
+		if endDetected == true then
+			triggerData.endCondition = nil
+			AudioTrigger_Deactivate(triggerData)
+		end
+		
+	end
+	
+end
+
+--? @shortdesc Verifies whether an audio trigger can start playing
+--? @args TABLE leader data table
+function AudioTrigger_CanPlay(triggerData)
+	
+	return scartype(g_currentAudioTrigger) == ST_NIL or g_currentAudioTrigger.priority < triggerData.priority
+	
+end
+
+--? @shortdesc Activates an audio trigger
+--? @args TABLE leader data table
+function AudioTrigger_Activate(triggerData)
+	
+	-- If there was already a trigger playing, and we've overridden it, stop it
+	if scartype(g_currentAudioTrigger) == ST_TABLE then
+		g_currentAudioTrigger.audioInProgress = false
+		Music_UnlockIntensity()
+	end
+	
+	-- Configure the trigger
+	triggerData.audioInProgress = true
+	Music_LockIntensity(triggerData.audioCue, triggerData.duration)
+	print("AUDIO TRIGGER: Playing "..tostring(triggerData.audioCue))
+	
+	-- Set the new current trigger
+	g_currentAudioTrigger = triggerData
+	
+end
+
+--? @shortdesc Deactivates an audio trigger
+--? @args TABLE leader data table
+function AudioTrigger_Deactivate(triggerData, playExit)
+	
+	triggerData.audioInProgress = false
+	if playExit == true and scartype(triggerData.onExit.exitAudio) == ST_STRING then
+		Music_LockIntensity(triggerData.onExit.exitAudio, triggerData.onExit.exitAudioDuration)
+		print("AUDIO: Playing exit "..tostring(triggerData.audioCue))
+	else
+		Music_UnlockIntensity()
+		print("AUDIO: Stopping "..tostring(triggerData.audioCue))
+	end
+	
+	-- Reset the currently playing trigger
+	if g_currentAudioTrigger == triggerData then
+		g_currentAudioTrigger = nil
+	end
+	
+	-- Is this a one-off? If so, remove!
+	if triggerData.oneOff == true then
+		AudioTrigger_Remove(triggerData)
+	end
+	
+end
+
+--? @shortdesc Completely removes an audio trigger from the mission
+function AudioTrigger_Remove(triggerData)
+	
+	for index, trigger in pairs(t_allAudioTriggers) do
+		if trigger.id == triggerData.id then
+			print("AUDIO: Removing trigger "..tostring(trigger.id))
+			table.remove(t_allAudioTriggers, index)
+			Rule_RemoveWithID(triggerData.monitorRuleID)
+			break
+		end
+	end
+	
+end

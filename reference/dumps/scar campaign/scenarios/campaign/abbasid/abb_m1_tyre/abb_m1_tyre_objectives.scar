@@ -1,0 +1,478 @@
+import("MissionOMatic/MissionOMatic.scar")
+import("cardinal.scar")
+
+function Tyre_RegisterObjectives()
+	
+	debug_skipFranksGathering = false
+	debug_skipEconPhase = false
+	debug_skipArmyCountdown = false
+	
+	if Util_GetCommandLineArgument("SkipFranksGathering") then
+		debug_skipFranksGathering = true
+	end
+	if Util_GetCommandLineArgument("SkipEconPhase") then
+		debug_skipFranksGathering = true
+		debug_skipEconPhase = true
+	end
+	if Util_GetCommandLineArgument("SkipArmyCountdown") then
+		debug_skipFranksGathering = true
+		debug_skipEconPhase = true
+		debug_skipArmyCountdown = true
+	end
+	
+	
+	OBJ_HorseArchers = {
+		Title = "$11257876", --Your horse archers must survive
+		Type = ObjectiveType_Information,
+		IsFailed = function()
+			return SGroup_CountSpawned(sg_p1_horse_archers) == 0
+		end,				
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	OBJ_DefendLandmarks = {
+		Title = "$11257877", --Your landmarks must survive
+		Type = ObjectiveType_Information,
+		IsFailed = function()
+			
+			local landmarks_remaining = 0
+	
+			local _Check = function(gid, idx, eid)
+				if Entity_GetStateModelBool(eid, "landmark_active") then
+					landmarks_remaining = landmarks_remaining + 1
+				end
+			end
+			EGroup_ForEach(eg_landmarks, _Check)
+			return landmarks_remaining == 0
+		end,				
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	OBJ_DefendTyre = {
+		Title = "$11252293", --Tyre's Town Center Must Survive
+		Type = ObjectiveType_Information,
+		PreStart = function()
+			Objective_AddUIElements(OBJ_DefendTyre, mkr_tyre_tc, true, "$11252309", false, 5)
+			Objective_Complete(OBJ_DefendLandmarks, false, false) --landmark fail condition no longer needed
+		end,
+		IsFailed = function()
+			return EGroup_CountSpawned(eg_tyre_town_center) == 0
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	-- FRANKS GATHERING
+	OBJ_FranksGathering = {
+		Title = "$11252294", --The Franks Are Gathering Resources for an Attack
+		showTitle = false,
+		showIntel = false,
+		Type = ObjectiveType_Information,
+		PreStart = function()
+			
+			Objective_SetCounter(OBJ_FranksGathering, 0, t_diff.enemy_resource_target)
+			
+			--Spawn some scattered enemy units
+			Tyre_SpawnScatteredUnits(player2, "mkr_p2_archer", {type = "scar_archer", numSquads = 1})
+			Tyre_SpawnScatteredUnits(player2, "mkr_p2_knight", {type = "scar_knight", numSquads = 1})
+			
+			Tyre_SpawnRamBuilders()
+			Tyre_SpawnEscorts()
+		end,
+		OnStart = function()
+			
+			FOW_RevealArea(Util_GetPosition(mkr_main_camp_reveal), 25, -1)
+		end,
+		IsComplete = function()
+			
+			if enemy_resource_total > enemy_resource_total_prev then
+				enemy_resource_total_prev = enemy_resource_total
+				
+				if enemy_resource_total > t_diff.enemy_resource_target then
+					enemy_resource_total = t_diff.enemy_resource_target
+				end
+				
+				Objective_SetCounter(OBJ_FranksGathering, enemy_resource_total, t_diff.enemy_resource_target)
+				
+				if enemy_resource_total == t_diff.enemy_resource_target then
+					return true
+				end
+			end
+			
+			if debug_skipFranksGathering then
+				TyreDebug_SkipFranksGathering()
+				return true
+			end
+			
+			return false
+
+		end,
+		OnComplete = function()
+			
+			if Objective_IsComplete(OBJ_ClearCamps) == false then
+				Objective_Complete(OBJ_ClearCamps, false, false)
+			end
+			
+			--send all remaining guards and villagers back to the main camp
+			Camps_RetreatAll()
+		end,
+	}
+	
+	-- ASSAULT COUNTDOWN
+	OBJ_AssaultCountdown = {
+		Title = "$11252296", --Frankish Attack is Mustering
+		showTitle = false,
+		Type = ObjectiveType_Information,
+		Intel_Start = EVENTS.RamConstructionStarted,
+		PreStart = function()
+			
+			-- reveal escorts
+			FOW_PlayerRevealSGroup(player1, sg_escorts, 25, -1)
+		end,
+		OnStart = function()
+			Music_LockIntensity(MUSIC_TENSE)
+			Rule_AddOneShot(Tyre_CheckStartPreparing, 30)
+			Tyre_ConstructRamTower()
+			
+			if debug_skipArmyCountdown then
+				Objective_StartTimer(OBJ_AssaultCountdown, COUNT_DOWN, 9, 0)
+			else
+				Objective_StartTimer(OBJ_AssaultCountdown, COUNT_DOWN, 360, 0)
+			end
+		end,
+		IsComplete = function()
+			if Objective_GetTimerSeconds(OBJ_AssaultCountdown) <= 180 and VOPlayed_RamTimerWarning == false then
+				VOPlayed_RamTimerWarning = true
+				Util_StartIntel(EVENTS.RamTimerWarning)
+			end
+			
+			if Objective_GetTimerSeconds(OBJ_AssaultCountdown) <= 0 then
+				return true
+			end
+			return false
+		end,
+		OnComplete = function()
+			Music_PostCombat_End()
+			Rule_AddInterval(Tyre_CheckDestroyRamStart, 1)
+		end,
+	}
+	
+	TOBJ_EnemyConstructing = {
+		Title = "$11253235", --The Enemy is Constructing 'The Beast'
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_AssaultCountdown,
+		StartAlongsideParent = true,
+	}
+	
+	OBJ_ClearCamps = {
+		Title = "$11255468", --Clear the Frankish Camps
+		Type = ObjectiveType_Primary,
+		PreStart = function()
+			
+			Objective_SetCounter(OBJ_ClearCamps, 0, 4)
+			Camps_AddUI()
+		end,
+		PreComplete = function()
+			Objective_Complete(OBJ_PauseMenu, false, false)
+		end,
+		OnComplete = function()
+			
+			Objective_Complete(SOBJ_EliminateGuardsAndGatherers, false, false)
+			
+			Rule_Remove(Camps_MonitorVillagers)
+			Rule_Remove(Camps_GatherResources)
+			Rule_Remove(Camps_UpdateUI)
+			
+			Objective_Complete(OBJ_FranksGathering, false, false)
+			
+			if base_phase_started == false then
+				Tyre_StartBasePhase()
+			end
+		end,
+	}
+	
+	SOBJ_EliminateGuardsAndGatherers = {
+		Title = "$11252304", --Eliminate Guards and Resource Gatherers
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ClearCamps,
+		StartAlongsideParent = true,
+	}
+	
+	OBJ_PauseMenu = {
+		Title = "$11257875", --View the pause menu for additional mission information
+		Type = ObjectiveType_Tip,
+	}
+	
+	OBJ_PrepareForAttack = {
+		Title = "$11252297", --Prepare to defend Tyre from the Frankish attack
+		Type = ObjectiveType_Primary,
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_PrepareForAttack, ANY)
+		end,
+		OnComplete = function()
+			Objective_Start(OBJ_AssaultCountdown, true, true)
+		end,
+	}
+	
+	OBJ_BuildUpStockpile = {
+		Title = "$11253236", --Harvest Resources
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_PrepareForAttack,
+		StartAlongsideParent = true,
+		PreStart = function()
+			Objective_SetCounter(OBJ_BuildUpStockpile, player_resource_total, HARVEST_TARGET)
+		end,
+		IsComplete = function()
+			
+			Objective_SetCounter(OBJ_BuildUpStockpile, player_resource_total, HARVEST_TARGET)
+			
+			if debug_skipEconPhase then
+				return true
+			end
+			
+			return player_resource_total >= HARVEST_TARGET
+		end,
+		OnComplete = function()
+			Rule_Remove(Tyre_MonitorResources)
+		end,
+	}
+	
+	OBJ_ProduceUnits = {
+		Title = "$11252298", --OR Produce Units
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_PrepareForAttack,
+		StartAlongsideParent = true,
+		PreStart = function()
+			
+			unit_count_current = Player_GetTotalPopulation(player1)
+			Objective_SetCounter(OBJ_ProduceUnits, unit_count_current, unit_count_target)
+		end,
+		IsComplete = function()
+			
+			unit_count_current = Player_GetTotalPopulation(player1)
+			
+			if unit_count_current > unit_count_prev then
+				unit_count_prev = unit_count_current
+				Objective_SetCounter(OBJ_ProduceUnits, unit_count_current, unit_count_target)
+			end
+			
+			if debug_skipEconPhase then
+				return true
+			end
+			
+			return unit_count_current >= unit_count_target
+		end,
+	}
+	
+	OBJ_DestroyRam = {
+		Title = "$11252299", --Destroy The Beast
+		Type = ObjectiveType_Battle,
+		PreStart = function()
+			Objective_Start(OBJ_DefendTyre, false, false)
+		end,
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_DestroyRam, sg_ram, true, "$11229622", false)
+		end,
+		OnStart = function()
+			
+			Rule_AddOneShot(Tyre_LaunchRam, 2)
+			
+			Music_LockIntensity(MUSIC_TENSE)
+			
+			Util_AutoSave()
+			VOCue_RamIncoming_CTA()
+			
+			Rule_AddOneShot(Tyre_StartDefendMole, 30)
+		end,
+		IsComplete = function()
+			
+			if SGroup_CountSpawned(sg_ram) > 0 then
+				local health = SGroup_GetAvgHealth(sg_ram)
+				Objective_SetProgressBar(SOBJ_RamHP, health)
+			end
+			
+			return SGroup_CountSpawned(sg_ram) == 0
+		end,
+		PreComplete = function()
+			Tyre_StartFinalRetreat()
+		end,
+		OnComplete = function()
+			Music_PostCombat_End()
+			Objective_Complete(SOBJ_RamHP, false, false)
+			Mission_Complete()
+		end,
+	}
+	SOBJ_RamHP = {
+		Title = "$11256458", --Remaining Health
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DestroyRam,
+		StartAlongsideParent = true,
+		SetupUI = function()
+			Obj_SetProgressVisible(SOBJ_RamHP.ID, true)
+			Obj_SetProgress(SOBJ_RamHP.ID, 1.0)
+			Obj_SetColour(SOBJ_RamHP.ID, 255, 0, 0, 255)
+		end,
+	}
+	
+	OBJ_AgeUp = {
+		Title = "$11252300", --Advance to the Feudal Age
+		Type = ObjectiveType_Primary,
+		OnStart = function()
+			Rule_AddInterval(Tyre_MonitorResources, 1)
+		end,
+		IsComplete = function()
+			if debug_skipEconPhase then
+				Objective_Complete(OBJ_HouseOfWisdom, false, false)
+				Objective_Complete(OBJ_Wing, false, false)
+				return true
+			end
+			
+			return Objective_AreSubObjectivesComplete(OBJ_AgeUp, ALL)
+		end,
+		OnComplete = function()
+			Objective_Start(OBJ_PrepareForAttack, true, true)
+		end,
+	}
+	OBJ_HouseOfWisdom = {
+		Title = "$11252301", --Build a House of Wisdom
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_AgeUp,
+		StartAlongsideParent = true,
+	}
+	OBJ_Wing = {
+		Title = "$11252302", --Build a Wing on the House of Wisdom
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_AgeUp,
+		StartAlongsideParent = true,
+	}
+	
+	OBJ_DefendMole = {
+		Title = "$11252303", --Position your army to defend Tyre
+		Type = ObjectiveType_Primary,
+		IsComplete = function()
+			
+			SGroup_Clear(sg_temp)
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_ui_mole)
+			SGroup_Filter(sg_temp, {"scar_scout", "scar_villager"}, FILTER_REMOVE)
+			return SGroup_CountSpawned(sg_temp) > 0
+		end,
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_DefendMole, mkr_ui_mole, true, "$11252322", true, 5)
+		end,
+	}
+	
+	Objective_Register(OBJ_HorseArchers) -- Fail condition
+	Objective_Register(OBJ_DefendLandmarks) -- Fail condition
+	Objective_Register(OBJ_DefendTyre)
+	
+	Objective_Register(OBJ_FranksGathering)
+	
+	Objective_Register(OBJ_AssaultCountdown)
+	Objective_Register(TOBJ_EnemyConstructing)
+	
+	Objective_Register(OBJ_ClearCamps)
+	Objective_Register(SOBJ_EliminateGuardsAndGatherers)
+	
+	Objective_Register(OBJ_PauseMenu)
+	
+	Objective_Register(OBJ_PrepareForAttack)
+	Objective_Register(OBJ_BuildUpStockpile)
+	Objective_Register(OBJ_ProduceUnits)
+	
+	Objective_Register(OBJ_AgeUp)
+	Objective_Register(OBJ_HouseOfWisdom)
+	Objective_Register(OBJ_Wing)
+	
+	Objective_Register(OBJ_DestroyRam)
+	Objective_Register(SOBJ_RamHP)
+	
+	Objective_Register(OBJ_DefendMole)
+
+end
+
+function Tyre_MonitorResources()
+	
+	local rate_food = Player_GetResourceRate(player1, RT_Food)
+	local rate_wood = Player_GetResourceRate(player1, RT_Wood)
+	local rate_gold = Player_GetResourceRate(player1, RT_Gold)
+	
+	player_resource_total = player_resource_total + rate_food + rate_wood + rate_gold
+	
+	--start prepare for attack phase if the player has gathered enough
+	if Objective_IsStarted(OBJ_PrepareForAttack) == false then
+		
+		if player_resource_total >= START_PREP_TARGET or Player_GetTotalPopulation(player1) >= unit_count_target * 0.5 then
+			Objective_Start(OBJ_PrepareForAttack, true, true)
+		end
+	end
+end
+
+function Tyre_CheckDestroyRamStart()
+	if ram_has_spawned then
+		Objective_Start(OBJ_DestroyRam, true, true)
+		Rule_RemoveMe()
+	end
+end
+
+function Tyre_StartDefendMole()
+	if Player_AreSquadsNearMarker(player1, mkr_ui_mole) == false and Objective_IsStarted(OBJ_DefendMole) == false then
+		Objective_Start(OBJ_DefendMole, true, true)
+	end
+end
+
+function Tyre_StartAgeUpObjective(context, data)
+	Objective_Start(OBJ_AgeUp, true, true)
+end
+
+
+function Tyre_HouseOfWisdomComplete(context, data)
+	if Entity_GetBlueprint(context.entity) == EBP.AYYUBID_CMP.BUILDING_HOUSE_OF_WISDOM_AYY then
+		
+		Objective_Complete(OBJ_HouseOfWisdom, false, false)
+		--Objective_Start(OBJ_Wing, true, true)
+		
+		Rule_AddGlobalEvent(Tyre_WingComplete, GE_UpgradeComplete)
+		Rule_AddGlobalEvent(Tyre_WingStarted, GE_UpgradeStart)
+		
+		house_of_wisdom_entity = context.entity
+		
+		EGroup_Add(eg_house_of_wisdom, house_of_wisdom_entity)
+		EGroup_Add(eg_landmarks, house_of_wisdom_entity)
+		
+		Training_Tyre_BuildWing()
+		
+		Rule_RemoveMe()
+	end
+end
+
+function Tyre_WingStarted(context, data)
+	local wing_upgrades = { 
+		UPG.ABBASID.UPGRADE_ADD_CULTURE_WING,
+		UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING,
+		UPG.ABBASID.UPGRADE_ADD_MILITARY_WING,
+		UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_AYY,
+	}
+	if Table_Contains(wing_upgrades, context.upgrade) then
+		wing_started = true
+		Rule_RemoveGlobalEvent(Tyre_WingStarted)
+	end
+end
+
+function Tyre_WingComplete(context, data)
+	local wing_upgrades = { 
+		UPG.ABBASID.UPGRADE_ADD_CULTURE_WING,
+		UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING,
+		UPG.ABBASID.UPGRADE_ADD_MILITARY_WING,
+		UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_AYY,
+	}
+	if Table_Contains(wing_upgrades, context.upgrade) then
+		Objective_Complete(OBJ_Wing, false, false)
+		Rule_RemoveGlobalEvent(Tyre_WingComplete)
+	end
+end
+

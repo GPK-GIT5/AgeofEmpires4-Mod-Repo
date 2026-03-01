@@ -1,0 +1,282 @@
+--
+-- "CanSeeTrigger"
+--	
+--  Prefab Script
+--
+
+
+--? @group scardoc;Prefabs
+
+
+-- Initializer function should ALWAYS be named after the prefab name with _Init appended on the end
+function canseetrigger_Init(data)	
+
+	local instance = Prefab_GetInstance(data)
+	
+	-- set up instance's data
+	instance.data = {}
+	instance.data.hasActivated = false
+	instance.data.triggerCount = 0 -- number of times trigger has been triggered so far
+	instance.data.lastTriggerTime = -1000 -- game time of last trigger
+	instance.data.stillPresent = false -- flag that indicates if a unit is still in the trigger zone after a trigger has been fired off
+	instance.data.external_interest_list = {} -- store any prefabs to trigger that have been registered externally at runtime, rather than in the WB
+	
+	
+	if instance.repeatable == false then
+	
+		instance.repeat_count = 1	
+	
+	end
+	
+	-- register the trigger zone if there was one
+	-- handles if unit is a plane too
+	if instance.active == "Immediately" then
+		Rule_AddInterval(canseetrigger_Check, 1, {instance = instance})
+		instance.data.hasActivated = true
+	end
+	
+end
+
+
+function canseetrigger_Stop(data)
+	local instance = Prefab_GetInstance(data)
+	
+	instance.repeat_count = 1
+	instance.data.triggerCount = 1
+	
+end
+
+--? @args Table/String instance
+--? @shortdesc Start running the CanSeeTrigger prefab
+function pcanseetrigger_Activate(data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	if instance.data.hasActivated == false then
+		Rule_AddInterval(canseetrigger_Check, 1, {instance = instance})
+		instance.data.hasActivated = true
+	end
+	
+end
+
+
+
+
+
+function canseetrigger_Test(instance)
+
+	if instance.trigger_type == "Marker" then
+		return Player_CanSeePosition(instance.trigger_player, Util_GetPosition(instance.trigger_marker))
+	elseif instance.trigger_type == "SGroup" then
+		return Player_CanSeeSGroup(instance.trigger_player, instance.trigger_sgroup, ANY)
+	elseif instance.trigger_type == "EGroup" then
+		return Player_CanSeeEGroup(instance.trigger_player, instance.trigger_egroup, ANY)
+	end
+
+	return false
+	
+end
+
+
+
+function canseetrigger_Check(context, data)
+
+	local instance = Prefab_GetInstance(data)
+
+	if canseetrigger_Test(instance) == true then
+	
+		canseetrigger_Trigger(data)
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+
+--? @args Table/String instance
+--? @shortdesc Start triggering the items listed in the CanSeeTrigger prefab
+--? @extdesc This prefab can only be triggered once, either by the trigger zone or by script, whichever is first
+function canseetrigger_Trigger(data)
+
+	local instance = Prefab_GetInstance(data)
+	local trigger = false
+
+	if instance.repeat_count == 0 or instance.data.triggerCount < instance.repeat_count then
+	
+		if instance.repeat_type == "Timed Delay" then
+		
+			if World_GetGameTime() - instance.data.lastTriggerTime >= instance.repeat_delay then
+			
+				trigger = true
+			
+			end
+		
+		elseif instance.repeat_type == "Leave and Re-enter" then
+		
+			if instance.data.stillPresent == false then
+				
+				trigger = true		
+		
+			end	
+			
+		end
+		
+	end
+	
+	if trigger == true then
+	
+		instance.data.triggerCount = instance.data.triggerCount + 1
+		instance.data.lastTriggerTime = World_GetGameTime()
+		instance.data.stillPresent = true
+		
+		
+		-- trigger anything specified in the prefab
+		for index, item in pairs(instance.things_to_trigger) do
+		
+			if item.trigger_type == "Scar Function" then															-- Call a SCAR function
+				
+				local event_data = {
+					instance = instance,
+					trigger_scar = item.trigger_scar,
+				}
+				Rule_AddOneShot(canseetrigger_TriggerScarFunction, item.delay, event_data)
+				
+			elseif item.trigger_type == "Prefab" then																	-- Trigger a Prefab
+
+				local event_data = {
+					instance = instance,
+					trigger_prefab = item.trigger_prefab,
+				}
+				Rule_AddOneShot(canseetrigger_TriggerPrefab, item.delay, event_data)
+				
+			elseif item.trigger_type == "Speech Event" then														-- Trigger an Intel Event
+				
+				local event_data = {
+					instance = instance,
+					trigger_intelevent = item.trigger_intelevent,
+				}
+				Rule_AddOneShot(canseetrigger_TriggerIntelEvent, item.delay, event_data)
+
+			end
+		
+		end
+		
+		
+		-- trigger anything that was registered externally
+		for index, item in pairs(instance.data.external_interest_list) do 
+			
+			local delay = item.delay or 0
+			Rule_AddOneShot(canseetrigger_TriggerExternalInterest, delay, item)
+			
+		end
+		
+		
+		-- if this is a repeating trigger, set up the conditions to repeat
+		if instance.repeat_count == 0 or instance.data.triggerCount < instance.repeat_count then -- we haven't overrun our repeat count yet, then
+		
+			if instance.repeat_type == "Leave and Re-enter" then
+				
+				Rule_AddInterval(canseetrigger_TriggerExited, 1, {instance = instance})
+				
+			else
+			
+				Rule_AddInterval(canseetrigger_Check, 1, {instance = instance})
+				
+			end
+			
+		end
+		
+		
+	end	
+	
+end
+
+
+--? @args Table/String instance
+--? @result Integer
+--? @shortdesc Returns how many times this instance has been triggered
+function canseetrigger_GetTriggerCount(data)
+
+	local instance = Prefab_GetInstance(data)
+	return instance.data.triggerCount
+	
+end
+
+
+
+
+function canseetrigger_TriggerExited(data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	if canseetrigger_Test(instance) == false then
+
+		instance.data.stillPresent = false
+		Rule_AddInterval(canseetrigger_Check, {instance = instance})
+		
+		Rule_RemoveMe()	
+		
+	end
+	
+end
+
+
+
+
+
+function canseetrigger_RegisterExternalInterest(data, params)
+
+	local instance = Prefab_GetInstance(data)
+	
+	local item = {
+		instance = params.instance,
+		action = params.action,
+		delay = params.delay,
+		params = params.params,
+	}
+	table.insert(instance.data.external_interest_list, item)
+	
+	print("Registering interest in trigger "..instance.instanceName.." from prefab "..params.instance.instanceName.." - "..params.action)
+	
+end
+
+
+
+
+
+function canseetrigger_TriggerExternalInterest(context, data)
+	
+	print("Triggering external interest on "..data.instance.instanceName.." - "..data.action)
+	Prefab_DoAction(data.instance, data.action, data.params)
+	
+end
+
+
+function canseetrigger_TriggerScarFunction(context, data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	local func = _G[data.trigger_scar]
+	
+	if scartype(func) == ST_FUNCTION then
+		func(instance)
+	end
+
+end
+
+
+function canseetrigger_TriggerPrefab(context, data)
+
+	Prefab_DoAction(data.trigger_prefab, "Trigger")
+
+end
+
+
+function canseetrigger_TriggerIntelEvent(context, data)
+
+	local intel_table = EVENTS[data.trigger_intelevent]
+	if scartype(intel_table) == ST_FUNCTION then
+		Util_StartIntel(intel_table)
+	end
+	
+end

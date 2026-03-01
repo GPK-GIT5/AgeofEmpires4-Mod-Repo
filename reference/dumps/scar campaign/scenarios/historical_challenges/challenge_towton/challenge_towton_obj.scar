@@ -1,0 +1,674 @@
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("MissionOMatic/MissionOMatic_utility.scar")
+import("missionomatic/missionomatic_artofwar.scar")
+import("training/coretraininggoals.scar")
+import("cardinal.scar")
+
+function HC_Towton_InitObjectives()
+	
+	
+	OBJ_Victory = {
+		
+		Title = "$11268447",--Defend against Yorkist attacks
+		Type = ObjectiveType_Battle,
+		PreComplete = function()
+			--send custom event if mission is completed with conqueror mode activated
+			if(conquerorModeActivated == true) then
+				Game_SendCustomChallengeEvent(player1,CE_TOWTONCONQ,1)
+			end
+		end,
+	}
+	
+	OBJ_ConquerorMedal = 
+	{
+		Title = "$11268452",--Conqueror Medal (Survive All Strengthened Enemy Waves)
+		Type = ObjectiveType_Bonus,
+		Icon = "icons\\fe\\medal_gold.png", --TODO: add new icon
+		StartAlongsideParent = true, 
+		OnStart = function()
+			Sound_Play2D(MUS_STING_TRIUMPHANT)
+		end,
+	}
+	OBJ_GoldMedal = 
+	{
+		Title = Loc_FormatText("$11268451", 35),--Gold Medal (Save %1BUILDINGS% Allied Buildings)
+		Type = ObjectiveType_Bonus,
+		Icon = "icons\\fe\\medal_gold.png",
+		StartAlongsideParent = true, 
+	}
+	OBJ_SilverMedal = 
+	{
+		Title = Loc_FormatText("$11268450", 20),--Silver Medal (Save %1BUILDINGS% Allied Buildings)
+		Type = ObjectiveType_Bonus,
+		Icon = "icons\\fe\\medal_silver.png",
+		StartAlongsideParent = true, 
+	}
+	OBJ_BronzeMedal = 
+	{
+		Title = "$11268449",--Bronze Medal (Survive All Enemy Waves)
+		Type = ObjectiveType_Bonus,
+		Icon = "icons\\fe\\medal_bronze.png",
+		StartAlongsideParent = true, 
+	}
+	OBJ_Towns = 
+	{
+		Title = "$11268448",--Allied Buildings Remaining
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_Victory,
+		StartAlongsideParent = true, 
+		
+		SetupUI = function()
+			Obj_SetProgressVisible(OBJ_Towns.ID, true)
+			Obj_SetProgress(OBJ_Towns.ID, 1.0)
+		end,
+	}
+	
+	SOBJ_Defend = 
+	{
+		Title = "$11268453",--The Lancaster Stronghold Must Survive
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_Victory,
+		StartAlongsideParent = true, 
+		
+	}
+	OBJ_Conqueror = 
+	{
+		Title = "$11268999",--Prove your ability to defend your allies for a greater challenge
+		Type = ObjectiveType_Bonus,
+		Parent = OBJ_GoldMedal,
+		StartAlongsideParent = true, 
+		
+	}
+	
+	OBJ_InitialAttacks = 
+	{
+		Title = "$11268454",--The Yorkist forces are sending scouting attacks to test our defenses
+		Type = ObjectiveType_Battle,
+		StartAlongsideParent = true, 
+	}
+	
+	
+	SOBJ_AttackPhaseNW = 
+	{
+		Title = "$11268456",--Defend the Northwest Town until reinforcements arrive
+		Type = ObjectiveType_Battle,
+		StartAlongsideParent = true, 
+	}
+	SOBJ_AttackPhaseSW = 
+	{
+		Title = "$11268457",--Defend the Southwest Town until reinforcements arrive
+		Type = ObjectiveType_Battle,
+		StartAlongsideParent = true, 
+	}
+	SOBJ_AttackPhaseSE = 
+	{
+		Title = "$11268458",--Defend the Southeast Town until reinforcements arrive
+		Type = ObjectiveType_Battle,
+		StartAlongsideParent = true, 
+	}
+	SOBJ_AttackPhaseNE = 
+	{
+		Title = "$11268459",--Defend the Northeast Town until reinforcements arrive
+		Type = ObjectiveType_Battle,
+		StartAlongsideParent = true, 
+	}
+	
+	SOBJ_ReinforcementsNW = 
+	{
+		Title = "$11268460",--Reinforcements have arrived.
+		Type = OT_Information,
+		PreStart = function()
+			Sound_Play2D(MUS_STING_TRIUMPHANT)
+		end,
+		OnStart = function()
+			if(SGroup_CountSpawned(sg_NavalReinforcementsNW) > 0) then
+				local firstSquad = SGroup_GetSquadAt(sg_NavalReinforcementsNW, 1)
+				SGroup_Single(sg_single, firstSquad)
+				reinforcementsNWLabel = Objective_AddUIElements(SOBJ_ReinforcementsNW, sg_single, false, "$11268461", true, 1)--Reinforcements
+				EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, sg_NavalReinforcementsNW, 40, "icons/cta/illustrations/player_reinforcement_arrived")
+				
+				Util_StartIntel(EVENTS.Allied_Reinforcements)
+				
+				--add minimap blip showing where reinforcements are
+				Rule_AddInterval(HC_Towton_PulseReinforcementsBlipNW, 5)
+			end
+		end,
+		IsComplete = function()
+			if(sg_NavalReinforcementsNW ~= nil) then
+				if(SGroup_CountSpawned(sg_NavalReinforcementsNW) > 0) then
+					return Misc_IsSGroupSelected(sg_NavalReinforcementsNW, ANY)
+				else
+					return true
+				end
+			end
+		end,
+		OnComplete = function()
+			Objective_Show(SOBJ_ReinforcementsNW, false, false)
+			UI_ModalVisual_Destroy(reinforcementsNWLabel)
+			if(reinforcementsNWLabel ~= nil) then
+				Objective_RemoveUIElements(SOBJ_ReinforcementsNW, reinforcementsNWLabel)
+			end
+			if(Rule_Exists(HC_Towton_PulseReinforcementsBlipNW)) then
+				Rule_Remove(HC_Towton_PulseReinforcementsBlipNW)
+			end
+		end,
+	}
+	SOBJ_ReinforcementsNE = 
+	{
+		Title = "$11268460",--Reinforcements have arrived.
+		Type = OT_Information,
+		PreStart = function()
+			Sound_Play2D(MUS_STING_TRIUMPHANT)
+		end,
+		OnStart = function()
+			if(SGroup_CountSpawned(sg_NavalReinforcementsNE) > 0) then
+				local firstSquad = SGroup_GetSquadAt(sg_NavalReinforcementsNE, 1)
+				SGroup_Single(sg_single, firstSquad)
+				reinforcementsNELabel = Objective_AddUIElements(SOBJ_ReinforcementsNE, sg_single, false, "$11268461", true, 1)--Reinforcements
+				EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, sg_NavalReinforcementsNE, 40, "icons/cta/illustrations/player_reinforcement_arrived")
+				
+				Util_StartIntel(EVENTS.Allied_Reinforcements)
+				
+				--add minimap blip showing where reinforcements are
+				Rule_AddInterval(HC_Towton_PulseReinforcementsBlipNE, 5)
+			end
+		end,
+		IsComplete = function()
+			if(sg_NavalReinforcementsNE ~= nil) then
+				if(SGroup_CountSpawned(sg_NavalReinforcementsNE) > 0) then
+					return Misc_IsSGroupSelected(sg_NavalReinforcementsNE, ANY)
+				else
+					return true
+				end
+			end
+		end,
+		OnComplete = function()
+			Objective_Show(SOBJ_ReinforcementsNE, false, false)
+			UI_ModalVisual_Destroy(reinforcementsNELabel)
+			if(reinforcementsNELabel ~= nil) then
+				Objective_RemoveUIElements(SOBJ_ReinforcementsNE, reinforcementsNELabel)
+			end
+			if(Rule_Exists(HC_Towton_PulseReinforcementsBlipNE)) then
+				Rule_Remove(HC_Towton_PulseReinforcementsBlipNE)
+			end
+		end,
+	}
+	SOBJ_ReinforcementsSE = 
+	{
+		Title = "$11268460",--Reinforcements have arrived.
+		Type = OT_Information,
+		PreStart = function()
+			Sound_Play2D(MUS_STING_TRIUMPHANT)
+		end,
+		OnStart = function()
+			if(SGroup_CountSpawned(sg_alliedReinforcementsSE) > 0) then
+				local firstSquad = SGroup_GetSquadAt(sg_alliedReinforcementsSE, 1)
+				SGroup_Single(sg_single, firstSquad)
+				reinforcementsSELabel = Objective_AddUIElements(SOBJ_ReinforcementsSE, sg_single, false, "$11268461", true, 1)--Reinforcements
+				EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, sg_alliedReinforcementsSE, 40, "icons/cta/illustrations/player_reinforcement_arrived")
+				
+				Util_StartIntel(EVENTS.Allied_Reinforcements)
+				
+				--add minimap blip showing where reinforcements are
+				Rule_AddInterval(HC_Towton_PulseReinforcementsBlipSE, 5)
+			end
+		end,
+		IsComplete = function()
+			if(sg_alliedReinforcementsSE ~= nil) then
+				if(SGroup_CountSpawned(sg_alliedReinforcementsSE) > 0) then
+					return Misc_IsSGroupSelected(sg_alliedReinforcementsSE, ANY)
+				else
+					return true
+				end
+			end
+		end,
+		OnComplete = function()
+			Objective_Show(SOBJ_ReinforcementsSE, false, false)
+			UI_ModalVisual_Destroy(reinforcementsSELabel)
+			if(reinforcementsSELabel ~= nil) then
+				Objective_RemoveUIElements(SOBJ_ReinforcementsSE, reinforcementsSELabel)
+			end
+			if(Rule_Exists(HC_Towton_PulseReinforcementsBlipSE)) then
+				Rule_Remove(HC_Towton_PulseReinforcementsBlipSE)
+			end
+		end,
+	}
+	SOBJ_ReinforcementsSW = 
+	{
+		Title = "$11268460",--Reinforcements have arrived.
+		Type = OT_Information,
+		PreStart = function()
+			Sound_Play2D(MUS_STING_TRIUMPHANT)
+		end,
+		OnStart = function()
+			if(SGroup_CountSpawned(sg_alliedReinforcementsSW) > 0) then
+				local firstSquad = SGroup_GetSquadAt(sg_alliedReinforcementsSW, 1)
+				SGroup_Single(sg_single, firstSquad)
+				reinforcementsSWLabel = Objective_AddUIElements(SOBJ_ReinforcementsSW, sg_single, false, "$11268461", true, 1)--Reinforcements
+				EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, sg_alliedReinforcementsSW, 40, "icons/cta/illustrations/player_reinforcement_arrived")
+				
+				Util_StartIntel(EVENTS.Allied_Reinforcements)
+				
+				--add minimap blip showing where reinforcements are
+				Rule_AddInterval(HC_Towton_PulseReinforcementsBlipSW, 5)
+			end
+		end,
+		IsComplete = function()
+			if(sg_alliedReinforcementsSW ~= nil) then
+				if(SGroup_CountSpawned(sg_alliedReinforcementsSW) > 0) then
+					return Misc_IsSGroupSelected(sg_alliedReinforcementsSW, ANY)
+				else
+					return true
+				end
+			end
+		end,
+		OnComplete = function()
+			Objective_Show(SOBJ_ReinforcementsSW, false, false)
+			UI_ModalVisual_Destroy(reinforcementsSWLabel)
+			if(reinforcementsSWLabel ~= nil) then
+				Objective_RemoveUIElements(SOBJ_ReinforcementsSW, reinforcementsSWLabel)
+			end
+			if(Rule_Exists(HC_Towton_PulseReinforcementsBlipSW)) then
+				Rule_Remove(HC_Towton_PulseReinforcementsBlipSW)
+			end
+		end,
+	}
+	SOBJ_ReinforcementsS = 
+	{
+		Title = "$11268460",--Reinforcements have arrived.
+		Type = OT_Information,
+		PreStart = function()
+			Sound_Play2D(MUS_STING_TRIUMPHANT)
+		end,
+		OnStart = function()
+			if(SGroup_CountSpawned(sg_alliedReinforcementsS) > 0) then
+				local firstSquad = SGroup_GetSquadAt(sg_alliedReinforcementsS, 1)
+				SGroup_Single(sg_single, firstSquad)
+				reinforcementsSLabel = Objective_AddUIElements(SOBJ_ReinforcementsS, sg_single, false, "$11268461", true, 1)--Reinforcements
+			end
+		end,
+		IsComplete = function()
+			if(sg_alliedReinforcementsS ~= nil) then
+				if(SGroup_CountSpawned(sg_alliedReinforcementsS) > 0) then
+					return Misc_IsSGroupSelected(sg_alliedReinforcementsS, ANY)
+				else
+					return true
+				end
+			end
+		end,
+		OnComplete = function()
+			Objective_Show(SOBJ_ReinforcementsS, false, false)
+			UI_ModalVisual_Destroy(reinforcementsSLabel)
+			if(reinforcementsSLabel ~= nil) then
+				Objective_RemoveUIElements(SOBJ_ReinforcementsS, reinforcementsSLabel)
+			end
+		end,
+	}
+	
+	OBJ_Boss = 
+	{
+		Title = "$11268462",--Defeat the Duke of York's final attack.
+		Type = ObjectiveType_Battle,
+		StartAlongsideParent = false, 
+	}
+	
+	
+	OBJ_AgeUpHint = 
+	{
+		Title = "$11192924",--Advance to the Castle Age
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_Victory,
+		StartAlongsideParent = false, 
+	}
+	
+	OBJ_ProductionHint = 
+	{
+		Title = Loc_FormatText("$11269238", 4),--Construct %1AMOUNT% or more Military Production Buildings
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_Victory,
+		StartAlongsideParent = false, 
+	}
+	
+	Objective_Register(OBJ_Victory)
+	Objective_Register(OBJ_GoldMedal)
+	Objective_Register(OBJ_Towns)
+	Objective_Register(SOBJ_Defend)
+	Objective_Register(OBJ_Conqueror)
+	Objective_Register(OBJ_Boss)
+	Objective_Register(OBJ_AgeUpHint)
+	Objective_Register(OBJ_ProductionHint)
+	
+	Objective_Start(OBJ_Victory)
+	Objective_StartTimer(OBJ_Victory, COUNT_DOWN, phase5StartTime)
+	Objective_Start(OBJ_GoldMedal)
+	Objective_Start(OBJ_Towns)
+	Objective_Start(SOBJ_Defend)
+	Objective_Start(OBJ_Conqueror, false, false)
+	Objective_StartTimer(OBJ_Conqueror, COUNT_DOWN, (60 * 5) + 30)
+	--
+	
+	phase1UI = nil
+	phase2UI = nil
+	phase3UI = nil
+	phase4UI = nil
+	defendTown1Blip = nil
+	defendTown2Blip = nil
+	defendTown3Blip = nil
+	defendTown4Blip = nil
+	allyTown1ReticuleID = nil
+	allyTown2ReticuleID = nil
+	allyTown3ReticuleID = nil
+	allyTown4ReticuleID = nil
+	reinforcementStartTime1 = 0
+	reinforcementStartTime2 = 0
+	reinforcementStartTime3 = 0
+	reinforcementStartTime4 = 0
+	phase1Duration = 5 * 60
+	phase2Duration = 5 * 60
+	phase3Duration = 5 * 60
+	phase4Duration = 4 * 60
+	
+	Rule_AddOneShot(HC_Towton_InitStartingAttackUI, 15)
+	Rule_AddOneShot(HC_Towton_InitStartingAttackUI2, 60)
+	
+end
+
+function HC_Towton_InitStartingAttackUI()
+	
+	
+	if(SGroup_CountSpawned(sg_firstScoutsE) > 0) then
+		--Optional: Stop the English Scouts
+		EventCues_CallToAction("$11172287", CTA_UNIQUE_STAKES, nil, nil, sg_firstScoutsE, 30, "icons/cta/illustrations/alarm")
+	end
+end
+
+function HC_Towton_InitStartingAttackUI2()
+	
+	Objective_Register(OBJ_InitialAttacks)
+	Objective_Start(OBJ_InitialAttacks)
+	
+	---set minimap markers
+	initialAttackBlipNW = UI_CreateMinimapBlip(Util_GetPosition(mkr_townNW), (60 * 5), "objective_battle")
+	initialAttackBlipNE = UI_CreateMinimapBlip(Util_GetPosition(mkr_townNE), (60 * 5), "objective_battle")
+	initialAttackBlipSW = UI_CreateMinimapBlip(Util_GetPosition(mkr_townSW), (60 * 5), "objective_battle")
+	initialAttackBlipSE = UI_CreateMinimapBlip(Util_GetPosition(mkr_townSE), (60 * 5), "objective_battle")
+	
+end
+
+function HC_Towton_InitObjectiveUI()
+	
+	
+	Objective_AddUIElements(SOBJ_Defend, eg_landmark, false, "$11268453", true, 3)--The Lancaster Stronghold Must Survive
+	
+	--get initial building count
+	eg_allAlliedBuildings = EGroup_CreateIfNotFound("eg_allAlliedBuildings")
+	eg_allAlliedBuildings = Player_GetAllEntitiesFromType(allyPlayer, "building")
+	--exclude walls and gates
+	EGroup_Filter(eg_allAlliedBuildings, {"wall", "gate", "farm"}, FILTER_REMOVE)
+	EGroup_RemoveGroup(eg_allAlliedBuildings, eg_outerHouses)
+	allAlliedBuildingsStartingCount = EGroup_CountSpawned(eg_allAlliedBuildings)
+	
+	Objective_SetCounter(OBJ_Towns, allAlliedBuildingsStartingCount, allAlliedBuildingsStartingCount)
+	
+end
+
+function HC_Towton_BeginNewPhase(inPhase)
+	
+	local townPosition = Util_GetPosition(mkr_townNW)
+	local bp_reticule = BP_GetReticuleBlueprint("marquee")
+	local size = 40
+	
+	
+	
+	if(inPhase == 1) then
+		reinforcementStartTime1 = World_GetGameTime()
+		townPosition = Util_GetPosition(mkr_townNW)
+		
+		Objective_Register(SOBJ_AttackPhaseNW)
+		Objective_Start(SOBJ_AttackPhaseNW)
+		Objective_StartTimer(SOBJ_AttackPhaseNW, COUNT_DOWN, phase1Duration)
+		Objective_Show(SOBJ_AttackPhaseNW, true, false)
+		
+		phase1UI = Objective_AddUIElements(SOBJ_AttackPhaseNW, townPosition, false, "$11268463", true, 12)--Awaiting Reinforcements
+		Obj_SetVisible(SOBJ_AttackPhaseNW.ID, true)
+		Obj_SetProgressVisible(SOBJ_AttackPhaseNW.ID, true)
+		--set reticule
+		allyTown1ReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, size)
+		UI_ModalVisual_SetPosition(allyTown1ReticuleID, townPosition)
+		---set minimap marker
+		defendTown1Blip = UI_CreateMinimapBlip(townPosition, phase1Duration, "objective_battle")
+		attackPhase1Started = true
+		--set minimap path
+		MarkerPaths_GenerateIcons("path_arrows_NW", AllMarkers_FromName("path_arrows_NW", ""), "military_route_enemy")
+		
+		--make beacon selectable
+		EGroup_SetSelectable(townDataTable[4].beacon, true)
+		--add reticule to beacon
+		beaconTown1ReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, 5)
+		UI_ModalVisual_SetPosition(beaconTown1ReticuleID, Util_GetPosition(townDataTable[4].beaconMkr))
+		
+	elseif(inPhase == 2) then
+		reinforcementStartTime2 = World_GetGameTime()
+		townPosition = Util_GetPosition(mkr_townSW)
+		
+		Objective_Register(SOBJ_AttackPhaseSW)
+		Objective_Start(SOBJ_AttackPhaseSW)
+		Objective_StartTimer(SOBJ_AttackPhaseSW, COUNT_DOWN, phase2Duration)
+		Objective_Show(SOBJ_AttackPhaseSW, true, false)
+		
+		phase2UI = Objective_AddUIElements(SOBJ_AttackPhaseSW, townPosition, false, "$11268463", true, 12)--Awaiting Reinforcements
+		Obj_SetVisible(SOBJ_AttackPhaseSW.ID, true)
+		Obj_SetProgressVisible(SOBJ_AttackPhaseSW.ID, true)
+		--set reticule
+		allyTown2ReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, size)
+		UI_ModalVisual_SetPosition(allyTown2ReticuleID, townPosition)
+		---set minimap marker
+		defendTown2Blip = UI_CreateMinimapBlip(townPosition, phase2Duration, "objective_battle")
+		attackPhase2Started = true
+		--set minimap path
+		MarkerPaths_GenerateIcons("path_arrows_SW", AllMarkers_FromName("path_arrows_SW", ""), "military_route_enemy")
+		
+		--make beacon selectable
+		EGroup_SetSelectable(townDataTable[3].beacon, true)
+		--add reticule to beacon
+		beaconTown2ReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, 5)
+		UI_ModalVisual_SetPosition(beaconTown2ReticuleID, Util_GetPosition(townDataTable[3].beaconMkr))
+		
+	elseif(inPhase == 3) then
+		reinforcementStartTime3 = World_GetGameTime()
+		townPosition = Util_GetPosition(mkr_townSE)
+		
+		Objective_Register(SOBJ_AttackPhaseSE)
+		Objective_Start(SOBJ_AttackPhaseSE)
+		Objective_StartTimer(SOBJ_AttackPhaseSE, COUNT_DOWN, phase3Duration)
+		Objective_Show(SOBJ_AttackPhaseSE, true, false)
+		
+		phase3UI = Objective_AddUIElements(SOBJ_AttackPhaseSE, townPosition, false, "$11268463", true, 12)--Awaiting Reinforcements
+		Obj_SetVisible(SOBJ_AttackPhaseSE.ID, true)
+		Obj_SetProgressVisible(SOBJ_AttackPhaseSE.ID, true)
+		--set reticule
+		allyTown3ReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, size)
+		UI_ModalVisual_SetPosition(allyTown3ReticuleID, townPosition)
+		---set minimap marker
+		defendTown3Blip = UI_CreateMinimapBlip(townPosition, phase3Duration, "objective_battle")
+		attackPhase3Started = true
+		--set minimap path
+		MarkerPaths_GenerateIcons("path_arrows_SE", AllMarkers_FromName("path_arrows_SE", ""), "military_route_enemy")
+		
+		--make beacon selectable
+		EGroup_SetSelectable(townDataTable[2].beacon, true)
+		--add reticule to beacon
+		beaconTown3ReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, 5)
+		UI_ModalVisual_SetPosition(beaconTown3ReticuleID, Util_GetPosition(townDataTable[2].beaconMkr))
+		
+	elseif(inPhase == 4) then
+		reinforcementStartTime4 = World_GetGameTime()
+		townPosition = Util_GetPosition(mkr_townNE)
+		
+		Objective_Register(SOBJ_AttackPhaseNE)
+		Objective_Start(SOBJ_AttackPhaseNE)
+		Objective_StartTimer(SOBJ_AttackPhaseNE, COUNT_DOWN, phase4Duration)
+		Objective_Show(SOBJ_AttackPhaseNE, true, false)
+		
+		phase4UI = Objective_AddUIElements(SOBJ_AttackPhaseNE, townPosition, false, "$11268463", true, 12)--Awaiting Reinforcements
+		Obj_SetVisible(SOBJ_AttackPhaseNE.ID, true)
+		Obj_SetProgressVisible(SOBJ_AttackPhaseNE.ID, true)
+		--set reticule
+		allyTown4ReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, size)
+		UI_ModalVisual_SetPosition(allyTown4ReticuleID, townPosition)
+		---set minimap marker
+		defendTown4Blip = UI_CreateMinimapBlip(townPosition, phase4Duration, "objective_battle")
+		attackPhase4Started = true
+		--set minimap path
+		MarkerPaths_GenerateIcons("path_arrows_NE", AllMarkers_FromName("path_arrows_NE", ""), "military_route_enemy")
+		
+		--make beacon selectable
+		EGroup_SetSelectable(townDataTable[1].beacon, true)
+		--add reticule to beacon
+		beaconTown4ReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, 5)
+		UI_ModalVisual_SetPosition(beaconTown4ReticuleID, Util_GetPosition(townDataTable[1].beaconMkr))
+		
+	end
+	
+	
+	
+end
+
+function HC_Towton_EndOldPhase(inPhase)
+	
+	if(inPhase == 1) then
+		if(Objective_IsStarted(SOBJ_AttackPhaseNW)) then
+			Objective_Complete(SOBJ_AttackPhaseNW, true, true)
+			Objective_Show(SOBJ_AttackPhaseNW, false, false)
+		end
+		
+		if(phase1UI ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackPhaseNW, phase1UI)
+		end
+		if(defendTown1Blip ~= nil) then
+			UI_DeleteMinimapBlip(defendTown1Blip)
+		end
+		if(allyTown1ReticuleID ~= nil) then
+			UI_ModalVisual_Destroy(allyTown1ReticuleID)
+		end
+		MarkerPaths_ClearIcons("path_arrows_NW")
+		attackPhase1Started = false
+	elseif(inPhase == 2) then
+		if(Objective_IsStarted(SOBJ_AttackPhaseSW)) then
+			Objective_Complete(SOBJ_AttackPhaseSW, true, true)
+			Objective_Show(SOBJ_AttackPhaseSW, false, false)
+		end
+		
+		if(phase2UI ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackPhaseSW, phase2UI)
+		end
+		if(defendTown2Blip ~= nil) then
+			UI_DeleteMinimapBlip(defendTown2Blip)
+		end
+		if(allyTown2ReticuleID ~= nil) then
+			UI_ModalVisual_Destroy(allyTown2ReticuleID)
+		end
+		MarkerPaths_ClearIcons("path_arrows_SW")
+		attackPhase2Started = false
+	elseif(inPhase == 3) then
+		if(Objective_IsStarted(SOBJ_AttackPhaseSE)) then
+			Objective_Complete(SOBJ_AttackPhaseSE, true, true)
+			Objective_Show(SOBJ_AttackPhaseSE, false, false)
+		end
+		
+		if(phase3UI ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackPhaseSE, phase3UI)
+		end
+		if(defendTown3Blip ~= nil) then
+			UI_DeleteMinimapBlip(defendTown3Blip)
+		end
+		if(allyTown3ReticuleID ~= nil) then
+			UI_ModalVisual_Destroy(allyTown3ReticuleID)
+		end
+		MarkerPaths_ClearIcons("path_arrows_SE")
+		attackPhase3Started = false
+	elseif(inPhase == 4) then
+		if(Objective_IsStarted(SOBJ_AttackPhaseNE)) then
+			Objective_Complete(SOBJ_AttackPhaseNE, true, true)
+			Objective_Show(SOBJ_AttackPhaseNE, false, false)
+		end
+		
+		if(phase3UI ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackPhaseNE, phase3UI)
+		end
+		if(defendTown4Blip ~= nil) then
+			UI_DeleteMinimapBlip(defendTown4Blip)
+		end
+		if(allyTown4ReticuleID ~= nil) then
+			UI_ModalVisual_Destroy(allyTown4ReticuleID)
+		end
+		MarkerPaths_ClearIcons("path_arrows_NE")
+		attackPhase4Started = false
+	end
+	
+end
+
+function HC_Towton_UpdateObjectiveUI()
+	
+	allAlliedBuildingsCurrentCount = EGroup_CountSpawned(eg_allAlliedBuildings)
+	if(allAlliedBuildingsCurrentCount ~= allAlliedBuildingsPreviousCount) then
+		Objective_SetCounter(OBJ_Towns, allAlliedBuildingsCurrentCount, allAlliedBuildingsStartingCount)
+		Obj_SetProgress(OBJ_Towns.ID, allAlliedBuildingsCurrentCount / allAlliedBuildingsStartingCount)
+		allAlliedBuildingsPreviousCount = allAlliedBuildingsCurrentCount
+	end
+	
+	if(Objective_IsStarted(SOBJ_AttackPhaseNW) and Objective_IsVisible(SOBJ_AttackPhaseNW)) then
+		reinforcementTime = World_GetGameTime() - reinforcementStartTime1
+		Obj_SetProgress(SOBJ_AttackPhaseNW.ID, reinforcementTime  / phase1Duration)
+	end
+	if(Objective_IsStarted(SOBJ_AttackPhaseSW) and Objective_IsVisible(SOBJ_AttackPhaseSW)) then
+		reinforcementTime = World_GetGameTime() - reinforcementStartTime2
+		Obj_SetProgress(SOBJ_AttackPhaseSW.ID, reinforcementTime  / phase2Duration)
+	end
+	if(Objective_IsStarted(SOBJ_AttackPhaseSE) and Objective_IsVisible(SOBJ_AttackPhaseSE)) then
+		reinforcementTime = World_GetGameTime() - reinforcementStartTime3
+		Obj_SetProgress(SOBJ_AttackPhaseSE.ID, reinforcementTime  / phase3Duration)
+	end
+	if(Objective_IsStarted(SOBJ_AttackPhaseNE) and Objective_IsVisible(SOBJ_AttackPhaseNE)) then
+		reinforcementTime = World_GetGameTime() - reinforcementStartTime4
+		Obj_SetProgress(SOBJ_AttackPhaseNE.ID, reinforcementTime  / phase4Duration)
+	end
+	
+end
+
+function HC_Towton_PulseReinforcementsBlipNW()
+	if(sg_NavalReinforcementsNW ~= nil) then
+		if(SGroup_CountSpawned(sg_NavalReinforcementsNW) > 0) then
+			--pulse minimap blip
+			UI_CreateMinimapBlip(Util_GetPosition(sg_NavalReinforcementsNW), 1, "objective_bonus")
+		end
+	end
+end
+
+function HC_Towton_PulseReinforcementsBlipNE()
+	if(sg_NavalReinforcementsNE ~= nil) then
+		if(SGroup_CountSpawned(sg_NavalReinforcementsNE) > 0) then
+			--pulse minimap blip
+			UI_CreateMinimapBlip(Util_GetPosition(sg_NavalReinforcementsNE), 1, "objective_bonus")
+		end
+	end
+end
+
+function HC_Towton_PulseReinforcementsBlipSW()
+	if(sg_alliedReinforcementsSW ~= nil) then
+		if(SGroup_CountSpawned(sg_alliedReinforcementsSW) > 0) then
+			--pulse minimap blip
+			UI_CreateMinimapBlip(Util_GetPosition(sg_alliedReinforcementsSW), 1, "objective_bonus")
+		end
+	end
+end
+
+function HC_Towton_PulseReinforcementsBlipSE()
+	if(sg_alliedReinforcementsSE ~= nil) then
+		if(SGroup_CountSpawned(sg_alliedReinforcementsSE) > 0) then
+			--pulse minimap blip
+			UI_CreateMinimapBlip(Util_GetPosition(sg_alliedReinforcementsSE), 1, "objective_bonus")
+		end
+	end
+end

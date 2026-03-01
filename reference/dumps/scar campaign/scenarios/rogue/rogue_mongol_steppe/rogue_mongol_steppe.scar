@@ -1,0 +1,273 @@
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("rogue_mongol_steppe_raiders.scar")
+import("rogue/rogue.scar")
+
+function Mission_PreInit()
+	content_pack = CONTENT_PACK_ROGUE
+	mission_name = "Watch Your Steppe"
+	print("------------------------------------------------------------------------")
+	print("------------- "..mission_name.." - Initializing -------------")
+	print("------------------------------------------------------------------------")
+	rogue_wave_strength = 0.9
+	WAVE_STAGING_DURATION = 5
+end
+
+function Mission_SetupPlayers()
+	Rogue_SetupPlayers_A()
+	
+	Rogue_AddHumanPlayer(1, COLOR_BLUE)
+	Rogue_AddEnemyWavePlayer(2,  "$11143414", COLOR_RED)
+	Rogue_AddAllyPlayer(3, 	     "$11096698", COLOR_YELLOW)
+	Rogue_AddEnemyAllyPlayer(4,  "$11143414", COLOR_RED)
+	Rogue_AddEnemyRaiderPlayer(5,"$11270310", COLOR_ORANGE)
+	Rogue_AddNeutralPlayer(6,    "$11096698", COLOR_YELLOW)
+	
+	Rogue_SetupPlayers_B()
+end
+
+function Mission_Preset()
+	Rogue_AddLane("west", true, ValidateContainsCavalry)
+	Rogue_AddLane("north", false, ValidateContainsCavalry)
+	Rogue_AddLane("east", true, ValidateContainsCavalry)
+	
+	Rogue_UseDefaultSchedule(true, false, 1.0)
+	
+	Rogue_SimulateEvents()	
+	
+	ResourceSpots_InitData({0,20,0,0,0,0,0})
+	ResourceSpots_Init("mkr_resource", "gaia", 6)
+	
+	Steppe_InitializeRaiders()
+	Sites_Init("archer", "manatarms", "crossbowman")
+	Steppe_SpawnSites()
+	
+	-- Points of interest
+	local t_unit_types_mon = {
+		{sbp = BP_GetSquadBlueprint("unit_militia_rogue_mon"), value = 60, tier = 1},
+		{sbp = SBP.MONGOL.UNIT_ARCHER_2_MON, value = 80, tier = 1},
+		{sbp = SBP.MONGOL.UNIT_SPEARMAN_2_MON, value = 80, tier = 1},
+		{sbp = SBP.MONGOL.UNIT_CROSSBOWMAN_3_MON, value = 120, tier = 2},
+		{sbp = SBP.MONGOL.UNIT_MANATARMS_3_MON, value = 120, tier = 2},
+	}
+	
+	-- Points of interest
+	Rogue_POI_Init(ROGUE_ENEMY_ALLY_PLAYER, t_unit_types_mon, nil, 10, 4)
+	
+	-- Defensive points of interest
+	Rogue_POI_Spawn("mkr_poi_def", t_poi_types_def, 1, 1)
+	
+	Steppe_DeleteSheep()
+	Steppe_SpawnGuards()
+end
+
+function Mission_Start()	
+	Rogue_SetupPlayers_C()
+end
+
+function Mission_Unpause()
+	--Outlaws_InitRaiding()
+	Steppe_UnpauseRaiders()
+end
+
+function GetRecipe()
+	local recipe = {		
+		--victory_message = "$39257",
+		--introNIS = EVENTS.Intro,
+		--outroNIS = EVENTS.Victory,
+		locations = {},  
+		modules = {},
+		onWin = {},
+		onLose = {},
+		onStart = {
+			titleCard = {
+				title = "", 
+				date = "", 
+				icon = "",
+			},
+		},
+	}
+	return recipe
+end
+
+function SortMarkersByDistance(mkr_1, mkr_2)
+	local dist_sqrd_1 = World_DistanceSquaredPointToPoint(wonder_position, Marker_GetPosition(mkr_1))
+	local dist_sqrd_2 = World_DistanceSquaredPointToPoint(wonder_position, Marker_GetPosition(mkr_2))
+	return dist_sqrd_1 < dist_sqrd_2 
+end
+
+function Steppe_SpawnSites()
+	wonder_position = Marker_GetPosition(mkr_wonder)
+	
+	-- SITE PICKUPS --
+	
+	-- organize close and far
+	local site_pickup_markers = AllMarkers_FromName("mkr_site_pickup", "")
+	table.sort(site_pickup_markers, SortMarkersByDistance)
+	local site_pickup_markers_close = {}
+	local site_pickup_markers_far = {}
+	for i, marker in ipairs(site_pickup_markers) do
+		if i < (#site_pickup_markers / 2) then
+			table.insert(site_pickup_markers_close, marker)	
+		else
+			table.insert(site_pickup_markers_far, marker)	
+		end
+	end
+	Table_Shuffle(site_pickup_markers_close)
+	Table_Shuffle(site_pickup_markers_far)
+	
+	-- close relics
+	local close_relics = 2
+	for i = 1, close_relics do
+		Site_CreateRelic(site_pickup_markers_close[1])
+		table.remove(site_pickup_markers_close, 1)
+	end
+	-- close pickups
+	local close_pickups = 13
+	for i = 1, close_pickups do
+		Site_CreatePickup(site_pickup_markers_close[1])
+		table.remove(site_pickup_markers_close, 1)
+	end
+	 -- far relics
+	local far_relics = 2
+	for i = 1, far_relics do
+		Site_CreateRelic(site_pickup_markers_far[1])
+		table.remove(site_pickup_markers_far, 1)
+	end
+	-- far pickups
+	local far_pickups = 13
+	for i = 1, far_relics do
+		Site_CreatePickup(site_pickup_markers_far[1])
+		table.remove(site_pickup_markers_far, 1)
+	end
+	
+	-- SITES --
+	
+	for i, marker in ipairs(side_objective_markers) do -- only contains unused objectives
+		Marker_Create("mkr_site", "", Marker_GetPosition(marker), Marker_GetDirection(marker), 20)
+	end
+
+	-- organize close and far
+	local site_markers = AllMarkers_FromName("mkr_site", "")
+	table.sort(site_markers, SortMarkersByDistance)
+	local site_markers_close = {}
+	local site_markers_far = {}
+	for i, marker in ipairs(site_markers) do
+		if i <= (#site_markers * (3/4)) then
+			table.insert(site_markers_close, marker)	
+		else
+			table.insert(site_markers_far, marker)	
+		end
+	end
+	Table_Shuffle(site_markers_close)
+	Table_Shuffle(site_markers_far)
+	
+	-- close POIs
+	local close_pois = 10
+	for i = 1, close_pois do
+		local site_marker = site_markers_close[1]
+		Marker_Create("mkr_poi_t1", "", Marker_GetPosition(site_marker), Marker_GetDirection(site_marker), 45)
+		table.remove(site_markers_close, 1)
+	end
+	-- close camps
+	for _, site_marker in ipairs(site_markers_close) do
+		Site_CreateCampSmall(site_marker)
+	end
+	-- far POIs
+	local far_pois = 4
+	for i = 1, far_pois do
+		local site_marker = site_markers_far[1]
+		Marker_Create("mkr_poi_t2", "", Marker_GetPosition(site_marker), Marker_GetDirection(site_marker), 45)
+		table.remove(site_markers_far, 1)
+	end
+	-- far camps
+	for _, site_marker in ipairs(site_markers_far) do
+		Site_CreateCampLarge(site_marker)
+	end
+	
+	
+	-- SPAWN PICKUPS AND RELICS --
+	local pickup_markers = AllMarkers_FromName("mkr_pickup", "")
+	for _, marker in ipairs(pickup_markers) do
+		local pickup_ebp = Table_GetRandomItem(pickup_ebps)
+		CreateEntity(ROGUE_ENEMY_ALLY_PLAYER, pickup_ebp, marker, nil, DIRECTION_BACK)
+	end
+	
+	local relic_markers = AllMarkers_FromName("mkr_relic", "")
+	for _, marker in ipairs(relic_markers) do
+		CreateEntity(nil, BP_GetEntityBlueprint("relic"), marker, nil, DIRECTION_BACK)
+	end
+	
+	Sites_Debug()
+end
+
+function Steppe_DeleteSheep()
+	local close_sheep_count = 6
+	local close_sheep_deleted = SGroup_CountSpawned(sg_sheep_close) - close_sheep_count
+	for i = 1, close_sheep_deleted do
+		local index = World_GetRand(1, SGroup_CountSpawned(sg_sheep_close))
+		Squad_Destroy(SGroup_GetSquadAt(sg_sheep_close, index))
+	end
+	
+	--local far_sheep_count = 40
+	--local far_sheep_deleted = SGroup_CountSpawned(sg_sheep_far) - far_sheep_count
+	--for i = 1, far_sheep_deleted do
+		--local index = World_GetRand(1, SGroup_CountSpawned(sg_sheep_far))
+		--Squad_Destroy(SGroup_GetSquadAt(sg_sheep_far, index))
+	--end
+end
+
+function Steppe_SpawnGuards()
+	guard_reserve = 0
+	--local unit_names = { "spearman", "archer", "horseman" }
+	Steppe_SpawnGuard("a", TARGET_ORDER_PATROL)
+	Steppe_SpawnGuard("b", TARGET_ORDER_LOOP)
+	Steppe_SpawnGuard("c", TARGET_ORDER_PATROL)
+	Steppe_SpawnGuard("d", TARGET_ORDER_LOOP)
+	Steppe_SpawnGuard("e", TARGET_ORDER_PATROL)
+	Steppe_SpawnGuard("f", TARGET_ORDER_PATROL)
+	Steppe_SpawnGuard("g", TARGET_ORDER_PATROL)
+	Steppe_SpawnGuard("h", TARGET_ORDER_PATROL)
+end
+
+function Steppe_SpawnGuard(name, targetOrder)
+	local unit_table = Steppe_GetGuardUnits()
+	local markers = AllMarkers_InSequence("mkr_guard_"..name.."_")
+	local army_params = {
+		player = ROGUE_ENEMY_ALLY_PLAYER,
+		units = unit_table,
+		targets = markers,
+		targetOrder = targetOrder,
+		
+	}
+	local army = Army_Init(army_params)
+	Modify_UnitSpeedWhenNotInCombat(army.sgroup, WALK_SPEED, MUT_Set)
+end
+
+function Steppe_GetGuardUnits()
+	local unit_value = GetIntegerInExponentialRange(160, 720)
+	guard_reserve = guard_reserve + unit_value
+	local unit_name = "knight"
+	if guard_reserve < 240 then
+		unit_name = "horseman"
+	end
+	local race_unit_type = wave_race_unit_types[unit_name]
+	local numSquads = math.floor(guard_reserve / race_unit_type.cost)
+	if numSquads < 1 then
+		numSquads = 1
+	end
+	local actual_value = numSquads * race_unit_type.cost
+	guard_reserve = guard_reserve - actual_value
+	return {{ type = race_unit_type.unit_type.scar_type, numSquads = numSquads }}
+end
+
+function ValidateContainsCavalry(wave_template)
+	for _, subwave_template in ipairs(wave_template.subwave_templates) do
+		for _, unit_row in ipairs(subwave_template.unit_table) do
+			local archtype = unit_types[unit_row.unit_name].archtype
+			if archtype.name == "cavalry" then
+				return true
+			end
+		end
+	end
+	return false
+end

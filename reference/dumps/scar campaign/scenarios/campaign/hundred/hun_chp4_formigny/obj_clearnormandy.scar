@@ -1,0 +1,549 @@
+
+function InitObjectives_ClearNormandy()
+	OBJ_ClearNormandy = {
+		Title = "$11172299", --Drive the English from Normandy
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.CLEAR_NORMANDY_START,
+		PreStart = function()
+			print("OBJ_ClearNormandy PreStart")
+			Music_UnlockIntensity()
+			Sound_SetMinimumMusicCombatIntensity(801,0)
+			Rule_AddOneShot(SpawnPlayerArmy, 3)
+			Rule_AddOneShot(Transition, 4)
+		end,
+		OnStart = function()
+			print("OBJ_ClearNormandy OnStart")
+			
+			checkWallsTown02ID = Rule_AddEGroupEvent(DestroyWallTown02_EntityKill, eg_town02_palisades, GE_EntityKilled)
+			Rule_AddInterval(Monitor_BricQuebecVillage, 1)
+			Rule_AddInterval(Monitor_StSauveurVillage, 1)
+			Rule_AddInterval(Monitor_PlayerFoundSecret, 1)
+			Rule_AddInterval(Monitor_MonasteryTown, 1)
+			Rule_AddInterval(Monitor_ReachedFormignyArea, 1)
+			Rule_AddInterval(Monitor_ValognesApproach, 1)
+			Rule_AddInterval(Monitor_Player1Dead, 1)
+		end,
+		PreComplete = function()
+			print("OBJ_ClearNormandy PreComplete")
+			Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE)
+		end,
+		OnComplete = function()
+			print("OBJ_ClearNormandy OnComplete")
+			CheckAchievementCompletion()
+			Mission_Complete()
+		end,
+	}
+	SOBJ_findKyriell = {
+		Title = "$11172300", --Find Kyriell's English army"
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ClearNormandy,
+		StartAlongsideParent = true,
+		OnComplete = function()
+			print("SOBJ_findKyriell OnComplete")
+			Music_StopMedium()
+			Util_AutoSave() --fourth save
+			Sound_Play2D("mus_stinger_campaign_triumph_short")
+			Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+			FOW_RevealMarker(mkr_formigny_reveal_1,-1)
+			FOW_RevealMarker(mkr_formigny_reveal_2,-1)
+			FOW_RevealMarker(mkr_formigny_reveal_3,-1)
+			FOW_RevealMarker(mkr_formigny_reveal_4,-1)
+			EventCues_CallToAction("$11200098", CTA_UNIQUE_STAKES, EVENTS.ATTACK_KYRIELL_ARMY_START, nil, mkr_formigny_CTA, 20, "icons/cta/illustrations/03_focus_longbowmen")
+			Objective_Start(SOBJ_KillKyriellArmy)
+			checkWallsFormignyID = Rule_AddEGroupEvent(DestroyWallFormigny_EntityKill, eg_formigny_walls, GE_EntityKilled)
+		end,
+	}
+	SOBJ_KillKyriellArmy = {
+		Title = "$11172301", --Destroy Kiriell's English army
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ClearNormandy,
+		StartAlongsideParent = false,			
+		SetupUI = function()
+			Objective_SetProgressBar(SOBJ_KillKyriellArmy, 0)
+		end,
+		PreStart = function()		
+			Rule_AddInterval(MonitorBattlefield, 1)
+		end,
+		OnStart = function()
+			print("SOBJ_KillKyriellArmy OnStart")
+			Music_LockIntensity(MUSIC_TENSE_COMBAT, 60)
+			Rule_AddOneShot(ChangeMusic_KillKyriellArmy,60)
+			Player_GetAll(player1)
+			player_count_battle_start = SGroup_CountSpawned(sg_allsquads)
+	
+		end,
+		IsComplete = function()
+			Player_GetAll(player1)
+			local player_count = SGroup_CountSpawned(sg_allsquads)
+			local army_unit_count = SGroup_CountSpawned(sg_main_army)
+			 
+			army_killed_final = army_count_final - army_unit_count
+
+			Objective_SetProgressBar(SOBJ_KillKyriellArmy, (army_killed_final / army_count_final))
+			
+			if army_killed_final >= army_killed_threshold_retreat then
+				Retreat()
+				Objective_Complete(SOBJ_KillKyriellArmy, true, true)
+			end
+			
+		end,
+		OnComplete = function()
+			print("SOBJ_KillKyriellArmy OnComplete")
+		end,
+	}		
+	Objective_Register(OBJ_ClearNormandy)
+	Objective_Register(SOBJ_findKyriell)
+	Objective_Register(SOBJ_KillKyriellArmy)
+end
+
+--------------------------------------------------------------------
+---------------------- Battle Progress -----------------------------
+--------------------------------------------------------------------
+function MonitorBattlefield()
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_monk", FILTER_REMOVE)
+	local player_count = SGroup_CountSpawned(sg_allsquads)
+	local army_unit_count = SGroup_CountSpawned(sg_main_army)
+	 
+	army_killed_final = army_count_final - army_unit_count
+
+	if not cannons_have_spawned then 
+		if EGroup_CountSpawned(eg_trigger_outposts) == 0 and SGroup_CountSpawned(sg_trigger_manatarms) == 0 then
+			SpawnCannons()
+		end
+	end
+	
+	--bretons cant spawn until frenzy over
+	if not bretons_have_spawned then
+		if player_count <= (PLAYER_THRESHOLD_REINFORCEMENTS - PLAYER_MONK_COUNT) and bretons_can_be_spawned then
+			SpawnBretons() --pivot cant happen until bretons spawned
+		end
+	end
+	
+	if retreat_has_happened then
+		--print("It's over... go home...")
+	else
+		if not bretons_have_arrived and Prox_AreSquadMembersNearMarker(sg_breton_all, mkr_breton_arrival_trigger, ANY) then
+			bretons_have_arrived = true
+			Pivot()
+		end
+		if pivot_has_happened then
+			CheckForBattlePivot()
+		else
+			if not frenzy_has_started then 
+				if army_killed_final >= army_killed_threshold_frenzy_start then
+					StartFrenzy()
+				end
+			end
+			if frenzy_has_started and not frenzy_has_ended then
+				if army_killed_final >= army_killed_threshold_frenzy_end then
+					EndFrenzy()
+				else
+					CheckForBattleFrenzy()
+				end
+			end
+			CheckForBattle()
+		end
+	end
+end
+
+function SpawnCannons()
+	print("SpawnCannons")
+	cannons_have_spawned = true
+	--UnitEntry_DeploySquads(player1, sg_player_cannon_squad04, {{sbp = SBP.FRENCH.UNIT_CANNON_4_FORM_FRE, numSquads = NUMBER_CANNON }}, mkr_cannon_spawn_1)  	
+	--MarkerPaths_MoveSGroupAlongPath(sg_player_cannon_squad04, "mkr_spline_cannons")
+	local units = {{sbp = SBP.FRENCH.UNIT_CANNON_4_FORM_FRE, numSquads = 1 }}
+	local marker_count = #AllMarkers_FromName("mkr_spline_cannons", "")
+	SpawnUnitsAndMoveAlongPath(player1, units, sg_player_cannon_squad04, "mkr_spline_cannons", 6, marker_count - 0)
+	SpawnUnitsAndMoveAlongPath(player1, units, nil, "mkr_spline_cannons", 5, marker_count - 1)
+	SpawnUnitsAndMoveAlongPath(player1, units, nil, "mkr_spline_cannons", 4, marker_count - 2)
+	SpawnUnitsAndMoveAlongPath(player1, units, nil, "mkr_spline_cannons", 3, marker_count - 3)
+	SpawnUnitsAndMoveAlongPath(player1, units, nil, "mkr_spline_cannons", 2, marker_count - 4)
+	SpawnUnitsAndMoveAlongPath(player1, units, nil, "mkr_spline_cannons", 1, marker_count - 5)
+	
+	EventCues_CallToAction("$11172370", CTA_CELEBRATE, EVENTS.CANNONS_ARRIVE, nil, sg_player_cannon_squad04, 20) --"Artillery units have arrived"
+	Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+	Sound_Play2D("mus_stinger_campaign_triumph_short")
+	
+	Rule_AddInterval(CheckCannonArrival, 1)
+end
+
+function StartFrenzy()
+	print("StartFrenzy")
+	frenzy_has_started = true
+	for i, module in ipairs(frenzy_modules) do
+		StartFrenzyForModule(module)
+	end
+	
+	Rule_AddInterval(CheckForEnemyCrossingRiver, 1)
+end
+
+function StartFrenzyForModule(module)
+	SetModuleAggression(module, true, true)
+	local target = { marker = module.frenzyLocation, useCustomDirection = false }
+	RovingArmy_SetTarget(module, target)
+end
+
+function EndFrenzy()
+	print("EndFrenzy")
+	frenzy_has_ended = true
+	Rule_AddOneShot(BretonsCanBeSpawned, 20)
+	mkr_battle_zone = mkr_battle_zone_2
+	for i, module in ipairs(armies_all) do
+		EndFrenzyForModule(module)
+	end
+	if enemy_has_crossed_river == true then
+		Util_StartIntel(EVENTS.HALFWAY)
+	end
+end
+
+function EndFrenzyForModule(module)
+	local newMarkerName = Marker_GetName(module.spawnLocation).."_after_frenzy"
+	module.spawnLocation = Marker_FromName(newMarkerName, "")
+	
+	SetModuleAggression(module, false, false)
+	local target = { marker = module.spawnLocation, useCustomDirection = true }
+	RovingArmy_SetTarget(module, target)
+end
+
+function BretonsCanBeSpawned()
+	bretons_can_be_spawned = true
+end
+
+function SpawnBretons()
+	print("SpawnBretons")
+	bretons_have_spawned = true
+	UnitEntry_DeploySquads(player1, sg_breton_cavalry_1, {{ type = "scar_knight", numSquads = NUMBER_KNIGHT }}, mkr_breton_spawn_1)	
+	UnitEntry_DeploySquads(player1, sg_breton_cavalry_2, {{ type = "scar_knight", numSquads = NUMBER_KNIGHT }}, mkr_breton_spawn_2)	
+	--UnitEntry_DeploySquads(player1, sg_breton_cavalry_3, {{ type = "scar_knight", numSquads = NUMBER_KNIGHT }}, mkr_breton_spawn_3)	
+	SGroup_AddGroup(sg_breton_all, sg_breton_cavalry_1)
+	SGroup_AddGroup(sg_breton_all, sg_breton_cavalry_2)
+	--SGroup_AddGroup(sg_breton_all, sg_breton_cavalry_3)
+	Cmd_FormationMove(sg_breton_cavalry_1, mkr_breton_dest_1)
+	Cmd_FormationMove(sg_breton_cavalry_2, mkr_breton_dest_2)
+	--Cmd_FormationMove(sg_breton_cavalry_3, mkr_breton_dest_3)
+	
+	EventCues_CallToAction("$11172369", CTA_CELEBRATE, EVENTS.BRETONS_ARRIVE, nil, mkr_breton_dest_1, 20) --Breton allies are nearby!
+
+	hpid_Trevieres = HintPoint_Add(mkr_trevieres_hintpoint, true, "$11172304", 5)
+	Sound_Play2D("mus_stinger_campaign_triumph_short")
+	Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+
+	FOW_PlayerRevealArea(player1,Marker_GetPosition(mkr_trevieres_reveal_1), Marker_GetProximityRadiusOrDefault(mkr_trevieres_reveal_1, 0),-1)
+	FOW_PlayerRevealArea(player1,Marker_GetPosition(mkr_trevieres_reveal_2), Marker_GetProximityRadiusOrDefault(mkr_trevieres_reveal_2, 0),-1)
+end
+
+function Pivot()
+	print("Pivot")
+	pivot_has_happened = true
+	--disband old modules and collect units
+	for i, module in ipairs(armies_all) do
+		RovingArmy_Disband(module, sg_pivot_spearman)
+	end
+	--split into unit types
+	SGroup_Filter(sg_pivot_spearman, "scar_archer", FILTER_REMOVE, sg_pivot_archer)
+	SGroup_Filter(sg_pivot_spearman, "scar_manatarms", FILTER_REMOVE, sg_pivot_manatarms)
+	print("sg_pivot_spearman:"..SGroup_CountSpawned(sg_pivot_spearman))
+	print("sg_pivot_archer:"..SGroup_CountSpawned(sg_pivot_archer))
+	print("sg_pivot_manatarms:"..SGroup_CountSpawned(sg_pivot_manatarms))
+	--split unit types into pivot holders
+	for i, sgroup in ipairs({ sg_pivot_spearman, sg_pivot_archer, sg_pivot_manatarms }) do
+		SGroup_SplitIntoExistingSGroups(sgroup, pivot_holder_sgroups, false)
+	end
+	--add unit holders to modules
+	for i, pivot_holder_sgroup in ipairs(pivot_holder_sgroups) do
+		print("pivot_holder_sgroup_"..i..":"..SGroup_CountSpawned(pivot_holder_sgroup))
+		SetModuleAggression(pivot_target_modules[i], false, false)
+		RovingArmy_AddSGroup(pivot_target_modules[i], pivot_holder_sgroup)
+	end
+	
+	Util_StartIntel(EVENTS.ENGLISH_PIVOT)
+end
+
+function Retreat()
+	print("Retreat")
+	retreat_has_happened = true
+	SGroup_Clear(sg_temp)
+	if pivot_has_happened then
+		for i, pivot_module in ipairs(pivot_target_modules) do
+			RovingArmy_Disband(pivot_module, sg_temp)
+		end
+	else
+		for i, module in ipairs(armies_all) do
+			RovingArmy_Disband(module, sg_temp)
+		end
+	end
+	local retreat_count = SGroup_CountSpawned(sg_temp)
+	
+	if retreat_count > 0 then
+		if retreat_count > 1 then
+			SGroup_FilterCount(sg_temp, retreat_count // 2, sg_formigny_retreat_half)	
+			RovingArmy_AddSGroup(formigny_retreat_army_2, sg_formigny_retreat_half)
+		end
+		
+		RovingArmy_AddSGroup(formigny_retreat_army_1, sg_temp)
+		if bretons_have_arrived == true then
+			Util_StartIntel(EVENTS.ENGLISH_RETREAT)
+		else
+			Util_StartIntel(EVENTS.ENGLISH_RETREAT_NO_BRETONS)
+		end
+	end
+end
+
+-------------------------------------------------------------------
+----------------------------- Micro -------------------------------
+-------------------------------------------------------------------
+function CheckForBattle()
+	assert(not pivot_has_happened, "Pivot has happened")
+	local zone = nil
+	if batle_was_active then
+		zone = mkr_battle_zone_leash
+	else
+		zone = mkr_battle_zone
+	end
+	Player_GetAllSquadsNearMarker(player1, sg_in_zone, zone)
+	battle_was_active = battle_is_active
+	battle_is_active = SGroup_CountSpawned(sg_in_zone) > 0 
+	
+	local modules = armies_all
+	if frenzy_has_started and not frenzy_has_ended then
+		modules = non_frenzy_modules
+	end
+	
+	if battle_is_active then
+		MicroArmy(modules, sg_in_zone)
+	elseif battle_was_active == true then
+		SendArmyBack(modules)	
+	end
+end
+
+function CheckForBattleFrenzy()
+	assert(frenzy_has_started, "Frenzy has not started yet")
+	assert(not frenzy_has_ended, "Frenzy has ended")
+	local zone = nil
+	if battle_was_active_frenzy then
+		zone = mkr_battle_zone_frenzy_leash
+	else
+		zone = mkr_battle_zone_frenzy
+	end
+	Player_GetAllSquadsNearMarker(player1, sg_in_zone_frenzy, zone)
+	battle_was_active_frenzy = battle_is_active_frenzy
+	battle_is_active_frenzy = SGroup_CountSpawned(sg_in_zone_frenzy) > 0 
+	
+	if battle_is_active_frenzy then
+		MicroArmy(frenzy_modules, sg_in_zone_frenzy)
+	elseif battle_was_active_frenzy == true then
+		SendArmyBackFrenzy(frenzy_modules)	
+	end
+end
+
+function CheckForBattlePivot()
+	assert(pivot_has_happened, "Pivot has not happened")
+	assert(not retreat_has_happened, "Retreat has happened")
+	local zone = nil
+	if battle_was_active_pivot then
+		zone = mkr_battle_zone_pivot_leash
+	else
+		zone = mkr_battle_zone_pivot
+	end
+	Player_GetAllSquadsNearMarker(player1, sg_in_zone_pivot, zone)
+	battle_was_active_pivot = battle_is_active_pivot
+	battle_is_active_pivot = SGroup_CountSpawned(sg_in_zone_pivot) > 0 
+	
+	if battle_is_active_pivot then
+		MicroArmy(pivot_target_modules, sg_in_zone_pivot)
+	elseif battle_was_active_pivot == true then
+		SendArmyBackPivot(pivot_target_modules)	
+	end
+end
+
+function MicroArmy(modules, sg_opponent_in_zone)
+	local player_pos = SGroup_GetPosition(sg_opponent_in_zone)
+	for i, module in ipairs(modules) do
+		if SGroup_CountSpawned(module.sgroup) > 0 and module.status == ARMY_STATUS_DEFENDING then
+			local closest_squad = SGroup_GetClosestSquad(sg_opponent_in_zone, SGroup_GetPosition(module.sgroup))
+			SetModuleAggression(module, true, true)
+			RovingArmy_SetTarget(module, { position = Squad_GetPosition(closest_squad), useCustomDirection = false })
+		end
+	end	
+end
+
+function SendArmyBack(modules)
+	for i, module in ipairs(modules) do
+		if SGroup_CountSpawned(module.sgroup) > 0 then
+			SetModuleAggression(module, false, false)
+			RovingArmy_SetTarget(module, { marker = module.spawnLocation, useCustomDirection = true })
+		end
+	end
+end
+
+function SendArmyBackFrenzy(modules)
+	for i, module in ipairs(modules) do
+		if SGroup_CountSpawned(module.sgroup) > 0 then
+			SetModuleAggression(module, false, false)
+			RovingArmy_SetTarget(module, { marker = module.frenzyLocation, useCustomDirection = true })
+		end
+	end
+end
+
+function SendArmyBackPivot(modules)
+	for i, module in ipairs(modules) do
+		if SGroup_CountSpawned(module.sgroup) > 0 then
+			SetModuleAggression(module, true, false)
+			RovingArmy_SetTarget(module, { marker = module.spawnLocation, useCustomDirection = true })
+		end
+	end
+end
+
+function SetModuleAggression(module, attackMoveEnRoute, largeRange)
+	if attackMoveEnRoute then
+		module.attackMoveEnRoute = attackMoveStyle_attackEverything
+		module.attackMoveAtTarget = attackMoveStyle_attackEverything
+	else
+		module.attackMoveEnRoute = attackMoveStyle_ignoreEverything
+		module.attackMoveAtTarget = attackMoveStyle_attackEverything
+	end
+	if largeRange then
+		module.combatRange = 40
+		module.leashRange = 40
+	else
+		module.combatRange = 20
+		module.leashRange = 20
+	end
+end
+
+-------------------------------------------------------------------
+----------------------------Monitor--------------------------------
+-------------------------------------------------------------------
+function Monitor_PlayerFoundSecret()
+	if  Prox_ArePlayersNearMarker(player1, mkr_town_pickup, ANY, 100) and bliped_pickuptown == nil then 	
+		bliped_pickuptown = UI_CreateMinimapBlip(mkr_town_pickup, 30, "general")
+		Rule_AddInterval(RemoveBlipWhenNearMarker, 1, { marker = mkr_town_pickup, blip = bliped_pickuptown })
+	end
+	if  Prox_ArePlayersNearMarker(player1, mkr_town_market, ANY, 100) and bliped_monasteryTown == nil then 	
+		bliped_monasteryTown = UI_CreateMinimapBlip(mkr_town_market, 30, "general")
+		Rule_AddInterval(RemoveBlipWhenNearMarker, 1, { marker = mkr_town_market, blip = bliped_monasteryTown })
+	end
+	if  Prox_ArePlayersNearMarker(player1, mkr_wolf_treasure, ANY, 80) and bliped_wolfTreasure == nil then 	
+		bliped_wolfTreasure = UI_CreateMinimapBlip(mkr_wolf_treasure, 30, "general")
+		Rule_AddInterval(RemoveBlipWhenNearMarker, 1, { marker = mkr_wolf_treasure, blip = bliped_wolfTreasure })
+	end
+	if bliped_pickuptown ~= nil and bliped_monasteryTown ~= nil and bliped_wolfTreasure ~= nil then
+		Rule_RemoveMe()
+	end
+end
+
+function Monitor_BricQuebecVillage()
+	if SGroup_CountSpawned(sg_town_1) == 0 then
+		Rule_RemoveMe()
+		Util_StartIntel(EVENTS.BricquebecDestroyed)
+		bric_quebec_is_destroyed = true 
+		bliped_valognesTown = UI_CreateMinimapBlip(mkr_valogne_hintpoint, 60, "general")
+	end
+end
+
+function Monitor_StSauveurVillage()
+	if SGroup_CountSpawned(sg_enemy_town_02_main_a01) == 0 and SGroup_CountSpawned(sg_enemy_town_02_main_a02) == 0 and 
+		EGroup_CountSpawned(eg_stsauveur) == 0 and SGroup_CountSpawned(sg_enemy_town_02_main02) == 0 then
+		Rule_RemoveMe()
+		Util_StartIntel(EVENTS.StSauveurDestroyed)
+	end
+end
+
+function Monitor_MonasteryTown()
+	if Prox_ArePlayersNearMarker(player1, mkr_town_market, ANY) then
+		EGroup_SetPlayerOwner(eg_togiveMonastery, player1 )
+		village_monastery = HintPoint_Add(mkr_town_market_tradingpost, true, "$11197870", LOCATION_LABEL_HEIGHT) --French Monastery
+		UnitEntry_DeploySquads(player1, sg_temp, player_units_monks, mkr_giveMonks)
+		Rule_RemoveMe()
+	end
+end
+
+function Monitor_ReachedFormignyArea()
+	if Prox_ArePlayersNearMarker(player1, mkr_found_formigny_region, ANY, 105, "gaia", FILTER_REMOVE ) then
+		Objective_Complete(SOBJ_findKyriell,false,false)
+		Rule_RemoveMe() 
+	end
+end
+
+function CheckCannonArrival()
+	if Prox_AreSquadsNearMarker(sg_player_cannon_squad04, mkr_cannon_arrival, ANY) then
+		print("CannonArrival")
+		Util_StartIntel(EVENTS.CANNONS_NEAR_RIVER)
+		Rule_RemoveMe()
+	end
+end
+
+function CheckForEnemyCrossingRiver()
+	if Prox_AreSquadsNearMarker(sg_main_army, mkr_river_crossing, ANY) then
+		enemy_has_crossed_river = true
+		Util_StartIntel(EVENTS.ENGLISH_FRENZY)
+		Rule_RemoveMe()
+	end
+end
+
+function Monitor_Player1Dead()
+	Player_GetAll(player1, sg_allsquads)
+	SGroup_Filter(sg_allsquads, "scar_monk", FILTER_REMOVE)
+
+	if SGroup_CountSpawned(sg_allsquads) == 0 then
+		Mission_Fail()
+	end
+end
+
+-------------------------------------------------------------------
+---------------------------Callbacks-------------------------------
+-------------------------------------------------------------------
+function DestroyWallTown02_EntityKill(context)
+	if context.victim ~= nil then
+		local victimBP = Entity_GetBlueprint(context.victim)
+		if victimBP == EBP.ENGLISH.BUILDING_DEFENSE_PALISADE_ENG or victimBP == EBP.ENGLISH.BUILDING_DEFENSE_PALISADE_GATE_ENG then
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_town_2, 60 )
+			Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_temp)
+			Music_PlayStinger(MUS_STING_TRIUMPHANT)
+			Rule_RemoveEGroupEvent(DestroyWallTown02_EntityKill, eg_town02_palisades)
+		end
+	end
+end
+
+function DestroyWallFormigny_EntityKill(context)
+	if context.victim ~= nil then
+		local victimBP = Entity_GetBlueprint(context.victim)
+		if victimBP == EBP.ENGLISH.BUILDING_DEFENSE_WALL_ENG or victimBP == EBP.ENGLISH.BUILDING_DEFENSE_WALL_GATE_ENG then
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_formigny_location, 85 )
+			Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_temp)
+			Music_PlayStinger(MUS_STING_TRIUMPHANT)
+			Rule_RemoveEGroupEvent(DestroyWallFormigny_EntityKill, eg_formigny_walls)
+		end
+	end
+end
+
+-------------------------------------------------------------------
+----------------------------Utility--------------------------------
+-------------------------------------------------------------------
+function RemoveBlipWhenNearMarker(context, data)
+	if Prox_ArePlayersNearMarker(player1, data.marker, ANY) == true then 
+		UI_DeleteMinimapBlip(data.blip)
+		Rule_RemoveMe()
+	end
+end
+
+function StartObj_KillKyriellArmy()
+	Objective_Start(SOBJ_KillKyriellArmy)
+end
+
+function ChangeMusic_KillKyriellArmy()
+	Music_UnlockIntensity()
+	Sound_SetMinimumMusicCombatIntensity(801,0)
+end
+
+function StartFormignyCapture()
+	Objective_Start(SOBJ_CaptureFormigny)
+	Music_LockIntensity(MUSIC_TENSE_COMBAT,120)
+	Rule_AddOneShot(CaptureFormigny_music_change,120)
+end
+
+function CaptureFormigny_music_change()
+	Music_UnlockIntensity()
+	Sound_SetMinimumMusicCombatIntensity(801,0)
+end

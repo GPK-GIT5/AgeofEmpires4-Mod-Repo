@@ -1,0 +1,1802 @@
+--
+-- Brémule 1119
+--
+-- Norman Chapter 2
+--
+
+-- We need to import this for anything to work
+import("MissionOMatic/MissionOMatic.scar")
+import("obj_frenchadvance.scar")
+import("obj_retakegrainville.scar")
+import("obj_retakecressenville.scar")
+import("obj_defeatthefrench.scar")
+import("obj_recaptures.scar")
+import("obj_funckeys.scar")
+import("prefabs/schemas/villagerlife.scar")
+
+
+import("training_bremule.scar")
+
+-- Setup player data
+function Mission_SetupPlayers()
+	
+	-- Get IDs for all players
+	player1 = World_GetPlayerAt(1)
+	player2 = World_GetPlayerAt(2)
+	player3 = World_GetPlayerAt(3) --Leader Holding Team
+	AI_Enable(player3, false)
+	
+	-- The human player
+	Setup_SetPlayerName(player1, "$11178730") --Normans
+	Setup_SetPlayerName(player3, "$11178730") --Normans
+	Player_SetCurrentAge(player1, AGE_FEUDAL)
+	Player_SetMaximumAge(player1, AGE_CASTLE)
+
+	-- The main enemy AI player	
+	Setup_SetPlayerName(player2, "$11178732") --French
+	Player_SetCurrentAge(player2, AGE_FEUDAL)
+	Player_SetMaximumAge(player2, AGE_FEUDAL)
+	
+		--Enable Player Colours
+	PlayerColour_Enable()
+	
+	Game_SetPlayerSlotColour(player1, 1)
+    Game_SetPlayerUISlotColour(player1, 1)
+	Game_SetPlayerSlotColour(player2, 2)
+    Game_SetPlayerUISlotColour(player2, 2)
+	Game_SetPlayerSlotColour(player3, 1)
+    Game_SetPlayerUISlotColour(player3, 1)	
+	
+	-- Player relationships	
+	Player_SetRelationship(player1, player2, R_ENEMY)
+	Player_SetRelationship(player2, player1, R_ENEMY)
+	
+	Player_SetRelationship(player3, player1, R_ALLY)	
+	Player_SetRelationship(player3, player2, R_ALLY)
+	Player_SetRelationship(player1, player3, R_ALLY)	
+	Player_SetRelationship(player2, player3, R_ALLY)
+	
+	-- Auto Age Up
+	PlayerUpgrades_Auto(player1, false)
+	PlayerUpgrades_Auto(player2, false)
+	PlayerUpgrades_Auto(player3, true)
+	
+	Player_SetPopCapOverride(player2, 600) -- extra popcap room for rams
+end
+
+-- Setup other data
+function Mission_SetupVariables()
+	
+	-- SGroups
+	sg_french_army = SGroup_CreateIfNotFound("sg_french_army")
+	sg_french_rovingarmy = SGroup_CreateIfNotFound("sg_french_rovingarmy")
+	sg_french_army_2 = SGroup_CreateIfNotFound("sg_french_grunts")
+	sg_french_grunts = SGroup_CreateIfNotFound("sg_french_army_2")
+	sg_french_ambush = SGroup_CreateIfNotFound("sg_french_ambush")
+	sg_french_huntingarmy = SGroup_CreateIfNotFound("sg_french_huntingarmy")
+	sg_french_ram = SGroup_CreateIfNotFound("sg_french_ram")
+	sg_french_flueryscout = SGroup_CreateIfNotFound("sg_french_flueryscout")
+	sg_player_flueryunits = SGroup_CreateIfNotFound("sg_player_flueryunits")
+	sg_louis_army = SGroup_CreateIfNotFound("sg_louis_army")
+	sg_intro_villager_units = SGroup_CreateIfNotFound("sg_intro_villager_units")
+	sg_player_henry = SGroup_CreateIfNotFound("sg_player_henry")
+	sg_player_fleurygold = SGroup_CreateIfNotFound("sg_player_fleurygold")
+	sg_player_fleuryfood = SGroup_CreateIfNotFound("sg_player_fleuryfood")
+	sg_player_retreatingunits = SGroup_CreateIfNotFound("sg_player_retreatingunits")
+	sg_player_louisthreats = SGroup_CreateIfNotFound("sg_player_louisthreats")
+	sg_louis_reup = SGroup_CreateIfNotFound("sg_louis_reup")
+
+	
+	-- French Town Defenders
+	sg_defenders_grainville = SGroup_CreateIfNotFound("sg_defenders_grainville")
+	sg_defenders_cressenville = SGroup_CreateIfNotFound("sg_defenders_cressenville")
+	sg_defenders_bremule = SGroup_CreateIfNotFound("sg_defenders_bremule")
+		
+	sg_sorting = SGroup_CreateIfNotFound("sg_sorting")
+	sg_transfer = SGroup_CreateIfNotFound("sg_transfer")
+	
+	sg_rallyingfrench = SGroup_CreateIfNotFound("sg_rallyingfrench")
+	
+	sg_wavetarget = SGroup_CreateIfNotFound("sg_wavetarget")
+	
+	sg_rebuilders_cressenville = SGroup_CreateIfNotFound("sg_rebuilders_cressenville")
+	sg_rebuilders_grainville = SGroup_CreateIfNotFound("sg_rebuilders_grainville")
+		
+	g_rovingarmy_fallback = mkr_french_army_spawn
+	
+	g_leaderHenry = Missionomatic_InitializeLeader({
+		name = "$11179251", --King Henry
+		owner = player1,
+		neutralHolder = player3,
+	})
+	
+	g_leaderLouis = Missionomatic_InitializeLeader({
+		name = "$11178732", --King Louis
+		owner = player2,
+		neutralHolder = player3,
+	})
+	
+	t_FrenchDefenders = --Defender Unit Group for Captured towns
+	{
+		{ type = "scar_spearman", numSquads = 6, },
+		{ type = "scar_manatarms", numSquads = 3, },
+		{ type = "scar_archer", numSquads = 6, },
+	}
+	
+		t_LouisArmy = --Final French Army
+	{
+		{ type = "scar_knight", numSquads = 9, },
+		{ sbp = SBP.FRENCH.UNIT_KING_LOUIS_CMP_FRE, numSquads = 1, tag = "king_louis", sgroup = g_leaderLouis.sgroup},
+	}
+		
+	-- EGroups
+	eg_village_fleury = EGroup_CreateIfNotFound("eg_village_fleury")
+	eg_village_grainville = EGroup_CreateIfNotFound("eg_village_grainville")
+	eg_village_cressenville = EGroup_CreateIfNotFound("eg_village_cressenville")
+	eg_village_bremule = EGroup_CreateIfNotFound("eg_village_bremule")
+	
+	b_GrainvilleFrench = false
+	b_CressenvilleFrench = false
+	
+	b_RecaptureIntelPlayed = false
+	b_firstSeen = true
+	b_endGame = false
+	b_frenchHuntersLaunched = false
+	b_siegecamp_alive = false
+	b_CampBuilt = false
+	b_KingLouis_FirstCounter = false
+	b_hunterArrow_On = false
+	
+	b_group_arrived_one = false
+	b_group_arrived_two = false
+	
+	dist_BaseToBase = Util_GetDistance(mkr_village_fleury, mkr_french_army_spawn)
+	
+	roving_LastPos = Util_GetPosition(mkr_crossroads)
+	
+end
+
+function Mission_SetDifficulty()
+
+	t_difficulty = 
+	{
+		scoutsAmount = Util_DifVar({4, 4, 8, 12}),
+		invasionScale = Util_DifVar({0.18, 0.5, .75, 1}),
+		attackWaveScale = Util_DifVar({0, 0, 1, 2}),
+		attackWaveFrequency = Util_DifVar({15, 15, 10, 5}), --Minutes
+		ramWaveFrequency = Util_DifVar({10, 10, 5, 5}), --Minutes
+		storyStartingVillagers = Util_DifVar({2, 0, 0, 0}), --Adds 2 villagers to gold and food each in Fluery
+		matchUpSimplify = 
+		{
+			ranged = Util_DifVar({0, 0, 1, 1}),
+			infantry = Util_DifVar({2, 2, 1, 1}),
+		},
+		enemyStartsMaxed = Util_DifVar({false, false, false, true}),
+		t_frenchScoutCamps = Util_DifVar({
+				{ --Story
+					mkr_scout_waypoint_1,
+					mkr_scout_waypoint_2,
+					mkr_scout_waypoint_3,
+					mkr_scout_waypoint_4,
+				},
+				{ --Easy
+					mkr_scout_waypoint_1,
+					mkr_scout_waypoint_2,
+					mkr_scout_waypoint_3,
+					mkr_scout_waypoint_4,
+				},
+				{ --Medium
+					mkr_scout_waypoint_1,
+					mkr_scout_waypoint_2,
+					mkr_scout_waypoint_3,
+					mkr_scout_waypoint_4,
+					mkr_scout_waypoint_5,
+					mkr_scout_waypoint_6,
+				},
+				{ --Hard
+					mkr_scout_waypoint_1,
+					mkr_scout_waypoint_2,
+					mkr_scout_waypoint_3,
+					mkr_scout_waypoint_4,
+					mkr_scout_waypoint_5,
+					mkr_scout_waypoint_6,
+					mkr_scout_waypoint_7,
+					mkr_scout_waypoint_8,
+				}
+			}),
+	}
+	
+end
+
+function Mission_SetRestrictions()	-- set up any restrictions (i.e. locking out units, etc) in here
+	
+	Player_SetSquadProductionAvailability(player1, SBP.ENGLISH.UNIT_TRADE_CART_ENG, ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player2, EBP.FRENCH.BUILDING_TECH_UNIT_RANGED_CONTROL_FRE, ITEM_UNLOCKED)
+
+end
+
+function Mission_Preset()	-- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)
+		
+	--Player Upgrades
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.ENGLISH.BUILDING_DEFENSE_OUTPOST_ENG, FILTER_KEEP)
+	Cmd_InstantUpgrade(eg_allentities, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+
+	
+	-- set music race to french
+	Sound_SetMusicRaceCode("french")
+		
+	FrenchAdvance_InitObjectives()
+	DefeatTheFrench_InitObjectives()
+	Recapture_InitObjectives()
+	CaptureGrainville_InitObjectives()
+	CaptureCressenville_InitObjectives()
+	
+	if UI_IsXboxControllerUI() then
+		FuncKeys_InitObjectives_Xbox()
+	else
+		FuncKeys_InitObjectives()
+	end
+
+	EGroup_SetInvulnerable(eg_burningbarn, 0.5, -1)
+	EGroup_SetInvulnerable(eg_farm_burn01, 0.25, -1)
+	EGroup_SetInvulnerable(eg_farm_burn02, 0.25, -1)
+	
+	-- Set up AI cached paths between specific markers to aid AI pathfinding to
+	-- detect and break through blocking walls.
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(player2, mkr_fleury_formup, Util_GetPosition(mkr_village_grainville), 5.0)
+end
+
+-- This is triggered after the intro, just as control is passed to the player
+function Mission_Start()
+	
+	----Start the intro camera
+	--Util_StartIntel(EVENTS.Intro)
+	
+	VillagerSetup()	
+	Objective_Start(OBJ_FrenchAdvance)
+	-- start the opening objectives (if you're using ObjectiveTable style objectives)
+	
+	cressenville_EntityTable = Build_LocationTable(eg_village_cressenville)
+	grainville_EntityTable = Build_LocationTable(eg_village_grainville)
+		
+	Rule_AddInterval(PlayerDeath, 1)
+
+	--extra wood for rams	
+	Action_SetResources_Do({ player = player2, resources = { food = 99999, wood = 99999, stone = 99999, gold = 99999 } })
+	FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_village_grainville), Marker_GetProximityRadius(mkr_village_grainville), -1)
+end
+
+function GetRecipe()
+
+	local recipe = {
+
+		missionType = "Hold Off the French",
+		campaign = "english",
+		chapter = "chapter2",
+		phase = "mission_bremule",
+		
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,
+		
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_angevin_rebellion",
+				-- Brémule
+				title = 11160636,
+				-- 1119
+				date = 11160637,
+			},
+		},
+
+		locations = {
+			{	
+				descriptor = "Bremule",
+				marker = mkr_village_bremule,
+				player = player2,
+				egroup = eg_village_bremule,
+			},
+			{	
+				descriptor = "Cressenville",
+				marker = mkr_village_cressenville,
+				player = player1,
+				egroup = eg_village_cressenville,
+				sgroup_defenders = sg_defenders_cressenville,
+				autoAssociateNewBuildings = false,
+			},
+			{	
+				descriptor = "Grainville",
+				marker = mkr_village_grainville,
+				player = player1,
+				egroup = eg_village_grainville,
+				sgroup_defenders = sg_defenders_grainville,
+				autoAssociateNewBuildings = false,
+			},
+			{
+				descriptor = "Fleury",
+				marker = mkr_village_fleury,
+				player = player1,
+				egroup = eg_village_fleury,
+			},
+			{
+				descriptor = "EnglishReinforce",
+				marker = mkr_english_reinforcments,
+				player = player1,
+			},
+		},
+		modules = {
+			-- Player units
+			--{
+				--type = "UnitSpawner",
+				--player = player1,
+				
+				--spawnLocation = mkr_cine_playermove,
+				----zeroPopulation = true,
+				--sgroup = sg_player_flueryunits,
+				--units = {
+					--{ type = "scar_manatarms", numSquads = 8, },
+					--{ type = "scar_archer", numSquads = 12, },
+					--{ type = "scar_horseman", numSquads = 18, },
+					--{ type = "scar_scout", numSquads = 1, },
+				--},
+			--},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				sgroup = sg_intro_villager_units,
+				units = {
+					{ type = "scar_villager", numSquads = 4+t_difficulty.storyStartingVillagers, spawn = mkr_english_workers_fleury, sgroup = sg_player_fleurygold},
+					{ type = "scar_villager", numSquads = 2+t_difficulty.storyStartingVillagers, spawn = mkr_english_workers_fleury, sgroup = sg_player_fleuryfood},
+				},
+			},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				
+				spawnLocation = mkr_village_grainville_spawn,
+				--zeroPopulation = true,
+				units = {
+					{ type = "scar_manatarms", numSquads = 2, },
+					{ type = "scar_horseman", numSquads = 3, },
+					{ type = "scar_scout", numSquads = 1, },
+					{ type = "scar_villager", numSquads = 6, spawn = mkr_english_workers_grainville, },
+				},
+			},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				
+				spawnLocation = mkr_village_cressenville_spawn,
+				--zeroPopulation = true,
+				units = {
+					{ type = "scar_spearman", numSquads = 4, },
+					{ type = "scar_archer", numSquads = 3, },
+					{ type = "scar_scout", numSquads = 1, },
+					{ type = "scar_villager", numSquads = 6, spawn = mkr_english_workers_cressenville, },
+				},
+			},
+			
+			-- ATTACK
+			--DEFENSE
+			{
+				descriptor = "FrenchCressenville",
+				
+				type = "Defend",
+				location = "Cressenville",
+				player = player2,
+				sgroup = sg_defenders_cressenville,
+			},
+			{
+				descriptor = "FrenchGrainville",
+				
+				type = "Defend",
+				location = "Grainville",
+				player = player2,
+				sgroup = sg_defenders_grainville,
+				--reinforcements = {unitSources = {{"FrenchArmy1"}}},
+			},
+			{
+				descriptor = "LouisReUp",
+				
+				type = "RovingArmy",
+				targets = {
+					 mkr_village_bremule,					
+				},
+				targetingType = ARMY_TARGETING_DISCARD,
+				player = player2,
+				sgroup = sg_louis_reup,
+			},
+			{
+				descriptor = "FrenchBremule",
+				
+				type = "Defend",
+				location = "Bremule",
+				player = player2,
+				sgroup = sg_defenders_bremule,
+			},
+		},
+		objectives = {
+		},
+		playbill = {
+		},
+	}
+	
+	return recipe
+	
+end
+
+----------------------------
+--HUNTING ARMY--
+----------------------------
+
+--Sets up the Hunting rovingarmy module
+function Init_Hunting_RovingArmy()
+	local moduleData = 
+	{
+		descriptor = "FrenchArmy_Hunting",
+		
+		type = "RovingArmy",
+		player = player2,
+		sgroup = sg_french_huntingarmy,
+		
+		spawnLocation = mkr_french_army_spawn,
+
+		
+		--fallbacks = {{marker = mkr_crossroads,}},
+		onDeathFunction = Set_HuntingReinforcements,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {mkr_crossroads},
+		--attackMove = attackMoveStyle_attackEverything,
+	}
+	
+	local huntModule = RovingArmy_Init(moduleData)	
+end
+
+--Sets up the waves for the hunting army
+function Init_FrenchWaves()
+	wave_data_1 = {
+		descriptor = "wave_1",
+		player = player2,
+		use_separate_spawns = false,
+		spawn = mkr_french_army_spawn,
+		units = {
+			{ type = "scar_horseman", numSquads = 10 },
+			{ type = "scar_knight", numSquads = 5 },
+			{ type = "scar_scout", numSquads = 1 },
+		},
+		staging_module = nil,
+		assault_module = "FrenchArmy_Hunting",
+		ignore_build_times = true,
+		--attackMove = attackMoveStyle_normal,
+	}
+	wave_1 = Wave_New(wave_data_1)
+	Wave_Prepare(wave_1)
+	Rule_AddInterval(ThreatArrow_SpottedHuntingArmy, 1)
+end
+
+function ThreatArrow_SpottedHuntingArmy()
+	if SGroup_CountSpawned(sg_french_huntingarmy) > 0 then
+		local huntingModule = MissionOMatic_FindModule("FrenchArmy_Hunting")
+		local currentHuntingTarget = huntingModule.targets[huntingModule.targetIndex]
+		if currentHuntingTarget ~= nil and currentHuntingTarget ~= mkr_crossroads then
+			if b_hunterArrow_On == false then
+				huntingArmy_threatArrow = ThreatArrow_CreateGroup("huntingArmy", sg_french_huntingarmy)
+				UI_CreateMinimapBlip(sg_french_huntingarmy, 10, "threat_group")
+				b_hunterArrow_On = true
+			end
+		else
+			if b_hunterArrow_On == true then
+				b_hunterArrow_On = false
+				ThreatArrow_DestroyGroup(huntingArmy_threatArrow)
+			end
+		end
+	else
+		if b_hunterArrow_On == true then
+			b_hunterArrow_On = false
+			ThreatArrow_DestroyGroup(huntingArmy_threatArrow)
+		end		
+	end
+end
+
+function HuntingArrow_On()
+	if b_hunterArrow_On == false then
+		huntingArmy_threatArrow = ThreatArrow_CreateGroup("huntingArmy", sg_french_huntingarmy)
+		UI_CreateMinimapBlip(sg_french_huntingarmy, 10, "threat_group")
+		b_hunterArrow_On = true
+	end
+end
+
+function HuntingArrow_Off()
+	if b_hunterArrow_On == true then
+		b_hunterArrow_On = false
+		ThreatArrow_DestroyGroup(huntingArmy_threatArrow)
+	end
+end
+
+function UpdateWaveTarget()
+	local huntModule = MissionOMatic_FindModule("FrenchArmy_Hunting")
+	--If the hunt module exists and has units spawned in it, continue
+	if huntModule ~= nil and SGroup_CountSpawned(huntModule.sgroup) > 0 then
+		local newTarget = nil 
+		local huntModule_CurrentTarget = huntModule.targets[huntModule.targetIndex]
+		--Get all the player units and remove any inside the safezone marker
+		Player_GetAll(player1)
+		Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_player_safezone)
+		SGroup_RemoveGroup(sg_allsquads, sg_temp)
+		
+		--If there are any units left outside the safezone marker then check if any of those units can be see, or else remove them
+		if SGroup_CountSpawned(sg_allsquads) > 1 then		
+			local _SpottedTargets = function(gid, idx, sid)
+				if Player_CanSeeSquad(player2, sid, ANY) ~= true then
+					SGroup_Remove(gid, sid)
+				end
+			end
+			SGroup_ForEach(sg_allsquads, _SpottedTargets)
+			
+			--If there are any valid units left that are outside the safezone marker and can be seen by player 2, guage their distance priority
+			if SGroup_CountSpawned(sg_allsquads) >= 1 then
+				local targetRange = nil
+				local squadTarget = nil
+				local bestTarget = {targetRange, squadTarget}
+				local dist_SameTarget = 0
+				local _BestTarget = function(gid, idx, sid)
+					local dist_WaveFromTarget = Util_GetDistance(huntModule.sgroup, sid)
+					--local dist_PlayerToSpawn = Util_GetDistance(sid, mkr_french_army_spawn)
+					local dist_WaveToBase = 9999
+					if huntModule_CurrentTarget ~= nil and huntModule_CurrentTarget ~= mkr_crossroads then
+						dist_WaveToBase = Util_GetDistance(huntModule.sgroup, huntModule_CurrentTarget.position)
+					end
+					
+					if dist_WaveToBase >= dist_WaveFromTarget then
+						if bestTarget.squadTarget == nil then
+							bestTarget.squadTarget = sid
+							bestTarget.targetRange = dist_WaveFromTarget
+						elseif dist_WaveFromTarget < bestTarget.targetRange then
+							bestTarget.squadTarget = sid
+							bestTarget.targetRange = dist_WaveFromTarget
+						end	
+					end
+					
+					newTarget = bestTarget.squadTarget
+				end
+				SGroup_ForEach(sg_allsquads, _BestTarget)
+				
+				if newTarget ~= nil then
+					if huntModule_CurrentTarget ~= nil and huntModule_CurrentTarget.position ~= nil then
+						dist_SameTarget = Util_GetDistance(huntModule_CurrentTarget.position, Util_GetPosition(newTarget))
+						if dist_SameTarget > 30 then
+							print("Enemy in range, changing target to "..tostring(newTarget))
+							if newTarget then 
+								RovingArmy_SetTarget(huntModule, Util_GetPosition(newTarget), 10) 
+								RovingArmy_AddTarget(huntModule, mkr_crossroads)
+							end
+						end
+					else
+						print("Current target invalid, changing target to "..tostring(newTarget))
+						if newTarget then 
+							RovingArmy_SetTarget(huntModule, Util_GetPosition(newTarget), 10) 
+							RovingArmy_AddTarget(huntModule, mkr_crossroads)
+						end
+					end
+				end
+			end
+		end
+		
+		if huntModule_CurrentTarget ~= nil and huntModule_CurrentTarget.marker ~= nil then
+			Rule_AddOneShot(UpdateWaveTarget, 3)
+		else
+			Rule_AddOneShot(UpdateWaveTarget, 10)
+		end
+	else
+		Rule_AddOneShot(UpdateWaveTarget, 1)
+	end	
+end
+
+function Set_HuntingReinforcements()
+	AudOnFromPoint(player1, roving_LastPos, "WALLA_CAMP_CELEBRATE_")
+	Sound_Play2D(MUS_STING_POSITIVE)
+	
+	huntingScale = huntingScale or 0
+	huntingScale = huntingScale+(2*t_difficulty.attackWaveScale)
+			
+	Rule_AddOneShot(Spawn_HuntingReinforcements, (60*t_difficulty.attackWaveFrequency))
+end
+
+function Spawn_HuntingReinforcements()
+	if b_endGame == false then
+		local units =
+		{
+			{type = "scar_scout", numSquads = 2,},
+			{type = "scar_knight", numSquads = (math.floor(huntingScale*0.25)),},
+			{type = "scar_horseman", numSquads = 10,},
+		}
+		--local hunters = MissionOMatic_FindModule("FrenchArmy_Hunting")
+		Wave_SetUnits(wave_1, units)
+		Wave_Prepare(wave_1)
+		--RovingArmy_SetTargets(hunters, SetPriorityTargets())
+		Rule_AddInterval(Reset_HuntingTargets, 3)
+	end
+end
+
+function Reset_HuntingTargets()
+	local hunters = MissionOMatic_FindModule("FrenchArmy_Hunting")
+	if SGroup_CountSpawned(hunters.sgroup) > 0 then
+		Rule_RemoveMe()
+		RovingArmy_SetTarget(hunters, mkr_crossroads)
+	end
+end
+
+function Hunting_Intel()
+	if b_frenchHuntersLaunched == false then 
+		b_frenchHuntersLaunched = true
+		Util_StartIntel(EVENTS.PlayerUnits_Harassed)	
+	end
+end
+
+function RovingLastPosition()
+	if SGroup_CountSpawned(sg_french_huntingarmy) > 0 then
+		roving_LastPos = Util_GetPosition(sg_french_huntingarmy)
+	end
+end
+	
+
+----------------------------
+--RAM WAVES--
+----------------------------
+
+function Init_Ram_RovingArmy()
+	local moduleData = 
+	{
+		descriptor = "FrenchArmy_Ram",
+		
+		type = "RovingArmy",
+		player = player2,
+		sgroup = sg_french_ram,
+		units =  ConstructWave(),
+		
+		spawnLocation = Siege_LaunchPoint(),
+		
+		--fallbacks = {{marker = mkr_crossroads,}},
+		onDeathFunction = StartRamTimer,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = Siege_Targets(),
+		attackMove = attackMoveStyle_attackEverything,
+	}
+	
+	local ramModule = RovingArmy_Init(moduleData)
+	Hunting_Intel() -- Plays intel the first time this group is launched
+end
+
+function StartRamTimer()
+	Rule_AddOneShot(Reset_RamWave, SiegeCamp_TimerMod()*(t_difficulty.ramWaveFrequency*60))
+end
+
+function SiegeCamp_TimerMod()
+	if eg_ambushtents ~= nil and EGroup_CountSpawned(eg_ambushtents) > 0 then
+		return 0.3
+	else
+		return 1
+	end		
+end
+
+function ConstructWave()
+	--Wave Init
+	local gameTime = World_GetGameTime()
+	gameTime = gameTime/60
+	waveTest = waveTest or nil
+	if waveTest ~= nil then 
+		gameTime = waveTest
+	end
+	
+	if gameTime <= 50 then
+		local quarterTime = gameTime/4
+		--local billionthTime = (1/1000000000)*gameTime
+		local exponentTime = (gameTime^6)/1000000000
+		
+		wavePower = quarterTime + exponentTime
+	else
+		wavePower = 51
+	end
+	
+	if t_difficulty.attackWaveScale == 0 then
+		wavePower = 1		
+	elseif t_difficulty.attackWaveScale == 2 and wavePower < 10 then
+		wavePower = 10	
+	else
+		wavePower = wavePower
+	end
+	
+	waveDiffModded = math.floor(math.min(wavePower, 50))
+	
+	local waveunits = {} --Changes attack wave composition based on game time
+	waveunits = 
+	{ 		
+		{ type = "scar_spearman", numSquads = 12+waveDiffModded},
+		{ type = "scar_manatarms", numSquads = math.floor(waveDiffModded/2)},
+		{ type = "scar_ram", numSquads = 1+(waveDiffModded/5)},
+	}
+	
+	local randunits = {
+		{ type = "scar_ram", numSquads = World_GetRand(1,2)}, 
+		{ type = "scar_horseman", numSquads = World_GetRand(1,5)}, 
+		{ type = "scar_archer", numSquads = World_GetRand(1,5)}, 
+		{ type = "scar_scout", numSquads = World_GetRand(1,3)}, 
+		{ type = "scar_knight", numSquads = World_GetRand(1,2)}
+	}
+	for i = 1, math.min(math.floor(waveDiffModded/5), 4) do
+		table.insert(waveunits, Table_GetRandomItem(randunits))
+	end
+	
+	return waveunits
+end
+
+function Reset_RamWave()
+	if b_endGame == false then
+		waveNumber = waveNumber or 1
+		local ramModule = MissionOMatic_FindModule("FrenchArmy_Ram")
+		local units = ConstructWave()
+		
+		local targets = Siege_Targets()
+		SpawnUnitsToModule(units, ramModule, Siege_LaunchPoint())
+		if SGroup_CountSpawned(ramModule.sgroup) > 0 then
+			RovingArmy_SetTargets(ramModule, targets)
+		end
+		waveNumber = waveNumber+1
+	end
+end
+
+function Siege_LaunchPoint()
+	Player_GetAll(player1)
+	if eg_ambushtents ~= nil and EGroup_CountSpawned(eg_ambushtents) > 0 and Prox_AreSquadsNearMarker(sg_allsquads, mkr_hill_ambush, ANY, 60) == false then --Player_CanSeePosition(player1, Util_GetPosition(mkr_hill_ambush)) ~= true then
+		return mkr_hill_ambush
+	elseif b_GrainvilleFrench == true and Prox_AreSquadsNearMarker(sg_allsquads, mkr_village_grainville_spawn, ANY, 60) == false then--Player_CanSeePosition(player1, Util_GetPosition(mkr_village_grainville_spawn)) ~= true then
+		return mkr_village_grainville_spawn
+	elseif b_CressenvilleFrench == true and Prox_AreSquadsNearMarker(sg_allsquads, mkr_village_cressenville_spawn, ANY, 60) == false then--Player_CanSeePosition(player1, Util_GetPosition(mkr_village_cressenville_spawn)) ~= true then
+		return mkr_village_cressenville_spawn
+	else
+		return mkr_french_army_spawn
+	end
+end
+
+function Siege_Targets()
+	local targets = {}
+	
+	if Game_GetSPDifficulty() > GD_EASY then
+		if b_CressenvilleFrench ~= true then
+			targets = {mkr_village_cressenville, mkr_village_grainville, mkr_village_fleury_attacktarget}
+		elseif b_GrainvilleFrench ~= true then
+			targets = {mkr_village_grainville, mkr_village_fleury_attacktarget}
+		elseif eg_ambushtents ~= nil and EGroup_CountSpawned(eg_ambushtents) > 0 then
+			targets = {mkr_village_fleury_attacktarget}
+		else
+			targets = {mkr_village_cressenville, mkr_village_grainville, mkr_village_fleury_attacktarget}
+		end
+	else
+		targets = {mkr_village_cressenville, mkr_village_grainville}
+	end
+	
+	return targets
+end
+
+----------------------------
+--FRENCH SCOUTS--
+----------------------------
+
+--Creates a new name for a scout group
+function NewScoutsDescriptor()
+	local myreturnstring = "French_Scout_"..g_frenchScoutIndex
+	return myreturnstring
+end
+
+--Spins up a new scout group
+function NewScoutGroup()
+	for index, camp in pairs(t_difficulty.t_frenchScoutCamps) do
+		eg_scoutcamps = EGroup_CreateIfNotFound("eg_scoutcamps")
+		sg_frenchscouts = SGroup_CreateIfNotFound("sg_frenchscouts")
+		if Player_CanSeePosition(player1, Util_GetPosition(camp)) ~= true then
+			Util_CreateEntities(player2, eg_scoutcamps, EBP.FRENCH.BUILDING_UNIT_CAVALRY_CONTROL_FRE, PositionWithOffset(Util_GetPosition(camp), 0, -12), 1, nil, true, false, true)
+			Util_CreateEntities(player2, eg_blah, BP_GetEntityBlueprint("military_tent_a_eng"), PositionWithOffset(Util_GetPosition(camp), 4, 0), 1, nil, true, false, true)
+			Util_CreateEntities(player2, eg_blah, BP_GetEntityBlueprint("ang_chp2_bremule_camp_a"), camp, 1, nil, true, true, true)
+			g_frenchScoutIndex = g_frenchScoutIndex or 1
+			local moduleData = {
+				descriptor = NewScoutsDescriptor(), 				
+				type = "RovingArmy",
+				player = player2,
+				
+				--attackMove = false,
+				targetingType = ARMY_TARGETING_RANDOM,
+				onDeathFunction = Delay_ScoutSpawn,
+				targets = {
+					mkr_crossroads,
+					mkr_french_army_spawn,
+					mkr_scout_waypoint_1,
+					mkr_scout_waypoint_2,
+					mkr_scout_waypoint_3,
+					mkr_scout_waypoint_4,
+					mkr_scout_waypoint_5,
+					mkr_scout_waypoint_6,
+					mkr_scout_waypoint_7,
+					mkr_scout_waypoint_8,
+				},
+			}
+			
+			local myNewModule = RovingArmy_Init(moduleData)
+			local units = {{ type = "scar_scout", numSquads = 1, sgroup = sg_frenchscouts },}
+			
+			SpawnUnitsToModule(units, myNewModule, mkr_french_army_spawn)
+			g_frenchScoutIndex = g_frenchScoutIndex+1
+		end
+	end
+end
+
+function Delay_ScoutSpawn()
+	Rule_AddOneShot(NewSingleScout, 8)
+end
+
+--If scout spawning is still active this spins up a new scout on the death of a previous scout
+function NewSingleScout()
+	if b_endGame == false and SGroup_CountSpawned(sg_frenchscouts) <= EGroup_CountSpawned(eg_scoutcamps) then
+		g_frenchScoutIndex = g_frenchScoutIndex or 1
+		local moduleData = {
+			descriptor = NewScoutsDescriptor(), 				
+			type = "RovingArmy",
+			player = player2,
+			withdrawThreshold = 0,
+			--attackMove = false,
+			targetingType = ARMY_TARGETING_RANDOM,
+			onDeathFunction = Delay_ScoutSpawn,
+			targets = {
+				mkr_crossroads,
+				mkr_french_army_spawn,
+				mkr_scout_waypoint_1,
+				mkr_scout_waypoint_2,
+				mkr_scout_waypoint_3,
+				mkr_scout_waypoint_4,
+				mkr_scout_waypoint_5,
+				mkr_scout_waypoint_6,
+				mkr_scout_waypoint_7,
+				mkr_scout_waypoint_8,
+			},
+		}
+		
+		local myNewModule = RovingArmy_Init(moduleData)
+		local units = {{ type = "scar_scout", numSquads = 1, sgroup = sg_frenchscouts },}
+		
+		SpawnUnitsToModule(units, myNewModule, Util_GetPosition(EGroup_GetRandomSpawnedEntity(eg_scoutcamps)))
+		g_frenchScoutIndex = g_frenchScoutIndex+1
+	end
+end
+
+----------------------------
+--FRENCH ARMY--
+----------------------------
+
+--Initializes all the french armies for the mission start
+function Init_FrenchAssault() --Spins up the french army attack
+	FrenchArmy_Scout1 = 
+	{
+		descriptor = "FrenchArmy_Scout1",
+		
+		type = "RovingArmy",
+		player = player2,
+		
+		spawnLocation = mkr_french_army_spawn,
+		units = {
+			{ type = "scar_scout", numSquads = 1, },
+			{ type = "scar_horseman", numSquads = 2, },
+		},
+		attackMove = true,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			mkr_village_cressenville,
+		},
+	}
+	
+	FrenchArmy_Scout2 = 
+	{
+		descriptor = "FrenchArmy_Scout2",
+		
+		type = "RovingArmy",
+		player = player2,
+		
+		spawnLocation = mkr_french_army_spawn,
+		units = {
+			{ type = "scar_scout", numSquads = 1, },
+			{ type = "scar_horseman", numSquads = 2, },
+		},
+		attackMove = true,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			mkr_village_grainville,
+		},
+	}
+	
+	FrenchArmy_Scout3 = 
+	{
+		descriptor = "FrenchArmy_Scout3",
+		
+		type = "RovingArmy",
+		player = player2,
+		
+		spawnLocation = mkr_french_army_spawn,
+		units = {
+			{ type = "scar_scout", numSquads = 1, },
+			{ type = "scar_horseman", numSquads = 2, },
+		},
+		attackMove = true,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			mkr_village_fleury_attacktarget,
+		},
+	}
+	
+	FrenchArmy1 = 
+	{
+		descriptor = "FrenchArmy1",
+		
+		type = "RovingArmy",
+		player = player2,
+		sgroup = sg_french_rovingarmy,
+			
+		spawnLocation = mkr_village_bremule,
+		units = {
+		},
+		
+		withdrawThreshold = 0.05,
+		addTargetsToFallbacks = true,
+
+		
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			mkr_village_bremule,
+			mkr_village_cressenville,
+			mkr_village_grainville,
+			mkr_village_fleury_attacktarget,
+		},
+	}
+		
+		Louis_Retinue = 
+	{
+		descriptor = "LouisRetinue",
+		
+		type = "RovingArmy",
+		player = player2,
+		sgroup = sg_louis_army,
+		attackMove = attackMoveStyle_attackEverything,
+		spawnLocation = mkr_village_bremule,
+		units = {
+		},
+		
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			{marker = mkr_village_bremule, combatRange = 80, leashRange = 500,}
+		},
+	}
+	
+	RovingArmy_Init(FrenchArmy_Scout1)
+	RovingArmy_Init(FrenchArmy_Scout2)
+	RovingArmy_Init(FrenchArmy_Scout3)
+	RovingArmy_Init(FrenchArmy1)
+	RovingArmy_Init(Louis_Retinue)
+	
+	Rule_AddInterval(FleuryObjective_InitialUpdate, 1)
+	Rule_AddInterval(FrenchArrival, 1, {currentMarker = mkr_village_cressenville})
+	Rule_AddInterval(FrenchArrival, 1, {currentMarker = mkr_village_grainville})
+	
+	RovingArmy_AddSGroup(FrenchArmy1, sg_french_army, true)
+	--RovingArmy_AddSGroup(Louis_Retinue, sg_louis_retinue, true)
+	--RovingArmy_AddSGroup(Louis_Retinue, sg_louis_retinue, true)
+	SGroup_SetInvulnerable(g_leaderLouis.sgroup, 0.10, -1)
+	--SGroup_AddAbility(g_leaderLouis.sgroup, BP_GetAbilityBlueprint("general_aura_combat"))
+	
+	if SGroup_CountSpawned(FrenchArmy1.sgroup) < 200 then
+		local units = {
+			{ type = "scar_spearman", numSquads = 200-SGroup_CountSpawned(FrenchArmy1.sgroup), sgroup = {sg_french_army, sg_french_grunts}},
+		}
+		SpawnUnitsToModule(units, FrenchArmy1, mkr_village_bremule_spawn)
+	end
+	
+	Modifier_Remove(frenchArmy_Speed)
+	frenchArmy_Speed = Modify_UnitSpeed(sg_french_army, 0.5)
+	FOW_PlayerRevealArea(player2, Util_GetPosition(mkr_village_bremule), 80, -1)
+
+end
+
+function Init_FrenchBackfill()
+	local units = {
+	{ type = "scar_knight", numSquads = 30*t_difficulty.invasionScale},
+	{ type = "scar_horseman", numSquads = 50*t_difficulty.invasionScale},
+	{ type = "scar_spearman", numSquads = 45*t_difficulty.invasionScale},
+	{ type = "scar_archer", numSquads = 45*t_difficulty.invasionScale},
+	}
+	SpawnUnitsToModule(units, MissionOMatic_FindModule("LouisReUp"), mkr_french_army_spawn)
+	--FrenchArmy2 = 
+	--{
+		--descriptor = "FrenchArmy2",
+		
+		--type = "RovingArmy",
+		--player = player2,
+		--sgroup = sg_french_army_2,
+			
+		--spawnLocation = mkr_french_army_spawn,
+		--units = {
+			--{ type = "scar_knight", numSquads = 30*t_difficulty.invasionScale},
+			--{ type = "scar_horseman", numSquads = 50*t_difficulty.invasionScale},
+			--{ type = "scar_spearman", numSquads = 45*t_difficulty.invasionScale},
+			--{ type = "scar_archer", numSquads = 45*t_difficulty.invasionScale},
+		--},
+		
+		----withdrawThreshold = 0.05,
+		
+		--targetingType = ARMY_TARGETING_DISCARD,
+		--targets = {
+			--mkr_village_bremule
+		--},
+	--}
+	
+	--RovingArmy_Init(FrenchArmy2)
+end
+
+
+--Spawns some attackers to lie in wait at the top of the switchback hill
+function AmbushSpawn() --Spawns a defense group to wait at the top of the switchback and jump the player army.
+	local moduleData = 
+		{
+			descriptor = "French_HillAmbush",
+			
+			type = "RovingArmy",
+			player = player2,
+			sgroup = sg_french_ambush,
+			onDeathDissolve = true,
+			targetingType = ARMY_TARGETING_DISCARD,
+			targets = {	mkr_hill_ambush,},
+		}
+	
+	local units = 
+		{
+			{ type = "scar_archer", numSquads = (12*t_difficulty.invasionScale)*t_difficulty.matchUpSimplify.ranged},
+			{ type = "scar_spearman", numSquads = (12*t_difficulty.invasionScale)*t_difficulty.matchUpSimplify.infantry},
+		}
+	
+	local myNewModule = RovingArmy_Init(moduleData)
+	SpawnUnitsToModule(units, myNewModule, Siege_LaunchPoint()) 
+	Rule_EnterProximity(AmbushCamp, ANY, sg_french_ambush, mkr_hill_ambush, 3, false, {})
+end
+
+----------------------------
+--UTILITY--
+----------------------------
+
+--Gets a list of targets based on player ownership
+function SetPriorityTargets()
+	local town_targets = {}
+	
+	if b_CressenvilleFrench == false then table.insert(town_targets, mkr_village_cressenville) end
+	if b_GrainvilleFrench == false then table.insert(town_targets, mkr_village_grainville) end
+	table.insert(town_targets, mkr_village_fleury_attacktarget)
+
+	return town_targets
+end
+
+
+--Play Nar and Adjust the game once the player start to retake ground
+function EnglishPushBack()
+	if Objective_IsComplete(SOBJ_CaptureGrainville) or Objective_IsComplete(SOBJ_CaptureCressenville) then
+		Rule_RemoveMe()
+		Util_StartIntel(EVENTS.EnglishPush)
+	end
+end
+
+--Spawns some villagers where we need them
+function VillagersReinforce(amount, area)
+	local units = {{type = "scar_villager", numSquads = amount}}
+	
+ 	UnitEntry_DeploySquads(player1, sg_temp, units, area)
+end
+
+--Locks out the AI performing its own upgrades
+function LockAllUpgrades(player)
+	for index, upgradeID in pairs(UPG.COMMON) do
+		if scartype(upgradeID) == ST_PBG then
+			Player_SetUpgradeAvailability(player, upgradeID, ITEM_LOCKED)
+		end
+	end
+
+	for index, upgradeID in pairs(UPG.ENGLISH) do
+		if scartype(upgradeID) == ST_PBG then
+			Player_SetUpgradeAvailability(player, upgradeID, ITEM_LOCKED)
+		end
+	end
+end
+
+function Build_LocationTable(egroup)
+		
+	local completeTable = {}
+		
+	local _BuildTable = function(gid, index, item)
+		table.insert(completeTable, index, {
+			entity = Entity_GetID(item), 
+			bp = Entity_GetBlueprint(item), 
+			pos = Entity_GetPosition(item),
+			facing = Util_GetFacingFromDirection(Entity_GetPosition(item), Entity_GetHeading(item)),
+				
+		})
+	end
+		
+	EGroup_ForEach(egroup, _BuildTable)
+	return completeTable
+end
+
+function Rebuild_Location(locationTable, rebuilderGroup, locationToRebuild)
+	Rule_AddOneShot(Rebuild_Location_Delayed, 0.125, {locationTable = locationTable, rebuilderGroup = rebuilderGroup, locationToRebuild = locationToRebuild})
+end
+
+function Rebuild_Location_Delayed(context, data) --Delayed to allow FOG of war to enable.
+	local locationTable = data.locationTable 
+	local rebuilderGroup = data.rebuilderGroup 
+	local locationToRebuild = data.locationToRebuild
+	
+		local typesToConvert = {
+			"scar_arsenal",
+			"scar_house",
+			"scar_barracks",
+			"scar_archeryrange",
+			"scar_stable",
+			"scar_blacksmith",
+			"scar_archeryrange",
+			"farm",
+			"scar_lumbercamp",
+			"scar_miningcamp",
+			"scar_gristmill",
+			"scar_market",
+			"scar_outpost",
+			"scar_monastery",
+		}
+	
+	local spawnPoint = World_GetHiddenPositionOnPath(player1, mkr_french_army_spawn, locationToRebuild, CHECK_BOTH)
+	if spawnPoint == nil then
+		spawnPoint = locationToRebuild
+	end	
+	UnitEntry_DeploySquads(player2, rebuilderGroup, {type = "scar_villager", numSquads = 3,}, spawnPoint)
+	for index, building in ipairs(locationTable) do
+		if Entity_IsValid(building.entity) then
+			local entity = Entity_FromID(building.entity)
+			if Entity_IsAlive(entity) ~= true then
+				for typeIndex, buildingType in pairs(typesToConvert) do 
+					if Entity_IsOfType(entity, buildingType) then
+						building.bp = Cardinal_ConvertTypeToEntityBlueprint(buildingType, player2, false)
+						Player_SetEntityProductionAvailability(player2, building.bp, ITEM_UNLOCKED)
+						LocalCommand_PlayerSquadConstructBuilding(player2, rebuilderGroup, building.bp, building.pos, building.facing, true)
+					end
+				end
+			end
+		end
+	end
+	
+	Cmd_MoveToAndDestroy(rebuilderGroup, mkr_french_army_spawn, true)
+end
+
+function ConstructCamp()
+	--local defaultOffset = Util_GetOffsetPosition(mkr_intro_horseman_4, OFFSET_FRONT, 1)
+	--LocalCommand_PlayerSquadConstructBuilding(player2, sg_french_grunts, BP_GetEntityBlueprint("military_tent_a_eng"), Util_GetPosition(mkr_intro_horseman_4), defaultOffset, false)
+	Cmd_Move(sg_french_grunts, mkr_intro_horseman_4, false)
+	--Rule_EnterProximity(SetUpTent, ALL, sg_french_grunts, mkr_intro_horseman_4, 3, false, {})
+end
+
+function LiquidateLouisArmy()
+		sg_louisholdingarmy = SGroup_CreateIfNotFound("sg_louisholdingarmy")
+		SGroup_AddGroup(sg_louis_army, sg_louis_reup)
+		Prefab_DoAction(MissionOMatic_FindModule("LouisReUp"), "Disband")
+		SGroup_Duplicate(sg_louis_army, sg_louisholdingarmy)
+		Prefab_DoAction(MissionOMatic_FindModule("LouisRetinue"), "Disband")
+		sg_louis_army = SGroup_CreateIfNotFound("sg_louis_army")
+		SGroup_AddGroup(sg_louis_army, sg_louisholdingarmy)
+		Rule_AddInterval(EnsureCampArrival, 20)
+		Rule_EnterProximity(Pre_BreakForCamp, ALL, sg_louis_army, mkr_village_bremule, 60, false, {})
+end
+
+function EnsureCampArrival()
+	if SGroup_CountSpawned(sg_louis_army) > 0 then
+		Cmd_FormationMove(sg_louis_army, mkr_village_bremule, false, false, Util_GetFacingFromDirection(Util_GetPosition(mkr_village_bremule), Util_GetDirectionFromAtoB(mkr_village_bremule, mkr_village_cressenville)))
+	end
+	if SGroup_CountSpawned(sg_louis_reup) > 0 then
+		Cmd_FormationMove(sg_louis_reup, mkr_village_bremule, false, false, Util_GetFacingFromDirection(Util_GetPosition(mkr_village_bremule), Util_GetDirectionFromAtoB(mkr_village_bremule, mkr_village_cressenville)))
+	end
+end
+
+function Pre_BreakForCamp()
+	Rule_Remove(EnsureCampArrival)
+	Rule_AddOneShot(DelaySetUpTent, 10)
+end
+
+function DelaySetUpTent()
+	sg_louisholdingarmy = SGroup_CreateIfNotFound("sg_louisholdingarmy")
+	SGroup_Duplicate(sg_louis_army, sg_louisholdingarmy)
+	Prefab_DoAction(MissionOMatic_FindModule("LouisRetinue"), "Disband")
+	sg_louis_army = SGroup_CreateIfNotFound("sg_louis_army")
+	SGroup_AddGroup(sg_louis_army, sg_louisholdingarmy)
+	Rule_AddOneShot(SetUpTent, 10)
+end
+
+
+function SetUpTent()
+	louisCamps = AllMarkers_FromName("mkr_louis_camp", "")
+	sg_louis_dup = SGroup_CreateIfNotFound("sg_louis_dup")
+	sg_louis_knights = SGroup_CreateIfNotFound("sg_louis_knights")
+	sg_louis_horseman = SGroup_CreateIfNotFound("sg_louis_horseman")
+	sg_temp_campgroup = SGroup_CreateIfNotFound("sg_temp_campgroup")
+	SGroup_Duplicate(sg_louis_army, sg_louis_dup)
+	SGroup_Filter(sg_louis_dup, "cavalry", FILTER_REMOVE, sg_louis_knights)
+	--SGroup_Filter(sg_louis_knights, "scar_horseman", FILTER_REMOVE, sg_louis_horseman)
+	for index, camp in pairs(louisCamps) do
+		SGroup_Duplicate(sg_louis_dup, sg_temp_campgroup)
+		SGroup_Clear(sg_louis_dup)
+		SGroup_FilterCount(sg_temp_campgroup, World_GetRand(4,9), sg_louis_dup)
+		HangOut(sg_temp_campgroup, camp)
+		if b_CampBuilt == false then
+			Util_CreateEntities(player2, eg_blah, BP_GetEntityBlueprint("ang_chp2_bremule_camp_a"), camp, 1, nil, true, true, true)
+		end
+	end	
+	b_CampBuilt = true
+	
+	--if t_campPatrols ~= nil and #t_campPatrols > 0 then
+		--for index, sgroup in pairs(sgroupTable) do
+			--SGroup_Destroy(sgroup)
+		--end
+	--end
+	t_campPatrols = {}
+	local i_campSet = 0
+	local _PatrolGroup = function(gid, index, sid)
+		if SGroup_Exists("sg_camppatrol_"..i_campSet) == false then
+			_G["sg_camppatrol_"..i_campSet] = SGroup_CreateIfNotFound("sg_camppatrol_"..i_campSet)
+			SGroup_Add(_G["sg_camppatrol_"..i_campSet], sid)
+			table.insert(t_campPatrols, _G["sg_camppatrol_"..i_campSet])
+		elseif SGroup_CountSpawned(_G["sg_camppatrol_"..i_campSet]) < 2 then
+			SGroup_Add(_G["sg_camppatrol_"..i_campSet], sid)
+		else
+			i_campSet = i_campSet+1
+			_G["sg_camppatrol_"..i_campSet] = SGroup_CreateIfNotFound("sg_camppatrol_"..i_campSet)
+			SGroup_Add(_G["sg_camppatrol_"..i_campSet], sid)
+			table.insert(t_campPatrols, _G["sg_camppatrol_"..i_campSet])
+		end			
+	end	
+	SGroup_ForEach(sg_louis_dup, _PatrolGroup)
+	
+	if campSpeed ~= nil then
+		Modifier_Remove(campSpeed)
+	end
+	campSpeed = Modify_UnitSpeed(sg_louis_army, 0.35)
+	if Rule_Exists(PatrolCamp) ~= true then
+		Rule_AddInterval(PatrolCamp, 10, {sgroupTable = t_campPatrols, poiTable = louisCamps})
+	end
+	if Rule_Exists(CombatWatch) ~= true then
+		Rule_AddInterval(CombatWatch, 2)
+	end
+	StandPretty(sg_louis_knights)
+	--Rule_Remove(PatrolCamp)
+	--Rule_Remove(CombatWatch)
+	--Modifier_RemoveAllFromSGroup(sg_louis_army)
+	--eg_tents = EGroup_CreateIfNotFound("eg_tents")
+	--Util_CreateEntities(player2, eg_tents, BP_GetEntityBlueprint("military_tent_a_eng"), mkr_intro_horseman_4, 1, nil, true, false, true)
+end
+
+function PatrolCamp(context, data)
+	sgroupTable = data.sgroupTable
+	poiTable = data.poiTable
+	
+	for index, sgroup in pairs(sgroupTable) do
+		if SGroup_CountSpawned(sgroup) > 0 and SGroup_IsMoving(sgroup, ALL) == false then
+			local rand_NextMoveTo = Util_GetPosition(Table_GetRandomItem(poiTable))
+			local offset_NextMoveTo = World_GetOffsetPositionRelativeToFacingTarget(rand_NextMoveTo, Util_GetPosition(sgroup), 3)
+			Cmd_FormationMove(sgroup, offset_NextMoveTo)
+		end
+	end
+end
+
+function CombatWatch()
+	if SGroup_CountSpawned(sg_louis_army) > 0 then
+		Player_GetAllSquadsNearMarker(player1, sg_player_louisthreats, mkr_village_bremule, 80)
+		if SGroup_CountSpawned(sg_player_louisthreats) > 0 then
+				Rule_RemoveMe()
+				CampShutDown(campSpeed, t_campPatrols, PatrolCamp)
+			end
+	else
+		Rule_RemoveMe()
+		CampShutDown(campSpeed, t_campPatrols, PatrolCamp)
+	end
+end
+
+function RestartCamp()
+	if SGroup_CountSpawned(sg_louis_army) > 0 then
+		Player_GetAllSquadsNearMarker(player1, sg_player_louisthreats, mkr_village_bremule, 80)
+		if SGroup_IsUnderAttack(sg_louis_army, ANY, 15) ~= true and SGroup_CountSpawned(sg_player_louisthreats) <= 0 then
+			Rule_RemoveMe()
+			--Encounter_Stop(Camp_Defense_Encounter, true)
+			SetUpTent()
+		else
+			Init_Camp_Defense_Encounter()
+		end
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function CampShutDown(modifier, sgroupTable, rule)
+	Modifier_Remove(modifier)
+	
+	Rule_Remove(rule)
+	for index, sgroup in pairs(sgroupTable) do
+		SGroup_Destroy(sgroup)
+	end
+	Init_Camp_Defense_Encounter()
+	--Player_GetAllSquadsNearMarker(player1, sg_player_louisthreats, mkr_village_bremule, 90)
+	--if SGroup_CountSpawned(sg_louis_army) > 0 and SGroup_CountSpawned(sg_player_louisthreats) > 0 then
+		--Init_Camp_Defense_Encounter()
+		----Cmd_FormationMove(sg_louis_army, mkr_village_bremule, false, false, Util_GetFacingFromDirection(Util_GetPosition(mkr_village_bremule), Util_GetDirectionFromAtoB(mkr_village_bremule, sg_player_louisthreats)))
+	--end
+end
+
+function HangOut(sgroup, marker)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		local unit_count = SGroup_CountSpawned(sgroup)
+		local spacingAmount = math.max(0.3*unit_count, 2)
+		if SGroup_HasSquadBlueprint(sgroup, "cavalry", ANY) then
+			spacingAmount = math.max(0.5*unit_count, 4)
+		end
+		local degreeSeperation = 360/unit_count
+		local _ArrangeUnits = function(gid, index, sid)
+			local i_offset = index+1
+			local offset_cos = math.cos(degreeSeperation*i_offset)
+			local offset_sin = math.sin(degreeSeperation*i_offset)
+			SGroup_Single(sg_single, sid)
+			local offsetLocation = PositionWithOffset(Util_GetPosition(marker), spacingAmount*offset_sin, spacingAmount*offset_cos)
+			Cmd_FormationMove(sg_single, offsetLocation, false, false, Util_GetFacingFromDirection(Util_GetPosition(marker), Util_GetDirectionFromAtoB(offsetLocation, marker)))
+		end
+		SGroup_ForEach(sgroup, _ArrangeUnits)
+	end
+end
+
+function Init_Camp_Defense_Encounter()
+	if Camp_Defense_Encounter == nil or Encounter_IsActive(Camp_Defense_Encounter) ~= true then
+		local goal = { 
+			plan = "Attack",
+			target = mkr_village_bremule,
+			combatRange = 90,
+			leashRange = 160,
+			attackMove = attackMoveStyle_attackEverything,
+			callbacks = {
+				success = Reset_Camp,
+			},
+		}	
+		Camp_Defense_Encounter = Encounter_Create(player2, sg_louis_army, goal, "Camp_Defense_Encounter")
+	end
+end
+
+function Reset_Camp()
+	if Rule_Exists(RestartCamp) ~= true then
+		Rule_AddInterval(RestartCamp, 5)
+	end
+end
+
+function AmbushCamp()
+	eg_ambushtents = EGroup_CreateIfNotFound("eg_ambushtents")
+	Util_CreateEntities(player2, eg_ambushtents, BP_GetEntityBlueprint("military_tent_a_eng"), mkr_hill_ambush_tent_1, 1, nil, true, false, true)
+	Util_CreateEntities(player2, eg_ambushtents, BP_GetEntityBlueprint("military_tent_a_eng"), mkr_hill_ambush_tent_2, 1, nil, true, false, true)
+	Util_CreateEntities(player2, eg_ambushtents, BP_GetEntityBlueprint("military_tent_a_eng"), mkr_hill_ambush_tent_3, 1, nil, true, false, true)
+	--Util_CreateEntities(player2, eg_ambushtents, EBP.ENGLISH.CAMP_FIRE, mkr_hill_ambush, 1, nil, true, true, true)
+	Util_CreateEntities(player2, eg_blah, BP_GetEntityBlueprint("ang_chp2_bremule_camp_a"), mkr_hill_ambush, 1, nil, true, true, true)
+	
+end
+
+--Sets up the player villagers and puts them to work
+function VillagerSetup()
+	local sg_villagerstoassign = SGroup_CreateIfNotFound("sg_villagerstoassign")
+	local sg_vta_group1 = SGroup_CreateIfNotFound("sg_vta_group1")
+	--local sg_vta_group2 = SGroup_CreateIfNotFound("sg_vta_group2")
+	--SGroup_Clear(sg_villagerstoassign)
+	--Player_GetAllSquadsNearMarker(player1, sg_villagerstoassign, mkr_village_fleury)
+	--SGroup_Filter(sg_villagerstoassign, "scar_villager", FILTER_KEEP)
+	AssignVillagersToGold(sg_player_fleurygold)
+	AssignVillagersToSheep(sg_player_fleuryfood)
+	
+	SGroup_Clear(sg_villagerstoassign)
+	SGroup_Clear(sg_vta_group1)
+	Player_GetAllSquadsNearMarker(player1, sg_villagerstoassign, mkr_village_grainville)
+	SGroup_Filter(sg_villagerstoassign, "scar_villager", FILTER_KEEP, sg_player_retreatingunits)
+	SGroup_FilterCount(sg_villagerstoassign, 3, sg_vta_group1)
+	AssignVillagersToWood(sg_villagerstoassign)
+	AssignVillagersToFarms(sg_vta_group1)
+	Cmd_Move(sg_player_retreatingunits, mkr_village_fleury_spawn)
+	
+	--SGroup_Clear(sg_villagerstoassign)
+	--SGroup_Clear(sg_vta_group1)
+	--Player_GetAllSquadsNearMarker(player1, sg_villagerstoassign, mkr_village_cressenville)
+	--SGroup_Filter(sg_villagerstoassign, "scar_villager", FILTER_KEEP)
+	--SGroup_FilterCount(sg_villagerstoassign, 3, sg_vta_group1)
+	--AssignVillagersToStone(sg_villagerstoassign)
+	--AssignVillagersToFarms(sg_vta_group1)
+	Rule_AddInterval(Unusual_Discovery, 2)
+	Rule_AddInterval(Discovery_Result, 1)
+end
+
+function Init_VillagerLife_Cressenville()
+	sg_french_cressenville_roam = SGroup_CreateIfNotFound("sg_french_cressenville_roam")
+	UnitEntry_DeploySquads(player2, sg_french_cressenville_roam, {{type = "scar_villager", numSquads = 3},}, mkr_village_cressenville_spawn)
+	sg_french_cressenville_food = SGroup_CreateIfNotFound("sg_french_cressenville_food")
+	UnitEntry_DeploySquads(player2, sg_french_cressenville_food, {{type = "scar_villager", numSquads = 3},}, mkr_village_cressenville_spawn)
+	VillagerLife_Create(player2, "vLife_Cressenville", sg_french_cressenville_roam, nil, sg_french_cressenville_food, nil, nil, "flee", mkr_village_cressenville, mkr_french_army_spawn, false, mkr_french_army_spawn)
+end
+
+function Init_VillagerLife_Grainville()
+	sg_french_grainville_roam = SGroup_CreateIfNotFound("sg_french_grainville_roam")
+	UnitEntry_DeploySquads(player2, sg_french_grainville_roam, {{type = "scar_villager", numSquads = 3},}, mkr_village_grainville_spawn)
+	sg_french_grainville_food = SGroup_CreateIfNotFound("sg_french_grainville_food")
+	UnitEntry_DeploySquads(player2, sg_french_grainville_food, {{type = "scar_villager", numSquads = 3},}, mkr_village_grainville_spawn)
+	sg_french_grainville_wood = SGroup_CreateIfNotFound("sg_french_grainville_wood")
+	UnitEntry_DeploySquads(player2, sg_french_grainville_wood, {{type = "scar_villager", numSquads = 3},}, mkr_village_grainville_spawn)
+	VillagerLife_Create(player2, "vLife_Grainville", sg_french_grainville_roam, sg_french_grainville_wood, sg_french_grainville_food, nil, nil, "flee", mkr_village_grainville, mkr_french_army_spawn, false, mkr_french_army_spawn)
+end
+
+function AudOnFromPoint(player, pos, audString)
+	local size = ""
+	
+	SGroup_Clear(sg_temp)
+	
+	Player_GetAllSquadsNearMarker(player, sg_temp, pos, 50)
+	
+	unitCount = SGroup_CountSpawned(sg_temp)
+	
+	if unitCount <= 5 then
+		return
+	else
+		if unitCount > 5 and unitCount <= 10 then
+			size = "SMALL"
+		elseif unitCount > 10 and unitCount <= 20 then
+			size = "MEDIUM"
+		else
+			size = "LARGE"
+		end
+		Sound_PlayOnSquad(_G[audString..size], sg_temp)
+	end
+end
+
+function Louis_Weakened()
+	if SGroup_GetAvgHealth(g_leaderLouis.sgroup) <= 0.15 then
+		Rule_RemoveMe()
+		Modify_WeaponDamage(g_leaderLouis.sgroup, "hardpoint_1", 0.1)
+		Entity_SetTargetingType(Squad_GetFirstEntity(SGroup_GetSquadAt(g_leaderLouis.sgroup, 1)), Targeting_None)
+		--SGroup_RemoveAbility(g_leaderLouis.sgroup, BP_GetAbilityBlueprint("general_aura_combat"))
+		Player_SetAbilityAvailability(player2, BP_GetAbilityBlueprint("general_aura_combat"), ITEM_REMOVED)
+	end
+end
+
+function Grainville_Loot()
+	local chestspawns = AllMarkers_FromName("mkr_village_grainville_chest", "")
+	eg_grainville_chests = EGroup_CreateIfNotFound("eg_grainville_chests")
+	Util_CreateEntities(player2, eg_grainville_chests, BP_GetEntityBlueprint("four_wheel_cart"), mkr_village_grainville_lootwagon, 1, nil, true, true, true)
+	for i, spawn in pairs(chestspawns) do
+		Util_CreateEntities(nil, eg_grainville_chests, BP_GetEntityBlueprint("resource_pickup_gold"), spawn, 1)
+		--Util_CreateEntities(nil, eg_grainville_chests, BP_GetEntityBlueprintByPbgID(195859), mkr_village_grainville, 1)
+		--EGroup_DestroyAllEntities(eg_grainville_chests)
+	end
+end
+
+function Cressenville_Loot()
+	local chestspawns = AllMarkers_FromName("mkr_village_cressenville_chest", "")
+	eg_cressenville_chests = EGroup_CreateIfNotFound("eg_cressenville_chests")
+	Util_CreateEntities(player2, eg_cressenville_chests, BP_GetEntityBlueprint("four_wheel_cart"), mkr_village_cressenville_lootwagon, 1, nil, true, true, true)
+	for i, spawn in pairs(chestspawns) do
+		Util_CreateEntities(nil, eg_cressenville_chests, BP_GetEntityBlueprint("resource_pickup_gold"), spawn, 1)
+		--Util_CreateEntities(nil, eg_grainville_chests, BP_GetEntityBlueprintByPbgID(195859), mkr_village_grainville, 1)
+		--EGroup_DestroyAllEntities(eg_grainville_chests)
+	end
+end
+
+function StandPretty(idleSgroup)
+	if SGroup_CountSpawned(idleSgroup) > 0 then
+		--Cmd_Stop(idleSgroup)
+		Cmd_FormationMove(idleSgroup, mkr_village_bremule, false, false, Util_GetFacingFromDirection(Util_GetPosition(mkr_village_bremule), Util_GetDirectionFromAtoB(mkr_village_bremule, mkr_village_cressenville)))
+	end
+end
+
+function Toggle_BuildingCombatOn_Cressenville()
+	EGroup_SetTargetingType(eg_village_cressenville, Targeting_Automatic)
+end
+
+function Toggle_BuildingCombatOn_Grainville()
+	EGroup_SetTargetingType(eg_village_grainville, Targeting_Automatic)
+end
+
+----------------------------
+--CINE/EVENTS UTILITY--
+----------------------------
+
+function Bremule_Intro_Parade()
+	
+	sg_intro_horseman = SGroup_CreateIfNotFound("sg_intro_horseman")
+	sg_intro_archer = SGroup_CreateIfNotFound("sg_intro_archer01")
+	sg_intro_manatarms = SGroup_CreateIfNotFound("sg_intro_manatarms01")
+	sg_intro_scout = SGroup_CreateIfNotFound("sg_intro_scout")
+
+	local units_parade = {
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade01, sgroup = sg_intro_horseman },
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade02, sgroup = sg_intro_horseman},
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade03, sgroup = sg_intro_horseman},
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade04, sgroup = sg_intro_horseman},
+	--	{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade05, sgroup = sg_intro_horseman},
+	--	{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade05a, sgroup = sg_intro_horseman},
+		{ type = "scar_archer", numSquads = 3, spawn = mkr_intro_parade06, sgroup = sg_intro_archer},
+		{ type = "scar_archer", numSquads = 3, spawn = mkr_intro_parade07, sgroup = sg_intro_archer},
+		{ type = "scar_manatarms", numSquads = 4, spawn = mkr_intro_parade08, sgroup = sg_intro_manatarms},
+		{ type = "scar_manatarms", numSquads = 4, spawn = mkr_intro_parade09, sgroup = sg_intro_manatarms},
+						}
+	
+	local parade_markers = {
+		mkr_intro_parade_mid01,
+		mkr_intro_parade_mid02,
+		mkr_intro_parade_mid03,
+		mkr_intro_parade_mid04,
+		mkr_intro_parade09_target,
+		mkr_intro_parade08_target,
+		mkr_intro_parade07_target,
+		mkr_intro_parade06_target,
+		mkr_intro_parade05a_target,
+		mkr_intro_parade05_target,
+		mkr_intro_parade04_target,
+		mkr_intro_parade03_target,
+		mkr_intro_parade02_target,
+		mkr_intro_parade01_target,
+							}
+
+	
+	local scout_parade = {
+		{ type = "scar_scout", numSquads = 1, spawn = mkr_intro_scout01, sgroup = sg_intro_scout },
+						}
+			
+	local scout_parade_markers = {
+		mkr_intro_scout01_01,
+		mkr_intro_scout01_02,
+		mkr_intro_scout01_03,
+		mkr_intro_scout01_target,
+								}
+	
+	Util_UnitParade(parade_markers, units_parade)
+	Util_UnitParade(scout_parade_markers, scout_parade)
+	
+	--intro_horseman_speed = Modify_UnitSpeed(sg_intro_horseman, 0.6)
+	--intro_scout_speed = Modify_UnitSpeed(sg_intro_scout, 0.6)
+	
+	--intro_horsemanSpeed_mod = Modify_UnitSpeed(sg_intro_horseman, 0.6)
+	--intro_archerSpeed_mod = Modify_UnitSpeed(sg_intro_archer, 0.8)
+	--intro_manatarmsSpeed_mod = Modify_UnitSpeed(sg_intro_manatarms, 0.9)
+	--intro_scoutSpeed_mod = Modify_UnitSpeed(sg_intro_scout, 0.6)
+end
+
+function Bremule_SkippedIntro()
+	
+	SGroup_DestroyAllSquads(sg_intro_horseman)
+	SGroup_DestroyAllSquads(sg_intro_archer)
+	SGroup_DestroyAllSquads(sg_intro_manatarms)
+	SGroup_DestroyAllSquads(sg_intro_scout)
+	
+	local skip_units_parade = {
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade01_target, sgroup = sg_intro_horseman },
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade02_target, sgroup = sg_intro_horseman},
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade03_target, sgroup = sg_intro_horseman},
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade04_target, sgroup = sg_intro_horseman},
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade05_target, sgroup = sg_intro_horseman},
+		{ type = "scar_horseman", numSquads = 3, spawn = mkr_intro_parade05a_target, sgroup = sg_intro_horseman},
+		{ type = "scar_archer", numSquads = 6, spawn = mkr_intro_parade06_target, sgroup = sg_intro_archer},
+		{ type = "scar_archer", numSquads = 6, spawn = mkr_intro_parade07_target, sgroup = sg_intro_archer},
+		{ type = "scar_manatarms", numSquads = 4, spawn = mkr_intro_parade08_target, sgroup = sg_intro_manatarms},
+		{ type = "scar_manatarms", numSquads = 4, spawn = mkr_intro_parade09_target, sgroup = sg_intro_manatarms},
+						}
+	
+	UnitEntry_DeploySquads(player1, sg_temp, skip_units_parade)
+	UnitEntry_DeploySquads(player1, sg_intro_scout, { type = "scar_scout", numSquads = 1, spawn = mkr_intro_scout01_target})
+
+end
+
+function French_IntroSpawn()
+	
+	sg_french_knight_1 = SGroup_CreateIfNotFound("sg_french_knight_1")
+	sg_french_knight_1_1 = SGroup_CreateIfNotFound("sg_french_knight_1_1")
+	sg_french_knight_1_2 = SGroup_CreateIfNotFound("sg_french_knight_1_2")
+	sg_french_horseman_1 = SGroup_CreateIfNotFound("sg_french_horseman_1")
+	sg_french_horseman_1_1 = SGroup_CreateIfNotFound("sg_french_horseman_1_1")
+	sg_french_horseman_1_2 = SGroup_CreateIfNotFound("sg_french_horseman_1_2")
+	sg_french_horseman_2 = SGroup_CreateIfNotFound("sg_french_horseman_2")
+	sg_french_horseman_3 = SGroup_CreateIfNotFound("sg_french_horseman_3")
+	sg_french_horseman_3_1 = SGroup_CreateIfNotFound("sg_french_horseman_3_1")
+	sg_french_horseman_3_2 = SGroup_CreateIfNotFound("sg_french_horseman_3_2")
+	sg_french_horseman_3_3 = SGroup_CreateIfNotFound("sg_french_horseman_3_3")
+	sg_french_horseman_4 = SGroup_CreateIfNotFound("sg_french_horseman_4")
+	sg_french_spearman_1 = SGroup_CreateIfNotFound("sg_french_spearman_1")
+	sg_french_spearman_2 = SGroup_CreateIfNotFound("sg_french_spearman_2")
+	sg_french_spearman_3 = SGroup_CreateIfNotFound("sg_french_spearman_3")
+	sg_french_spearman_4 = SGroup_CreateIfNotFound("sg_french_spearman_4")
+	sg_french_archer_1 = SGroup_CreateIfNotFound("sg_french_archer_1")
+	
+	sg_louis_retinue = SGroup_CreateIfNotFound("sg_louis_retinue")
+	sg_louis_knights01 = SGroup_CreateIfNotFound("sg_louis_knights01")
+	sg_louis_knights02 = SGroup_CreateIfNotFound("sg_louis_knights02")
+	
+	local units = {
+			{ type = "scar_horseman", numSquads = 5, sgroup = sg_french_horseman_1, spawn = mkr_intro_horseman_1},
+			{ type = "scar_horseman", numSquads = 5, sgroup = sg_french_horseman_1_1, spawn = mkr_intro_horseman_1_1},
+			{ type = "scar_horseman", numSquads = 10, sgroup = sg_french_horseman_1_2, spawn = mkr_intro_horseman_1_2},
+			{ type = "scar_horseman", numSquads = 20, sgroup = sg_french_horseman_2, spawn = mkr_intro_horseman_2},
+			{ type = "scar_horseman", numSquads = 20, sgroup = sg_french_horseman_4, spawn = mkr_intro_horseman_4},
+			{ type = "scar_spearman", numSquads = 5, sgroup = sg_french_spearman_1, spawn = mkr_intro_spearman_1},
+			{ type = "scar_spearman", numSquads = 5, sgroup = sg_french_spearman_2, spawn = mkr_intro_spearman_2},
+			{ type = "scar_spearman", numSquads = 5, sgroup = sg_french_spearman_3, spawn = mkr_intro_spearman_3},
+			{ type = "scar_spearman", numSquads = 5, sgroup = sg_french_spearman_4, spawn = mkr_intro_spearman_4},
+			{ type = "scar_archer", numSquads = 40, sgroup = sg_french_archer_1, spawn = mkr_intro_archer_1},
+	}
+	
+	t_LouisArmy = --Final French Army
+	{
+		{ type = "scar_knight", numSquads = 5, sgroup = sg_louis_knights01, spawn = mkr_intro_louis_knights01 },
+		{ type = "scar_knight", numSquads = 4, sgroup = sg_louis_knights02, spawn = mkr_intro_louis_knights02 },
+		{ sbp = SBP.FRENCH.UNIT_KING_LOUIS_CMP_FRE, numSquads = 1, tag = "king_louis", sgroup = g_leaderLouis.sgroup, spawn = mkr_intro_louis},
+	}
+	
+	UnitEntry_DeploySquads(player2, sg_french_army, units, mkr_french_army_spawn)
+	UnitEntry_DeploySquads(player2, {sg_louis_retinue, sg_french_army}, t_LouisArmy, mkr_intro_louis)
+	
+	
+	local parade_knights = {
+			{ type = "scar_knight", numSquads = 5, sgroup = {sg_french_knight_1, sg_french_army}, spawn = mkr_intro_knight_1},
+			{ type = "scar_knight", numSquads = 5, sgroup = {sg_french_knight_1_1, sg_french_army}, spawn = mkr_intro_knight_1_1},
+			{ type = "scar_knight", numSquads = 10, sgroup = {sg_french_knight_1_2, sg_french_army}, spawn = mkr_intro_knight_1_2},
+	}
+	
+	local parade_knights_mkr = {
+		mkr_intro_horseman_3_2,
+		mkr_intro_horseman_3_1,
+		mkr_intro_horseman_3,
+	}
+	
+	Util_UnitParade(parade_knights_mkr, parade_knights, nil, nil, player2)
+	french_knight_speed_1 = Modify_UnitSpeed(sg_french_knight_1, 0.5)
+	french_knight_speed_1_1 = Modify_UnitSpeed(sg_french_knight_1_1, 0.5)
+	french_knight_speed_1_2 = Modify_UnitSpeed(sg_french_knight_1_2, 0.5)
+	
+	Cmd_HoldPosition(sg_french_horseman_1, true)
+	Cmd_HoldPosition(sg_french_horseman_1_1, true)
+	Cmd_HoldPosition(sg_french_horseman_1_2, true)
+	Cmd_HoldPosition(sg_french_spearman_4, true)
+	
+	local parade_horsemen = {
+		{ type = "scar_horseman", numSquads = 5, sgroup = {sg_french_horseman_3, sg_french_army}, spawn = mkr_intro_horseman_3},
+		{ type = "scar_horseman", numSquads = 5, sgroup = {sg_french_horseman_3_1, sg_french_army}, spawn = mkr_intro_horseman_3_1},
+		{ type = "scar_horseman", numSquads = 5, sgroup = {sg_french_horseman_3_2, sg_french_army}, spawn = mkr_intro_horseman_3_2},
+		{ type = "scar_horseman", numSquads = 5, sgroup = {sg_french_horseman_3_3, sg_french_army}, spawn = mkr_intro_horseman_3_3},
+	}
+	
+	local parade_horsemen_mkr = {
+		mkr_intro_horseman_3_3_target,
+		mkr_intro_horseman_3_2_target,
+		mkr_intro_horseman_3_1_target,
+		mkr_intro_horseman_3_target,
+	}
+	
+	Util_UnitParade(parade_horsemen_mkr, parade_horsemen, nil, nil, player2)
+	french_horseman_speed_3 = Modify_UnitSpeed(sg_french_horseman_3, 0.5)
+	french_horseman_speed_3_1 = Modify_UnitSpeed(sg_french_horseman_3_1, 0.5)
+	french_horseman_speed_3_2 = Modify_UnitSpeed(sg_french_horseman_3_2, 0.5)
+	french_horseman_speed_3_3 = Modify_UnitSpeed(sg_french_horseman_3_3, 0.5)
+	
+	Cmd_HoldPosition(sg_french_horseman_3, true)
+	Cmd_HoldPosition(sg_french_horseman_3_1, true)
+	Cmd_HoldPosition(sg_french_horseman_3_2, true)
+	Cmd_HoldPosition(sg_french_horseman_3_3, true)
+	
+end
+
+function French_Louis_Move()
+	
+	Cmd_FormationMove(sg_louis_knights01, mkr_intro_louis_target)
+	Cmd_FormationMove(sg_louis_knights02, mkr_intro_louis_target)
+	Cmd_FormationMove(g_leaderLouis.sgroup, mkr_intro_louis_target)
+	
+	french_louis_knights_speed_1 = Modify_UnitSpeed(sg_louis_knights01, 0.5)
+	french_louis_knights_speed_2 = Modify_UnitSpeed(sg_louis_knights02, 0.5)
+	french_louis_speed = Modify_UnitSpeed(g_leaderLouis.sgroup, 0.5)
+	
+end
+
+function Spearmen_Move()
+	
+	Cmd_FormationMove(sg_french_spearman_1, mkr_intro_louis_target)
+	Cmd_FormationMove(sg_french_spearman_2, mkr_intro_louis_target)
+	Cmd_FormationMove(sg_french_spearman_3, mkr_intro_louis_target)
+	
+	french_spearman_speed_1 = Modify_UnitSpeed(sg_french_spearman_1, 0.7)
+	french_spearman_speed_2 = Modify_UnitSpeed(sg_french_spearman_2, 0.7)
+	french_spearman_speed_3 = Modify_UnitSpeed(sg_french_spearman_3, 0.7)
+	
+end
+
+function Scout_Move()
+	
+	Cmd_Move(sg_introscout, mkr_intro_scout_waypoint_2)
+	
+end
+
+function Louis_Speech()
+
+	SGroup_PlaySpeech(g_leaderLouis.sgroup, "Campaign_Speech/leaders/ang/louis/french_loius_ang_chp2_bremule_iHigh_cLow_01")
+	
+end
+--Campaign_Speech\leaders\ang\louis\french_loius_ang_chp2_bremule_iHigh_cLow_01
+
+----------------------------
+--GAME OVER--
+----------------------------
+
+function PlayerDeath()
+	Player_GetAll(player1)
+	--SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+	--local playerCount = SGroup_CountSpawned(sg_allsquads)
+	
+	--local _currentlyBuilding = function(gid, index, entity)
+		--if Entity_HasProductionQueue(entity) then
+			--playerCount = playerCount + Entity_GetProductionQueueSize(entity)
+		--end
+	--end
+	--EGroup_ForEach(eg_allentities, _currentlyBuilding)
+	
+	EGroup_Clear(eg_temp)
+	EGroup_Filter(eg_allentities, "town_center", FILTER_REMOVE, eg_temp)
+	local tcCount = EGroup_CountSpawned(eg_temp)
+	--EGroup_Clear(eg_temp)
+	--EGroup_Filter(eg_allentities, "trade_post", FILTER_REMOVE, eg_temp)
+	--local marketCount = EGroup_CountSpawned(eg_temp)
+	
+	--local resourceAmount = 0
+	--if marketCount <= 0 then
+		--resourceAmount = Player_GetResource(player1, RT_Food)
+	--else
+		--resourceAmount = Player_GetResource(player1, RT_Food)
+		--if resourceAmount < Player_GetResource(player1, RT_Gold) then resourceAmount = Player_GetResource(player1, RT_Gold) end
+		--if resourceAmount < Player_GetResource(player1, RT_Wood) then resourceAmount = Player_GetResource(player1, RT_Wood) end
+		--if resourceAmount < Player_GetResource(player1, RT_Stone) then resourceAmount = Player_GetResource(player1, RT_Stone) end
+	--end
+	
+	if tcCount < 1 then --or (playerCount <= 0 and resourceAmount < 45) then 
+		Mission_Fail()
+	end
+end
+	
+--Defines the game over conditions
+function GameOver()
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities,"town_center", FILTER_KEEP)
+	local i_townCenterCount = EGroup_Count(eg_allentities)
+	
+	if i_townCenterCount <= 0 then
+		Mission_Fail()
+	else
+		return false
+	end
+end
+
+function Unusual_Discovery()
+	if Player_CanSeeSGroup(player1, sg_lupin, ANY) then
+		Rule_RemoveMe()
+		Modify_UnitSpeed(sg_lupin, 1.25)
+		Modify_EntityMaxHealth(sg_lupin, 5, MUT_Multiplication)
+		Cmd_MoveToAndDestroy(sg_lupin, mkr_lupin)
+	end
+end
+
+function Discovery_Result()
+	if SGroup_CountSpawned(sg_lupin) < 1 then
+		Rule_RemoveMe()
+		UnitEntry_DeploySquads(player2, sg_lupin, {sbp = SBP.GAIA.GAIA_HUNTABLE_WOLF, numSquads = 1}, mkr_lupin_spawn)
+		Modify_UnitSpeed(sg_lupin, 1.5)
+		Modify_EntityMaxHealth(sg_lupin, 5, MUT_Multiplication)
+	end
+end

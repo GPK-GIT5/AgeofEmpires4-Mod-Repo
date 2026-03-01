@@ -1,0 +1,679 @@
+import("cardinal.scar")
+import("rogue/rogue_wave_templates.scar")
+import("rogue/rogue_events.scar")
+import("ai/army.scar")
+import("gameplay/event_cues.scar")
+
+function Round_Init(arrive_at, reserve_usage, infinite_interval)
+	local round = {}
+	round_index = round_index + 1
+	round.id = round_index
+	round.suffix = tostring(round.id)
+	if round.id < 10 then
+		round.suffix = "0"..round.suffix
+	end
+	round.name = "Round_"..round.suffix
+	round.arrive_at = arrive_at
+	round.waves = {}
+	round.reserve_usage = reserve_usage or DEFAULT_RESERVE_USAGE
+	round.value = 0
+	round.infinite_interval = infinite_interval
+	table.insert(rounds, round)	
+	return  round
+end
+
+function Round_Arrive(state, round, is_boss_round) 
+	assert(state.gathering_has_started, "A round has been scheduled at a time before gathering has begun. Rogue_StartGatheringAt needs to be called with an early enough time.")
+	if state == states.sim then
+		round.desired_value = states.sim.resources_current * round.reserve_usage
+		round.earliest_launch_time = 9999999999
+		round.is_boss_round = is_boss_round
+		
+		if round.is_boss_round then
+			local race_boss_unit_types = wave_race_boss_unit_types
+			assert(#race_boss_unit_types > 0, "attempted to get a boss when there are no bosses left")
+			local index = World_GetRand(1, #race_boss_unit_types)
+			local race_boss_unit_type = race_boss_unit_types[index]
+			round.boss_sbp = race_boss_unit_type.sbp
+			round.boss_archtype_name = race_boss_unit_type.boss_archtype.name
+			round.race_boss_unit_type = race_boss_unit_type
+			round.boss_sbp_name = race_boss_unit_type.name
+			states.sim.next_lane_count = states.sim.max_lanes
+			table.remove(race_boss_unit_types, index)
+		end	
+		
+		round.lane_count = states.sim.next_lane_count
+		local chosen_lanes = Lanes_Choose(state, round.lane_count, round.boss_sbp)
+		states.sim.next_lane_count = states.sim.next_lane_count + 1
+		if states.sim.next_lane_count > states.sim.max_lanes then
+			states.sim.next_lane_count = states.sim.min_lanes
+		end
+	
+		local boss_lane
+		if is_boss_round then
+			for lane_name, lane in pairs(lanes) do
+				if lane.boss_sbp == round.boss_sbp then
+					boss_lane = lane	
+				end
+			end
+			if boss_lane == nil then
+				boss_lane = Table_GetRandomItem(chosen_lanes)
+			end
+		end
+		
+		for i = 1, round.lane_count do
+			local lane = table.remove(chosen_lanes)
+			local desired_value = round.desired_value / round.lane_count
+			local is_boss_wave = (lane == boss_lane)
+			local wave = Wave_Init(round, lane, desired_value, is_boss_wave)
+			round.waves[lane.name] = wave
+			round.value = round.value + wave.value
+			if wave.earliest_launch_time < round.earliest_launch_time then
+				round.earliest_launch_time = wave.earliest_launch_time
+			end
+			round.spawn_at = round.earliest_launch_time - WAVE_STAGING_DURATION 
+		end
+		
+		if round.infinite_interval ~= nil then
+			local break_length = round.infinite_interval * BREAK_FACTOR
+			local breaks_per_cycle = ROUNDS_REPEATED / BREAK_INTERVAL
+			ValidateInteger(breaks_per_cycle)
+			round.next_spawn_delay = round.infinite_interval * ROUNDS_REPEATED + break_length * breaks_per_cycle
+			round.next_spawn_time = round.spawn_at + round.next_spawn_delay
+			
+			for lane_name, wave in pairs(round.waves) do
+				for sublane_name, subwave in pairs(wave.subwaves) do
+					subwave.next_launch_time = subwave.launch_at + round.next_spawn_delay
+				end
+			end
+		end
+		
+		if debug_sim_events then
+			Round_PrintSimSchedule(state, round)
+		end
+		Event_InitRoundSpawn(round.spawn_at, round)
+	end
+	state.resources_current = state.resources_current - round.value
+end
+
+function Wave_Init(round, lane, desired_value, is_boss_wave)
+	local wave = {}
+	wave_index = wave_index + 1
+	wave.id = wave_index
+	wave.suffix = tostring(wave.id)
+	if wave.id < 10 then
+		wave.suffix = "0"..wave.suffix
+	end
+	wave.suffix = round.suffix.."_"..wave.suffix
+	wave.name = "Wave_"..wave.suffix
+	wave.is_boss_wave = is_boss_wave
+	wave.desired_value = desired_value
+	wave.value = 0
+	wave.round = round
+	wave.lane = lane
+	wave.value = 0
+	wave.subwaves = {}
+	wave.sgroup = SGroup_CreateUniqueWithPrefix(wave.name)
+	wave.age = states.sim.current_age
+	
+	if is_boss_wave then
+		wave.boss_sbp = round.boss_sbp
+		wave.boss_sbp_name = round.boss_sbp_name
+		wave.boss_archtype_name = round.boss_archtype_name
+	end
+
+	wave.wave_template, wave.eligibile_template_count = WaveTemplate_Choose(lane, ROGUE_ENEMY_WAVE_FACTION, wave.desired_value, wave.boss_archtype_name, wave.id == 1)
+	
+	assert(wave.wave_template ~= nil, time_string.." Wave_"..wave.name.." no valid templates for value "..wave.desired_value.." at age "..states.sim.current_age)
+	
+	local remaining_sublane_names
+	if World_GetRand(1, 2) == 1 then
+		remaining_sublane_names = { "center", "left", "right" }
+	else
+		remaining_sublane_names = { "center", "right", "left" }
+	end
+	local wave_string = "       - "..wave.name.." - "..lane.name
+	--print("       - "..wave.name.." - "..lane.name.." - "..wave.wave_template.name)
+	wave.earliest_launch_time = 999999999
+	local boss_has_been_added = false
+	for _, subwave_template in ipairs(wave.wave_template.subwave_templates) do
+		local random_sublane_name = table.remove(remaining_sublane_names, 1) 
+		local sublane = lane.sublanes[random_sublane_name]
+		local is_boss_subwave = false
+		if wave.is_boss_wave and boss_has_been_added == false and (round.boss_archtype_name == "siege" or Table_Contains(subwave_template.archtype_names, round.boss_archtype_name)) then
+			boss_has_been_added = true
+			is_boss_subwave = true
+		end
+		local subwave = Subwave_Init(wave, sublane, subwave_template, is_boss_subwave)
+		wave.subwaves[random_sublane_name] = subwave
+		wave.value = wave.value + subwave.value
+		for _, unit_row in ipairs(subwave.unit_table) do
+			wave_string = wave_string.." - "..unit_row.numSquads.." "..unit_row.unit_name
+		end
+		if subwave.launch_at < wave.earliest_launch_time then
+			wave.earliest_launch_time = subwave.launch_at 
+		end
+	end
+	return wave
+end
+
+function Subwave_Init(wave, sublane, subwave_template, is_boss_subwave)
+	local round = wave.round
+	local subwave = {}
+	subwave_index = subwave_index + 1
+	subwave.id = subwave_index
+	subwave.suffix = tostring(subwave.id)
+	if subwave.id < 10 then
+		subwave.suffix = "0"..subwave.suffix
+	end
+	subwave.suffix = wave.suffix.."_"..subwave.suffix
+	subwave.name = "Subwave_"..subwave.suffix
+	--print(subwave.name)
+	subwave.wave = wave
+	subwave.sublane = sublane
+	subwave.subwave_template = subwave_template
+	subwave.is_boss_subwave = is_boss_subwave
+	subwave.value = 0
+	--local subwave_string = "        - "..subwave.name.." - "
+	subwave.unit_table = Clone(subwave_template.unit_table, true)
+	for _, unit_row in ipairs(subwave.unit_table) do
+		unit_row.sbp = TechTree_GetSBP(unit_row.unit_name)
+		local unit_cost = wave_race_unit_types[unit_row.unit_name].cost
+		unit_row.numSquads = math.floor((wave.desired_value * unit_row.proportion) / unit_cost)
+		unit_row.value = unit_row.numSquads * unit_cost
+		subwave.value = subwave.value + unit_row.value
+		--subwave_string = subwave_string..tostring(unit_row.numSquads).." "..unit_row.unit_name
+	end
+	
+	if is_boss_subwave then
+		local unit_row = { sbp = round.boss_sbp, numSquads = 1, unit_name = string.upper(round.boss_sbp_name) }
+		table.insert(subwave.unit_table, unit_row)	
+	end
+	
+	--print(time_string..subwave_string)
+	subwave.arrive_at = wave.round.arrive_at
+	subwave.launch_at = math.floor(subwave.arrive_at - sublane.travel_time)
+
+	local overridePositions = nil
+	if subwave.launch_at - WAVE_STAGING_DURATION < 0 then
+		overridePositions = Clone(subwave.sublane.positions, false)
+		local trimmedPositionsCount = 0
+
+		while subwave.launch_at - WAVE_STAGING_DURATION < 0 do
+			local overrideDistance = 0
+			local overrideWalkingDistance = 0
+			local overrideTravelTime = 0
+			local previous_position = nil
+			trimmedPositionsCount = trimmedPositionsCount + 1
+			table.remove(overridePositions, 1)
+			assert(#overridePositions > 2, "Too many positions cut! Lane no longer usable.")
+			for i = 2, #overridePositions do
+				local position = overridePositions[i]	
+				if previous_position then
+					local distance = Util_GetDistance(previous_position, position)
+					overrideDistance = overrideDistance + distance
+				end
+				previous_position = position
+			end
+			overrideWalkingDistance = overrideDistance - ARRIVAL_THRESHOLD_DISTANCE
+			overrideTravelTime = overrideWalkingDistance /  WALK_SPEED
+			
+			subwave.launch_at = math.floor(subwave.arrive_at - overrideTravelTime)
+		end
+		print("Subwave positions overridden - "..trimmedPositionsCount.." removed")
+	end
+	
+	
+	
+	-- Combat AI --
+	subwave.combatRange = 40
+	subwave.leashRange = 55
+	for _, unit_row in ipairs(subwave.unit_table) do
+		if unit_row.unit_name == "trebuchet" then
+			subwave.combatRange = 65
+			subwave.leashRange = 75
+		end
+	end
+	
+	subwave.attackBuildings = BUILDINGS_ALL
+	if subwave.subwave_template.max_damage_to_buildings == 1 then
+		subwave.attackBuildings = BUILDINGS_NONE
+	end
+	
+	local positions = overridePositions or Clone(subwave.sublane.positions, false)
+	subwave.spawn = { position = table.remove(positions, 1), direction = subwave.sublane.spawn_direction }
+	subwave.targets = {}
+	for _, position in ipairs(positions) do
+		local target = { 
+			combatRange = subwave.combatRange,
+			leashRange = subwave.leashRange,
+			position = position, 
+			attackBuildings = subwave.attackBuildings, 
+		}
+		table.insert(subwave.targets, target)
+	end
+	subwave.staging_target = table.remove(subwave.targets, 1)
+	subwave.targets[#subwave.targets].attackBuildings = BUILDINGS_ALL
+	
+	Event_InitSubwaveLaunch(subwave.launch_at, subwave)
+	
+	return subwave
+end
+
+function Round_Spawn(state, round)
+	if state == states.game then
+		local wave_unit_count = SGroup_CountSpawned(sg_wave_units)
+		local wave_spawn_ratio = (wave_unit_count - WAVE_UNIT_THRESHOLD_MIN) / (WAVE_UNIT_THRESHOLD_MAX - WAVE_UNIT_THRESHOLD_MIN)
+		wave_spawn_ratio = 1 - wave_spawn_ratio
+		wave_spawn_ratio = math.min(wave_spawn_ratio, 1)
+		wave_spawn_ratio = math.max(wave_spawn_ratio, 0.01)
+		print("wave_unit_count = "..wave_unit_count.."    wave_spawn_ratio = "..wave_spawn_ratio)
+		
+		local is_super_ram_round = false
+		if conqueror_is_enabled and ROGUE_STRESS_TEST == false then
+			if state.second >= next_super_ram_at then
+				is_super_ram_round = true
+				next_super_ram_at = next_super_ram_at + SUPER_RAM_INTERVAL
+				print("is_super_ram_round")
+			end
+		end
+		
+		local super_ram_lane_name = nil
+		if is_super_ram_round then
+			for lane_name, wave in pairs(round.waves) do
+				if wave.is_boss_wave then
+					super_ram_lane_name = lane_name
+					print("super ram lane is "..lane_name.." - matching boss lane")
+					break
+				end
+			end
+			if super_ram_lane_name == nil then
+				local eligible_lane_names = {}
+				for lane_name, wave in pairs(round.waves) do
+					table.insert(eligible_lane_names, lane_name)
+				end
+				super_ram_lane_name = Table_GetRandomItem(eligible_lane_names)
+				print("super ram lane is "..super_ram_lane_name)
+			end
+		end
+		
+		for lane_name, wave in pairs(round.waves) do
+			local is_super_round_wave = false
+			if lane_name == super_ram_lane_name then
+				is_super_round_wave = true
+			end
+			Wave_Spawn(state, wave, is_super_round_wave, wave_spawn_ratio)
+		end
+		if round.next_spawn_time ~= nil then
+			Event_InitRoundSpawn(round.next_spawn_time, round)
+			round.spawn_at = round.next_spawn_time
+			round.next_spawn_time = round.spawn_at + round.next_spawn_delay
+			
+			for lane_name, wave in pairs(round.waves) do
+				for sublane_name, subwave in pairs(wave.subwaves) do
+					subwave.launch_at = subwave.next_launch_time
+					subwave.next_launch_time = subwave.launch_at + round.next_spawn_delay
+					Event_InitSubwaveLaunch(subwave.launch_at, subwave)
+				end
+			end
+		end
+		Round_PrintGameSchedule(round)
+	end
+end
+
+function Wave_Spawn(state, wave, is_super_ram_wave, wave_spawn_ratio)
+	if state == states.game then
+		if SGroup_IsEmpty(wave.sgroup) == false then
+			SGroup_Clear(wave.sgroup)
+		end
+		
+		local subwaveCount = 0
+		for sublane_name, subwave in pairs(wave.subwaves) do
+			subwaveCount = subwaveCount + 1
+		end
+		
+		local isLastWave_Count = 0
+		for sublane_name, subwave in pairs(wave.subwaves) do
+			local is_super_ram_subwave = false			
+			if is_super_ram_wave and sublane_name == "center" then
+				is_super_ram_subwave = true
+				print("super ram subwave found")
+			end
+			
+			isLastWave_Count = isLastWave_Count + 1
+			local is_last_subwave = isLastWave_Count == subwaveCount
+						
+			SpawnManager_AddSpawn(state, subwave, is_super_ram_subwave, wave_spawn_ratio, is_last_subwave)
+		end
+	end
+end
+
+function Subwave_Spawn(state, subwave, is_super_ram_subwave, wave_spawn_ratio, is_last_subwave)
+	local unit_table = UnitTable_Multiply(subwave.unit_table, wave_spawn_ratio)
+	if state == states.game then
+		local army_data = {
+			player = ROGUE_ENEMY_WAVE_PLAYER,
+			spawn = subwave.spawn,
+			units = unit_table,
+			targets = { subwave.staging_target },
+			onDeathDissolve = false,
+			moveUnloadOption = MOVE_UNLOAD_OPTION_NEVER,
+		}
+		subwave.army = Army_Init(army_data)
+		subwave.army.subwave = subwave		
+		SGroup_AddGroup(ROGUE_ALL_WAVE_SQUADS_SGROUP, subwave.army.sgroup)
+		
+		if is_super_ram_subwave then
+			local army_data = {
+				player = ROGUE_ENEMY_WAVE_PLAYER,
+				spawn = subwave.spawn,
+				units = {{ sbp = SBP.ROGUE.UNIT_SUPA_RAM_ROGUE, numSquads = 1 }},
+				onDeathDissolve = false,
+			}
+			subwave.ram_army = Army_Init(army_data)
+			subwave.ram_army.subwave = subwave
+			SGroup_AddGroup(ROGUE_ALL_WAVE_SQUADS_SGROUP, subwave.ram_army.sgroup)
+			--local UI_element = Objective_AddUIElements(OBJ_DUMMY, subwave.ram_army.sgroup, true, "test", false)
+			FOW_RevealSGroup(subwave.ram_army.sgroup, 10, -1)
+			print("super ram subwave spawned")
+		end
+	end
+	SGroup_AddGroup(sg_wave_units, subwave.army.sgroup)
+	if subwave.wave.round == rounds[1] and subwave.sublane.name == "center" then
+		EventCues_CallToAction("$11268925", CTA_ALARM, nil, nil, subwave.army.sgroup, 20) --Enemy Units Approaching
+	end
+	
+	-- Garrisoned units created in StateTree are not automatically added to the army
+	-- If the garrison is a controllable unit, like a ram, and is destroyed, its
+	-- held units will not be under AI control and just idle.
+	Rule_AddOneShot(
+		AddHeldSquadsToArmyRecursively,
+		1, --delay in seconds
+		{
+			army = subwave.army,
+			sgroup = subwave.army.sgroup,
+			destroyGroupOnFinalize = false,
+		}
+	)
+	SGroup_AddGroup(subwave.wave.sgroup, subwave.army.sgroup)
+	FOW_RevealSGroup(subwave.army.sgroup, 10, -1)
+	
+	if is_last_subwave then
+		Modify_UnitSpeedUntilInCombat(subwave.wave.sgroup, WALK_SPEED, MUT_Set)
+		UI_CreateMinimapBlip(subwave.wave.sgroup, -1, "objective_battle")
+	end
+		
+end
+
+function SpawnManager_Update()
+	if #rogue_spawns_queue == 0 then
+		return
+	end
+	
+	local spawn_data = rogue_spawns_queue[1]
+	Subwave_Spawn(spawn_data.state, spawn_data.subwave, spawn_data.is_super_ram_subwave, spawn_data.wave_spawn_ratio, spawn_data.is_last_subwave)
+	
+	table.remove(rogue_spawns_queue, 1)
+end
+
+function SpawnManager_AddSpawn(state, subwave, is_super_ram_subwave, wave_spawn_ratio, is_last_subwave)
+	table.insert(rogue_spawns_queue, {state = state, subwave = subwave, is_super_ram_subwave = is_super_ram_subwave, wave_spawn_ratio = wave_spawn_ratio, is_last_subwave = is_last_subwave})
+end
+
+function UnitTable_Multiply(unit_table, ratio)
+	local r = {}
+	for _, unit_row in ipairs(unit_table) do
+		local new_unit_row = Clone(unit_row, false)
+		local numSquads = math.floor(unit_row.numSquads * ratio + 0.5)
+		new_unit_row.numSquads = math.max(1, numSquads)
+		table.insert(r, new_unit_row)
+	end
+	return r
+end
+
+--? @shortdesc Adds any held squads in the provided sgroup to the provided army, allowing them to act with the army in the event that the hold is destroyed.
+--? data : {
+--? 	Army army,
+--? 	SGroup sgroup,
+--? 	bool destroyGroupOnFinalize,
+--? }
+function AddHeldSquadsToArmyRecursively(context, data)
+	local army = data.army
+	local sgroup = data.sgroup
+	local destroyGroupOnFinalize = data.destroyGroupOnFinalize	
+	local tempHeldSquads = SGroup_CreateUnique("")
+	
+	for i = 1, SGroup_CountSpawned(sgroup) do
+		local squad = SGroup_GetSquadAt(sgroup, i)
+		Squad_GetSquadsHeld(squad, tempHeldSquads)
+		
+		if SGroup_CountSpawned(tempHeldSquads) > 0 then
+			Army_AddSGroup(army, tempHeldSquads)
+			local groupToCheck = SGroup_CreateUnique("")
+			SGroup_AddGroup(groupToCheck, tempHeldSquads)
+			
+			-- Its possible to garrison holds inside of a hold (like a russian nesting doll)
+			-- This recursive call ensures that all held units are added to the army
+			Rule_AddOneShot(
+				AddHeldSquadsToArmyRecursively,
+				0.5, --delay in seconds
+				{
+					army = army,
+					sgroup = groupToCheck,
+					destroyGroupOnFinalize = true
+				}
+			)
+			
+			-- If this hold ungarrisons its units, the encounter needs to be
+			-- refreshed, otherwise the units may sit idle until the army starts
+			-- its next task.
+			Rule_AddInterval(
+				CheckForHoldUnload,
+				0.5, --delay in seconds
+				{
+					army = army,
+					squad = squad
+				}
+			)
+		end
+	end
+	
+	SGroup_Destroy(tempHeldSquads)
+	
+	if destroyGroupOnFinalize then
+		SGroup_Destroy(sgroup)
+	end
+end
+
+function CheckForHoldUnload(context, data)
+	local army = data.army
+	local squad = data.squad
+	
+	if not (Squad_IsAlive(squad) and Squad_IsHoldingAny(squad)) then
+		_Army_RestartEncounterFamily(army)
+		Rule_RemoveMe()
+		return
+	end
+end
+
+function Subwave_Launch(state, subwave)
+	if state == states.game then
+		--print(time_string.." Subwave "..subwave.name.." launched")
+		
+		if subwave == nil then
+			assert(Game_IsRTM(), "Subwave_Launch() attempted to handle a subwave event with no subwave data.")
+		end
+		
+		if subwave.army ~= nil then
+			Army_AddTargets(subwave.army, subwave.targets)
+			subwave.army.onDeathDissolve = true
+		else
+			assert(Game_IsRTM(), "Subwave_Launch() attempted to launch an army that no longer exists. This should never happen. Subwave #"..subwave.name)
+		end
+		
+		if subwave.ram_army ~= nil then
+			local targets = Table_Concatenate({ subwave.staging_target }, subwave.targets)
+			Army_AddTargets(subwave.ram_army, targets)
+			subwave.ram_army.onDeathDissolve = true
+		end
+	end
+end
+
+function Round_PrintSimSchedule(state, round)
+	local round_string = time_string.." "..round.name.." arrives - spawns at "..Util_ConvertIntegerSecondsToStringTime(round.spawn_at)
+	if round.infinite_interval ~= nil then
+		local next_round_spawn_time_string = Util_ConvertIntegerSecondsToStringTime(round.next_spawn_time)
+		round_string = round_string.." - next spawn at "..next_round_spawn_time_string
+	end
+	print(round_string)
+	for lane_name, wave in pairs(round.waves) do
+		local wave_string = "          "..wave.name.." - "..lane_name.." - chosen from "..wave.eligibile_template_count.." templates"
+		local largest_template_value = wave.lane.per_age[state.current_age].largest_template_value
+		wave_string = wave_string.." - value: "..math.floor(wave.desired_value).."/"..math.floor(largest_template_value)
+		print(wave_string)
+		for _, sublane_name in ipairs({ "left", "center", "right" }) do
+			local subwave = wave.subwaves[sublane_name]
+			if subwave ~= nil then
+				local subwave_string = " - "
+				for _, unit_row in ipairs(subwave.unit_table) do
+					subwave_string = subwave_string..unit_row.unit_name.."("..unit_row.numSquads..") "
+				end
+				subwave_string = "              "..subwave.name.." - launches at "..Util_ConvertIntegerSecondsToStringTime(subwave.launch_at)..subwave_string
+				if subwave.next_launch_time ~= nil then
+					local next_subwave_launch_time_string = Util_ConvertIntegerSecondsToStringTime(subwave.next_launch_time)
+					subwave_string = subwave_string.." - next launch at "..next_subwave_launch_time_string
+				end
+				print(subwave_string)
+			end
+		end
+	end
+end
+
+function Round_PrintGameSchedule(round)
+	local round_string = time_string.." "..round.name.." spawned"
+	if round.infinite_interval ~= nil then
+		round_string = round_string.." - infinite"
+	end
+	print(round_string)
+	
+	for lane_name, wave in pairs(round.waves) do
+		local wave_string = "          "..wave.name.." - "..lane_name
+		print(wave_string)
+		
+		for _, sublane_name in ipairs({ "left", "center", "right" }) do
+			local subwave = wave.subwaves[sublane_name]
+			if subwave ~= nil then
+				local subwave_string = " - "
+				for _, unit_row in ipairs(subwave.unit_table) do
+					subwave_string = subwave_string..unit_row.unit_name.."("..unit_row.numSquads..") "
+				end
+				print("              "..subwave.name..subwave_string)
+			end
+		end
+	end
+end
+
+function Rounds_IdentifyWarningPosition()
+	for _, event in ipairs(states.game.events) do
+		if event.name == "round spawn" then
+			for lane_name, wave in pairs(event.round.waves) do
+				wave_warning_position = wave.lane.sublanes["center"].positions[1]
+				return
+			end
+		end
+	end
+end
+
+--? @shortdesc Checks if any squads spawned in the lanes have become idle and fixes them 
+--? @extdesc Finds any squads spawned in a lane that is not currently attacking or moving.
+--? If that squad is not moving or attacking 25 seconds later, it is assumed to be in a
+--? broken state and "fixed". The fix involves re-assigning it to an army that is headed
+--? directly to the landmark, instead of any missed checkpoints.
+function Rogue_CheckForIdleAttackers()
+	local currentIdleAttackers = SGroup_CreateUnique()
+	Rogue_GetAllIdleAttackers(currentIdleAttackers)
+	
+	if SGroup_Count(currentIdleAttackers) == 0 then
+		SGroup_Destroy(currentIdleAttackers)
+		return
+	end
+		
+	Rule_AddOneShot(Rogue_RecoverIdleAttackers, 25.0, currentIdleAttackers)
+end
+
+function Rogue_RecoverIdleAttackers(context, currentIdleAttackers)	
+	local squadsToRecover = SGroup_CreateUnique()
+	
+	for i = 1, SGroup_Count(currentIdleAttackers) do
+		local squad = SGroup_GetSquadAt(currentIdleAttackers, i)
+		
+		if Rogue_IsSquadIdle(squad) then
+			local army = Army_FindArmyFromSquad(squad)
+			
+			if army then
+				Army_Dissolve(army)
+			end
+			
+			local message = "ERROR: Squad " .. Squad_GetID(squad) .. " has been idle for too long"
+			
+			if Misc_IsCommandLineOptionSet("rogue_idle_squads_assert") then
+				fatal(messsage)
+			end
+			
+			print(message)
+			SGroup_Add(squadsToRecover, squad)
+		end
+	end
+	
+	if SGroup_Count(squadsToRecover) <= 0 then
+		SGroup_Destroy(squadsToRecover)
+		SGroup_Destroy(currentIdleAttackers)
+		return
+	end
+	
+	if not EGroup_Exists("eg_player_wonder") then
+		SGroup_Destroy(squadsToRecover)
+		SGroup_Destroy(currentIdleAttackers)
+		return
+	end
+	
+	local wonder = EGroup_FromName("eg_player_wonder")
+	
+	if wonder == nil or EGroup_CountSpawned(wonder) <= 0 then
+		SGroup_Destroy(squadsToRecover)
+		SGroup_Destroy(currentIdleAttackers)
+		return
+	end
+	
+	local armyData = {
+		player = ROGUE_ENEMY_WAVE_PLAYER,
+		sgroup = squadsToRecover,
+		targets = { EGroup_GetPosition(wonder) },
+		onDeathDissolve = true,
+		moveUnloadOption = MOVE_UNLOAD_OPTION_NEVER,
+	}
+	
+	Army_Init(armyData)
+	SGroup_Destroy(currentIdleAttackers)
+end
+
+function Rogue_GetAllIdleAttackers(sgroup)
+	SGroup_Clear(sgroup)
+	
+	for i = 1, SGroup_Count(ROGUE_ALL_WAVE_SQUADS_SGROUP) do
+		local squad = SGroup_GetSquadAt(ROGUE_ALL_WAVE_SQUADS_SGROUP, i)
+		
+		if Rogue_IsSquadIdle(squad) then
+			SGroup_Add(sgroup, squad)
+		end
+	end
+end
+
+function Rogue_IsSquadIdle(squad)
+	return Squad_IsAlive(squad)
+	and not Squad_IsMoving(squad)
+	and not Entity_IsMoving(Squad_GetFirstEntity(squad)) --Rams always return false for Squad_IsMoving
+	and not Squad_IsAttacking(squad, 5)
+	and not Squad_IsInHoldSquad(squad)
+	and not Squad_IsInHoldEntity(squad)
+end

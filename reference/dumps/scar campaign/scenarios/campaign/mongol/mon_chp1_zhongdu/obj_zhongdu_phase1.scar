@@ -1,0 +1,678 @@
+--
+-- Zhongdu 1215 - Primary Objectives
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_zhongdu_phase2.scar")
+
+ZHONGDU_STRENGTH_HIGH = "High"
+ZHONGDU_STRENGTH_LOW = "Low"
+ZHONGDU_STRENGTH_ZERO = "Zero"
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function Zhongdu_InitObjectives_Phase1()
+
+	--
+	-- PHASE 1
+	--
+	OBJ_InfoSupply = { 
+		
+		Title = "$11192361", 				-- Zhongdu Military Supply
+		Type = ObjectiveType_Information,
+		
+		Intel_Start = EVENTS.Enemy_Military_Supply,
+			
+		-- we're going to show the title of the *subobjective* instead for the objective start and complete title cards
+		TitleStart = "$11197150",			-- Eliminate traders to stop attacks from the city
+		TitleComplete = "$11197150",		-- Eliminate traders to stop attacks from the city
+		
+		supplyCurrent = 0,
+		supplyMax = 100,
+		
+		PreStart = function()
+			g_sallyVoCountdown = 0
+		end,
+		
+		SetupUI = function()
+			local ratio = OBJ_InfoSupply.supplyCurrent / OBJ_InfoSupply.supplyMax
+			Obj_SetProgress(OBJ_InfoSupply.ID, ratio)
+			Obj_SetProgressVisible(OBJ_InfoSupply.ID, true)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			if g_sallyVoCountdown > 0 then
+				g_sallyVoCountdown = g_sallyVoCountdown - 1
+			end
+			
+			local ratio = OBJ_InfoSupply.supplyCurrent / OBJ_InfoSupply.supplyMax
+			Obj_SetProgress(OBJ_InfoSupply.ID, ratio)
+			Obj_SetProgressBlinking(ratio >= 0.9)
+			-- If we've surpassed the number of supply required for an attack, launch one!
+			if ratio >= 1.0 then
+				-- Send a raid against the units near the khan
+				local supplySallyTarget = SGroup_CreateUnique("targets")
+				Player_GetAllSquadsNearMarker(g_playerMongol, supplySallyTarget, SGroup_GetPosition(g_leaderGenghisKhan.sgroup), 50)
+				
+				-- If we have a valid target, create a counterattack
+				if SGroup_Count(supplySallyTarget) > 0 then
+					
+					if g_sallyVoCountdown <= 0 then
+						Util_StartIntel(EVENTS.Enemy_CounterAttack)
+						g_sallyVoCountdown = 300
+					end
+					
+					local raiderModule = Raiding_TriggerRaid(supplySallyTarget, true, {
+						{ type = "scar_horseman", ratio = 0.5, },
+						{ type = "scar_knight", ratio = 0.3, },
+						{ type = "scar_firelancer", ratio = 0.2, },
+					}, true)
+					-- Also create a threat arrow
+					if raiderModule ~= nil then
+						Zhongdu_DebugRaidTiming("supply raiders")
+						-- Setup the threat arrow if we have an sgroup
+						if raiderModule.sgroup ~= nil and scartype(raiderModule.sgroup) == ST_SGROUP and SGroup_Count(raiderModule.sgroup) > 0 then
+							Rule_AddOneShot(Zhongdu_PlaceSallyThreatArrow, 3, {sgroup = raiderModule.sgroup})
+						end
+						-- And set up the onDeathFunction to spit out VO if this is the first time
+						raiderModule.onDeathFunction = Zhongdu_OnSallyDeathVO
+					else
+						print("ZHONGDU: Sally module nil")
+					end
+					
+				end
+				
+				-- Update the current supply to remove the amount previously used
+				OBJ_InfoSupply.supplyCurrent = OBJ_InfoSupply.supplyCurrent - OBJ_InfoSupply.supplyMax
+			end
+			
+			if Objective_IsComplete(SOBJ_StopTraders) == true then
+				OBJ_InfoSupply.showTitle = false
+			end
+			return Objective_IsComplete(SOBJ_StopTraders)
+			
+		end,
+		
+		OnComplete = function()
+			Objective_Complete(SOBJ_InfoSupply_Explaination, false, false)
+		end,
+	}
+
+	SOBJ_InfoSupply_Explaination = { 
+		
+		Title = "$11197150",				-- Eliminate traders to stop attacks from the city
+		Type = ObjectiveType_Information,
+		Parent = OBJ_InfoSupply,
+		StartAlongsideParent = true,
+		
+		showTitle = false,
+		
+	}
+	
+	OBJ_StarveCity = { Title = "$11178634", Type = ObjectiveType_Battle,
+		
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(Zhongdu_EntryVO, 1)
+			Music_UnlockIntensity()
+			
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_StopTraders)
+		end,
+		
+		OnComplete = function()
+			-- Do the rest of things
+			Music_UnlockIntensity()
+			Objective_Start(OBJ_PlunderCity)
+			Rule_RemoveGlobalEvent(Zhongdu_OnSquadKilled)
+			Rule_RemoveGlobalEvent(Zhongdu_OnEntityKilled)
+			
+			-- Nullify the defences
+			Zhongdu_UpdateDefences(0)
+			
+			-- Complete this if it somehow wasn't completed already, though that's unlikely
+			if Objective_IsComplete(OBJ_EasyHint) == false then
+				Objective_Complete(OBJ_EasyHint, false, false)
+			end
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(g_playerMongol, sg_allsquads)
+			SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+			return SGroup_Count(sg_allsquads) <= 1
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_SecretTraderPings = { Title = "$11191985", Type = ObjectiveType_Optional, Parent = OBJ_StarveCity, StartAlongsideParent = true,
+		
+		IsSecret = true,
+		showTitle = false,
+		playIntel = false,
+		
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_StopTraders)
+		end,
+		
+		OnComplete = function()
+			
+		end,
+		
+	}
+	SOBJ_StopTraders = { Title = "$11191985", Type = ObjectiveType_Battle, Parent = OBJ_StarveCity, StartAlongsideParent = true,
+		
+		--Intel_Start = EVENTS.Trader_Objective, decided to instead trigger this in the events file to avoid overlap with other UI elements
+		
+		progressCurrent = 0,
+		progressMax = 100,
+		
+		PreStart = function()
+
+			-- Shunyi,
+			local pathShunyi = { mkr_supply_shunyi_1, mkr_supply_shunyi_2, mkr_supply_shunyi_3, mkr_supply_shunyi_4, mkr_supply_shunyi_5, mkr_supply_shunyi_6, mkr_supply_shunyi_7 }
+			SOBJ_StopTraders.ruleShunyi = Rule_AddInterval(Zhongdu_OnmapCaravan, { delay = 0, interval = g_supplyCartFrequency }, { spawnMarker = mkr_jin_shunyi_market, markerPath = pathShunyi, })
+			SOBJ_StopTraders.uiShunyi = Objective_AddUIElements(SOBJ_StopTraders, g_pos_market_shunyi, true, "$11178636", false, 6)
+			Zhongdu_SetupMinimapPath(mkr_jin_shunyi_market, pathShunyi)
+			
+			-- Tongzhou
+			local pathTongzhou = { mkr_supply_tongzhou_1, mkr_supply_tongzhou_2, mkr_supply_tongzhou_3, mkr_supply_tongzhou_4, }
+			SOBJ_StopTraders.ruleTongzhou = Rule_AddInterval(Zhongdu_OnmapCaravan, { delay = g_supplyCartSpacing * 2, interval = g_supplyCartFrequency }, { spawnMarker = mkr_jin_tongzhou_market, markerPath = pathTongzhou, })
+			SOBJ_StopTraders.uiTongzhou = Objective_AddUIElements(SOBJ_StopTraders, g_pos_market_tongzhou, true, "$11178637", false, 6)
+			Zhongdu_SetupMinimapPath(mkr_jin_tongzhou_market, pathTongzhou)
+			
+			-- Daxing
+			local pathDaxing = { mkr_supply_daxing_1, mkr_supply_daxing_2, mkr_supply_daxing_3, }
+			SOBJ_StopTraders.ruleDaxing = Rule_AddInterval(Zhongdu_OnmapCaravan, { delay = g_supplyCartSpacing * 3, interval = g_supplyCartFrequency }, { spawnMarker = mkr_jin_daxing_market, markerPath = pathDaxing, })
+			SOBJ_StopTraders.uiDaxing = Objective_AddUIElements(SOBJ_StopTraders, g_pos_market_daxing, true, "$11178638", false, 6)
+			Zhongdu_SetupMinimapPath(mkr_jin_daxing_market, pathDaxing)
+			
+			-- Fangshan
+			local pathFangshan = { mkr_supply_fangshan_1, mkr_supply_fangshan_2, mkr_supply_fangshan_3, mkr_supply_fangshan_4, }
+			SOBJ_StopTraders.ruleFangshan = Rule_AddInterval(Zhongdu_OnmapCaravan, { delay = g_supplyCartSpacing * 1, interval = g_supplyCartFrequency }, { spawnMarker = mkr_jin_fangshan_market, markerPath = pathFangshan, })
+			SOBJ_StopTraders.uiFangshan = Objective_AddUIElements(SOBJ_StopTraders, g_pos_market_fangshan, true, "$11178639", false, 6)
+			Zhongdu_SetupMinimapPath(mkr_jin_fangshan_market, pathFangshan)
+			
+		end,
+		
+		OnStart = function()
+
+		end,
+		
+		IsComplete = function()
+			
+			-- Next, go through all the rules and, if the markets are destroyed, remove the rules and the associated traders and markers and such
+			if Rule_ExistsWithID(SOBJ_StopTraders.ruleShunyi) == true and EGroup_Count(eg_market_shunyi) <= 0 then
+				
+				Util_StartIntel(EVENTS.Eliminate_Market_Shunyi)
+				Zhongdu_OnVillageDestroyed("shunyi")
+				Rule_RemoveWithID(SOBJ_StopTraders.ruleShunyi)
+				Objective_RemoveUIElements(SOBJ_StopTraders, SOBJ_StopTraders.uiShunyi)
+				SOBJ_StopTraders.progressCurrent = SOBJ_StopTraders.progressCurrent + 25
+				print("SOBJ_StopTraders: progress at "..tostring(SOBJ_StopTraders.progressCurrent))
+				
+			end
+			
+			if Rule_ExistsWithID(SOBJ_StopTraders.ruleTongzhou) == true and EGroup_Count(eg_market_tongzhou) <= 0 then
+				
+				Util_StartIntel(EVENTS.Eliminate_Market_Tongzhou)
+				Zhongdu_OnVillageDestroyed("tongzhou")
+				Rule_RemoveWithID(SOBJ_StopTraders.ruleTongzhou)
+				Objective_RemoveUIElements(SOBJ_StopTraders, SOBJ_StopTraders.uiTongzhou)
+				SOBJ_StopTraders.progressCurrent = SOBJ_StopTraders.progressCurrent + 25
+				print("SOBJ_StopTraders: progress at "..tostring(SOBJ_StopTraders.progressCurrent))
+				
+			end
+			
+			if Rule_ExistsWithID(SOBJ_StopTraders.ruleDaxing) == true and EGroup_Count(eg_market_daxing) <= 0 then
+				
+				Util_StartIntel(EVENTS.Eliminate_Market_Daxing)
+				Zhongdu_OnVillageDestroyed("daxing")
+				Rule_RemoveWithID(SOBJ_StopTraders.ruleDaxing)
+				Objective_RemoveUIElements(SOBJ_StopTraders, SOBJ_StopTraders.uiDaxing)
+				SOBJ_StopTraders.progressCurrent = SOBJ_StopTraders.progressCurrent + 25
+				print("SOBJ_StopTraders: progress at "..tostring(SOBJ_StopTraders.progressCurrent))
+				
+			end
+			
+			if Rule_ExistsWithID(SOBJ_StopTraders.ruleFangshan) == true and EGroup_Count(eg_market_fangshan) <= 0 then
+				
+				Util_StartIntel(EVENTS.Eliminate_Market_Fangshan)
+				Zhongdu_OnVillageDestroyed("fangshan")
+				Rule_RemoveWithID(SOBJ_StopTraders.ruleFangshan)
+				Objective_RemoveUIElements(SOBJ_StopTraders, SOBJ_StopTraders.uiFangshan)
+				SOBJ_StopTraders.progressCurrent = SOBJ_StopTraders.progressCurrent + 25
+				print("SOBJ_StopTraders: progress at "..tostring(SOBJ_StopTraders.progressCurrent))
+				
+			end
+			
+			-- Check to see if Intel needs to be played
+			if g_supplyIntelLowPlayed == false and SOBJ_StopTraders.progressCurrent >= 50 then
+				Util_StartIntel(EVENTS.Zhongdu_Starved_Medium)
+				g_supplyIntelLowPlayed = true
+			end
+			
+			if g_supplyIntelNonePlayed == false and SOBJ_StopTraders.progressCurrent >= 100 then
+				--Util_StartIntel(EVENTS.Zero_Strength)
+				g_supplyIntelNonePlayed = true
+				--Also remove the rule wwarning the player away from the city
+				Rule_Remove(Zhongdu_WarnAgainstCity)
+			end
+			
+			Objective_SetProgressBar(SOBJ_StopTraders, 1.0 - (SOBJ_StopTraders.progressCurrent / SOBJ_StopTraders.progressMax))
+			return SOBJ_StopTraders.progressCurrent >= SOBJ_StopTraders.progressMax
+			
+		end,
+		
+		OnComplete = function()
+			
+			-- We might have completed it for other reasons, so only kill those archers if this is done
+			if SOBJ_StopTraders.progressCurrent >= SOBJ_StopTraders.progressMax then
+				for idx = 1, 6 do
+					local moduleName = "WallArchers"..tostring(idx)
+					local archerSgroup = MissionOMatic_FindModule(moduleName).sgroup
+					SGroup_Kill(archerSgroup)
+				end	
+			end
+
+			if Rule_ExistsWithID(SOBJ_StopTraders.ruleShunyi) == true then
+				Rule_RemoveWithID(SOBJ_StopTraders.ruleShunyi)
+				Objective_RemoveUIElements(SOBJ_StopTraders, SOBJ_StopTraders.uiShunyi)
+				for idx = 1, 8 do
+					MarkerPaths_ClearIcons("minimap_path_"..tostring(idx))
+				end
+				
+			end
+			
+			if Rule_ExistsWithID(SOBJ_StopTraders.ruleTongzhou) == true then
+				Rule_RemoveWithID(SOBJ_StopTraders.ruleTongzhou)
+				Objective_RemoveUIElements(SOBJ_StopTraders, SOBJ_StopTraders.uiTongzhou)
+				for idx = 9, 13 do
+					MarkerPaths_ClearIcons("minimap_path_"..tostring(idx))
+				end
+			end
+			
+			if Rule_ExistsWithID(SOBJ_StopTraders.ruleDaxing) == true then
+				Rule_RemoveWithID(SOBJ_StopTraders.ruleDaxing)
+				Objective_RemoveUIElements(SOBJ_StopTraders, SOBJ_StopTraders.uiDaxing)
+				for idx = 14, 17 do
+					MarkerPaths_ClearIcons("minimap_path_"..tostring(idx))
+				end
+			end
+			
+			if Rule_ExistsWithID(SOBJ_StopTraders.ruleFangshan) == true then
+				Rule_RemoveWithID(SOBJ_StopTraders.ruleFangshan)
+				Objective_RemoveUIElements(SOBJ_StopTraders, SOBJ_StopTraders.uiFangshan)
+				for idx = 18, 22 do
+					MarkerPaths_ClearIcons("minimap_path_"..tostring(idx))
+				end
+			end
+			
+		end,
+	}
+	
+	OBJ_EasyHint = { Title = "$11191217", Type = ObjectiveType_Optional,
+
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			print("XIANGYANG: Should be placing easy mode hint")
+			Objective_AddUIElements(OBJ_EasyHint, mkr_ui_easy_hint_1, true, "$11191218", true)
+			Objective_AddUIElements(OBJ_EasyHint, mkr_ui_easy_hint_2, true, "$11191218", true)
+		end,
+		
+		IsComplete = function()
+			Player_GetAll(g_playerMongol)
+			EGroup_Filter(eg_allentities, "packable_building", FILTER_KEEP)
+			EGroup_Filter(eg_allentities, "mobile_building", FILTER_REMOVE)
+			EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+			return EGroup_CountSpawned(eg_allentities) >= 1
+		end,
+		
+		OnComplete = function()
+			
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_InfoSupply)
+	Objective_Register(SOBJ_InfoSupply_Explaination)
+	
+	Objective_Register(OBJ_StarveCity)
+	Objective_Register(SOBJ_SecretTraderPings)
+	Objective_Register(SOBJ_StopTraders)
+	
+	Objective_Register(OBJ_EasyHint)
+	
+end
+
+--? @shortdesc Boosts the city defenses of Zhongdu
+function Zhongdu_UpdateDefences(defenseStrength)
+
+	-- That branches out behaviour
+	if defenseStrength == 2 then
+		print("ZHONGDU: Strength at "..tostring(defenseStrength).."!")
+		-- Remove any modifiers on the towers
+		for index, modifier in pairs(g_zhongduModifierList) do
+			Modifier_Remove(modifier)
+		end
+		-- Nullify the list
+		g_zhongduModifierList = {}
+		-- Artificially boost Zhongdu defenses
+		local hardpointName = "hardpoint_01"
+		local modFireThresh = Modifier_Create(MAT_Entity, "on_fire_threshold_modifier", MUT_Multiplication, false, 15, "")
+		local modFireArmour = Modifier_Create(MAT_Entity, "on_fire_damage_per_tick_modifier", MUT_Multiplication, false, 0, "")
+		local function _ModifyTowers(gid, idx, eid)
+			if Entity_IsValid(Entity_GetID(eid)) then
+				table.insert(g_zhongduModifierList, Modifier_ApplyToEntity(modFireThresh, eid, 0))
+				table.insert(g_zhongduModifierList, Modifier_ApplyToEntity(modFireArmour, eid, 0))
+				Entity_SetStateModelFloat(eid, "universal_buff_count", 100)
+			end
+		end
+		-- Apply this to the outpost EGroup
+		EGroup_ForEach(eg_zhongdu_towers, _ModifyTowers)
+		table.insert(g_zhongduModifierList, Modify_ReceivedDamage(eg_zhongdu_towers, 0.1))
+		table.insert(g_zhongduModifierList, Modify_WeaponDamage(eg_zhongdu_towers, "hardpoint_01", 3.0))
+		table.insert(g_zhongduModifierList, Modify_WeaponReload(eg_zhongdu_towers, "hardpoint_01", 0.1))
+		
+	elseif defenseStrength == 1 then
+		print("ZHONGDU: Strength at "..tostring(defenseStrength).."!")
+		-- Remove any modifiers on the towers
+		for index, modifier in pairs(g_zhongduModifierList) do
+			Modifier_Remove(modifier)
+		end
+		-- Nullify the list
+		g_zhongduModifierList = {}
+		-- And any VFX
+		local function _RemoveTowerVFX(gid, idx, eid)
+			if Entity_IsValid(Entity_GetID(eid)) then
+				Entity_SetStateModelFloat(eid, "universal_buff_count", 0)
+			end
+		end
+		EGroup_ForEach(eg_zhongdu_towers, _RemoveTowerVFX)
+		
+	elseif defenseStrength == 0 then
+		print("ZHONGDU: Strength at "..tostring(defenseStrength).."!")
+		-- Remove any modifiers on the towers
+		for index, modifier in pairs(g_zhongduModifierList) do
+			Modifier_Remove(modifier)
+		end
+		-- Nullify the list
+		g_zhongduModifierList = {}
+		-- Disable Zhongdu tower weapons altogether
+		local weaponsOff = Modifier_Create(MAT_Weapon, WM_ENABLE, MUT_Enable, false, -1, "hardpoint_01")
+		-- Go through each tower and apply the modifier
+		local _DisableWeapons = function(gid, idx, eid)
+			if Entity_IsValid(Entity_GetID(eid)) then
+				table.insert(g_zhongduModifierList, Modifier_ApplyToEntity(weaponsOff, eid, 0))
+			end
+		end
+		EGroup_ForEach(eg_zhongdu_towers, _DisableWeapons)
+		-- Remove any VFX
+		local function _RemoveTowerVFX(gid, idx, eid)
+			if Entity_IsValid(Entity_GetID(eid)) then
+				Entity_SetStateModelFloat(eid, "universal_buff_count", 0)
+			end
+		end
+		EGroup_ForEach(eg_zhongdu_towers, _RemoveTowerVFX)
+		
+	end
+	
+end
+
+--? @shortdesc Triggers the speech content related to the first four villages
+function Zhongdu_OnVillageDestroyed(villageName)
+	
+	-- Increment the counter and do associated escalations
+	g_villagesDestroyed = g_villagesDestroyed + 1
+	
+	-- If we haven't started hunting the player's base yet, and we're on Hard, start now
+	-- Otherwise, never do this. Players on Easy and Medium found base attacks overwhelming and panic-inducing, to the point of failing the mission.
+	if Game_GetSPDifficulty() >= GD_NORMAL and Rule_Exists(Zhongdu_AttackPlayerBase) == false then
+		Rule_AddInterval(Zhongdu_AttackPlayerBase, 1)
+	end
+	
+	-- Make sure the remaining carts are a little stronger, to compensate for there being fewer
+	g_supplyCartStrength = g_supplyCartStrength + 1
+	
+	-- Increase the raid limit
+	local newPartyLimit = 1 + math.floor((g_villagesDestroyed + 1) / 2)
+	print("Party limit set to "..newPartyLimit)
+	Raiding_SetPartyLimit(newPartyLimit)
+	-- And the number of units in a raid
+	g_raidSystem.partySize = g_raidSystem.partySize + Util_DifVar({2, 2, 4, 6})
+	
+	-- Play VO for the first market
+	if g_intelFirstMarketPlayed == false then
+		Util_StartIntel(EVENTS.First_Market_Destroyed)
+		g_intelFirstMarketPlayed = true
+	end
+	
+	-- Also send a raid against the player
+	local villageRevengeTarget = SGroup_CreateUnique("sg_destroyers_"..villageName)
+	Player_GetAllSquadsNearMarker(g_playerMongol, villageRevengeTarget, Marker_FromName("mkr_jin_"..villageName, ""), 50)
+	if SGroup_Count(villageRevengeTarget) <= 0 then
+		villageRevengeTarget = g_leaderGenghisKhan.sgroup
+	end
+	
+	if Game_GetSPDifficulty() >= GD_NORMAL then
+		local raidRevengeVillage = Raiding_TriggerRaid(villageRevengeTarget)
+		if raidRevengeVillage ~= nil then
+			g_baseHuntingTimer = g_baseHuntingTimer + 25
+			Zhongdu_DebugRaidTiming("village revenge")
+		end
+	end
+	
+	-- Finally, remove the minimap markers
+	if villageName == "shunyi" then
+		for idx = 1, 8 do
+			MarkerPaths_ClearIcons("minimap_path_"..tostring(idx))
+		end
+	elseif villageName == "tongzhou" then
+		for idx = 9, 13 do
+			MarkerPaths_ClearIcons("minimap_path_"..tostring(idx))
+		end
+	elseif villageName == "daxing" then
+		for idx = 14, 17 do
+			MarkerPaths_ClearIcons("minimap_path_"..tostring(idx))
+		end
+	elseif villageName == "fangshan" then
+		for idx = 18, 22 do
+			MarkerPaths_ClearIcons("minimap_path_"..tostring(idx))
+		end
+	else
+		assert(false, "Invalid village name: "..tostring(villageName))
+	end
+	
+end
+
+--? @shortdesc Triggers the appearance and movement of a Jin supply caravan headed for Zhongdu from a specific map location
+function Zhongdu_OnmapCaravan(context, data)
+	
+	if Objective_IsStarted(OBJ_StarveCity) == true and Objective_IsComplete(OBJ_StarveCity) == false then
+		
+		-- Make sure the player doesn't have any units too close by
+		local spawnLocation = ResolveSpawnLocation(data.spawnMarker)
+		local playersTooClose = false
+		if scartype(spawnLocation) == ST_MARKER then
+			Player_GetAll(g_playerMongol)
+			if Prox_AreSquadsNearMarker(sg_allsquads, spawnLocation, ANY) then
+				-- If they do, early out
+				return
+			end
+		end
+		
+		-- How desperately are they defending the convoys?
+		local defenderRatio = SOBJ_StopTraders.progressCurrent / SOBJ_StopTraders.progressMax
+		local escortHorsemen = 2 + (defenderRatio * Util_DifVar({2, 2, 4, 7}))
+		local escortSpearmen = 0 + (defenderRatio * Util_DifVar({3, 4, 6, 10}))
+		local escortArchers = 0 + (defenderRatio * Util_DifVar({5, 6, 9, 12}))
+		
+		-- Set up and spawn the units
+		local convoySGroup = SGroup_CreateUnique(tostring(g_playerJin).." convoy")
+		local convoyTrader = SGroup_CreateUnique(tostring(g_playerJin).." trader")
+		local unitTable = {
+			{ sbp = BP_GetSquadBlueprint("unit_supply_cart_chi"), numSquads = 1, sgroup = convoyTrader, tag = "supplies" },
+			{ type = "scar_horseman", numSquads = escortHorsemen, tag = "supplies" },
+			{ type = "scar_spearman", numSquads = escortSpearmen, tag = "supplies" },
+			{ type = "scar_archer", numSquads = escortArchers, tag = "supplies" },
+		}
+		
+		-- Spawn the units correctly
+		UnitEntry_DeploySquads(g_playerJin, convoySGroup, unitTable, spawnLocation)
+		
+		local supplyPath = {}
+		if scartype(data.markerPath) == ST_TABLE then
+			for index, marker in pairs(data.markerPath) do
+				table.insert(supplyPath, marker)
+			end
+		end
+		table.insert(supplyPath, mkr_jin_zhongdu)
+		
+		-- We currently can't issue these orders immediately, so we need to build in a delay or they won't be respected
+		MissionOMatic_SGroupCommandDelayed(convoySGroup, supplyPath, true, 1, true, Zhongdu_ExtraCleanup)
+		
+		-- Also, add the UI indicators to the traders
+		HintPoint_Add(convoyTrader, true, "$11192359", 5)
+		Modify_SightRadius(convoyTrader, 0.30)
+		MissionOMatic_RevealMovingSGroup(convoyTrader)
+	end
+	
+end
+
+--? @shortdesc Marks the arrival of a caravan in Zhongdu by removing the caravan and spawning soldiers to the Jin
+function Zhongdu_TickSupplyCaravans(squadID, callbackData)
+	
+	if Squad_IsOfType(squadID, "supply_cart") then
+		-- Kick off the InfoSupply objective display, if we haven't already
+		if Objective_IsStarted(OBJ_InfoSupply) == false then
+			Objective_Start(OBJ_InfoSupply)
+		end
+		
+		-- Adjust the supply progress
+		OBJ_InfoSupply.supplyCurrent = OBJ_InfoSupply.supplyCurrent + g_supplyCartStrength + (4 - g_villagesDestroyed)
+		
+		if Objective_IsComplete(OBJ_InfoSupply) == false then
+			-- Create an event cue
+			UI_CreateEventCueClickable(-1, 10, 0, 0,
+				"$11192371",
+				"$11192373",
+				"high_priority_negative", "", "sfx_ui_event_queue_campaign_high_priority_negative_play", 255, 255, 255, 255, ECV_Queue,
+				Zhongdu_SnapCamera)
+		end
+	end
+	
+end
+
+--? @shortdesc Clears excess caravan units near the center of the map
+function Zhongdu_ExtraCleanup(squadID, callbackData)
+
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(g_playerJin, sg_temp, mkr_jin_zhongdu, Marker_GetProximityRadiusOrDefault(mkr_jin_zhongdu, 20))
+	local _RemoveNotTagged = function(gid, idx, sid)
+		if MissionOMatic_SquadHasTag(sid, "supplies") == false then
+			SGroup_Remove(sg_temp, sid)
+		else
+			-- Do this in case it's a supply cart that we're nuking
+			Zhongdu_TickSupplyCaravans(sid)
+		end
+	end
+	SGroup_ForEach(sg_temp, _RemoveNotTagged)
+	
+	-- Now delete all those
+	SGroup_DestroyAllSquads(sg_temp)
+	
+end
+
+function Zhongdu_SnapCamera(id)
+
+	Camera_MoveTo(mkr_jin_zhongdu)
+	
+end
+	
+--? @shortdesc Used to display paths from an outlying Jin town to Zhongdu
+function Zhongdu_DisplayMinimapPath(context, data)
+	
+	local pointList = AIPlayer_GetCachedPathPoints(g_playerJin, data.pathID)
+	MarkerPaths_GenerateIcons(data.pathName, pointList, "military_route_enemy", 52)
+	
+end
+
+--? @shortdesc Triggered when the player leaves the starting area
+function Zhongdu_EntryVO(context, data)
+	
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_start_zone, Marker_GetProximityRadiusOrDefault(mkr_start_zone, 0))
+	local inZone = SGroup_Count(sg_temp)
+	Player_GetAll(g_playerMongol, sg_temp)
+	local inTotal = SGroup_Count(sg_temp)
+	
+	if (inTotal - inZone) > 3 then
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Zhongdu_PlaceSallyThreatArrow(context, data)
+	
+	local sgroup = data.sgroup
+	if scartype(sgroup) == ST_SGROUP and SGroup_Count(sgroup) > 0 then
+		ThreatArrow_CreateGroup("enemy squad", sgroup)
+	end
+	
+end
+
+function Zhongdu_OnSallyDeathVO()
+	
+	if g_intelFirstCounterattackPlayed ~= true then
+		Util_StartIntel(EVENTS.Enemy_CounterAttack_Destroyed)
+		g_intelFirstCounterattackPlayed = true
+	else
+		print("ZHONGDU: Sally destroyed, but VO already nil")
+	end
+	
+end
+
+--? @shortdesc Creates a set of minimap paths along a list of markers
+function Zhongdu_SetupMinimapPath(markerStart, markerPath)
+	
+	g_minimapPathCounter = g_minimapPathCounter or 1
+	table.insert(markerPath, 1, markerStart)
+	
+	for index, marker in pairs(markerPath) do
+		
+		AIPlayer_RequestHighPath(g_playerJin, g_minimapPathCounter, Util_GetPosition(markerStart), Util_GetPosition(mkr_jin_zhongdu), EBP.CORE.UNIT_TRADE_CART, true)
+		
+		local thisName = "minimap_path_"..tostring(g_minimapPathCounter)
+		Rule_AddOneShot(Zhongdu_DisplayMinimapPath, 2, { pathID = g_minimapPathCounter, pathName = thisName })
+		
+		g_minimapPathCounter = g_minimapPathCounter + 1
+		
+	end
+	
+end

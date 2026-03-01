@@ -1,0 +1,147 @@
+
+-----
+--- Mission Zero - Progress to Castle Age
+---
+----
+
+function IntroProgressCastleAge_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_ProgressCastleAge = {
+		
+		Title = 11192924, --Progress to Castle Age
+		Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.AgeUpCastle_IntelStart,
+		--Intel_Complete = EVENTS.AgeUpCastle_CompletedIntel,
+		
+		PreStart = function()
+
+		end,
+		
+		OnStart = function ()
+			Objective_Start(SOBJ_AgeUpCastle)
+		end,
+		
+		--IsComplete = function()
+			--return Objective_AreSubObjectivesComplete (OBJ_ProgressCastleAge, ALL)
+		--end,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_AgeUpCastle) then
+				Objective_Complete(OBJ_Tip_AgeUpCastle,false,false)
+			end
+			HintPoint_RemoveAll()
+		end,
+		
+		OnComplete = IntroProgressToCastleAge_OnComplete,
+		
+		Cheat = Cheat_Progress_Castleage,
+		
+	}
+	
+	SOBJ_AgeUpCastle = {
+		
+		Title = 11192925, -- Age up to Castle Age
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ProgressCastleAge,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.BuildSecondLandmark_IntelStart,
+		
+		SetupUI = AgeUpCastle_UI,
+		
+		PreStart = function()
+			Rule_AddGlobalEvent(ProgressAgeCastle_OnConstructionStart, GE_ConstructionStart)
+			Rule_AddGlobalEvent(ProgressAgeCastle_OnConstructionCancelled, GE_ConstructionCancelled)
+			Player_SetMaximumAge(player1, AGE_CASTLE)
+			Tutorials_MissionZero_HighlightAgeUpCastle()
+			--enable The White Tower landmark
+			Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE2_WHITE_TOWER_ENG, ITEM_UNLOCKED)
+		end,
+		OnStart = AgeUpCastle_Start,
+				
+		OnComplete = AgeUpCastle_OnComplete,
+	}
+	
+	Objective_Register(OBJ_ProgressCastleAge)
+	Objective_Register(SOBJ_AgeUpCastle)
+	
+end
+
+function AgeUpCastle_UI()
+	
+end
+
+function AgeUpCastle_Start()
+
+	Rule_AddInterval(AgeUpCastle_Monitor,0.25)
+	
+	Rule_AddOneShot (CastleAgeTip, 3)
+end
+
+function CastleAgeTip()
+
+	if not Objective_IsComplete(OBJ_ProgressCastleAge) then
+		Objective_Start(OBJ_Tip_AgeUpCastle, false, false)
+	end
+end
+
+function AgeUpCastle_Monitor()
+	
+	if EGroup_IsEmpty(eg_CastleLandmark) == false then
+		
+		if EGroup_GetAvgHealth(eg_CastleLandmark) > 0.95 then
+			Objective_Complete(OBJ_ProgressCastleAge, false, false)
+			Rule_RemoveGlobalEvent(ProgressAgeCastle_OnConstructionStart)
+			Rule_RemoveGlobalEvent(ProgressAgeCastle_OnConstructionCancelled)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function AgeUpCastle_OnComplete()
+	
+end
+
+
+function IntroProgressToCastleAge_OnComplete()
+	Mission_Complete()
+end
+
+-- Global event callback for GE_ConstructionStart
+function ProgressAgeCastle_OnConstructionStart(context)
+
+	local buildingOwner = Entity_GetPlayerOwner(context.entity)
+	if buildingOwner == player1 then
+		
+		if not Objective_IsComplete(SOBJ_AgeUpCastle) then
+			if Entity_IsOfType(context.entity, "wonder_feudal_age") then
+				--remove availability to prevent player from placing duplicates of this landmark once one is placed
+				Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE2_WHITE_TOWER_ENG, ITEM_REMOVED)
+				-- if we previously started and canceled construction we do some clean up
+				if castleAgeStartedConstruction == true then
+					EGroup_Clear(eg_CastleLandmark)
+					HintPoint_Remove(hpid_landmark_tip)
+					g_outro_pos = nil
+				end
+				castleAgeStartedConstruction = true
+				EGroup_Add(eg_CastleLandmark, context.entity)
+				hpid_landmark_tip = HintPoint_Add(context.entity, true, "$11192775", 3)
+				g_outro_pos = Entity_GetPosition(context.entity)
+			end
+		end
+	end
+end
+
+-- Global event callback for GE_ConstructionCancelled
+function ProgressAgeCastle_OnConstructionCancelled(context)
+	local buildingOwner = Entity_GetPlayerOwner(context.entity)
+	if buildingOwner == player1 then
+		if not Objective_IsComplete(SOBJ_AgeUpCastle) then
+			if Entity_IsOfType(context.entity, "wonder_feudal_age") then
+				--unlock production of the landmark again if the player has cancelled the one under construction
+				Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE2_WHITE_TOWER_ENG, ITEM_UNLOCKED)
+			end
+		end
+	end
+end

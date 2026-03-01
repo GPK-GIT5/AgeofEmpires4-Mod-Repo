@@ -1,0 +1,114 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+
+function CommandOfficials_InitObjectives()
+
+	OBJ_CommandOfficials = {
+		Title = "$1000947", --Command your Officials
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.SetBalancedStart,
+
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_CommandOfficials, ALL)
+		end,
+	}
+
+	SOBJ_SetBalanced = {
+		Title = "$1000946", --Choose the Balanced Economy
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_CommandOfficials,
+		StartAlongsideParent = true,
+		PreStart = SetBalanced_PreStart,
+		OnStart = SetBalanced_Start,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Rule_Add(Salisbury3_MonitorResearchObjStart)
+			
+			
+			--Objective_Start(SOBJ_Research, false, true)
+		end
+	}
+
+	SOBJ_Research = {
+		Title = "$999587",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_CommandOfficials,
+		StartAlongsideParent = false,
+		PreStart = Research_PreStart,
+		OnStart = Research_Start,
+
+		OnComplete = function()
+			Objective_Start(OBJ_BuildLandmark, true, true)
+		end
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_CommandOfficials)
+	Objective_Register(SOBJ_SetBalanced)
+	Objective_Register(SOBJ_Research)
+end
+
+-- ///// SetBalanced //////////////////////////////////////////////
+function SetBalanced_PreStart()
+	
+	Game_SetVisibility(VF_XboxUIVillagerPriorities, true)
+	Rule_Add(SetBalanced_Monitor)
+end
+
+function SetBalanced_Start()
+
+	Goals_SetBalanced()
+end
+
+function SetBalanced_Monitor()
+	
+	local resources = UI_GetGovernmentRadialWeights()
+	if resources.food > 0 or resources.gold > 0 or resources.wood > 0 or resources.stone > 0 then
+		
+		Objective_Complete(SOBJ_SetBalanced, false, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+-- ///// Research //////////////////////////////////////////////
+
+
+function Salisbury3_MonitorResearchObjStart()
+	-- once the player if out of the radial menu, then we trigger the research objective
+	-- we have no speech for this, so we play a banner even if it is a sub-objective
+	if UI_GetActiveRadialMenuType() == RMT_Invalid then
+		Objective_Start(SOBJ_Research, true)
+		Rule_RemoveMe()
+	end
+	
+	
+end
+
+
+
+function Research_PreStart()
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1, ITEM_UNLOCKED)
+	Game_SetVisibility(VF_XboxUIFindMenu, true)
+	
+	Rule_AddGlobalEvent(Research_Monitor, GE_UpgradeComplete)
+	
+end
+
+function Research_Start()
+
+	Goals_Research()
+
+end
+
+function Research_Monitor(context)
+	if Entity_GetPlayerOwner(context.executer) == player1 then
+		if context.upgrade == UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1 then
+			Objective_Complete(SOBJ_Research, false, true)
+			Rule_RemoveMe()
+		end
+	end
+
+end

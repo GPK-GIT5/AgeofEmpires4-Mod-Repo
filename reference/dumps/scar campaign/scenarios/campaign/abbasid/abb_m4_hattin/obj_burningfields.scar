@@ -1,0 +1,456 @@
+--
+-- Hattin 1187 - Burnable Fields
+--
+
+import("abb_m4_hattin.scar")
+import("abb_m4_hattin_data.scar")
+
+--[[
+	
+	Burnable Fields
+	---------------
+	
+	This allows fields to be set alight and burn continuously.
+	We set the field to take no further damage when it's alight (setting an invulnerable threshold resulted in the fire going out when it hit that threshold!), as
+	well as switching targetting of the field off so you can't attack it any more.
+
+]]
+
+function BurnableFields_Init()
+	-- Set up the table of burnable field and path data
+	t_burnableFields = {
+		tutFields1 = {
+			egroup = eg_burnableFieldsTut1,
+			marker = mkr_burnableFieldsTut1,
+			customHint = "$11255564",
+		},
+		tutFields2 = {
+			egroup = eg_burnableFieldsTut2,
+			marker = mkr_burnableFieldsTut2,
+			startDeactivated = true,
+			customHint = "$11254791",
+		},
+		--path_1_2 = { egroup = eg_burnableFields_1_2, marker = mkr_burnableFields_1_2, },
+		--path_1_3 = { egroup = eg_burnableFields_1_3, marker = mkr_burnableFields_1_3, },
+		path_1_4 = { egroup = eg_burnableFields_1_4, marker = mkr_burnableFields_1_4, },
+		--path_2_4 = { egroup = eg_burnableFields_2_4, marker = mkr_burnableFields_2_4, },
+		path_2_5 = { egroup = eg_burnableFields_2_5, marker = mkr_burnableFields_2_5, },
+		--path_3_4 = { egroup = eg_burnableFields_3_4, marker = mkr_burnableFields_3_4, },
+		path_3_6 = { egroup = eg_burnableFields_3_6, marker = mkr_burnableFields_3_6, },
+		--path_4_5 = { egroup = eg_burnableFields_4_5, marker = mkr_burnableFields_4_5, },
+		--path_4_6 = { egroup = eg_burnableFields_4_6, marker = mkr_burnableFields_4_6, },
+		path_4_7 = { egroup = eg_burnableFields_4_7, marker = mkr_burnableFields_4_7, },
+		path_5_7 = { egroup = eg_burnableFields_5_7, marker = mkr_burnableFields_5_7, },
+		path_6_7 = { egroup = eg_burnableFields_6_7, marker = mkr_burnableFields_6_7, },
+		--path_7_tiberias = { egroup = eg_burnableFields_7_9, marker = mkr_burnableFields_7_9, infiniteBurn = true, startDeactivated = true, },
+		path_8_tiberias = { egroup = eg_burnableFields_8_9, marker = mkr_burnableFields_8_9, fieldBurndownTime = t_difficulty.hornsOfHattinBurnTime },
+	}
+
+	-- note the number of burnable fields in each area, and the highest number of burnable fields across all areas (we scale smoke damage to this amount, so areas with few fields don't do as much damage)
+	for index, field in pairs(t_burnableFields) do
+		field.id = index
+		field.modIDs = {}
+		field.ignitionTime = nil
+		BurnableFields_InitField(field)
+		if i_highestNumBurnableFields == nil or field.numFields > i_highestNumBurnableFields then 
+			i_highestNumBurnableFields = field.numFields 
+		end
+	end
+	
+	Rule_Add(BurnableFields_Manager)
+	Rule_AddInterval(Monitor_TiberiasRoadApproach, 2)
+end
+
+--? @shortdesc Initializes a specific burning field, treating the field as a reference that gets filled in
+function BurnableFields_InitField(field)
+	
+	field.egroup_notOnFire = EGroup_CreateUnique("Burnable Field - Not On Fire")
+	field.egroup_onFire = EGroup_CreateUnique("Burnable Field - On Fire")
+	field.egroup_invulnerable = EGroup_CreateUnique("Burnable Field - Invulnerable")
+	field.sgroup_debuffedCrusaders = SGroup_CreateUnique("Burnable Field - Nearby Crusaders")
+	field.numFields = EGroup_CountSpawned(field.egroup)
+	field.infiniteBurn = field.infiniteBurn or false
+	field.fieldBurndownTime = field.customBurnTime or t_difficulty.fieldBurndownTime
+	field.timeStamps = {
+		lastSmokeCough = World_GetGameTime(),
+		lastUnitPassedThrough = -1,
+	}
+
+	Rule_AddEGroupEvent(BurnableFields_WatchForSuddenDeath, field.egroup, GE_EntityKilled, {largerField = field})
+	
+	EGroup_AddEGroup(field.egroup_notOnFire, field.egroup)							-- copy the fields into the "not on fire" group. 
+	
+	EGroup_SetTargetingType(field.egroup, Targeting_Manual)							-- make the fields manual targetting only (so your units don't auto-attack them)
+	
+	Modify_OnFireHealthPercentage(field.egroup, MUT_Multiplication, 3)				-- increase the threshold at which they catch fire
+	Modify_OnFireDamagePerTick(field.egroup, MUT_Multiplication, 3)					-- increase the rate at which the fields' health depletes when on fire
+	
+	-- Some fields may start disabled and only be activated later. If so, we're done here!
+	if field.startDeactivated == true then
+		BurnableFields_Deactivate(field)
+		return
+	end
+	
+	-- Otherwise, also go through the UI activation process
+	BurnableFields_Activate(field)
+end
+
+function BurnableFields_WatchForSuddenDeath(context, data)
+	local field = data.largerField
+	print(string.format("death recorded in %s", field.id))
+	local firePercentage = BurnableFields_GetOnFirePercentage(field)
+	
+	if firePercentage <= 0.0 then
+		local _BurnNearbyFields = function(gid, idx, eid)
+			if Entity_IsBurning(eid) == false then
+				local distToField = Util_GetDistance(eid, context.victim)
+				if distToField < 10 then
+					Entity_SetHealth(eid, 0.5)
+					Entity_SetOnFire(eid)
+				else
+					print(string.format("Nearby field is %s away, not burning", distToField))
+				end
+			end
+		end
+		EGroup_ForEach(field.egroup, _BurnNearbyFields)
+	end
+	
+	-- We only want to check this on the first death
+	-- After that, the field should be on fire
+	Rule_RemoveMe()
+end
+
+function BurnableFields_Deactivate(field)
+	EGroup_SetInvulnerable(field.egroup, true)
+	EGroup_SetSelectable(field.egroup, false)
+	
+	if field.hpid ~= nil then
+		HintPoint_Remove(field.hpid)
+	end
+	
+	if field.reticule ~= nil then
+		Objective_RemoveGroundReticule(TOBJ_BurnableFields, field.reticule)
+	end
+	
+	if field.minimapIcon ~= nil then
+		MapIcon_Destroy(field.minimapIcon)
+	end
+end
+
+function BurnableFields_Activate(field)
+	-- Make the fields burnable
+	EGroup_SetInvulnerable(field.egroup, false)
+	EGroup_SetSelectable(field.egroup, true)
+	
+	-- Fields always start with a hintpoint, which disappears when they first catch fire
+	if scartype(field.customHint) == ST_STRING then
+		field.hpid = HintPoint_Add(field.marker, true, field.customHint)
+	elseif field.noHint ~= true then
+		field.hpid = HintPoint_Add(field.marker, true, "$11254292")
+	end
+	
+	-- Add the ground reticule to clarify where the fields are
+	field.reticule = Objective_AddGroundReticule(TOBJ_BurnableFields, field.marker, Marker_GetProximityRadius(field.marker), BP_GetReticuleBlueprint("aura_ring"))
+
+	-- Add a minimap icon
+	local fieldPos = Util_GetPosition(field.marker)
+	local facingPos = World_Pos(fieldPos.x + 1, fieldPos.y, fieldPos.z + 1)
+	field.minimapIcon = MapIcon_CreatePosition(fieldPos, "icons/races/common/upgrades/incendiary_weapons", 1.0, 255, 255, 255, 255)
+	MapIcon_SetFacingPosition(field.minimapIcon, facingPos)
+end
+
+--? @shortdesc Gets a field by its id/name
+function BurnableFields_GetField(name)
+	for index, field in pairs(t_burnableFields) do
+		if field.id == name then
+			return field 
+		end
+	end
+end
+
+function BurnableFields_UpdateHint(field, newHint)
+	if field.hpid ~= nil then
+		HintPoint_Remove(field.hpid)
+		field.hpid = nil
+	end
+	field.hpid = HintPoint_Add(field.marker, true, newHint)
+end
+
+--? @shortdesc Regularly runs
+function BurnableFields_Manager()
+
+	for index, field in pairs(t_burnableFields) do
+		local _CheckFieldsNotOnFire = function(gid, idx, eid)
+			if Entity_IsBurning(eid) then
+				Entity_SetTargetingType(eid, Targeting_None)	-- disable targeting on this entity completely now it's on fire
+				EGroup_Remove(field.egroup_notOnFire, eid)		-- move entity to the "on fire" subset group
+				EGroup_Add(field.egroup_onFire, eid)
+			else
+				if EGroup_Count(field.egroup_onFire) >= 1 then
+					-- Fakes the fire "spreading" between individual burnable fields
+					-- To do so, calculate damage from neighbouring "on fire" entities
+					local count = EGroup_CountEntitiesNearMarker(field.egroup_onFire, Util_GetPosition(eid), 15) 
+					if count >= 1 then
+						local damage = count * 10
+						-- Setting health only works with percentages (!) so I have to calculate that from the new health and max health values
+						local oldHealth = Entity_GetHealth(eid)
+						local newHealth = oldHealth - damage
+						local maxHealth = Entity_GetHealthMax(eid)
+						Entity_SetHealth(eid, newHealth / maxHealth)
+					end
+				end
+			end
+		end
+		
+		EGroup_ForEach(field.egroup_notOnFire, _CheckFieldsNotOnFire)
+		
+		-- If the field has no ignition time but is on fire, we need to mark it as ignited
+		if field.ignitionTime == nil and EGroup_CountSpawned(field.egroup_onFire) >= 1 then
+			-- Remove whatever hintpoint it had before it was burnt
+			HintPoint_Remove(field.hpid)
+			field.hpid = nil
+			-- Mark when it caught fire
+			field.ignitionTime = World_GetGameTime()
+			-- And if there's an onBurning, we need to do that
+			if field.onBurning ~= nil then
+				field.onBurning()
+			end
+		end
+		
+		-- Make the fields invulnerable at a certain threshold
+		local _CheckFieldsOnFire = function(gid, idx, eid)
+			if EGroup_ContainsEntity(field.egroup_invulnerable, eid) == false and Entity_IsBurning(eid) == true then
+				EGroup_Single(eg_single, eid)
+				EGroup_SetAvgHealth(eg_single, 0.05)
+				table.insert(field.modIDs, Modify_ReceivedDamage(eg_single, 0))
+				-- Zero out fire damage on this field
+				table.insert(field.modIDs, Modify_OnFireDamagePerTick(eg_single, MUT_Multiplication, 0))
+				EGroup_Add(field.egroup_invulnerable, eid)
+			end
+		end
+		EGroup_ForEach(field.egroup_onFire, _CheckFieldsOnFire)
+	end
+	
+	-- check each area, and see if we need to trigger a cough or a flee on any units there due to the smoke from the fields
+	for index, field in pairs(t_burnableFields) do
+		local fireStrength = BurnableFields_GetFireStrength(field)
+		
+		-- If it's on fire at all, do stuff
+		if fireStrength > 0 then
+			-- Regardless of anything else, if it's not an infinite burn, count down
+			if field.infiniteBurn == false then
+				local timeLeft = field.fieldBurndownTime - (World_GetGameTime() - field.ignitionTime)
+				if timeLeft % 10 == 0 and timeLeft > 0 then
+					local timerMessage = Loc_FormatText("$11254294", timeLeft)
+					UI_CreatePositionKickerMessage(Util_GetPosition(field.marker), timerMessage, "icons/races/common/abilities/on_fire_on", "", 7.5, 0, 3)
+				end
+				
+				HintPoint_Remove(field.hpid)
+				if timeLeft <= 0 then
+					BurnableFields_Terminate(field)
+				end
+			end
+			
+			-- If there are ANY nearby Crusaders, do stuff!
+			if Prox_AreSquadsNearMarker(sg_crusaders, field.marker, ANY) == true then
+				-- Trigger debuffs
+				BurnableFields_TriggerDebuffs(field)
+				-- Log that units are passing through
+				field.timeStamps.lastUnitPassedThrough = World_GetGameTime()
+				-- Flag thereas being unitsin the area
+				field.unitsInArea = true
+			end
+		end
+		
+		-- If it has affected crusaders, handle any necessary stuff!
+		-- This no longer has anything to do with whether those units are actually near the fields or not
+		if SGroup_Count(field.sgroup_debuffedCrusaders) > 0 then
+			-- Coughing
+			if World_GetGameTime() - field.timeStamps.lastSmokeCough >= BURNABLEFIELDS_COUGH_RATE then
+				BurnableFields_TriggerCough(field)
+				field.timeStamps.lastSmokeCough = World_GetGameTime()
+				
+				-- VO - after first objective is complete, play this when another Crusaders is harmed by fire
+				if Objective_IsComplete(SOBJ_FirstTutorialCombat) then
+					if VOPlayed_EnemiesWeakenedByFire == false then
+						VOPlayed_EnemiesWeakenedByFire = true
+						Util_StartIntel(EVENTS.EnemiesWeakenedByFire)
+					end
+				end
+			end
+		end
+	end
+end
+
+--? @shortdesc Terminates a field, ending burning and resetting Crusader paths
+function BurnableFields_Terminate(field, killEntities)
+	if field.terminated == true then
+		return
+	end
+	
+	killEntities = killEntities or true
+	
+	for index, mod in pairs(field.modIDs) do
+		Modifier_Remove(mod)
+	end
+	
+	if field.disableUI ~= true then
+		field.hpid = HintPoint_Add(field.marker, true, "$11254293")
+		Objective_RemoveGroundReticule(TOBJ_BurnableFields, field.reticule)
+		MapIcon_Destroy(field.minimapIcon)
+		UI_CreatePositionKickerMessage(Util_GetPosition(field.marker), "$11255650", "icons/races/common/abilities/on_fire_off", "", 6, 0, 3)
+	end
+	
+	if killEntities == true then
+		EGroup_Kill(field.egroup)
+	else
+		EGroup_SetSelectable(firstField.egroup, false)
+	end
+	field.terminated = true
+end
+
+--? @shortdesc Adds a pathing blocker to the location of a burning field
+function BurnableFields_AddBlocker(eid, field)
+
+	EGroup_Clear(eg_single)
+	local pos = Util_GetPosition(eid)
+	local toward = Util_GetFacingFromDirection(pos, Util_GetDirection(eid))
+	Util_CreateEntities(player7, eg_single, BP_GetEntityBlueprint("burnable_field_hattin_blocker"), pos, 1, toward)
+	
+end
+
+--? @shortdesc Removes a pathing blocker from the location of a burning field. Implemented as a rule.
+function BurnableFields_RemoveBlocker(context, data)
+	if Entity_IsValid(data.worldID_field) == false or Entity_IsAlive(Entity_FromID(data.worldID_field)) == false then 	-- the original field exists for a few seconds after it dies, so we need to check IsAlive as well
+		local eid = Entity_FromID(data.worldID_blocker)
+		Entity_Destroy(eid)
+		Rule_RemoveMe()
+	end
+end
+
+function BurnableFields_GetOnFirePercentage(field)
+	local onFireCount = BurnableFields_CountFieldsOnFire(field)
+	local totalCount = EGroup_CountSpawned(field.egroup)
+	return onFireCount / totalCount
+end
+
+function BurnableFields_CountFields(field)
+	return field.numFields
+end
+
+function BurnableFields_CountFieldsOnFire(field)
+	return EGroup_CountSpawned(field.egroup_onFire)
+end
+
+function BurnableFields_GetFireStrength(field)
+	return EGroup_CountSpawned(field.egroup_onFire) / i_highestNumBurnableFields
+end
+
+function BurnableFields_HasBeenBurned(field)
+	return field ~= nil and field.ignitionTime ~= nil
+end
+
+function BurnableFields_TriggerCough(field)
+	SGroup_Clear(sg_single)
+	BurnableFields_PickRandomUnitAtLocation(field, sg_single)
+	if SGroup_Count(sg_single) == 1 then
+		local message = Table_GetRandomItem({"$11254295", "$11254296", "$11254297"})
+		UI_CreatePositionKickerMessage(Util_GetPosition(sg_single), message, "icons/pings/ping_lookhere_icon", "", 3, 0, 3)
+		Sound_PlayOnSquad("sfx_campaign_scripted_coughing", sg_single)
+	end
+end
+
+function BurnableFields_TriggerCough_RemoveHintpoint(context, data)
+	HintPoint_Remove(data.hpid)
+end
+
+function BurnableFields_TriggerDebuffs(field)
+	local sg_newDebuffTargets = SGroup_CreateUniqueWithPrefix("sg_newDebuffTargets")
+	SGroup_Clear(sg_newDebuffTargets)
+	local _IdentifyNewVictims = function(gid, idx, sid)
+		if SGroup_ContainsSquad(field.sgroup_debuffedCrusaders, Squad_GetID(sid), true) == false and Squad_IsOfType(sid, "siege") == false then
+			SGroup_Single(sg_single, sid)
+			SGroup_AddGroup(sg_newDebuffTargets, sg_single)
+		end
+	end
+	Player_GetAllSquadsNearMarker(player2, sg_temp, field.marker)
+	SGroup_ForEach(sg_temp, _IdentifyNewVictims)
+	
+	-- Apply to any newly found units
+	if SGroup_Count(sg_newDebuffTargets) > 0 then
+		
+		-- We need these to be exclusive so they don't stack
+		local speedMod = Modifier_Create(MAT_Entity, "speed_maximum_modifier", MUT_Multiplication, true, t_difficulty.smokeDebuffSpeed, "")
+		local damageMod = Modifier_Create(MAT_Weapon, "damage_weapon_modifier", MUT_Multiplication, true, t_difficulty.smokeDebuffDmgDealt, "hardpoint_01")
+		local healthMod = Modifier_Create(MAT_Entity, "received_damage_modifier", MUT_Multiplication, true, t_difficulty.smokeDebuffDmgReceived, "")
+		
+		-- Apply the modifiers
+		local _ApplyDebuffs = function(gid, idx, sid)
+			Modifier_ApplyToSquad(speedMod, sid, t_difficulty.smokeDebuffDuration)
+			Modifier_ApplyToSquad(damageMod, sid, t_difficulty.smokeDebuffDuration)
+			Modifier_ApplyToSquad(healthMod, sid, t_difficulty.smokeDebuffDuration)
+			
+			if Squad_Count(sid) >= 1 then 
+				local entity = Squad_GetFirstEntity(sid)
+				Entity_SetAnimatorAction(entity, "gameplay_add_debuff")
+				Entity_SetStateModelBool(entity, "smoke_reaction", true)
+			end
+		end
+		
+		SGroup_ForEach(sg_newDebuffTargets, _ApplyDebuffs)
+		SGroup_AddGroup(field.sgroup_debuffedCrusaders, sg_newDebuffTargets)
+		
+		Rule_AddOneShot(BurnableFields_ReleaseUnits, t_difficulty.smokeDebuffDuration, {field = field, sgroup = sg_newDebuffTargets})
+	end
+end
+
+--? @shortdesc Removes squads from the field's purview
+function BurnableFields_ReleaseUnits(context, data)
+	local _RemoveSmokeReaction = function(gid, idx, sid)
+		if Squad_Count(sid) >= 1 then 
+			local entity = Squad_GetFirstEntity(sid)
+			Entity_SetStateModelBool(entity, "smoke_reaction", false)
+		end
+	end
+	SGroup_ForEach(data.sgroup, _RemoveSmokeReaction)
+	
+	SGroup_RemoveGroup(data.field.sgroup_debuffedCrusaders, data.sgroup)
+	SGroup_Destroy(data.sgroup)
+end
+
+function Debug_DebuffAllVFX()
+	-- Turn on the debuff FX
+	local _SetFXOnSquad = function(gid, idx, sid)
+		if Squad_Count(sid) >= 1 then 
+			local entity = Squad_GetFirstEntity(sid)
+			Entity_SetAnimatorAction(entity, "gameplay_add_debuff")
+		end
+	end
+	
+	Player_GetAll(player1)
+	SGroup_ForEach(sg_allsquads, _SetFXOnSquad)
+end
+
+function BurnableFields_PickRandomUnitAtLocation(field, resultsGroup)
+	if SGroup_CountSpawned(field.sgroup_debuffedCrusaders) >= 1 then 
+		local squad = SGroup_GetRandomSpawnedSquad(field.sgroup_debuffedCrusaders)
+		SGroup_Add(resultsGroup, squad)
+	end
+end
+
+--[[
+	Location 7 Blockade
+	----------------
+	
+	When the enemy approaches the road to Tiberias, allied forces should block the direct path
+]]
+
+function Monitor_TiberiasRoadApproach(context, data)
+	-- How many enemy units are nearby?
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_location7, 60)
+	if SGroup_Count(sg_temp) > 0 then
+		Cmd_FormationMove(sg_allies_roadblock, mkr_ally_roadblock_b, true)
+		Cmd_FormationMove(sg_allies_roadblock, mkr_ally_roadblock_b, true, false, mkr_ally_roadblock_b_facing)
+		Rule_RemoveMe()
+	end
+end

@@ -1,0 +1,214 @@
+
+import("training.scar")
+import("training/campaigntraininggoals.scar")
+
+--
+-- Research Fire Arrows  PlayerIsResearchingIncendiary
+--
+function Paris_AddHintIncendiaryArrows()
+	local showArsinalGoal = Training_Goal("Entity", 
+		{Message=11191028, DataTemplate="LeftClickTrainingDataTemplate"}, --The Arsinal lets you research upgrades for your ranged units.
+		UserIsSelectingArsenal)
+	
+	local researchIncendiaryGoal = Training_Goal("PBG", 
+		{Message=11191029, DataTemplate="LeftClickTrainingDataTemplate"}, --Incendiary Arrows lets archers and crossbowmen deal bonus damage to buildings and siege equipment.
+		PlayerIsResearchingIncendiary)
+	
+	local researchFireArrowsSequence = Training_GoalSequence(
+		"researchFireArrows",									-- id 
+		1,											-- repeatMax
+		0,											-- remindMax
+		ResearchFireArrowsTrigger,					-- trigger
+		CampaignTraining_TimeoutIgnorePredicate,	-- ignore
+		nil, 										-- remind
+		ReasearchFireArrowsIgnore,					-- bypass
+		true, 										-- canRegress
+		{ showArsinalGoal, researchIncendiaryGoal })
+	
+	Training_AddGoalSequence(researchFireArrowsSequence)
+	Training_EnableGoalSequenceByID(researchFireArrowsSequence, true)
+end
+
+-- trigger
+function ResearchFireArrowsTrigger(goalSequence)
+	--print("ResearchFireArrowsTrigger")
+	
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+		local arsenal = FindEntityOnScreen("bowyer")
+		if arsenal ~= nil then
+			goalSequence.goals[1].key = arsenal
+			goalSequence.goals[2].key = UPG.FRENCH.UPGRADE_RANGED_INCENDIARY_FRE
+			return true
+		end
+	end
+	return false
+end
+
+function ReasearchFireArrowsIgnore(goalSequence)
+	if Player_HasUpgrade(player1, UPG.FRENCH.UPGRADE_RANGED_INCENDIARY_FRE) or PlayerResearchingIncendiary() then
+		return true
+	end
+	return false
+end
+
+function PlayerResearchingIncendiary()
+	Player_GetAll(player1)
+	local upgradeFound = false
+	local checkArsenal = function(group, item_index, item)
+		local queue_size = Entity_GetProductionQueueSize(item)
+		for i = 0, queue_size - 1 do
+			if Entity_GetProductionQueueItem(item, i) == UPG.FRENCH.UPGRADE_RANGED_INCENDIARY_FRE then
+				upgradeFound = true
+				return true
+			end
+		end
+	end
+	EGroup_Filter(eg_allentities, "bowyer", FILTER_KEEP)
+	EGroup_ForEach(eg_allentities, checkArsenal)
+	--if upgradeFound then print("player is researching")
+	--else print("player is NOT researching") end
+	return upgradeFound
+end
+
+-- goal 1      
+function UserIsSelectingArsenal(goal)
+	--print("UserIsSelectingVillager")
+	
+	return UserIsSelectingBuilding("bowyer")
+end
+
+function PlayerIsResearchingIncendiary(goal) -- Goal 2
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	EGroup_Filter(eg_currentSelection, "bowyer", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		for i = 1, EGroup_CountSpawned(eg_currentSelection) do
+			local entity = EGroup_GetSpawnedEntityAt(eg_currentSelection, i)
+			if Entity_HasProductionQueue(entity) then
+				local production_queue_size = Entity_GetProductionQueueSize(entity)
+				--print("Production queue size: "..production_queue_size)
+				for i = 0, production_queue_size - 1 do
+					if Entity_GetProductionQueueItem(entity, i) == UPG.FRENCH.UPGRADE_RANGED_INCENDIARY_FRE then
+						return true
+					end
+				end
+			end
+		end
+		
+	end
+	return false
+end
+
+
+function FindEntityOnScreen(scar_type)
+	local localPlayer = Game_GetLocalPlayer()
+	local walls = Player_GetEntitiesFromType(localPlayer, scar_type)
+	if EGroup_CountSpawned(walls) > 0 then
+		local camera_pos = Camera_GetTargetPos()
+		local closest_wall = World_GetClosest(camera_pos, walls)
+		if Misc_IsEntityOnScreen(closest_wall, 100) then
+			return closest_wall
+		end
+	end
+	
+	return nil
+end
+
+function UserIsSelectingBuilding(building)
+	local player_is_selecting_building = false
+	local buildingBP = Cardinal_ConvertTypeToEntityBlueprint(building, Game_GetLocalPlayer())
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	for i = 1, EGroup_Count(eg_currentSelection) do
+		local entity = EGroup_GetEntityAt(eg_currentSelection, i)
+		if Entity_GetBlueprint(entity) == buildingBP then
+			return true
+		end
+	end
+	
+	return false
+end
+
+----------------------------
+function Paris_AddHintToRepair()
+	local repairGoal = Training_Goal("Entity", 
+		{Message="$11205301", DataTemplate="RightClickTrainingDataTemplate"}, --A building needs repair.
+		UserIsRepairing)
+	
+	local repairWallGoalSequence = Training_GoalSequence(
+		"select",									-- id 
+		1,											-- repeatMax
+		0,											-- remindMax
+		BuildingIsDamaged,							-- trigger
+		CheckIgnore,								-- ignore
+		nil, 										-- remind
+		RepairBypass,								-- bypass
+		true, 										-- canRegress
+		{ repairGoal })
+	
+	Training_AddGoalSequence(repairWallGoalSequence)
+	Training_EnableGoalSequenceByID(repairWallGoalSequence, true)
+end
+
+-- ignore
+function CheckIgnore(goalSequence)
+	if goalSequence.isActive == true then
+		local e_wall = goalSequence.goals[1].key
+		if Entity_GetHealth(e_wall) == 0 then
+			print("Ignore Repair Hint Because Building is Dead")
+			return true
+		end
+	end
+	return false
+end
+
+-- trigger
+function BuildingIsDamaged(goalSequence) -- Initial Check
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+		local damaged_building = nil
+		local CheckForDamage = function(group_id, entity_index, entity)
+			if Entity_GetHealth(entity) < Entity_GetHealthMax(entity) then
+				damaged_building = entity
+				return true
+			else
+				return false
+			end
+		end
+		
+		--local buildings = Player_GetEntities(player1)
+		World_GetEntitiesNearMarker(player1, eg_temp, mkr_repair_hint, OT_Player)
+		EGroup_FilterUnderConstruction(eg_temp, FILTER_REMOVE)
+		EGroup_ForEach(eg_temp, CheckForDamage)
+		if damaged_building ~= nil then
+			goalSequence.goals[1].key = damaged_building
+			return true			
+		end
+	end
+	return false
+end
+
+function UserIsRepairing(goal)
+	local is_under_repair = Entity_IsUnderRepair(goal.key)
+	if is_under_repair then 
+		print("Is under repair")
+	else
+		print("Is not under repair")
+	end
+	return is_under_repair
+end
+
+function RepairBypass(goalSequence)
+	local building_under_repair = nil
+	local _CheckEntity = function(gid, idx, eid)
+		if Entity_IsUnderRepair(eid) then
+			building_under_repair = eid
+			return true
+		end
+	end
+	Player_GetAll()
+	EGroup_ForEach(eg_temp, _CheckEntity)
+	if building_under_repair ~= nil then
+		print("Repair bypassed because building dead")
+		return true
+	end
+	return false
+end
+

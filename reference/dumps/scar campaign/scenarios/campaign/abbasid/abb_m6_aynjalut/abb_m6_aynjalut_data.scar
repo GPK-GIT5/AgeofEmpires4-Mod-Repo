@@ -1,0 +1,1112 @@
+import("cardinal.scar")
+import("missionomatic/missionomatic.scar")
+
+function AynJalut_InitData1()
+	mission_seconds = { 0 }
+	WALK_SPEED = 2.5
+	
+	FORCE_INTERVAL_LONG = 15
+	FORCE_INTERVAL_SHORT = 10
+	
+	START_TO_HILL = 105
+	HILL_TO_FIELD = 90
+	START_TO_FIELD = START_TO_HILL + HILL_TO_FIELD
+	
+	forces_total = 0
+	forces_spawned = 0
+	rounds_defeated = 0
+	
+	RANK_INTERVAL = 1.5
+	ROUND_INTERVAL = 135
+	
+	PLAYER_MILITARY_COST_FLOOR = 8000
+	PLAYER_MILITARY_COST_CEIL = 20000
+	REINFORCEMENT_RATIO_MAX = 1.0
+	REINFORCEMENT_RATIO_MIN = 0.4
+	
+	ROUNDS_BEGIN = 20
+	ROUND_ATTACK_TIME_1 = 	ROUNDS_BEGIN + 290
+	ROUND_ATTACK_TIME_2 = 	ROUND_ATTACK_TIME_1 + ROUND_INTERVAL
+	ROUND_ATTACK_TIME_3 = 	ROUND_ATTACK_TIME_2 + ROUND_INTERVAL
+	ROUND_ATTACK_TIME_4 = 	ROUND_ATTACK_TIME_3 + ROUND_INTERVAL
+	ROUND_ATTACK_TIME_5 = 	ROUND_ATTACK_TIME_4 + ROUND_INTERVAL
+	
+	local player_prepare_time = Util_DifVar({ 60, 52, 46, 40 })
+	REINFORCE_TIME_1 = ROUND_ATTACK_TIME_1 - player_prepare_time
+	REINFORCE_TIME_2 = ROUND_ATTACK_TIME_2 - player_prepare_time
+	REINFORCE_TIME_3 = ROUND_ATTACK_TIME_3 - player_prepare_time
+	REINFORCE_TIME_4 = ROUND_ATTACK_TIME_4 - player_prepare_time
+	REINFORCE_TIME_5 = ROUND_ATTACK_TIME_5 - player_prepare_time
+	
+	ARMY_SIZE_1 =	{numRanks = Util_DifVar({1,1,1,1}), numFiles = Util_DifVar({1,1,1,1}), extra = Util_DifVar({0,0,0,0}), numSquads = Util_DifVar({ 1, 1, 1, 1}) }
+	ARMY_SIZE_XS =	{numRanks = Util_DifVar({5,6,3,4}), numFiles = Util_DifVar({1,1,2,2}), extra = Util_DifVar({0,0,1,0}), numSquads = Util_DifVar({ 5, 6, 7, 8}) }
+	ARMY_SIZE_S = 	{numRanks = Util_DifVar({3,4,4,5}), numFiles = Util_DifVar({2,2,2,2}), extra = Util_DifVar({1,0,1,0}), numSquads = Util_DifVar({ 7, 8, 9,10}) }
+	ARMY_SIZE_M = 	{numRanks = Util_DifVar({4,5,5,6}), numFiles = Util_DifVar({2,2,2,2}), extra = Util_DifVar({1,0,1,0}), numSquads = Util_DifVar({ 9,10,11,12}) }
+	ARMY_SIZE_L =   {numRanks = Util_DifVar({5,6,6,4}), numFiles = Util_DifVar({2,2,2,3}), extra = Util_DifVar({1,0,1,2}), numSquads = Util_DifVar({11,12,13,14}) }
+	ARMY_SIZE_XL =  {numRanks = Util_DifVar({4,4,5,5}), numFiles = Util_DifVar({3,3,3,3}), extra = Util_DifVar({1,2,0,1}), numSquads = Util_DifVar({13,14,15,16}) }
+	ARMY_SIZE_XXL = {numRanks = Util_DifVar({5,5,5,6}), numFiles = Util_DifVar({3,3,3,3}), extra = Util_DifVar({0,1,2,0}), numSquads = Util_DifVar({15,16,17,18}) }
+	ARMY_SIZE_XXXL ={numRanks = Util_DifVar({5,6,6,6}), numFiles = Util_DifVar({3,3,3,3}), extra = Util_DifVar({2,0,1,2}), numSquads = Util_DifVar({17,18,19,20}) }
+	
+	ARMY_SIZE_XS_SPECIAL = 	{numRanks = Util_DifVar({3,3,4,4}), numFiles = Util_DifVar({2,2,2,2}), extra = Util_DifVar({1,1,0,0}), numSquads = Util_DifVar({ 7, 7, 8,8}) }
+	ARMY_SIZE_S_SPECIAL = 	{numRanks = Util_DifVar({4,4,5,5}), numFiles = Util_DifVar({2,2,2,2}), extra = Util_DifVar({1,1,0,0}), numSquads = Util_DifVar({ 9, 9, 10,10}) }
+	ARMY_SIZE_M_SPECIAL = 	{numRanks = Util_DifVar({5,5,6,6}), numFiles = Util_DifVar({2,2,2,2}), extra = Util_DifVar({1,1,0,0}), numSquads = Util_DifVar({ 11,11,12,12}) }
+	
+	forward_villager_gangs = {}
+	
+	outpost_egroups = { eg_outpost_1, eg_outpost_2, eg_outpost_3 }
+	
+	sg_all_enemies = SGroup_CreateUniqueWithPrefix("sg_all_enemies")
+	sg_afula_villagers = SGroup_CreateUniqueWithPrefix("sg_afula_villagers")
+	sg_healers = SGroup_CreateUniqueWithPrefix("sg_healers")
+	sg_qutuz = SGroup_CreateUniqueWithPrefix("sg_qutuz")
+	
+	active_alerts = {}
+	last_event_que_at = -1000
+	last_sound_alert_at = -1000
+
+	sg_fleeing_villagers_left = SGroup_CreateUniqueWithPrefix("sg_fleeing_villagers_left")
+	sg_fleeing_villagers_right = SGroup_CreateUniqueWithPrefix("sg_fleeing_villagers_right")
+	forward_villager_sgroups = {}
+	for i = 1, 8 do
+		table.insert(forward_villager_sgroups, SGroup_CreateUniqueWithPrefix("sg_forward_villagers_"..i))
+	end
+	
+	VANGUARD_THRESHOLD = 10
+	VILLAGER_THRESHOLD = 20
+	
+	enemies_killed = 0
+	afula_villagers_killed = 0
+	vanguard_killed = 0
+	
+	USE_AI_GLOBAL = true
+	
+	lanes = {
+		hill = {
+			far_left = 	CreateLane("far_left",  1, 3),
+			left = 		CreateLane("left",      1, 3),
+			right = 	CreateLane("right",     1, 3),
+			far_right = CreateLane("far_right", 1, 3),
+		},
+		full = {
+			road = 		CreateLane("road",      1, 18),
+			outpost_a = CreateLane("outpost_a", 1, 4),
+			outpost_b = CreateLane("outpost_b", 1, 4),
+			outpost_c = CreateLane("outpost_c", 1, 4),
+		},
+	}	
+
+	slot_letters = { "a", "b", "c", "d", "e", "f", "g", "h" }
+	slot_numbers = { 1, 2 }
+	slots = {
+		hill = CreateSlots("hill"),
+		field = CreateSlots("field"),
+		half = CreateSlots("half"),
+		battle = CreateSlots("battle"),
+		town = CreateSlots("town"),
+	}
+
+	------------------------------------------------------------
+	------------------------ ROUNDS ----------------------------
+	------------------------------------------------------------
+	
+	-- ROUND 1 - vanguard, ignores buildings
+	cohort_1 = {
+		arrive_at = ROUND_ATTACK_TIME_1 - 285,
+		signal_field_at = ROUND_ATTACK_TIME_1 - 65 + 3,
+		signal_town_at = ROUND_ATTACK_TIME_1,
+		spawn_conditions = {
+			is_in_rank = true,
+			is_walking = true,
+			is_ai_controlled = false,
+		},
+		orders = {
+			initial = {
+				{ type = "wait_for_duration", duration = 25 },
+				{ type = "start_running" },
+				{ type = "attack_lane", phase_name = "hill", enable_ai = USE_AI_GLOBAL },
+				{ type = "attack_slot", phase_name = "hill" },
+			},
+			signal_field = {
+				{ type = "start_walking" },
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" },
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0,
+				squad_type = "scar_horseman", army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_road,
+				lane_name = "left",
+				slot_name = "b1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_LONG * 1,
+				squad_type = "scar_spearman", army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_road,
+				lane_name = "far_right",
+				slot_name = "g1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_LONG * 2,
+				squad_type = "scar_horseman", army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_road,
+				lane_name = "far_left",
+				slot_name = "a1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_LONG * 3,
+				squad_type = "scar_spearman", army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_road,
+				lane_name = "right",
+				slot_name = "f1",
+			},
+		},
+	}
+	-- ROUND 1 - sides
+	cohort_2 = {
+		arrive_at = ROUND_ATTACK_TIME_1 - 185,
+		signal_field_at = ROUND_ATTACK_TIME_1 - 65,
+		signal_town_at = ROUND_ATTACK_TIME_1,
+		on_arrive = MakeAllyBuildingsAttackable,
+		spawn_conditions = {
+			is_in_rank = false,
+			is_walking = false,
+			is_ai_controlled = USE_AI_GLOBAL,
+		},
+		orders = {
+			initial = {
+				{ type = "attack_lane", phase_name = "hill" },
+				{ type = "attack_slot", phase_name = "hill" },
+			},
+			signal_field = {
+				{ type = "start_walking" },
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" },
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0, 
+				squad_type = "scar_horseman", army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_left,
+				lane_name = "left",
+				slot_name = "b2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_LONG * 1, 
+				squad_type = "scar_horseman", army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_left,
+				lane_name = "far_left",
+				slot_name = "a2",
+			},
+			{
+				spawn_delay = 0, 
+				squad_type = "scar_spearman", army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_right,
+				lane_name = "right",
+				slot_name = "f2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_LONG * 1, 
+				squad_type = "scar_spearman", army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_right,
+				lane_name = "far_right",
+				slot_name = "g2",
+			},
+		},
+	}
+	-- ROUND 1 - road
+	cohort_3 = {
+		arrive_at = ROUND_ATTACK_TIME_1 - 135,
+		spawn_conditions = {
+			is_in_rank = true,
+			is_walking = true,
+			is_ai_controlled = false,
+		},
+		orders = {
+			initial = {
+				{ type = "wait_for_arrival", marker = mkr_arrival_afula },
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "town", enable_ai = USE_AI_GLOBAL },
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0,
+				squad_type = "scar_militia", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "c1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1,
+				squad_type = "scar_archer", army_size = ARMY_SIZE_XL,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "c2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2,
+				squad_type = "scar_militia", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "d1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 3,
+				squad_type = "scar_archer", army_size = ARMY_SIZE_XL,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "d2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 4,
+				squad_type = "scar_militia", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "e1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 5,
+				squad_type = "scar_archer", army_size = ARMY_SIZE_XL,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "e2",
+			},
+		},
+	}
+	-- ROUND 2 - sides
+	cohort_4 = {
+		arrive_at = ROUND_ATTACK_TIME_2 - START_TO_FIELD,
+		signal_field_at = ROUND_ATTACK_TIME_2 - HILL_TO_FIELD,
+		signal_town_at = ROUND_ATTACK_TIME_2,
+		on_arrive = MakeAllyBuildingsImmune,
+		on_signal_town = WaveAttack2, 
+		spawn_conditions = {
+			is_in_rank = false,
+			is_walking = false,
+			is_ai_controlled = USE_AI_GLOBAL,
+		},
+		orders = {
+			initial = {
+				{ type = "attack_lane", phase_name = "hill" },
+				{ type = "attack_slot", phase_name = "hill" },
+			},
+			signal_field = {
+				{ type = "start_walking" },
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" },
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0, 
+				squad_type = "scar_militia", army_size = ARMY_SIZE_XXXL,
+				spawn = mkr_spawn_left,
+				lane_name = "far_left",
+				slot_name = "a1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1, 
+				squad_type = "scar_militia", army_size = ARMY_SIZE_XXXL,
+				spawn = mkr_spawn_left,
+				lane_name = "left",
+				slot_name = "c1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2, 
+				squad_type = "scar_militia", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_left,
+				lane_name = "far_left",
+				slot_name = "b1",
+			},
+			{
+				spawn_delay = 0, 
+				squad_type = "scar_archer", army_size = ARMY_SIZE_XXXL,
+				spawn = mkr_spawn_right,
+				lane_name = "right",
+				slot_name = "g1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1, 
+				squad_type = "scar_archer", army_size = ARMY_SIZE_XXXL,
+				spawn = mkr_spawn_right,
+				lane_name = "far_right",
+				slot_name = "h1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2, 
+				squad_type = "scar_archer", army_size = ARMY_SIZE_XXXL,
+				spawn = mkr_spawn_right,
+				lane_name = "right",
+				slot_name = "f1",
+			},
+		},
+	}
+	-- ROUND 2 - road
+	cohort_5 = {
+		arrive_at = ROUND_ATTACK_TIME_2 - START_TO_FIELD,
+		signal_field_at = ROUND_ATTACK_TIME_2 - HILL_TO_FIELD,
+		signal_town_at = ROUND_ATTACK_TIME_2,
+		spawn_conditions = {
+			is_in_rank = true,
+			is_walking = true,
+			is_ai_controlled = false,
+		},
+		orders = {
+			initial = {
+				{ type = "wait_for_duration", duration = 45 }, 
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "hill", enable_ai = USE_AI_GLOBAL },
+			},
+			signal_field = {
+				{ type = "start_walking" },
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" }, 
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0,
+				squad_sbp = SBP.MONGOL.UNIT_KNIGHT_3_CMP_MON, army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "d1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1,
+				squad_sbp = SBP.MONGOL.UNIT_KNIGHT_3_CMP_MON, army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "e1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2,
+				squad_type = "scar_horsearcher", army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "d2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 3,
+				squad_type = "scar_horsearcher", army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "e2",
+			},
+		},
+	}
+	-- ROUND 3 - sides
+	cohort_6 = {
+		arrive_at = ROUND_ATTACK_TIME_3 - START_TO_FIELD,
+		signal_field_at = ROUND_ATTACK_TIME_3 - HILL_TO_FIELD,
+		signal_town_at = ROUND_ATTACK_TIME_3,
+		on_signal_town = WaveAttack3,
+		spawn_conditions = {
+			is_in_rank = false,
+			is_walking = true,
+			is_ai_controlled = USE_AI_GLOBAL,
+		},
+		orders = {
+			initial = {
+				{ type = "attack_lane", phase_name = "hill" },
+				{ type = "attack_slot", phase_name = "hill" },
+			},
+			signal_field = {
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" },
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0, 
+				squad_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_MASTER_CRU, army_size = ARMY_SIZE_1, is_crusader = true,
+				spawn = mkr_spawn_left,
+				lane_name = "left",
+				slot_name = "c1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1, 
+				squad_type = "scar_crossbowman", army_size = ARMY_SIZE_S_SPECIAL, is_crusader = true,
+				spawn = mkr_spawn_left,
+				lane_name = "far_left",
+				slot_name = "b2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2, 
+				squad_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_CRU, army_size = ARMY_SIZE_M_SPECIAL, is_crusader = true,
+				spawn = mkr_spawn_left,
+				lane_name = "left",
+				slot_name = "c2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 3, 
+				squad_type = "scar_crossbowman", army_size = ARMY_SIZE_S_SPECIAL, is_crusader = true,
+				spawn = mkr_spawn_left,
+				lane_name = "far_left",
+				slot_name = "a2",
+			},
+			{
+				spawn_delay = 0, 
+				squad_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU, army_size = ARMY_SIZE_1, is_crusader = true,
+				spawn = mkr_spawn_right,
+				lane_name = "right",
+				slot_name = "g1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1, 
+				squad_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, army_size = ARMY_SIZE_XS_SPECIAL, is_crusader = true,
+				spawn = mkr_spawn_right,
+				lane_name = "far_right",
+				slot_name = "h2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2, 
+				squad_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, army_size = ARMY_SIZE_XS_SPECIAL, is_crusader = true,
+				spawn = mkr_spawn_right,
+				lane_name = "right",
+				slot_name = "g2",
+			},
+			
+		},
+	}
+	-- ROUND 3 - road
+	cohort_7 = {
+		arrive_at = ROUND_ATTACK_TIME_3 - START_TO_FIELD,
+		signal_field_at = ROUND_ATTACK_TIME_3 - HILL_TO_FIELD,
+		signal_town_at = ROUND_ATTACK_TIME_3,
+		spawn_conditions = {
+			is_in_rank = true,
+			is_walking = true,
+			is_ai_controlled = false,
+		},
+		orders = {
+			initial = {
+				{ type = "wait_for_duration", duration = 45 }, 
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "hill", enable_ai = USE_AI_GLOBAL },
+			},
+			signal_field = {
+				{ type = "start_walking" },
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" }, 
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0,
+				squad_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_MASTER_CRU, army_size = ARMY_SIZE_1, is_crusader = true,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "e1",
+			},
+			{
+				spawn_delay = RANK_INTERVAL * 1,
+				squad_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, army_size = ARMY_SIZE_XS_SPECIAL, is_crusader = true,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "f2",
+			},
+			{
+				spawn_delay = RANK_INTERVAL * 1 + FORCE_INTERVAL_SHORT * 1,
+				squad_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, army_size = ARMY_SIZE_XS_SPECIAL, is_crusader = true,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "e2",
+			},
+			{
+				spawn_delay = RANK_INTERVAL * 1 + FORCE_INTERVAL_SHORT * 2,
+				squad_sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_CRU, army_size = ARMY_SIZE_M_SPECIAL, is_crusader = true,
+				spawn = mkr_spawn_left,
+				lane_name = "road",
+				slot_name = "d2",
+			},
+		}
+	}
+
+	-- ROUND 4 - sides
+	cohort_8 = {
+		arrive_at = ROUND_ATTACK_TIME_4 - START_TO_FIELD,
+		signal_field_at = ROUND_ATTACK_TIME_4 - HILL_TO_FIELD,
+		signal_town_at = ROUND_ATTACK_TIME_4,
+		spawn_conditions = {
+			is_in_rank = false,
+			is_walking = true,
+			is_ai_controlled = USE_AI_GLOBAL,
+		},
+		orders = {
+			initial = {
+				{ type = "attack_lane", phase_name = "hill" },
+				{ type = "attack_slot", phase_name = "hill" },
+			},
+			signal_field = {
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" },
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0, 
+				squad_sbp = SBP.MONGOL.UNIT_KNIGHT_3_CMP_MON, army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_left,
+				lane_name = "far_left",
+				slot_name = "a2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1, 
+				squad_sbp = SBP.MONGOL.UNIT_KNIGHT_3_CMP_MON, army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_left,
+				lane_name = "far_left",
+				slot_name = "b2",
+			},
+			{
+				spawn_delay = 0, 
+				squad_type = "scar_archer", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_right,
+				lane_name = "far_right",
+				slot_name = "h2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1, 
+				squad_type = "scar_archer", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_right,
+				lane_name = "right",
+				slot_name = "f2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2, 
+				squad_type = "scar_archer", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_right,
+				lane_name = "far_right",
+				slot_name = "g2",
+			},
+		},
+	}
+	-- ROUND 4 - road
+	cohort_9 = {
+		arrive_at = ROUND_ATTACK_TIME_4 - START_TO_FIELD,
+		signal_field_at = ROUND_ATTACK_TIME_4 - HILL_TO_FIELD,
+		signal_town_at = ROUND_ATTACK_TIME_4,
+		on_signal_town = WaveAttack4,
+		spawn_conditions = {
+			is_in_rank = true,
+			is_walking = true,
+			is_ai_controlled = false,
+		},
+		orders = {
+			initial = {
+				{ type = "wait_for_duration", duration = 45 }, 
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "hill", enable_ai = USE_AI_GLOBAL },
+			},
+			signal_field = {
+				{ type = "start_walking" },
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" }, 
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0,
+				squad_type = "scar_spearman", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "c2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1,
+				squad_type = "scar_spearman", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "d2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2,
+				squad_type = "scar_spearman", army_size = ARMY_SIZE_XXL,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "e2",
+			},
+		},
+	}
+	-- ROUND 5 - sides
+	cohort_10 = {
+		arrive_at = ROUND_ATTACK_TIME_5 - START_TO_FIELD,
+		signal_field_at = ROUND_ATTACK_TIME_5 - HILL_TO_FIELD,
+		signal_town_at = ROUND_ATTACK_TIME_5,
+		on_signal_town = WaveAttack5,
+		spawn_conditions = {
+			is_in_rank = false,
+			is_walking = true,
+			is_ai_controlled = USE_AI_GLOBAL,
+		},
+		orders = {
+			initial = {
+				{ type = "attack_lane", phase_name = "hill" },
+				{ type = "attack_slot", phase_name = "hill" },
+			},
+			signal_field = {
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" },
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0, 
+				squad_type = "scar_horsearcher", army_size = ARMY_SIZE_S_SPECIAL,
+				spawn = mkr_spawn_left,
+				lane_name = "far_left",
+				slot_name = "a1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1, 
+				squad_type = "scar_horsearcher", army_size = ARMY_SIZE_S_SPECIAL,
+				spawn = mkr_spawn_left,
+				lane_name = "left",
+				slot_name = "b1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2, 
+				squad_type = "scar_horsearcher", army_size = ARMY_SIZE_S_SPECIAL,
+				spawn = mkr_spawn_left,
+				lane_name = "far_left",
+				slot_name = "a2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 3, 
+				squad_type = "scar_horsearcher", army_size = ARMY_SIZE_S_SPECIAL,
+				spawn = mkr_spawn_left,
+				lane_name = "left",
+				slot_name = "b2",
+			},
+			{
+				spawn_delay = 0, 
+				squad_sbp = SBP.MONGOL.UNIT_KNIGHT_3_CMP_MON, army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_right,
+				lane_name = "right",
+				slot_name = "g1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1, 
+				squad_sbp = SBP.MONGOL.UNIT_KNIGHT_3_CMP_MON, army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_right,
+				lane_name = "far_right",
+				slot_name = "h1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2, 
+				squad_sbp = SBP.MONGOL.UNIT_KNIGHT_3_CMP_MON, army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_right,
+				lane_name = "right",
+				slot_name = "f1",
+			},
+		},
+	}
+	-- ROUND 5 - road
+	cohort_11 = {
+		arrive_at = ROUND_ATTACK_TIME_5 - START_TO_FIELD,
+		signal_field_at = ROUND_ATTACK_TIME_5 - HILL_TO_FIELD,
+		signal_town_at = ROUND_ATTACK_TIME_5,
+		spawn_conditions = {
+			is_in_rank = true,
+			is_walking = true,
+			is_ai_controlled = false,
+		},
+		orders = {
+			initial = {
+				{ type = "wait_for_duration", duration = 45 }, 
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "hill", enable_ai = USE_AI_GLOBAL },
+			},
+			signal_field = {
+				{ type = "start_walking" },
+				{ type = "attack_slot", phase_name = "half" },
+				{ type = "attack_slot", phase_name = "field" },
+			},
+			signal_town = {
+				{ type = "start_running" },
+				{ type = "attack_slot", phase_name = "battle" },
+				{ type = "attack_slot", phase_name = "town" }, 
+				{ type = "finish_afula" },
+			},
+		},
+		forces = {
+			{
+				spawn_delay = 0,
+				squad_sbp = SBP.MONGOL.UNIT_KITBUQA_CMP_MON, army_size = ARMY_SIZE_1,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "d1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 0 + RANK_INTERVAL,
+				squad_type = "scar_manatarms", army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "c1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 1 + RANK_INTERVAL,
+				squad_type = "scar_manatarms", army_size = ARMY_SIZE_L,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "e1",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 2 + RANK_INTERVAL,
+				squad_type = "scar_crossbowman", army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "d2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 3 + RANK_INTERVAL,
+				squad_type = "scar_crossbowman", army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "c2",
+			},
+			{
+				spawn_delay = FORCE_INTERVAL_SHORT * 4 + RANK_INTERVAL,
+				squad_type = "scar_crossbowman", army_size = ARMY_SIZE_M,
+				spawn = mkr_spawn_road,
+				lane_name = "road",
+				slot_name = "e2",
+			},
+		},
+	}
+
+	cohorts = { cohort_1, cohort_2, cohort_3, cohort_4, cohort_5, cohort_6, cohort_7, cohort_8, cohort_9, cohort_10, cohort_11 }
+	
+	round_1 = { cohorts = { cohort_1, cohort_2, cohort_3 } }
+	round_2 = { cohorts = { cohort_4, cohort_5 } }
+	round_3 = { cohorts = { cohort_6, cohort_7 } }
+	round_4 = { cohorts = { cohort_8, cohort_9 } }
+	round_5 = { cohorts = { cohort_10, cohort_11 } }
+	rounds = { round_1, round_2, round_3, round_4, round_5 }
+	
+	for _, round in ipairs(rounds) do
+		Round_Init(round)
+	end
+	
+	reinforcements = {
+		{
+			reinforce_at = REINFORCE_TIME_1,
+			onComplete = StartMainObjective,
+			battalions = {
+				{
+					delay = 0,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03, mkr_ally_main_04 },
+					units = {
+						{ type = "scar_spearman", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 3,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03 },
+					units = {
+						{ type = "scar_archer", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 0,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03, mkr_ally_side_04 },
+					units = {
+						{ type = "scar_horseman", numSquads = 10 },
+					},	
+				},
+				{
+					delay = 3,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03 },
+					units = {
+						{ type = "scar_horseman", numSquads = 10 },
+					},	
+				},
+			},
+		},
+		{
+			reinforce_at = REINFORCE_TIME_2,
+			battalions = {
+				{
+					delay = 0,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03, mkr_ally_main_04 },
+					units = {
+						{ type = "scar_manatarms", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 3,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03 },
+					units = {
+						{ type = "scar_manatarms", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 0,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03, mkr_ally_side_04 },
+					units = {
+						{ type = "scar_crossbowman", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 3,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03 },
+					units = {
+						{ type = "scar_crossbowman", numSquads = 20 },
+					},	
+				},
+			},
+		},
+		{
+			reinforce_at = REINFORCE_TIME_3,
+			battalions = {
+				{
+					delay = 0,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03, mkr_ally_main_04 },
+					units = {
+						{ type = "scar_spearman", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 3,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03 },
+					units = {
+						{ type = "scar_spearman", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 0,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03, mkr_ally_side_04 },
+					units = {
+						{ type = "scar_horsearcher", numSquads = 10 },
+					},	
+				},
+				{
+					delay = 3,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03 },
+					units = {
+						{ type = "scar_horsearcher", numSquads = 10 },
+					},	
+				},
+			},
+		},
+		{
+			reinforce_at = REINFORCE_TIME_4,
+			battalions = {
+				{
+					delay = 0,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03, mkr_ally_main_04 },
+					units = {
+						{ type = "scar_archer", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 3,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03 },
+					units = {
+						{ type = "scar_archer", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 0,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03, mkr_ally_side_04 },
+					units = {
+						{ type = "scar_knight", numSquads = 10 },
+					},	
+				},
+				{
+					delay = 3,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03 },
+					units = {
+						{ type = "scar_knight", numSquads = 10 },
+					},	
+				},
+			},	
+		},
+		{
+			reinforce_at = REINFORCE_TIME_5,
+			battalions = {
+				{
+					delay = 0,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03, mkr_ally_main_04, mkr_ally_main_05 },
+					units = {
+						{ sbp = SBP.AYYUBID_CMP.UNIT_LEADER_QUTUZ_AYY, numSquads = 1 },
+					},	
+				},
+				{
+					delay = 1.5,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03, mkr_ally_main_04 },
+					units = {
+						{ type = "scar_manatarms", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 4.5,
+					spawn = mkr_ally_main_spawn,
+					targets = { mkr_ally_main_01, mkr_ally_main_02, mkr_ally_main_03 },
+					units = {
+						{ type = "scar_handcannon", numSquads = 20 },
+					},	
+				},
+				{
+					delay = 1.5,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03, mkr_ally_side_04 },
+					units = {
+						{ type = "scar_horseman", numSquads = 10 },
+					},	
+				},
+				{
+					delay = 4.5,
+					spawn = mkr_ally_side_spawn,
+					targets = { mkr_ally_side_01, mkr_ally_side_02, mkr_ally_side_03, mkr_ally_side_04 },
+					units = {
+						{ type = "scar_horseman", numSquads = 10 },
+					},	
+				},
+			},
+		},
+	}
+	reinforcement_costs = {}
+	for _, reinforcement in ipairs(reinforcements) do
+		Reinforcement_Init(reinforcement)
+		table.insert(reinforcement_costs, reinforcement.cost)
+	end
+	reinforcement_index = 1
+end
+
+function CreateLane(lane_name, min, max)
+	min = min or 1
+	max = max or 9999
+	local index = min
+	local path = {}
+	while index <= max do
+		local index_string = tostring(index)
+		if index < 10 then
+			index_string = "0"..index_string
+		end
+		local marker_name = "mkr_"..lane_name.."_"..index_string
+		if Marker_Exists(marker_name, "") == false then
+			break
+		end
+		local marker = Marker_FromName(marker_name, "")
+		table.insert(path, marker)
+		index = index + 1
+	end
+	return path
+end
+
+function CreateSlots(area_name)
+	local slots = {}
+	
+	for _, letter in ipairs(slot_letters) do
+		for _, number in ipairs(slot_numbers) do
+			local marker_name = "mkr_"..area_name.."_"..letter..tostring(number)
+			if Marker_Exists(marker_name, "") then
+				local marker = Marker_FromName(marker_name, "")
+				local key = letter..tostring(number)
+				slots[key] = marker
+			end
+		end
+	end
+	return slots
+end
+
+function GetRecipe()
+	local recipe = {
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,
+		audioSettings = {
+			campaignName = "abb",
+			missionName = "rts1260aynjalut",
+		},
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_slaves_to_sultans",
+				title = "$11253293", --Jazreel Valley
+				date = "$11253292", --1260
+			},
+		},
+		modules = {},
+		
+	}
+	return recipe 
+end
+
+function AynJalut_InitData2()
+	
+end

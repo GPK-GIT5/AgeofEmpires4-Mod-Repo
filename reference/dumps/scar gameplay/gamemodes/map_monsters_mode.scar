@@ -1,0 +1,661 @@
+-----------------------------------------------------------------------
+-- Imported Scripts
+-----------------------------------------------------------------------
+
+-- Import replay system
+--import("replay/replaystatviewer.scar")
+
+-- Import Utility Scripts
+import("cardinal.scar")							-- Contains sfx references, UI templates, and Civ/Age helper functions
+import("ScarUtil.scar")							-- Contains game helper functions
+
+-- Register the win condition and set the callback function prefix
+Core_RegisterModule("MapMonsters")
+
+-- Import Gameplay Systems
+import("gameplay/score.scar")					-- Tracks player score
+import("gameplay/diplomacy.scar")				-- Manages Tribute
+import("gameplay/vision.scar")
+import("gameplay/cheat.scar")
+-- import("gameplay/treaty.scar")		-- Error importing this on the new branch but it exists in the main game mode
+import("gameplay/dynamic_spawning.scar")
+
+-- start conditions
+import("startconditions/classic_start.scar")
+
+-- Import Win Conditions
+import("winconditions/annihilation.scar")		-- Support for eliminating a player when they can no longer fight or produce units
+import("winconditions/elimination.scar")		-- Support for player quitting or dropping (through pause menu or disconnection)
+import("winconditions/surrender.scar")			-- Support for player surrender (through pause menu)
+import("winconditions/regicide.scar")
+import("winconditions/conquest.scar")
+import("winconditions/wonder.scar")
+import("winconditions/religious.scar")
+
+-- Import UI Support
+import("gameplay/chi/current_dynasty_ui.scar")	-- Displays Chinese Dynasty UI
+import("gameplay/event_cues.scar")
+import("gameplay/currentageui.scar")
+import("gameplay/templar/templar_age_up_ui.scar")
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+
+-- Global constants
+DEBUG_OUTPUT = false -- Toggle debug print to console and other debug displays.
+function INTERVAL_FROM_MINUTES( minutes ) return minutes * 60 end
+
+-- Global data table used for generic match options and data
+_match = {
+	options = {},
+	is_cheat_enabled = false,
+	is_diplomacy_enabled = false,
+	is_tribute_enabled = true,
+	is_nomad_start = false,
+	speed = {						-- modifier multipliers 
+		build = 1,
+		repair = 1,
+		gather = 1,		
+		upgrade = 1,
+		production = 1,
+		modifiers = {},
+	},
+}
+
+-- Global table used for data specific to the map monsters.
+--		For terrain type and related arrays, land = 1, sea/water = 2.
+_monsterInfo = {
+	-- Constants
+	map_sample_size 			= 32, 								-- Distance between each sample point when searching for viable monster spawn locations. 32 is the GCD of all default map sizes.
+	spawn_threshold_player_min 	= 0.15,  							-- Threshold for shortest distance allowed from player start position as a percentage(0-1) of max spawn range. 0 = no minimum cut off can spawn at player start pos, 0.5 = remove points that are less than half the max range away from the closest player start point.
+	spawn_threshold_from_mid 	= 0.15, 							-- Threshold for largest allowed distance from the calculated mid point as a percentage(0-1) of max spawn range. 0 = only the single most equally spaced spawn point will be picked, 1 = all spawn points picked regardless of distance from players.      
+	spawn_threshold_diff	 	= 0.28, 							-- Threshold for largest allowed difference between the closest player and furthest player. USed by the new system to ensure spawns aren't too close to one player compared to the others.
+	single_player_threshold_min = 0.45,								-- Percentage(0-1) of min distance in single player games, start a little less than half the map distance away.
+	single_player_threshold_max = 0.9,								-- Percentage(0-1) of max distance in single player games, stop short of the full length to avoid spawning at map borders.
+	interval_seconds 			= INTERVAL_FROM_MINUTES( 8 ),		-- Seconds between each monster spawn
+	interval_seconds_min 		= INTERVAL_FROM_MINUTES( 5 ),
+	interval_seconds_max 		= INTERVAL_FROM_MINUTES( 20 ),
+	blueprint_name 				= {"gaia_monster_land", "gaia_monster_water"},
+	sgroup_name		 			= {"sg_AllLandMonsters", "sg_AllWaterMonsters"},
+	spawn_prompt_loc			= {"$11265741", "$11265742"},
+	spawn_prompt_sub_loc		= {"$0", "$0"},
+	spawn_prompt_template		= {"event_monster_land", "event_monster_sea"},
+	spawn_prompt_icon			= {"icons\\gaia\\animals\\land_monster", "icons\\gaia\\animals\\water_monster"},
+	spawn_prompt_sfx			= {"sfx_ui_event_queue_high_priority_play", "sfx_ui_event_queue_high_priority_play"},
+	spawn_prompt_position		= {ECV_Title, ECV_Title},
+	spawn_prompt_lifetime		= {5, 5},
+	
+	-- Variables
+	spawn_positions_count 	= { 0, 0 },
+	spawn_positions 		= { {}, {} }, -- Old system
+	spawn_markers 			= { {}, {} }, -- New system
+	prev_spawn_type			= eTerrainType.invalid,
+	fallback_to_old_spawn_system  = false
+}
+
+-----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+-- Called during load as part of the game setup sequence
+function MapMonsters_OnGameSetup()
+	
+	Setup_GetWinConditionOptions(_match.options)
+	_match.is_nomad_start = Setup_GetIsNomadStart()
+	
+	-- Win condition options
+	if _match.options.section_inner_win_conditions then
+		if not _match.options.section_inner_win_conditions.option_win_condition_conquest then
+			Core_UnregisterModule("Conquest")
+		end	
+	
+		if not _match.options.section_inner_win_conditions.option_win_condition_religious then
+			Core_UnregisterModule("Religious")
+		end
+		
+		if not _match.options.section_inner_win_conditions.option_win_condition_wonder then
+			Core_UnregisterModule("Wonder")
+		end	
+		
+		if not _match.options.section_inner_win_conditions.option_win_condition_regicide and not Game_HasMatchTypeFlag(MTF_FFA8) then
+			Core_UnregisterModule("Regicide")
+		end	
+	end
+
+	
+	--Shared vision
+	if not _match.options.section_starting_conditions
+		or not _match.options.section_starting_conditions.option_vision
+		or _match.options.section_starting_conditions.option_vision.enum_value == _match.options.section_starting_conditions.option_vision.enum_items.option_vision_default then
+		--(_match.options.section_starting_conditions and _match.options.section_starting_conditions.option_vision.enum_value == _match.options.section_starting_conditions.option_vision.enum_items.option_vision_default) then
+		Core_UnregisterModule("Vision")	
+	end
+	
+	--Diplomacy options
+	if _match.options.section_diplomacy then
+		_match.is_diplomacy_enabled = not _match.options.section_diplomacy.option_diplomacy_teams		
+		_match.is_tribute_enabled = _match.options.section_diplomacy.option_diplomacy_tribute
+	end
+	
+	-- Set player behaviour when eliminated
+	if _match.options.section_endgame then 
+		allow_spectators = _match.options.section_endgame.option_allow_spectators
+	end
+	
+	-- If treaty is not used
+	if  (_match.options.section_starting_conditions == nil)
+		or (_match.options.section_starting_conditions.option_treaty_duration == nil)
+		or (_match.options.section_starting_conditions.option_treaty_duration <= 0) then
+		
+		Core_UnregisterModule("Treaty")	
+	end
+	
+	_match.is_cheat_enabled = Misc_IsCommandLineOptionSet("cheat")
+	_match.revealMap = Misc_IsCommandLineOptionSet("no_fow")
+end
+
+-- Called before initialization, preceding other module OnInit functions
+function MapMonsters_PreInit()
+	
+	-- Enable Tribute UI
+	Core_CallDelegateFunctions("TributeEnabled", true)
+	
+end
+
+-- Called on match initialization before handing control to the player
+function MapMonsters_OnInit()
+
+	UI_AllTerritoryHide()
+
+	Core_CallDelegateFunctions("DiplomacyEnabled", _match.is_diplomacy_enabled)
+	Core_CallDelegateFunctions("TributeEnabled", _match.is_tribute_enabled)
+	
+	ReplayStatViewer_PopulateReplayStatTabs({"CurrentResourcesTemplate", "IncomeTemplate", "MilitaryTemplate"})
+
+	
+	if _match.options.section_starting_conditions and 
+		_match.options.section_starting_conditions.option_speed and 
+		_match.options.section_starting_conditions.option_speed.enum_value == _match.options.section_starting_conditions.option_speed.enum_items.option_speed_2x then
+		MapMonsters_SetSpeed(2)
+	elseif _match.options.section_starting_conditions and 
+		_match.options.section_starting_conditions.option_speed and 
+		_match.options.section_starting_conditions.option_speed.enum_value == _match.options.section_starting_conditions.option_speed.enum_items.option_speed_3x then
+		MapMonsters_SetSpeed(3)
+	else
+		MapMonsters_SetSpeed()
+	end
+	
+	for _, player in pairs(PLAYERS) do
+	
+		-- Debug options
+		if player.isHuman then
+			
+			if (_match.options.section_debug_options and _match.options.section_debug_options.option_high_resources) or _match.is_cheat_enabled then
+				Player_SetResource(player.id, RT_Food, 20000)
+				Player_SetResource(player.id, RT_Wood, 20000)
+				Player_SetResource(player.id, RT_Stone, 5000)
+				Player_SetResource(player.id, RT_Gold, 10000)				
+			end
+			
+			if (_match.options.section_debug_options and _match.options.section_debug_options.option_high_popcap) or _match.is_cheat_enabled then
+				Player_SetMaxPopulation(player.id, CT_Personnel, 200)
+			end
+			
+			if (_match.options.section_debug_options and _match.options.section_debug_options.option_reveal_map) or _match.revealMap then
+				FOW_PlayerRevealAll(player.id)
+			end		
+			
+			if (_match.options.section_debug_options and _match.options.section_debug_options.option_instant_build) or _match.is_cheat_enabled then
+				local n = World_GetPossibleEntitiesCount(player.race)        
+        		for j = 0, n-1 do 
+		        	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "cost_ticks_matchifier", MUT_Set, false, 0.01, World_GetPossibleEntitiesBlueprint(player.race, j)), player.id, 0.0)    
+				end
+			end
+		end		
+	end
+	
+	if (_match.options.section_debug_options and _match.options.section_debug_options.option_instant_build) or _match.is_cheat_enabled then
+		Rule_AddGlobalEvent(MapMonsters_OnConstructionComplete, GE_ConstructionComplete)
+	end	
+	
+	-- Optionally remove initial units
+	if Misc_IsCommandLineOptionSet("no_units") then
+        for _, player in pairs(PLAYERS) do              
+            SGroup_DestroyAllSquads(Player_GetSquads(player.id))
+            print(string.format("MapMonsters_OnInit() - Removed all squads owned by Player %d", player.index))
+        end         
+    end
+	
+	-- Optionally remove gaia animals
+	if Misc_IsCommandLineOptionSet("no_gaia") then    
+        local egroup = EGroup_CreateUnique()
+        World_GetAllNeutralEntities(egroup)
+        EGroup_Filter(egroup, "animal", FILTER_KEEP)
+        EGroup_DestroyAllEntities(egroup)    		
+		EGroup_Destroy(egroup)
+		print(string.format("MapMonsters_OnInit() - All neutral animal entities removed"))
+    end
+end
+
+-- Called after initialization is done when game is fading up from black
+function MapMonsters_Start()
+
+	--Nomad special start conditions. 
+	if _match.is_nomad_start == true then
+		for _, player in pairs(PLAYERS) do
+			Player_SetStateModelBool(player.id, "nomad_bonus_claimed", false)
+		end
+	end
+	
+	-- Fog of war options
+	if (_match.options.section_starting_conditions and _match.options.section_starting_conditions.option_fow) then
+		if (_match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_explore) then 
+			FOW_ExploreAll()
+		elseif (_match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_reveal) then
+			FOW_ForceRevealAllUnblockedAreas()
+		end
+	end
+
+	-- UI Options
+	if (_match.options.section_starting_conditions and _match.options.section_starting_conditions.option_score) then
+		for _, player in pairs(PLAYERS) do
+			player.scarModel.show_actual_score = true
+			UI_SetPlayerDataContext(player.id, player.scarModel)
+		end
+	end
+	
+	if (_match.options.section_starting_conditions and _match.options.section_starting_conditions.option_monster_spawn_duration) then
+		_monsterInfo.interval_seconds = _match.options.section_starting_conditions.option_monster_spawn_duration * 60
+		-- Clamp the monster spawn interval between max and min values.
+		if(_monsterInfo.interval_seconds > _monsterInfo.interval_seconds_max) then
+			_monsterInfo.interval_seconds = _monsterInfo.interval_seconds_max
+		elseif(_monsterInfo.interval_seconds < _monsterInfo.interval_seconds_min) then
+			_monsterInfo.interval_seconds = _monsterInfo.interval_seconds_min
+		end	
+	end
+	-- Monster Spawn Event, find valid monster spawn points and setup interval event to spawn map monsters at set intervals.
+	if MapMonsters_TryFindSpawnPoints() then
+		Rule_AddInterval( MapMonsters_SpawnMonster, _monsterInfo.interval_seconds, nil, nil )
+	else
+		bug("Error finding spawnpoints on the map.")
+	end
+end
+
+-- Called when Core_SetPlayerDefeated() is invoked. Signals that a player has been eliminated from play due to defeat.
+function MapMonsters_OnPlayerDefeated(player, reason)
+	
+end
+
+-- When a victory condition is met, a module must call Core_OnGameOver() in order to invoke this delegate and notify all modules that the match is about to end. Generally used for clean up (removal of rules, objectives, and UI elements specific to the module).
+function MapMonsters_OnGameOver()
+	Rule_RemoveGlobalEvent(MapMonsters_OnConstructionComplete)
+end
+
+-- Global event callback for GE_ConstructionComplete
+function MapMonsters_OnConstructionComplete(context)	
+
+	local player = Core_GetPlayersTableEntry(context.player)
+	local entity = context.entity
+
+	-- Accelerate unit production if cheat/option enabled
+	if (_match.options.section_debug_options and _match.options.section_debug_options.option_instant_build) or _match.is_cheat_enabled then
+		if player.isHuman then
+			Modifier_ApplyToEntity(Modifier_Create(MAT_Entity, "production_speed_matchifier", MUT_Multiplication, false, 100.0, nil), entity, 0.0)
+			Modifier_ApplyToEntity(Modifier_Create(MAT_Entity, "cost_ticks_matchifier", MUT_Multiplication, false, 0.01, nil), entity, 0.0)
+		end
+	else 
+		-- Reduce unit production and upgrade times  
+		if _match.speed.production ~= 1 and Entity_HasProductionQueue(entity) then 
+			Modifier_ApplyToEntity(Modifier_Create(MAT_Entity, "production_speed_matchifier", MUT_Multiplication, false, _match.speed.production, nil), entity, 0.0)
+		end
+		if _match.speed.upgrade ~= 1 then 
+			Modifier_ApplyToEntity(Modifier_Create(MAT_Entity, "cost_ticks_matchifier", MUT_Multiplication, false, 1/_match.speed.upgrade, nil), entity, 0.0)
+		end
+	end
+end
+
+function MapMonsters_SpawnMarkerFilter(marker_entity, context_data)
+	
+	local minPlayerDistance = context_data
+	local playerDiffMax = World_GetWidth() * _monsterInfo.spawn_threshold_diff
+	local insertMarker = DynamicSpawning_FilterByPlayerStartDistance(marker_entity, minPlayerDistance) -- Use the defualt player distance first
+	
+	-- If insert is true then further filter out markers that are much closer to one player than another.
+	if insertMarker then
+		
+		local largestPlayerDist = 0
+		local smallestPlayerDist = World_GetWidth() * 2
+		
+		local playerCount = World_GetPlayerCount()
+		for playerIndex = 1, playerCount do
+						
+			local playerStartPos = Player_GetStartingPosition(World_GetPlayerAt(playerIndex))
+			local playerDistance = Util_GetDistance(playerStartPos, Entity_GetPosition(marker_entity))
+			
+			if playerDistance > largestPlayerDist then
+				largestPlayerDist = playerDistance
+			end
+			
+			if playerDistance < smallestPlayerDist then
+				smallestPlayerDist = playerDistance
+			end
+		end
+		
+		local distanceDiff = largestPlayerDist - smallestPlayerDist
+		insertMarker = distanceDiff <= playerDiffMax
+	end
+	
+	return insertMarker
+end
+
+function MapMonsters_TryFindSpawnPoints()
+	
+	if DynamicSpawning_IsEnabled() then
+		
+		local minDistance = World_GetWidth() * _monsterInfo.spawn_threshold_player_min
+		local filterFunction = MapMonsters_SpawnMarkerFilter
+		
+		DynamicSpawning_GatherLandSpawnMarkers(_monsterInfo.spawn_markers[eTerrainType.land], filterFunction, minDistance) -- Gather land spawn positions.
+		DynamicSpawning_GatherWaterSpawnMarkers(_monsterInfo.spawn_markers[eTerrainType.water], filterFunction, minDistance) -- Gather water spawn positions.
+		
+		-- If no spawn points are found for land and water then fallback to the old spawning system.
+		if #_monsterInfo.spawn_markers[eTerrainType.land] < 1 and #_monsterInfo.spawn_markers[eTerrainType.water] < 1 then
+			_monsterInfo.fallback_to_old_spawn_system = true
+		else
+			return true
+		end
+	end
+	
+	MapMonsters_FindSpawnPointsUsingOldSystem()
+	-- If even the old system fails to find spawn points then return false
+	if _monsterInfo.spawn_positions_count[eTerrainType.land] < 1 and _monsterInfo.spawn_positions_count[eTerrainType.water] < 1 then
+		return false
+	end
+	
+	return true
+end
+	
+function MapMonsters_FindSpawnPointsUsingOldSystem()
+	------------------------------------------------------------------------------------
+	--                       Step 1: Find potential spawn positions                   --
+	------------------------------------------------------------------------------------
+	
+	-- Find map size and sample area
+	local mapWidth = World_GetWidth()
+	local playerCount = World_GetPlayerCount()
+	local startPos = (mapWidth * -0.5) + _monsterInfo.map_sample_size
+	local endPos = (mapWidth * 0.5) - _monsterInfo.map_sample_size
+	
+	local samplePosX = startPos
+	local samplePosZ = startPos
+	
+	if DEBUG_OUTPUT then
+		print(" ")
+		print("Finding monster spawn locations - World Size: " .. mapWidth .. ", Sample Size: " .. _monsterInfo.map_sample_size .. ", Player Count: " .. playerCount)
+	end
+		
+	-- Get the monster blueprints from their string names and spawn one of each to calculate valid positions
+	local playerTable = Core_GetPlayersTableEntryFromIndex(1)
+	local monsterSquadBlueprint = {BP_GetSquadBlueprint(_monsterInfo.blueprint_name[eTerrainType.land]), BP_GetSquadBlueprint(_monsterInfo.blueprint_name[eTerrainType.water])}
+	local monsterSquadGroup = {SGroup_CreateIfNotFound("sg_tempLandMonster"), SGroup_CreateIfNotFound("sg_tempSeaMonster")}
+	
+	-- Gather sample locations and distances
+	local midPointDistance = {mapWidth, mapWidth} -- Equal to the largest distance of the point that is closest to all player starts.
+	local maxDistance = {0, 0}
+	local potentialSpawnLocations = {{}, {}}
+	
+	while (samplePosZ <= endPos) do
+		if DEBUG_OUTPUT then print(" ") end
+		
+		while (samplePosX <= endPos) do
+			
+			-- First get the terrain type at the sample location
+			local terrainType = World_GetTerrainCellType(samplePosX, samplePosZ) -- 0 == sky, 1 == land, 2 == water/sea
+			
+			-- Get a valid spawnable position based on the terrain/monster type.
+			local spawnablePosition = nil
+			
+			-- Spawn a temp monster to test location.
+			if SGroup_IsEmpty(monsterSquadGroup[terrainType]) then
+				UnitEntry_DeploySquads(playerTable.id, monsterSquadGroup[terrainType], {{sbp = monsterSquadBlueprint[terrainType], numSquads = 1}}, Util_ScarPos(samplePosX, samplePosZ))
+			end
+			
+			-- Make sure temp monster has spawned before use.
+			if SGroup_IsEmpty(monsterSquadGroup[terrainType]) == false then
+				local closestFreePosition = Squad_TryFindClosestFreePosition(SGroup_GetSpawnedSquadAt(monsterSquadGroup[terrainType], 1), Util_ScarPos(samplePosX, samplePosZ))
+				spawnablePosition = Util_ScarPos(closestFreePosition.x, closestFreePosition.z)
+			end
+			
+			-- If a spawnable position has been found then check distances from all players and cache.
+			if spawnablePosition ~= nil then
+				
+				-- Find distances from player start positions.
+				local smallestPlayerDist = mapWidth
+				local largestPlayerDist = 0
+				
+				for playerIndex = 1, playerCount do
+					
+					local playerStartPos = Player_GetStartingPosition(World_GetPlayerAt(playerIndex))
+					local playerDistance = Util_GetDistance(playerStartPos, spawnablePosition)
+					
+					if playerDistance > largestPlayerDist then
+						largestPlayerDist = playerDistance
+					end
+					
+					if playerDistance < smallestPlayerDist then
+						smallestPlayerDist = playerDistance
+					end
+				end
+				
+				-- Create and cache spawn info based on terrain type.
+				local newSpawnLocation = {
+					position = spawnablePosition,
+					smallestDistance = smallestPlayerDist,
+					largestDistance = largestPlayerDist
+				}
+				
+				-- Update distance range
+				if largestPlayerDist < midPointDistance[terrainType] then
+					midPointDistance[terrainType] = largestPlayerDist
+				end
+				
+				if largestPlayerDist > maxDistance[terrainType] then
+					maxDistance[terrainType] = largestPlayerDist
+				end
+				
+				-- Add spawn location to array 
+				table.insert(potentialSpawnLocations[terrainType], newSpawnLocation)
+				
+				if DEBUG_OUTPUT then
+					if terrainType == eTerrainType.land then print("\tSpawn Loc - Type: Land, Pos: " .. spawnablePosition.x .. "x " .. spawnablePosition.y .. "y " .. spawnablePosition.z .. "z, Dist: " .. largestPlayerDist) end       
+				else if terrainType == eTerrainType.water then print("\tSpawn Loc - Type: Water, Pos: " .. spawnablePosition.x .. "x " .. spawnablePosition.y .. "y " .. spawnablePosition.z .. "z, Dist: " .. largestPlayerDist) end
+				end
+			end
+			
+			-- Increment X position
+			samplePosX = samplePosX + _monsterInfo.map_sample_size
+		end
+		
+		-- Reset X and Increment Z position
+		samplePosX = startPos
+		samplePosZ = samplePosZ + _monsterInfo.map_sample_size
+	end
+	
+	if DEBUG_OUTPUT then
+		print(" ")
+		print("\tMonster Spawn Range - Land: " .. midPointDistance[eTerrainType.land] .. " - " .. maxDistance[eTerrainType.land] .. ", Water: " .. midPointDistance[eTerrainType.water] .. " - " .. maxDistance[eTerrainType.water])
+	end
+	
+	------------------------------------------------------------------------------------
+	--               Step 2: Filter points based on player distances                  --
+	------------------------------------------------------------------------------------
+	
+	-- Perform steps for land and water terrain type
+	for terrainType = 1, eTerrainType.max do
+		
+		-- Copy spawn positions from local table to global, filtering out any that are not in a fair position ie. a roughly equal distance from all players' starting positions.
+		local spawnRange = maxDistance[terrainType] - midPointDistance[terrainType]
+		local minPlayerDistanceThreshold = spawnRange * _monsterInfo.spawn_threshold_player_min
+		local midPointDistanceThreshold = midPointDistance[terrainType] + (spawnRange * _monsterInfo.spawn_threshold_from_mid)
+		
+		-- If only one player in match use a different rule for selecting spawn locations
+		if playerCount == 1 then 
+			
+			minPlayerDistanceThreshold = spawnRange * _monsterInfo.single_player_threshold_min
+			midPointDistanceThreshold = midPointDistance[terrainType] + (spawnRange * _monsterInfo.single_player_threshold_max)
+		end
+		
+		for _, spawnLocation in pairs(potentialSpawnLocations[terrainType]) do
+			
+			if spawnLocation.smallestDistance >= minPlayerDistanceThreshold and spawnLocation.largestDistance <= midPointDistanceThreshold then
+				
+				_monsterInfo.spawn_positions_count[terrainType] = _monsterInfo.spawn_positions_count[terrainType] + 1
+				table.insert(_monsterInfo.spawn_positions[terrainType], spawnLocation.position)
+			end
+		end
+		
+		if DEBUG_OUTPUT then
+			
+			if terrainType == eTerrainType.land then 
+				
+				print("\tSpawn Filter - Land Mid Range: " .. midPointDistance[eTerrainType.land] .. " - " ..  midPointDistanceThreshold)
+				print("\tSpawn Filter - Land Player Min: " .. minPlayerDistanceThreshold)
+				print("\tSpawn Filter - Land Count: " .. _monsterInfo.spawn_positions_count[eTerrainType.land])
+				print(" ")
+				
+			elseif terrainType == eTerrainType.water then 
+				
+				print("\tSpawn Filter - Water Mid Range: " .. midPointDistance[eTerrainType.water] .. " - " ..  midPointDistanceThreshold)
+				print("\tSpawn Filter - Water Player Min: " .. minPlayerDistanceThreshold)
+				print("\tSpawn Filter - Water Count: " .. _monsterInfo.spawn_positions_count[eTerrainType.water])
+				print(" ")
+			end
+		end
+	end
+	
+	-- Clean up anything no longer needed
+	SGroup_DeSpawn(monsterSquadGroup[eTerrainType.land])
+	SGroup_DeSpawn(monsterSquadGroup[eTerrainType.water])
+	SGroup_DestroyAllSquads(monsterSquadGroup[eTerrainType.land])
+	SGroup_DestroyAllSquads(monsterSquadGroup[eTerrainType.water])
+	SGroup_Destroy(monsterSquadGroup[eTerrainType.land])
+	SGroup_Destroy(monsterSquadGroup[eTerrainType.water])
+	potentialSpawnLocations[eTerrainType.land] = nil
+	potentialSpawnLocations[eTerrainType.water] = nil
+	potentialSpawnLocations = nil
+	
+end
+
+function MapMonsters_SpawnMonster(context, data)
+	
+	local canSpawnWater = false
+	
+	-- Info needed to spawn monsters on water.
+	if MapMonsters_ShouldUseDynamicSpawning() then
+		canSpawnWater = #_monsterInfo.spawn_markers[eTerrainType.water] > 0
+	else
+		canSpawnWater = _monsterInfo.spawn_positions_count[eTerrainType.water] > 0
+	end
+	
+	-- Decide which monster / terrain type to spawn.
+	local typeToSpawn = eTerrainType.land
+	if canSpawnWater and _monsterInfo.prev_spawn_type == eTerrainType.land then
+		typeToSpawn = eTerrainType.water
+	end
+	
+	-- Override condition for water maps where the land spawn positions equidistant to all 
+	-- towncenters can be null.
+	if MapMonsters_ShouldUseDynamicSpawning() then 
+		if canSpawnWater and #_monsterInfo.spawn_markers[eTerrainType.land] < 1 then
+			typeToSpawn =  eTerrainType.water
+		end
+	else if canSpawnWater and _monsterInfo.spawn_positions_count[eTerrainType.land] < 1 then
+			typeToSpawn =  eTerrainType.water
+		end
+	end
+	
+	-- Spawn monster of selected type.
+	local monsterSquadGroup = SGroup_CreateIfNotFound(_monsterInfo.sgroup_name[typeToSpawn])
+	local monsterSpawnedCount = SGroup_CountSpawned(monsterSquadGroup )
+	local monsterSquadBlueprint = BP_GetSquadBlueprint(_monsterInfo.blueprint_name[typeToSpawn])
+	local playerTable = Core_GetPlayersTableEntryFromIndex(1)
+	
+	local spawnPosition = nil
+	if MapMonsters_ShouldUseDynamicSpawning() then
+		spawnPosition = Entity_GetPosition(Table_GetRandomItem(_monsterInfo.spawn_markers[typeToSpawn]))
+	else
+		spawnPosition = Table_GetRandomItem(_monsterInfo.spawn_positions[typeToSpawn])
+	end
+	
+	if monsterSpawnedCount > 0 then SGroup_DeSpawn( monsterSquadGroup ) end -- First despawn any already existing monsters of the selected type
+	
+	UnitEntry_DeploySquads(playerTable.id, monsterSquadGroup, {{sbp = monsterSquadBlueprint, numSquads = 1}}, spawnPosition)
+	UI_CreateEventCue(_monsterInfo.spawn_prompt_loc[typeToSpawn], _monsterInfo.spawn_prompt_sub_loc[typeToSpawn], _monsterInfo.spawn_prompt_template[typeToSpawn], _monsterInfo.spawn_prompt_icon[typeToSpawn], _monsterInfo.spawn_prompt_sfx[typeToSpawn], _monsterInfo.spawn_prompt_position[typeToSpawn], _monsterInfo.spawn_prompt_lifetime[typeToSpawn])       
+	_monsterInfo.prev_spawn_type = typeToSpawn;
+	
+	if DEBUG_OUTPUT then
+		if typeToSpawn == eTerrainType.land then 
+			print("Spawning Land Monster - Pos: " .. spawnPosition.x .. "x " .. spawnPosition.y .. "y " .. spawnPosition.z)
+			
+		elseif typeToSpawn == eTerrainType.water then 
+			print("Spawning Sea Monster - Pos: " .. spawnPosition.x .. "x " .. spawnPosition.y .. "y " .. spawnPosition.z)
+		end
+	end
+	
+	-- Ensure all monsters are neutral and not player owned
+	SGroup_SetWorldOwned(monsterSquadGroup)
+end
+
+-- Modifies the default gathering, construction, production, and upgrade speeds for all units and players.
+function MapMonsters_SetSpeed(speed)
+
+	-- Removed existing speed modifiers
+	for _, modifier in pairs(_match.speed.modifiers) do
+		Modifier_RemoveInternal(modifier.ModifierID)
+	end
+	_match.speed.modifiers = {}
+	
+	-- Determine new modifier value(s)
+	local GetCommandLineNumber = function(arg, default_value)
+		local arg_value = tonumber(Util_GetCommandLineArgument(arg))
+		if arg_value == nil or arg_value == 0 then 
+			arg_value = default_value
+		end
+		return math.abs(arg_value)
+	end
+	
+	local default_speed = speed or GetCommandLineNumber("speed", 1)
+	_match.speed.build = GetCommandLineNumber("build_speed", default_speed)
+	_match.speed.repair = GetCommandLineNumber("repair_speed", default_speed)
+	_match.speed.gather = GetCommandLineNumber("gather_speed", default_speed)
+	_match.speed.upgrade = GetCommandLineNumber("upgrade_speed", default_speed)
+	_match.speed.production = GetCommandLineNumber("production_speed", default_speed)
+	
+	local ApplyModifier = function(player_id, modifier_ebp, modifier_type, modifier_value)
+		if modifier_value ~= 1 then 
+			local modifier = Modifier_Create(MAT_EntityType, modifier_type, MUT_Multiplication, false, modifier_value, modifier_ebp)
+			Modifier_ApplyToPlayer(modifier, player_id, 0.0)
+			table.insert(_match.speed.modifiers, modifier)
+		end
+	end
+	
+	-- Apply new modifiers
+	for _, player in pairs(PLAYERS) do	
+		local villager_ebp = Cardinal_ConvertTypeToEntityBlueprint("villager", player.id)		
+		ApplyModifier(player.id, villager_ebp, "resource_entity_harvest_rate_food", _match.speed.gather)
+		ApplyModifier(player.id, villager_ebp, "resource_entity_harvest_rate_wood", _match.speed.gather)
+		ApplyModifier(player.id, villager_ebp, "resource_entity_harvest_rate_gold", _match.speed.gather)
+		ApplyModifier(player.id, villager_ebp, "resource_entity_harvest_rate_stone", _match.speed.gather)
+		ApplyModifier(player.id, villager_ebp, "construction_rate", _match.speed.build)
+--		ApplyModifier(player.id, villager_ebp, "repair_rate_matchifier", _match.speed.repair)
+	end
+end
+
+function MapMonsters_ShouldUseDynamicSpawning()
+	if _monsterInfo.fallback_to_old_spawn_system then
+		return false
+	end
+	
+	return  DynamicSpawning_IsEnabled()
+end

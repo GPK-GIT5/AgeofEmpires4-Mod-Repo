@@ -1,0 +1,886 @@
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("missionomatic/missionomatic_artofwar.scar")
+import("training/coretraininggoals.scar")
+import("cardinal.scar")
+
+
+
+function HC_Towton_InitTowns()
+	
+	townDataTable = {}
+	--create table entry for each town
+	for i = 1, 8 do
+		townDataTable[i] = {army = nil, armyMakeup = nil, manor = nil, manorMkr = nil, manorDestroyed = false, 
+			beacon = nil, beaconLit = false, beaconFires = nil, beaconMkr = nil, beaconTowerMarkers = nil, 
+		reinforcementGroup = nil, patrolGroup = nil, currentPatrolPoint = 1, patrolMarkers = nil}
+	end
+	
+	
+	local sbp_spearman1 = SBP.LANCASTER.UNIT_SPEARMAN_1_LAN
+	local sbp_yeoman2 = SBP.LANCASTER.UNIT_YEOMAN_2_LAN
+	local sbp_hobelar2 = SBP.LANCASTER.UNIT_HOBELAR_2_LAN
+	local sbp_monk = SBP.LANCASTER.UNIT_MONK_3_LAN
+	local sbp_earlsGuard = SBP.LANCASTER.UNIT_EARLSGUARD_3_LAN
+	
+	sg_reinforceArmyUnits = SGroup_CreateIfNotFound("sg_reinforceArmyUnits")
+	eg_manorGroup = EGroup_CreateIfNotFound("eg_manorGroup")
+	
+	local bp_reticule = BP_GetReticuleBlueprint("marquee")
+	
+	-------------------------------
+	local currentTownIndex = 1
+	--set up NorthEast town (1)
+	armyMakeup = {}
+	armyMakeup[1] = {unitBP = sbp_earlsGuard, desiredCount = 1, currentCount = 0, spawnMarker = mkr_manorNE}
+	armyMakeup[2] = {unitBP = sbp_spearman1, desiredCount = 7, currentCount = 0, spawnMarker = mkr_manorNE}
+	armyMakeup[3] = {unitBP = sbp_monk, desiredCount = 2, currentCount = 0, spawnMarker = mkr_manorNE}
+	townDataTable[currentTownIndex].armyMakeup = armyMakeup
+	
+	--add manors to table
+	townDataTable[currentTownIndex].manor = EGroup_CreateIfNotFound("eg_manorGroup"..tostring(currentTownIndex))
+	townDataTable[currentTownIndex].manorMkr = mkr_manorNE
+	Player_GetAllEntitiesNearMarker(allyPlayer, townDataTable[currentTownIndex].manor, mkr_manorNE)
+	--make manor untargetable until half of buildings are destroyed
+	EGroup_SetTargetingType(townDataTable[currentTownIndex].manor, Targeting_None)
+	
+	--add beacons to table (these egroups are defined in scenario data, outside of scar files)
+	townDataTable[currentTownIndex].beacon = eg_beaconNE
+	townDataTable[currentTownIndex].beaconMkr = mkr_beaconNE
+	townDataTable[currentTownIndex].beaconTowerMarkers = {mkr_towerNE1, mkr_towerNE2, mkr_towerNE3}
+	HC_Towton_InitBeacon(currentTownIndex)
+	
+	--make beacon unselectable
+	EGroup_SetSelectable(townDataTable[currentTownIndex].beacon, false)
+	
+	--set up manual patrol points
+	townDataTable[currentTownIndex].patrolMarkers = {mkr_townNE1, mkr_townNE2}
+	
+	params = {
+		player = allyPlayer,
+		name = "townArmy_"..tostring(currentTownIndex),
+		spawn = mkr_townNE,
+		targets = {mkr_townNE1, mkr_townNE2},
+		onDeathReset = true,
+		targetOrder = TARGET_ORDER_PATROL,
+		leashBuffer = 30,
+	}
+	townDataTable[currentTownIndex].army = Army_Init(params)
+	-------------------------------
+	-------------------------------
+	currentTownIndex = 2
+	--set up SouthEast town (2)
+	armyMakeup = {}
+	armyMakeup[1] = {unitBP = sbp_earlsGuard, desiredCount = 1, currentCount = 0, spawnMarker = mkr_manorSE}
+	armyMakeup[2] = {unitBP = sbp_spearman1, desiredCount = 5, currentCount = 0, spawnMarker = mkr_manorSE}
+	armyMakeup[3] = {unitBP = sbp_yeoman2, desiredCount = 5, currentCount = 0, spawnMarker = mkr_manorSE}
+	townDataTable[currentTownIndex].armyMakeup = armyMakeup
+	
+	--add manors to table
+	townDataTable[currentTownIndex].manor = EGroup_CreateIfNotFound("eg_manorGroup"..tostring(currentTownIndex))
+	townDataTable[currentTownIndex].manorMkr = mkr_manorSE
+	Player_GetAllEntitiesNearMarker(allyPlayer, townDataTable[currentTownIndex].manor, mkr_manorSE)
+	--make manor untargetable until half of buildings are destroyed
+	EGroup_SetTargetingType(townDataTable[currentTownIndex].manor, Targeting_None)
+	
+	--add beacons to table (these egroups are defined in scenario data, outside of scar files)
+	townDataTable[currentTownIndex].beacon = eg_beaconSE
+	townDataTable[currentTownIndex].beaconMkr = mkr_beaconSE
+	townDataTable[currentTownIndex].beaconTowerMarkers = {mkr_towerSE1, mkr_towerSE2, mkr_towerSE3}
+	HC_Towton_InitBeacon(currentTownIndex)
+	
+	--make beacon unselectable
+	EGroup_SetSelectable(townDataTable[currentTownIndex].beacon, false)
+	
+	--set up manual patrol points
+	townDataTable[currentTownIndex].patrolMarkers = {mkr_townSE1, mkr_townSE2}
+	
+	params = {
+		player = allyPlayer,
+		name = "townArmy_"..tostring(currentTownIndex),
+		spawn = mkr_townSE,
+		targets = {mkr_townSE1, mkr_townSE2},
+		onDeathReset = true,
+		targetOrder = TARGET_ORDER_PATROL,
+		leashBuffer = 30,
+	}
+	townDataTable[currentTownIndex].army = Army_Init(params)
+	-------------------------------
+	-------------------------------
+	currentTownIndex = 3
+	--set up SouthWest town (3)
+	armyMakeup = {}
+	armyMakeup[1] = {unitBP = sbp_earlsGuard, desiredCount = 1, currentCount = 0, spawnMarker = mkr_manorSW}
+	armyMakeup[2] = {unitBP = sbp_hobelar2, desiredCount = 4, currentCount = 0, spawnMarker = mkr_manorSW}
+	armyMakeup[3] = {unitBP = sbp_spearman1, desiredCount = 2, currentCount = 0, spawnMarker = mkr_manorSW}
+	townDataTable[currentTownIndex].armyMakeup = armyMakeup
+	
+	--add manors to table
+	townDataTable[currentTownIndex].manor = EGroup_CreateIfNotFound("eg_manorGroup"..tostring(currentTownIndex))
+	townDataTable[currentTownIndex].manorMkr = mkr_manorSW
+	Player_GetAllEntitiesNearMarker(allyPlayer, townDataTable[currentTownIndex].manor, mkr_manorSW)
+	--make manor untargetable until half of buildings are destroyed
+	EGroup_SetTargetingType(townDataTable[currentTownIndex].manor, Targeting_None)
+	
+	--add beacons to table (these egroups are defined in scenario data, outside of scar files)
+	townDataTable[currentTownIndex].beacon = eg_beaconSW
+	townDataTable[currentTownIndex].beaconMkr = mkr_beaconSW
+	townDataTable[currentTownIndex].beaconTowerMarkers = {mkr_towerSW1, mkr_towerSW2, mkr_towerSW3}
+	HC_Towton_InitBeacon(currentTownIndex)
+	
+	--make beacon unselectable
+	EGroup_SetSelectable(townDataTable[currentTownIndex].beacon, false)
+	
+	--set up manual patrol points
+	townDataTable[currentTownIndex].patrolMarkers = {mkr_townSW1, mkr_townSW2}
+	
+	params = {
+		player = allyPlayer,
+		name = "townArmy_"..tostring(currentTownIndex),
+		spawn = mkr_townSW,
+		targets = {mkr_townSW1, mkr_townSW2},
+		onDeathReset = true,
+		targetOrder = TARGET_ORDER_PATROL,
+		leashBuffer = 30,
+	}
+	townDataTable[currentTownIndex].army = Army_Init(params)
+	-------------------------------
+	-------------------------------
+	currentTownIndex = 4
+	--set up NorthWest town (4)
+	armyMakeup = {}
+	armyMakeup[1] = {unitBP = sbp_earlsGuard, desiredCount = 1, currentCount = 0, spawnMarker = mkr_manorNW}
+	armyMakeup[2] = {unitBP = sbp_yeoman2, desiredCount = 6, currentCount = 0, spawnMarker = mkr_manorNW}
+	armyMakeup[3] = {unitBP = sbp_spearman1, desiredCount = 4, currentCount = 0, spawnMarker = mkr_manorNW}
+	townDataTable[currentTownIndex].armyMakeup = armyMakeup
+	
+	--add manors to table
+	townDataTable[currentTownIndex].manor = EGroup_CreateIfNotFound("eg_manorGroup"..tostring(currentTownIndex))
+	townDataTable[currentTownIndex].manorMkr = mkr_manorNW
+	Player_GetAllEntitiesNearMarker(allyPlayer, townDataTable[currentTownIndex].manor, mkr_manorNW)
+	--make manor untargetable until half of buildings are destroyed
+	EGroup_SetTargetingType(townDataTable[currentTownIndex].manor, Targeting_None)
+	
+	--add beacons to table (these egroups are defined in scenario data, outside of scar files)
+	townDataTable[currentTownIndex].beacon = eg_beaconNW
+	townDataTable[currentTownIndex].beaconMkr = mkr_beaconNW
+	townDataTable[currentTownIndex].beaconTowerMarkers = {mkr_towerNW1, mkr_towerNW2, mkr_towerNW3}
+	HC_Towton_InitBeacon(currentTownIndex)
+	
+	--make beacon unselectable
+	EGroup_SetSelectable(townDataTable[currentTownIndex].beacon, false)
+	
+	--set up manual patrol points
+	townDataTable[currentTownIndex].patrolMarkers = {mkr_townNW1, mkr_townNW2}
+	
+	params = {
+		player = allyPlayer,
+		name = "townArmy_"..tostring(currentTownIndex),
+		spawn = mkr_townNW,
+		targets = {mkr_townNW1, mkr_townNW2},
+		onDeathReset = true,
+		targetOrder = TARGET_ORDER_PATROL,
+		leashBuffer = 30,
+	}
+	townDataTable[currentTownIndex].army = Army_Init(params)
+	-------------------------------
+	-------------------------------
+	currentTownIndex = 5
+	--set up North Beacon (5)
+	
+	--add beacons to table (these egroups are defined in scenario data, outside of scar files)
+	townDataTable[currentTownIndex].beacon = eg_beaconN
+	townDataTable[currentTownIndex].beaconMkr = mkr_beaconN
+	townDataTable[currentTownIndex].beaconTowerMarkers = {mkr_towerN1, mkr_towerN2}
+	HC_Towton_InitBeacon(currentTownIndex)
+	
+	--add reticule to beacon
+	beaconNorthReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, 5)
+	UI_ModalVisual_SetPosition(beaconNorthReticuleID, Util_GetPosition(townDataTable[currentTownIndex].beaconMkr))
+	
+	-------------------------------
+	-------------------------------
+	currentTownIndex = 6
+	--set up South Beacon (6)
+	
+	--add beacons to table (these egroups are defined in scenario data, outside of scar files)
+	townDataTable[currentTownIndex].beacon = eg_beaconS
+	townDataTable[currentTownIndex].beaconMkr = mkr_beaconS
+	townDataTable[currentTownIndex].beaconTowerMarkers = {mkr_towerS1}
+	HC_Towton_InitBeacon(currentTownIndex)
+	
+	-------------------------------
+	-------------------------------
+	
+	--add groups to hold reinforcements before they join with the army
+	for i = 1, #townDataTable do 
+		townDataTable[i].reinforcementGroup = SGroup_CreateIfNotFound("sg_reinforcements"..tostring(i))
+		townDataTable[i].patrolGroup = SGroup_CreateIfNotFound("patrolGroup"..tostring(i))
+	end
+	
+	HC_Towton_InitDefensiveOutposts()
+	
+	Rule_AddInterval(HC_Towton_UpdateTowns, 15)
+	Rule_AddInterval(HC_Towton_UpdateTownDefenders, 5)
+	
+end
+
+function HC_Towton_InitDefensiveOutposts()
+	--set up egroups for the ally player's defensive outposts so they can be upgraded
+	
+	eg_outpostNE = EGroup_CreateIfNotFound("eg_outpostNE")
+	EGroup_AddEGroup(eg_outpostNE, eg_townNE)
+	EGroup_Filter(eg_outpostNE, EBP.LANCASTER.BUILDING_DEFENSE_OUTPOST_LAN, FILTER_KEEP)
+	
+	eg_outpostSE = EGroup_CreateIfNotFound("eg_outpostSE")
+	EGroup_AddEGroup(eg_outpostSE, eg_townSE)
+	EGroup_Filter(eg_outpostSE, EBP.LANCASTER.BUILDING_DEFENSE_OUTPOST_LAN, FILTER_KEEP)
+	
+	eg_outpostNW = EGroup_CreateIfNotFound("eg_outpostNW")
+	EGroup_AddEGroup(eg_outpostNW, eg_townNW)
+	EGroup_Filter(eg_outpostNW, EBP.LANCASTER.BUILDING_DEFENSE_OUTPOST_LAN, FILTER_KEEP)
+	
+	eg_outpostSW = EGroup_CreateIfNotFound("eg_outpostSW")
+	EGroup_AddEGroup(eg_outpostSW, eg_townSW)
+	EGroup_Filter(eg_outpostSW, EBP.LANCASTER.BUILDING_DEFENSE_OUTPOST_LAN, FILTER_KEEP)
+	
+	
+end
+
+function HC_Towton_InitBeacon(townIndex)
+	
+	--set props to be invulnerable
+	eg_beaconProps = EGroup_CreateIfNotFound("eg_beaconProps")
+	World_GetNeutralEntitiesNearMarker(eg_beaconProps, townDataTable[townIndex].beaconMkr)
+	EGroup_RemoveGroup(eg_beaconProps, townDataTable[townIndex].beacon)
+	EGroup_SetSelectable(eg_beaconProps, false)
+	EGroup_SetInvulnerable(eg_beaconProps, true, -1)
+	EGroup_SetTargetingType(eg_beaconProps, Targeting_None)
+	
+	--modify the entity used to light the beacon
+	--EGroup_SetSelectable(townDataTable[townIndex].beacon, false)
+	beaconEntity = EGroup_GetEntityAt(townDataTable[townIndex].beacon, 1)
+	if(beaconEntity ~= nil) then
+		Entity_ConvertBlueprint(beaconEntity, EBP.LANCASTER.BUILDING_SIGNAL_BEACON_LAN)
+		Entity_SetInvulnerable(beaconEntity, true, -1)
+	end
+end
+
+
+function HC_Towton_UpdateTowns()
+	
+	--reset current unit counts before counting existing units of each type
+	for i = 1, #townDataTable do 
+		if(townDataTable[i].army ~= nil) then
+			for makeupI = 1, #townDataTable[i].armyMakeup do
+				townDataTable[i].armyMakeup[makeupI].currentCount = 0
+			end
+		end
+	end
+	
+	--check for adding new units
+	for i = 1, #townDataTable do 
+		if(townDataTable[i].army ~= nil and townDataTable[i].manorDestroyed == false and finalWaveStarted == false) then
+			if(EGroup_CountSpawned(townDataTable[i].manor) > 0) then
+				local addedNewUnit = false
+				local sg_tempArmyUnits = townDataTable[i].patrolGroup --Army_GetSGroup(townDataTable[i].army)
+				if(SGroup_CountSpawned(townDataTable[i].reinforcementGroup) > 0) then
+					SGroup_AddGroup(sg_tempArmyUnits, townDataTable[i].reinforcementGroup)
+				end
+				
+				if(sg_tempArmyUnits ~= nil) then
+					--
+					local mostNeededCount = 0
+					for makeupI = 1, #townDataTable[i].armyMakeup do 
+						--count how many units of this type are in the army
+						for unitI = 1, SGroup_CountSpawned(sg_tempArmyUnits) do 
+							local squad = SGroup_GetSquadAt(sg_tempArmyUnits, unitI)
+							if(Squad_GetBlueprint(squad) == townDataTable[i].armyMakeup[makeupI].unitBP) then
+								townDataTable[i].armyMakeup[makeupI].currentCount = townDataTable[i].armyMakeup[makeupI].currentCount + 1
+							end
+						end
+						local unitMissingCount = townDataTable[i].armyMakeup[makeupI].desiredCount - townDataTable[i].armyMakeup[makeupI].currentCount
+						if(unitMissingCount > mostNeededCount) then
+							mostNeededCount = unitMissingCount
+						end
+					end
+					
+					--add a new unit of the type that is missing the most members
+					for makeupI = 1, #townDataTable[i].armyMakeup do 
+						local unitMissingCount = townDataTable[i].armyMakeup[makeupI].desiredCount - townDataTable[i].armyMakeup[makeupI].currentCount
+						--if we haven't reached the max number of units of this type, and haven't added something else, add spawn a new unit
+						if(unitMissingCount > 0 and unitMissingCount == mostNeededCount and addedNewUnit == false) then
+							
+							UnitEntry_DeploySquads(allyPlayer, townDataTable[i].reinforcementGroup, {sbp = townDataTable[i].armyMakeup[makeupI].unitBP, numSquads = 1 }, townDataTable[i].armyMakeup[makeupI].spawnMarker)
+							
+							--only add one unit per army per update call
+							addedNewUnit = true
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	
+	
+end
+
+
+function HC_Towton_UpdateTownDefenders()
+	
+	for i = 1, #townDataTable do 
+		if(townDataTable[i].army ~= nil and townDataTable[i].manorDestroyed == false) then
+			local sg_tempArmyUnits = townDataTable[i].patrolGroup ---Army_GetSGroup(townDataTable[i].army)
+			--send reinforcements towards the defending army
+			if(SGroup_CountSpawned(townDataTable[i].reinforcementGroup) > 0 and SGroup_CountSpawned(sg_tempArmyUnits) > 0) then
+				Cmd_AttackMove(townDataTable[i].reinforcementGroup, Util_GetPosition(sg_tempArmyUnits), false)
+			end
+			--merge units that are close enough to the defending army (iterate backwards so we can remove items)
+			for unitI = SGroup_CountSpawned(townDataTable[i].reinforcementGroup), 1, -1 do 
+				squad = SGroup_GetSquadAt(townDataTable[i].reinforcementGroup, unitI)
+				--add to army if army sgroup is empty or the squad is close enough
+				if(SGroup_CountSpawned(sg_tempArmyUnits) == 0) then
+					SGroup_Single(sg_single, squad)
+					--Army_AddSGroup(townDataTable[i].army, sg_single)
+					SGroup_AddGroup(townDataTable[i].patrolGroup, sg_single)
+					SGroup_Remove(townDataTable[i].reinforcementGroup, squad)
+				elseif(Util_GetDistance(squad, sg_tempArmyUnits) < 10) then
+					SGroup_Single(sg_single, squad)
+					--Army_AddSGroup(townDataTable[i].army, sg_single)
+					SGroup_AddGroup(townDataTable[i].patrolGroup, sg_single)
+					SGroup_Remove(townDataTable[i].reinforcementGroup, squad)
+				end
+			end
+			
+			--manually order units to patrol
+			if(SGroup_CountSpawned(townDataTable[i].patrolGroup) > 0 and townDataTable[i].patrolMarkers ~= nil) then
+				patrolTargetLocation = Util_GetPosition(townDataTable[i].patrolMarkers[townDataTable[i].currentPatrolPoint])
+				
+				if(SGroup_IsUnderAttack(townDataTable[i].patrolGroup, ANY, 5) == false) then
+					Cmd_AttackMove(townDataTable[i].patrolGroup, patrolTargetLocation, false)
+					if(townDataTable[i].currentPatrolPoint == 1) then
+						townDataTable[i].currentPatrolPoint = 2
+					else
+						townDataTable[i].currentPatrolPoint = 1
+					end
+				end
+			end
+		end
+	end
+end
+
+function HC_Towton_ManorDestroyed(manorPosition)
+	
+	Util_StartIntel(EVENTS.Town_Lost)
+	Sound_Play2D(MUS_STING_NEGATIVE)
+	
+	local townIndex = 0
+	for i = 1, #townDataTable do
+		if(townDataTable[i].manorMkr ~= nil) then
+			if(Util_GetDistance(townDataTable[i].manorMkr, manorPosition) < 10) then
+				townIndex = i
+			end
+		end
+	end
+	
+	--light signal beacon for allied towns and send reinforcements
+	if(townIndex > 0) then
+		townDataTable[townIndex].manorDestroyed = true
+		
+		if(townIndex < 5) then
+			HC_Towton_LightBeacon(townIndex)
+			Army_Dissolve(townDataTable[townIndex].army)
+		end
+	end
+	
+end
+
+function HC_Towton_LightBeacon(townIndex)
+	--return if this beacon has alreaddy been lit
+	if(townDataTable[townIndex].beaconLit == true) then
+		return
+	end
+	
+	--set tent to be on fire
+	if(EGroup_Count(townDataTable[townIndex].beacon) > 0) then
+		EGroup_SetAvgHealth(townDataTable[townIndex].beacon, .1)
+		Modify_OnFireDamagePerTick(townDataTable[townIndex].beacon, MUT_Multiplication, 0)
+		Modify_ReceivedDamage(townDataTable[townIndex].beacon, 0, true, -1)
+		
+		if(EGroup_Count(townDataTable[townIndex].beacon) > 0) then
+			for i = 1, EGroup_Count(townDataTable[townIndex].beacon) do
+				local entity = EGroup_GetEntityAt(townDataTable[townIndex].beacon, i)	
+				tentPosition = Util_GetPosition(entity)
+				tentPosition.y = tentPosition.y + 1
+				Entity_WarpToPos(entity, tentPosition)
+				EGroup_SetSelectable(townDataTable[townIndex].beacon, false)
+				EGroup_SetTargetingType(townDataTable[townIndex].beacon, Targeting_None)
+			end
+		end
+	end
+	
+	--add campfires
+	campfireBP = BP_GetEntityBlueprint("camp_fire")
+	townDataTable[townIndex].beaconFires = EGroup_CreateIfNotFound("beaconFires"..tostring(townIndex))
+	local warpPos = Util_GetPosition(townDataTable[townIndex].beaconMkr)
+	for i = 1, 3 do
+		warpPos = Util_GetPosition(townDataTable[townIndex].beaconMkr)
+		warpPos.y = warpPos.y + 1.6
+		if(i == 1) then
+			warpPos.x = warpPos.x + .5
+			warpPos.z = warpPos.z + .5
+		end
+		if(i == 2) then
+			warpPos.x = warpPos.x - .5
+			warpPos.z = warpPos.z - .5
+		end
+		if(i == 3) then
+			warpPos.x = warpPos.x - .5
+			warpPos.z = warpPos.z + .5
+		end
+		if(i == 4) then
+			warpPos.x = warpPos.x + .5
+			warpPos.z = warpPos.z - .5
+		end
+		Util_CreateEntities(localPlayer, townDataTable[townIndex].beaconFires, campfireBP, warpPos, 1, nil, true)
+		entity = EGroup_GetEntityAt(townDataTable[townIndex].beaconFires, i)
+		Entity_WarpToPos(entity, warpPos)
+	end
+	
+	--add extra effect for beacon lighting
+	local weaponBP = BP_GetWeaponBlueprint("weapon_naval_fireship_explosive")
+	Misc_DoWeaponHitEffectOnPosition(Util_GetPosition(townDataTable[townIndex].beaconMkr), weaponBP, true)
+	
+	--add towers with a delay
+	for i = 1, #townDataTable[townIndex].beaconTowerMarkers do
+		Rule_AddOneShot(HC_Towton_LightTower, 2 * i, {towerTownIndex = townIndex, towerIndex = i})
+	end
+	
+	if(townIndex == 5) then
+		Rule_AddOneShot(HC_Towton_SpawnAlliedShip, 5)
+	else
+		Rule_AddOneShot(HC_Towton_SpawnAlliedReinforcements, 10, {inTownIndex = townIndex})
+	end
+	
+	townDataTable[townIndex].beaconLit = true
+end
+
+function HC_Towton_LightTower(context, data)
+	
+	campfireBP = BP_GetEntityBlueprint("camp_fire")
+	
+	eg_TowerFires = EGroup_CreateIfNotFound("eg_TowerFires")
+	EGroup_Clear(eg_TowerFires)
+	for i = 1, 3 do
+		warpPos = Util_GetPosition(townDataTable[data.towerTownIndex].beaconTowerMarkers[data.towerIndex])
+		warpPos.y = warpPos.y + 5.3
+		
+		Util_CreateEntities(localPlayer, eg_TowerFires, campfireBP, warpPos, 1, nil, true)
+		entity = EGroup_GetEntityAt(eg_TowerFires, i)
+		Entity_WarpToPos(entity, warpPos)
+		--hide spawning in, then reveal once it has warped to the correct position
+		EGroup_Hide(eg_TowerFires, true)
+	end
+	Rule_AddOneShot(HC_Towton_RevealTowerFire, .1, {towerFirePosition = Util_GetPosition(townDataTable[data.towerTownIndex].beaconTowerMarkers[data.towerIndex])})
+	FOW_PlayerRevealArea(localPlayer, Util_GetPosition(townDataTable[data.towerTownIndex].beaconTowerMarkers[data.towerIndex]), 15, -1)
+	
+end
+
+function HC_Towton_RevealTowerFire(context, data)
+	--reveal fires once they have been warped to the correct position
+	campfireBP = BP_GetEntityBlueprint("camp_fire")
+	eg_TowerFires = EGroup_CreateIfNotFound("eg_TowerFires")
+	EGroup_Clear(eg_TowerFires)
+	eg_TowerFires = Player_GetEntitiesInArea(localPlayer, data.towerFirePosition, 15)
+	EGroup_Filter(eg_TowerFires, campfireBP, FILTER_KEEP)
+	EGroup_Hide(eg_TowerFires, false)
+	
+	for i = 1, EGroup_CountSpawned(eg_TowerFires) do
+		warpPos = Util_GetPosition(data.towerFirePosition)
+		warpPos.y = warpPos.y + 6.1
+		
+		entity = EGroup_GetEntityAt(eg_TowerFires, i)
+		Entity_WarpToPos(entity, warpPos)
+	end
+end
+
+function HC_Towton_SpawnAlliedShip()
+	
+	sg_alliedShips = SGroup_CreateIfNotFound("sg_alliedShips")
+	local sbp_carrack = SBP.LANCASTER.UNIT_NAVAL_CARRACK_LAN
+	UnitEntry_DeploySquads(allyPlayer, sg_alliedShips, {sbp = sbp_carrack, numSquads = 1}, mkr_ShipSpawn1)
+	--add upgrade
+	Cmd_InstantUpgrade(sg_alliedShips, UPG.LANCASTER.UPGRADE_SHIPOFTHECROWN_LAN)
+	Cmd_Move(sg_alliedShips, mkr_ShipRally1, true)
+	Cmd_AttackMove(sg_alliedShips, mkr_ShipRally2, true)
+	
+end
+
+
+function HC_Towton_SpawnAlliedReinforcements(context, data)
+	
+	--find number of player combat units for dynamic adjustments
+	sg_playerCombatUnits = SGroup_CreateIfNotFound("sg_playerCombatUnits")
+	SGroup_Clear(sg_playerCombatUnits)
+	sg_playerCombatUnits = Player_GetSquads(localPlayer)
+	SGroup_Filter(sg_playerCombatUnits, "scar_military", FILTER_KEEP)
+	
+	
+	--this is the 1st town to be attacked
+	if(data.inTownIndex == 4) then
+		sg_alliedTransportsNW = SGroup_CreateIfNotFound("sg_alliedTransportsNW")
+		local sbp_transport = SBP.LANCASTER.UNIT_NAVAL_TRANSPORT_SHIP_LAN
+		--calculate number of units earned based on how long the player defended the town
+		local allyCount = math.ceil(((World_GetGameTime() - reinforcementStartTime1) / phase1Duration) * 20)
+		
+		if(SGroup_CountSpawned(sg_playerCombatUnits) < 10) then
+			allyCount = allyCount + 5
+		end
+		
+		if(allyCount < 5) then
+			allyCount = 5
+		end
+		
+		local type1Count = math.floor(allyCount * .4)
+		local type2Count = allyCount - type1Count
+		local shipCount = math.ceil(allyCount / 16)
+		
+		UnitEntry_DeploySquads(allyPlayer, sg_alliedTransportsNW, {sbp = sbp_transport, numSquads = shipCount }, mkr_reinforcement_NW_spawn)
+		
+		sg_NavalReinforcementsNW = SGroup_CreateIfNotFound("sg_NavalReinforcementsNW")
+		CreateUnitsInsideSGroup(localPlayer, {{ sbp = SBP.LANCASTER.UNIT_EARLSGUARD_4_LAN, numSquads = type1Count }}, sg_alliedTransportsNW, sg_NavalReinforcementsNW)
+		CreateUnitsInsideSGroup(localPlayer, {{ sbp = SBP.LANCASTER.UNIT_YEOMAN_4_LAN, numSquads = type2Count }}, sg_alliedTransportsNW, sg_NavalReinforcementsNW)
+		
+		Cmd_FormationMove(sg_alliedTransportsNW, mkr_reinforcement_NW_landing, true)
+		
+		Rule_AddOneShot(HC_Towton_StartUnloadAlliedTransportsNW, 10)
+	end
+	
+	--this is the 4th town to be attacked
+	if(data.inTownIndex == 1) then
+		sg_alliedTransportsNE = SGroup_CreateIfNotFound("sg_alliedTransportsNE")
+		local sbp_transport = SBP.LANCASTER.UNIT_NAVAL_TRANSPORT_SHIP_LAN
+		--calculate number of units earned based on how long the player defended the town
+		local allyCount = math.ceil(((World_GetGameTime() - reinforcementStartTime4) / phase1Duration) * 32)
+		if(allyCount < 5) then
+			allyCount = 5
+		end
+		
+		local type1Count = math.floor(allyCount * .5)
+		local type2Count = allyCount - type1Count
+		
+		--additional unit types only if medals have been failed
+		local type3Count = 0
+		local type4Count = 0
+		
+		--dynamic difficulty adjustment: give additional units if gold medal has been failed
+		if(conquerorModeActivated == false and goldMedalFailed == true) then
+			type3Count = 8
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 30) then
+				type3Count = type3Count + 7
+			end
+			allyCount = allyCount + type3Count
+		end
+		--dynamic difficulty adjustment: give even more units if silver medal has been failed
+		if(conquerorModeActivated == false and silverMedalFailed == true) then
+			type4Count = 2
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 30) then
+				type4Count = type4Count + 3
+			end
+			allyCount = allyCount + type4Count
+		end
+		
+		local shipCount = math.ceil(allyCount / 16)
+		
+		UnitEntry_DeploySquads(allyPlayer, sg_alliedTransportsNE, {sbp = sbp_transport, numSquads = shipCount }, mkr_reinforcement_NE_spawn)
+		
+		sg_NavalReinforcementsNE = SGroup_CreateIfNotFound("sg_NavalReinforcementsNE")
+		CreateUnitsInsideSGroup(localPlayer, {{ sbp = SBP.LANCASTER.UNIT_CROSSBOWMAN_4_LAN, numSquads = type1Count }}, sg_alliedTransportsNE, sg_NavalReinforcementsNE)
+		CreateUnitsInsideSGroup(localPlayer, {{ sbp = SBP.LANCASTER.UNIT_YEOMAN_4_LAN, numSquads = type2Count }}, sg_alliedTransportsNE, sg_NavalReinforcementsNE)
+		
+		--additional unit types if medals have been failed
+		if(type3Count > 0) then
+			CreateUnitsInsideSGroup(localPlayer, {{ sbp = SBP.LANCASTER.UNIT_EARLSGUARD_4_LAN, numSquads = type3Count }}, sg_alliedTransportsNE, sg_NavalReinforcementsNE)
+		end
+		if(type4Count > 0) then
+			CreateUnitsInsideSGroup(localPlayer, {{ sbp = SBP.LANCASTER.UNIT_SIEGE_CULVERIN_4_LAN, numSquads = type4Count }}, sg_alliedTransportsNE, sg_NavalReinforcementsNE)
+		end
+		
+		Cmd_FormationMove(sg_alliedTransportsNE, mkr_reinforcement_NE_landing, true)
+		
+		Rule_AddOneShot(HC_Towton_StartUnloadAlliedTransportsNE, 10)
+	end
+	
+	--cavalry reinforcements for the 2 southern towns
+	
+	--this is the 3rd town to be attacked
+	if(data.inTownIndex == 2) then
+		sg_alliedReinforcementsSE = SGroup_CreateIfNotFound("sg_alliedReinforcementsSE")
+		local sbp_knight = SBP.FRENCH.UNIT_KNIGHT_4_FRE
+		--calculate number of units earned based on how long the player defended the town
+		local allyCount = math.ceil(((World_GetGameTime() - reinforcementStartTime3) / phase1Duration) * 10)
+		
+		--dynamic difficulty adjustment: give additional units if gold medal has been failed
+		if(conquerorModeActivated == false and goldMedalFailed == true) then
+			allyCount = allyCount + 3
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 25) then
+				allyCount = allyCount + 2
+			end
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 15) then
+				allyCount = allyCount + 3
+			end
+		end
+		--dynamic difficulty adjustment: give even more units if silver medal has been failed
+		if(conquerorModeActivated == false and silverMedalFailed == true) then
+			allyCount = allyCount + 3
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 25) then
+				allyCount = allyCount + 2
+			end
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 15) then
+				allyCount = allyCount + 3
+			end
+		end
+		
+		if(allyCount < 5) then
+			allyCount = 5
+		end
+		
+		local reinforcementData = {sbp = sbp_knight, numSquads = allyCount }
+		
+		UnitEntry_DeploySquads(allyPlayer2, sg_alliedReinforcementsSE, reinforcementData, mkr_reinforcement_S_spawn)
+		
+		Cmd_FormationMove(sg_alliedReinforcementsSE, mkr_reinforcement_S_rally1, true)
+		Cmd_FormationMove(sg_alliedReinforcementsSE, mkr_reinforcement_SE_rally1, true)
+		Cmd_AttackMove(sg_alliedReinforcementsSE, mkr_townSE, true)
+		
+		Rule_AddInterval(HC_Towton_ChangeReinforcementsOwnerSE, .5)
+		
+		--add objective showing reinforcements
+		Objective_Register(SOBJ_ReinforcementsSE)
+		Objective_Start(SOBJ_ReinforcementsSE)
+	end
+	
+	--this is the 2nd town to be attacked
+	if(data.inTownIndex == 3) then
+		sg_alliedReinforcementsSW = SGroup_CreateIfNotFound("sg_alliedReinforcementsSW")
+		local sbp_knight = SBP.FRENCH.UNIT_KNIGHT_3_FRE
+		--calculate number of units earned based on how long the player defended the town
+		local allyCount = math.ceil(((World_GetGameTime() - reinforcementStartTime2) / phase1Duration) * 8)
+		
+		--dynamic difficulty adjustment: give additional units if gold medal has been failed
+		if(conquerorModeActivated == false and goldMedalFailed == true) then
+			allyCount = allyCount + 3
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 20) then
+				allyCount = allyCount + 3
+			end
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 10) then
+				allyCount = allyCount + 2
+			end
+		end
+		--dynamic difficulty adjustment: give even more units if silver medal has been failed
+		if(conquerorModeActivated == false and silverMedalFailed == true) then
+			allyCount = allyCount + 3
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 20) then
+				allyCount = allyCount + 3
+			end
+			if(SGroup_CountSpawned(sg_playerCombatUnits) < 10) then
+				allyCount = allyCount + 2
+			end
+		end
+		
+		if(allyCount < 5) then
+			allyCount = 5
+		end
+		
+		local reinforcementData = {sbp = sbp_knight, numSquads = allyCount }
+		
+		UnitEntry_DeploySquads(allyPlayer2, sg_alliedReinforcementsSW, reinforcementData, mkr_reinforcement_S_spawn)
+		
+		Cmd_FormationMove(sg_alliedReinforcementsSW, mkr_reinforcement_S_rally1, true)
+		Cmd_FormationMove(sg_alliedReinforcementsSW, mkr_reinforcement_SW_rally1, true)
+		Cmd_AttackMove(sg_alliedReinforcementsSW, mkr_townSW, true)
+		
+		Rule_AddInterval(HC_Towton_ChangeReinforcementsOwnerSW, .5)
+		
+		--add objective showing reinforcements
+		Objective_Register(SOBJ_ReinforcementsSW)
+		Objective_Start(SOBJ_ReinforcementsSW)
+	end
+	
+	--extra beacon
+	if(data.inTownIndex == 6) then
+		sg_alliedReinforcementsS = SGroup_CreateIfNotFound("sg_alliedReinforcementsS")
+		local sbp_knight = SBP.FRENCH.UNIT_KNIGHT_3_FRE
+		local reinforcementData = {sbp = sbp_knight, numSquads = 4 }
+		
+		UnitEntry_DeploySquads(allyPlayer2, sg_alliedReinforcementsS, reinforcementData, mkr_reinforcement_S_spawn)
+		
+		Cmd_FormationMove(sg_alliedReinforcementsS, mkr_reinforcement_S_rally1, true)
+		Cmd_FormationMove(sg_alliedReinforcementsS, mkr_reinforcement_SW_rally1, true)
+		Cmd_AttackMove(sg_alliedReinforcementsS, mkr_townSW, true)
+		
+		Rule_AddInterval(HC_Towton_ChangeReinforcementsOwnerS, .5)
+		
+		--add objective showing reinforcements
+		Objective_Register(SOBJ_ReinforcementsS)
+		Objective_Start(SOBJ_ReinforcementsS)
+	end
+	
+end
+
+function HC_Towton_ChangeReinforcementsOwnerSE()
+	
+	sg_southReinforcements = SGroup_CreateIfNotFound("sg_southReinforcements")
+	
+	sg_southReinforcements = Player_GetSquads(allyPlayer2)
+	if(SGroup_CountSpawned(sg_southReinforcements) > 0) then
+		---remove units still behind the walls
+		SGroup_FilterByProximity(sg_southReinforcements, mkr_reinforcement_S_spawn, FILTER_REMOVE, 40)
+		SGroup_FilterByProximity(sg_southReinforcements, mkr_reinforcement_S_Area, FILTER_REMOVE, 40)
+		--change owner of units that have passed the walls
+		for i = SGroup_CountSpawned(sg_southReinforcements), 1, -1 do 
+			ally2Squad = SGroup_GetSquadAt(sg_southReinforcements, i)
+			SGroup_Single(sg_single, ally2Squad)
+			if(SGroup_ContainsSGroup(sg_alliedReinforcementsSE, sg_single, ANY) == true) then
+				Squad_SetPlayerOwner(ally2Squad, localPlayer)
+			else
+				SGroup_Remove(sg_southReinforcements, ally2Squad)
+			end
+		end
+		Cmd_FormationMove(sg_southReinforcements, mkr_reinforcement_SE_rally1, true)
+		Cmd_AttackMove(sg_southReinforcements, mkr_townSE, true)
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function HC_Towton_ChangeReinforcementsOwnerSW()
+	
+	sg_southReinforcements = SGroup_CreateIfNotFound("sg_southReinforcements")
+	
+	sg_southReinforcements = Player_GetSquads(allyPlayer2)
+	if(SGroup_CountSpawned(sg_southReinforcements) > 0) then
+		---remove units still behind the walls
+		SGroup_FilterByProximity(sg_southReinforcements, mkr_reinforcement_S_spawn, FILTER_REMOVE, 40)
+		SGroup_FilterByProximity(sg_southReinforcements, mkr_reinforcement_S_Area, FILTER_REMOVE, 40)
+		--change owner of units that have passed the walls
+		for i = SGroup_CountSpawned(sg_southReinforcements), 1, -1 do 
+			ally2Squad = SGroup_GetSquadAt(sg_southReinforcements, i)
+			SGroup_Single(sg_single, ally2Squad)
+			if(SGroup_ContainsSGroup(sg_alliedReinforcementsSW, sg_single, ANY) == true) then
+				Squad_SetPlayerOwner(ally2Squad, localPlayer)
+			else
+				SGroup_Remove(sg_southReinforcements, ally2Squad)
+			end
+		end
+		Cmd_FormationMove(sg_southReinforcements, mkr_reinforcement_SW_rally1, true)
+		Cmd_AttackMove(sg_southReinforcements, mkr_townSW, true)
+	else
+		Rule_RemoveMe()
+	end
+	
+end
+
+function HC_Towton_ChangeReinforcementsOwnerS()
+	
+	sg_southReinforcements = SGroup_CreateIfNotFound("sg_southReinforcements")
+	
+	sg_southReinforcements = Player_GetSquads(allyPlayer2)
+	if(SGroup_CountSpawned(sg_southReinforcements) > 0) then
+		---remove units still behind the walls
+		SGroup_FilterByProximity(sg_southReinforcements, mkr_reinforcement_S_spawn, FILTER_REMOVE, 40)
+		SGroup_FilterByProximity(sg_southReinforcements, mkr_reinforcement_S_Area, FILTER_REMOVE, 40)
+		--change owner of units that have passed the walls
+		for i = SGroup_CountSpawned(sg_southReinforcements), 1, -1 do 
+			ally2Squad = SGroup_GetSquadAt(sg_southReinforcements, i)
+			SGroup_Single(sg_single, ally2Squad)
+			if(SGroup_ContainsSGroup(sg_alliedReinforcementsS, sg_single, ANY) == true) then
+				Squad_SetPlayerOwner(ally2Squad, localPlayer)
+			else
+				SGroup_Remove(sg_southReinforcements, ally2Squad)
+			end
+		end
+		Cmd_FormationMove(sg_southReinforcements, mkr_reinforcement_SW_rally1, true)
+		Cmd_AttackMove(sg_southReinforcements, mkr_townSW, true)
+	else
+		Rule_RemoveMe()
+	end
+	
+end
+
+function HC_Towton_StartUnloadAlliedTransportsNW()
+	Rule_AddInterval(HC_Towton_UnloadAlliedTransportsNW, .5)
+	--add objective showing reinforcements
+	Objective_Register(SOBJ_ReinforcementsNW)
+	Objective_Start(SOBJ_ReinforcementsNW)
+end
+
+function HC_Towton_UnloadAlliedTransportsNW()
+	sg_squadsHeld = SGroup_CreateIfNotFound("sg_squadsHeld")
+	for i = SGroup_CountSpawned(sg_alliedTransportsNW), 1, -1 do 
+		local transportSquad = SGroup_GetSquadAt(sg_alliedTransportsNW, i)
+		
+		Squad_GetSquadsHeld(transportSquad, sg_squadsHeld)
+		if(SGroup_CountSpawned(sg_squadsHeld) > 0) then
+			--send transport to shore
+			SGroup_Single(sg_single, transportSquad)
+			Cmd_Move(sg_single, mkr_reinforcement_NW_landing, false)
+			--unload transport
+			Cmd_UngarrisonSquad(sg_squadsHeld, mkr_reinforcement_NW_landing, true)
+			Cmd_Move(sg_squadsHeld, mkr_reinforcement_NW_rally1, true)
+			Cmd_AttackMove(sg_squadsHeld, mkr_townNW, true)
+		else
+			--send empty transport away
+			SGroup_Single(sg_single, transportSquad)
+			Cmd_Move(sg_single, mkr_reinforcement_NW_spawn, false)
+			Cmd_Move(sg_single, mkr_reinforcement_NW_spawn, true, true)
+			--remove empty transport
+			SGroup_Remove(sg_alliedTransportsNW, transportSquad)
+		end
+	end
+	
+	SGroup_GetSquadsHeld(sg_alliedTransportsNW, sg_squadsHeld)
+	
+	if(SGroup_CountSpawned(sg_squadsHeld) == 0) then
+		Rule_RemoveMe()
+	end
+end
+
+function HC_Towton_StartUnloadAlliedTransportsNE()
+	Rule_AddInterval(HC_Towton_UnloadAlliedTransportsNE, .5)
+	--add objective showing reinforcements
+	Objective_Register(SOBJ_ReinforcementsNE)
+	Objective_Start(SOBJ_ReinforcementsNE)
+end
+
+function HC_Towton_UnloadAlliedTransportsNE()
+	sg_squadsHeld = SGroup_CreateIfNotFound("sg_squadsHeld")
+	for i = SGroup_CountSpawned(sg_alliedTransportsNE), 1, -1 do 
+		local transportSquad = SGroup_GetSquadAt(sg_alliedTransportsNE, i)
+		
+		Squad_GetSquadsHeld(transportSquad, sg_squadsHeld)
+		if(SGroup_CountSpawned(sg_squadsHeld) > 0) then
+			--send transport to shore
+			SGroup_Single(sg_single, transportSquad)
+			Cmd_Move(sg_single, mkr_reinforcement_NE_landing, false)
+			--unload transport
+			Cmd_UngarrisonSquad(sg_squadsHeld, mkr_reinforcement_NE_landing, true)
+			Cmd_Move(sg_squadsHeld, mkr_reinforcement_NE_rally1, true)
+			Cmd_AttackMove(sg_squadsHeld, mkr_townNE, true)
+		else
+			--send empty transport away
+			SGroup_Single(sg_single, transportSquad)
+			Cmd_Move(sg_single, mkr_reinforcement_NE_spawn, false)
+			Cmd_Move(sg_single, mkr_reinforcement_NE_spawn, true, true)
+			--remove empty transport
+			SGroup_Remove(sg_alliedTransportsNE, transportSquad)
+		end
+	end
+	
+	SGroup_GetSquadsHeld(sg_alliedTransportsNE, sg_squadsHeld)
+	
+	if(SGroup_CountSpawned(sg_squadsHeld) == 0) then
+		Rule_RemoveMe()
+	end
+end

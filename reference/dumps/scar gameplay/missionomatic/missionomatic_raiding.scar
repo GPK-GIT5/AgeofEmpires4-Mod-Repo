@@ -1,0 +1,516 @@
+-- This script manages raid behaviour, which means AI units roaming the map and seeking out targets to attack
+
+--? @shortdesc Use this to initialize the raid system
+function Raiding_Init(initData)
+
+	if scartype(initData.spawnLocations) ~= ST_TABLE or #initData.spawnLocations < 1 then
+		if Util_HasPosition(initData.spawnLocation) == true then
+			initData.spawnLocations = { Util_GetPosition(initData.spawnLocation) }
+		else
+			fatal("RAIDING: Raid system needs either one spawnLocation or a table of spawnLocations, but has neither!")
+		end
+	end
+	
+	if initData.canBuildRams == nil then
+		initData.canBuildRams = true
+	end
+	
+	g_raidSystem = {
+		-- Stuff that came in during Init()
+		player = initData.player,
+		spawnLocations = initData.spawnLocations,
+		despawnLocation = initData.despawnLocation,
+		scoutTargets = initData.scoutTargets,
+		raiderComposition = initData.raiderComposition,
+		sendProbes = initData.sendProbes,
+		activeScouting = initData.activeScouting,
+		partyLimit = initData.partyLimit,
+		partySize = initData.partySize,
+		onIdlePartyFound = initData.onIdle,
+		canBuildRams = initData.canBuildRams,
+		
+		-- Stuff that's just always the same, initially
+		raidParties = {},
+		probeSize = initData.probeSize or 1,
+		exclusionRadius = initData.raidSpacing or 60,
+		exclusionTimer = {
+			current = 0,
+			max = initData.raidTiming or Util_DifVar({120, 120, 90, 60}),
+			noise = 5,
+		},
+		
+		-- Scouting stuff
+		allScoutsSGroup = SGroup_CreateUnique("sg_raiding_scouts"),
+		scoutTimer = {
+			current = 0,
+			max = initData.scoutTiming or Util_DifVar({80, 80, 70, 60}),
+			noise = 5,
+		},
+		
+		-- Stuff we'll use or populate later
+		huntTargets = SGroup_CreateUnique("sg_raiding_hunt_targets"),
+	}
+	
+	-- Set off a per-second monitoring function
+	Raiding_Activate()
+	
+end
+
+--? @shortdesc Activate the raid system
+function Raiding_Activate()
+	
+	if Rule_Exists(_Raiding_Monitor) == false then
+		Rule_AddInterval(_Raiding_Monitor, 1)
+	end
+	
+end
+
+--? @shortdesc Deactivate the raid system (can be reactivated)
+function Raiding_Dectivate()
+	
+	if Rule_Exists(_Raiding_Monitor) == true then
+		Rule_Remove(_Raiding_Monitor)
+	end
+	
+end
+
+--? @shortdesc Returns true if the timer will allow another raid to be launched
+function Raiding_IsTimerValid()
+	
+	return g_raidSystem.exclusionTimer.current <= 0
+	
+end
+
+--? @shortdesc Returns the number of current raid parties
+function Raiding_CountParties()
+	return #g_raidSystem.raidParties
+end
+
+--? @shortdesc Removes a specific RovingArmy from the system
+function Raiding_RemoveParty(module)
+	-- Remove this RovingArmy from the raider system, so it doesn't get any new orders
+	for index, army in pairs(g_raidSystem.raidParties) do
+		if army == module then
+			table.remove(g_raidSystem.raidParties, index)
+			local armyName = "nil"
+			if army ~= nil then
+				armyName = army.descriptor
+			end
+			print(string.format("RAIDING: Removed blocked party %s, %s left", armyName, #g_raidSystem.raidParties))
+		end
+	end
+end
+
+--? @shortdesc Forcibly prunes away all dead raider parties
+function Raiding_PruneParties()
+	for index, army in pairs(g_raidSystem.raidParties) do
+		if RovingArmy_IsDefeated(army) == true then
+			table.remove(g_raidSystem.raidParties, index)
+			local armyName = "nil"
+			if army ~= nil then
+				armyName = army.descriptor
+			end
+			print(string.format("RAIDING: Pruned away expired party %s, %s left", armyName, #g_raidSystem.raidParties))
+		end
+	end
+end
+
+--? @shortdesc Use this to try to trigger a raid against the given position
+--? @args SGROUP/EGROUP/POS raidPos, BOOL force
+--? @result MODULE of the assigned raiding party
+function Raiding_TriggerRaid(raidPos, ignoreExclusions, customComposition, forceNew)
+	
+	-- Can't raid a NIL position!
+	if raidPos == nil then
+		print(string.format("RAIDING: NIL target passed to raid, forced? %s", ignoreExclusions))
+		return nil
+	elseif scartype(raidPos) == ST_SGROUP and SGroup_CountSpawned(raidPos) <= 0 then
+		print(string.format("RAIDING: Empty SGroup passed to raid, forced? %s", ignoreExclusions))
+		return nil
+	-- Sometimes we want to force a new party into existence, maybe with a specific composition, regardless of who else is out there
+	elseif forceNew == true then
+		print(string.format("RAIDING: Forcing new raid party on %s!", raidPos))
+		return _Raiding_InitRaid(nil, raidPos, customComposition)
+	end
+	
+	-- Also check for invalid sallies OR invalid targets
+	for index, army in pairs(g_raidSystem.raidParties) do
+		-- If this army is dead, get rid of it
+		if RovingArmy_IsDefeated(army) == true or RovingArmy_IsEmpty(army) == true then
+			table.remove(g_raidSystem.raidParties, index)
+			local armyName = "nil"
+			if army ~= nil then
+				armyName = army.descriptor
+			end
+			print(string.format("RAIDING: Removed expired party %s, %s left", armyName, #g_raidSystem.raidParties))
+		
+		-- If it isn't dead, see if it already has a target at this location - we don't want any duplicates!
+		elseif raidPos ~= nil then
+			for idxTarget, target in pairs(army.targets) do
+				local targetPosition = target.position
+				if targetPosition == nil and target.sgroup ~= nil and SGroup_CountSpawned(target.sgroup) > 0 then
+					targetPosition = target.sgroup
+				elseif targetPosition == nil then
+					Util_PrintTable(target)
+					assert("Raid can't evaluate target position! Printed to ScarLog!")
+				end
+				
+				local targetDist = Util_GetDistance(targetPosition, raidPos)
+				if targetDist <= g_raidSystem.exclusionRadius and ignoreExclusions ~= true then
+					-- Nil it, because we don't want to do anything with this target
+					raidPos = nil
+					break
+				end
+			end
+		end
+	end
+	
+	-- EARLY OUT if this target is nil, which should only happen if one of the raid groups already has a target here
+	if raidPos == nil then
+		--print(string.format("RAIDING: Target within %s of existing raid target; not assigning!", g_raidSystem.exclusionRadius))
+		return nil
+	end
+	
+	-- If there are ANY sallies, make sure we're not making a new one to go a place that's already targeted
+	if #g_raidSystem.raidParties > 0 then
+		
+		-- Set to a nonzero value, in case this is the first time it's being invoked
+		local immediacyRadius = g_raidSystem.exclusionRadius + 30
+		-- Let's figure out who's the best to send
+		local bestArmy = { army = nil, dist = 99999999, unvisitedCount = 1, }
+		
+		-- Does anybody NOT have many targets? Find whoever has the fewest unvisited targets (so they'll get there sooner)
+		for idxArmy, army in pairs(g_raidSystem.raidParties) do
+			if RovingArmy_CountUnvisitedTargets(army) < bestArmy.unvisitedCount and SGroup_CountSpawned(army.sgroup) > 0 then
+				bestArmy.army = army
+				bestArmy.dist = Util_GetDistance(army.sgroup, raidPos)
+				bestArmy.unvisitedCount = RovingArmy_CountUnvisitedTargets(army)
+			end
+		end
+		
+		-- If that worked, we've got someone who's idle or almost idle, so assign them to this
+		if bestArmy.army ~= nil then
+			print(string.format("RAIDING: Adding target %s to idle %s!", raidPos, bestArmy.army.descriptor))
+			return _Raiding_InitRaid(bestArmy.army, raidPos, customComposition)
+			
+		-- Didn't work? Try something else
+		else
+			-- Let's find out how close the closest sally target is to this place
+			for idxArmy, army in pairs(g_raidSystem.raidParties) do
+				for idxTarget, target in pairs(army.targets) do
+					if target.visited ~= true and (target.position ~= nil or target.sgroup ~= nil) then
+						assert((target.position ~= nil or target.sgroup ~= nil) and raidPos ~= nil, string.format("A raid group is getting something nilled. targetPos %s, targetSgroup %s, raidPos %s", target.position, target.sgroup, raidPos))
+						local targetDist = Util_GetDistance(target.position or target.sgroup, raidPos)
+						if targetDist < bestArmy.dist then 
+							bestArmy.dist = targetDist
+							bestArmy.army = army
+						end
+					end
+				end
+			end
+			-- If the closest target is not too close but within immediacy distance?
+			if bestArmy.dist > g_raidSystem.exclusionRadius and bestArmy.dist < immediacyRadius then
+				print(string.format("RAIDING: Adding target %s to nearby army %s!", raidPos, bestArmy.army.descriptor))
+				return _Raiding_InitRaid(bestArmy.army, raidPos, customComposition)
+				
+			-- If the target is extremely close, don't even bother making a new sally or assigning a new target
+			elseif bestArmy.dist < g_raidSystem.exclusionRadius and ignoreExclusions ~= true then
+				--print(string.format("RAIDING: Army within %s (is %s) of existing raid target; not assigning!", g_raidSystem.exclusionRadius, bestArmy.dist))
+				return nil
+			end
+		end
+	end
+	
+	-- If we're here and thus haven't found an immediate best sally, meaning the ones that exist have plenty of targets or aren't super close
+	-- This means we should make a new one... unless the timer won't allow us to do that
+	if Raiding_IsTimerValid() == true and #g_raidSystem.raidParties < g_raidSystem.partyLimit then
+		return _Raiding_InitRaid(nil, raidPos, customComposition)
+		
+	-- Otherwise, pick the closest of all those that exists
+	else
+		if Raiding_IsTimerValid() == false then
+			--print(string.format("RAIDING: Timer wasn't ready to make a new raid party (%s), looking for existing one", g_raidSystem.exclusionTimer.current))
+		end
+		
+		-- Find the closest army to the position
+		local closest = { dist = 99999999, army = nil }
+		for index, army in pairs(g_raidSystem.raidParties) do
+			local thisSGroup = army.sgroup
+			if SGroup_CountSpawned(thisSGroup) > 0 then
+				local thisDist = Util_GetDistance(thisSGroup, raidPos)
+				if thisDist < closest.dist then
+					closest.dist = thisDist
+					closest.army = army
+				end
+			end
+		end
+		-- Add it! Or not
+		if closest.army ~= nil then
+			-- Figure out if it's too close to an existing target
+			local tooClose = false
+			for index, target in pairs(closest.army.targets) do
+				if target.visited ~= true and (target.position ~= nil or target.sgroup ~= nil) and Util_GetDistance(target.position or target.sgroup, raidPos) < g_raidSystem.exclusionRadius then 
+					tooClose = true
+					break
+				end
+			end
+			-- Add it if it isn't too close to an existing target
+			if tooClose == false then
+				print(string.format("RAIDING: Adding target %s to closest army: %s!", raidPos, closest.army.descriptor))
+				return _Raiding_InitRaid(closest.army, raidPos, customComposition)
+				
+			end
+		end
+		
+	end
+	
+	-- If we got all the way here, we weren't allowed to create a new raid party but there also wasn't an existing one to use
+	-- Too bad! But knowing that it's nil can be used to make decisions outside of this function
+	return nil
+end
+
+--? @shortdesc Sets the maximum number of raiding parties allowed at once
+function Raiding_SetPartyLimit(value)
+	
+	value = math.max(value, 0)
+	g_raidSystem.partyLimit = value
+	
+end
+
+--? @shortdesc Sets whether scouts are regularly sent to look for the player
+function Raiding_SetScouting(value)
+	
+	if scartype(value) == ST_BOOLEAN then
+		g_raidSystem.activeScouting = value
+	end
+	
+end
+
+--? @shortdesc Initiates a raid against a given position
+function _Raiding_InitRaid(raidParty, raidPos, customComposition)
+	
+	-- If raidPos is nil, something went very wrong
+	if scartype(raidPos) == ST_NIL then
+		assert(scartype(raidPos) ~= ST_NIL, string.format("raidParty: %s, raidPos: %s", raidParty, raidPos))
+	end
+	
+	-- If we did pass one in, just add the target
+	if raidParty ~= nil then
+		RovingArmy_AddTarget(raidParty, raidPos, g_raidSystem.exclusionRadius)
+	-- If we didn't pass one in, we need to make one!
+	else
+		-- Spawn a party close to the raid pos
+		raidParty = RovingArmy_Init({
+			descriptor = "raiders_"..tostring(#g_raidSystem.raidParties),
+			type = "RovingArmy",
+			player = g_raidSystem.player,
+			spawnLocation = _Raiding_GetSpawnLocation(raidPos),
+			units = _Raiding_GenerateUnitList(customComposition),
+			targetingType = ARMY_TARGETING_PROX,
+			targets = { raidPos, },
+			onDeathDissolve = true,
+			attackMove = attackMoveStyle_attackEverything,
+			timeRaidLaunched = World_GetGameTime(),
+			combatRange = 45,
+			leashRange = 65,
+			cavalryCanBuildRams = g_raidSystem.canBuildRams,
+		})
+		table.insert(g_raidSystem.raidParties, raidParty)
+		-- Reset the timer that locks new raids from being made
+		_Raiding_ResetRaidTimer()
+		print("RAIDING: New raid module: "..raidParty.descriptor)
+	end
+	-- Send out a probe, if using
+	if g_raidSystem.sendProbes == true then
+		Raiding_TriggerProbe(raidPos, true)
+		-- Since this involves scouts, reset the scout timer
+		_Raiding_ResetScoutTimer()
+	end
+	
+	if raidParty ~= nil then
+		return raidParty
+	else
+		print("RAIDING: Initialized a raid, but ended up with raidParty=NIL")
+	end
+	
+end
+
+
+--? @shortdesc Spawns an extremely basic, small probe attack meant to alert the player more than anything
+function Raiding_TriggerProbe(probeDestination, attackMove, overrideSpawn)
+	
+	-- Set up and spawn the units
+	assert(attackMove ~= nil, "Probes must have an attackMove value specified!")
+	attackMove = attackMove
+	local probeSGroup = SGroup_CreateUnique("probe")
+	local spawnLocation = ResolveSpawnLocation(overrideSpawn or _Raiding_GetSpawnLocation())
+	
+	-- Spawn the units correctly
+	UnitEntry_DeploySquads(g_raidSystem.player, probeSGroup, { { type = "scar_scout", numSquads = g_raidSystem.probeSize, tag = "probe", }, }, spawnLocation)
+	
+	-- If the probeDestination isn't a table, make it a table of the thing it is, and add the despawn location
+	if scartype(probeDestination) ~= ST_TABLE then
+		probeDestination = { probeDestination, }
+	end
+	
+	-- Can't use g_raidSystem.spawnLocation due to an unresolved bug that will instantly kill the unit when it returns
+	-- See issue: https://mscardinal.visualstudio.com/Cardinal/_workitems/edit/39620
+	table.insert(probeDestination, g_raidSystem.despawnLocation)
+	
+	-- Give them a move command that will ultimately consume them in the end
+	MissionOMatic_SGroupCommandDelayed(probeSGroup, probeDestination, attackMove, 1, true)
+	
+end
+
+--? @shortdesc Stops all active raid parties and returns them as an SGroup
+function Raiding_ExtractAllSquads()
+	
+	local sg_allRaiders = SGroup_CreateUnique("sg_allRaiders")
+	
+	for index, army in pairs(g_raidSystem.raidParties) do
+		-- Disband the roving army and get its units
+		RovingArmy_Disband(army, sg_allRaiders)
+	end
+	
+	return sg_allRaiders
+end
+
+--? @shortdesc Sometimes spawns a scout to attack-move around the map, looking to engage the player
+function _Raiding_Monitor(context, data)
+	
+	-- Manage the timers
+	g_raidSystem.exclusionTimer.current = math.max(0, g_raidSystem.exclusionTimer.current - 1)
+	g_raidSystem.scoutTimer.current = math.max(0, g_raidSystem.scoutTimer.current - 1)
+	
+	-- Manage idlers
+	if scartype(g_raidSystem.onIdlePartyFound) == ST_FUNCTION then
+		local currentlyIdle = _Raiding_FindIdleRaiders()
+		if #currentlyIdle > 0 then
+			print(string.format("Found %s idle raiding parties! Calling function...", #currentlyIdle))
+			g_raidSystem.onIdlePartyFound()
+		end
+	end
+	
+	-- Manage the scouts
+	if g_raidSystem.scoutTimer.current <= 0 and g_raidSystem.activeScouting == true then
+		-- Reset the timer
+		_Raiding_ResetScoutTimer()
+		-- Set up and spawn the units
+		local scoutSGroup = SGroup_CreateUnique("raid_scout")
+		local unitTable = { { type = "scar_scout", numSquads = 1 }, }
+		local spawnLocation = ResolveSpawnLocation(_Raiding_GetSpawnLocation())
+		-- Spawn the units correctly
+		UnitEntry_DeploySquads(g_raidSystem.player, scoutSGroup, unitTable, spawnLocation)
+		-- Where to send them? Everywhere!
+		local shuffledPositions = Table_GetRandomItem(g_raidSystem.scoutTargets, #g_raidSystem.scoutTargets)
+		
+		-- We need to send these scouts back and despawn them, eventually, or they clutter the map
+		-- However, we can't use g_raidSystem.spawnLocation due to an unresolved bug that will instantly kill the unit when it returns
+		-- See issue: https://mscardinal.visualstudio.com/Cardinal/_workitems/edit/62350
+		table.insert(shuffledPositions, g_raidSystem.despawnLocation)
+		--print(string.format("RAIDING: Scouting %s positions!", #shuffledPositions))
+		MissionOMatic_SGroupCommandDelayed(scoutSGroup, shuffledPositions, true, 1, true)
+		
+		-- Also add this scout to the overal group of active scouts
+		SGroup_AddGroup(g_raidSystem.allScoutsSGroup, scoutSGroup)
+	end
+	
+end
+
+--? @shortdesc Updates the composition of the generated raid parties
+function Raiding_UpdateComposition(newComposition)
+	
+	-- Don't do anything if the data is egregiously bad
+	if scartype(newComposition) ~= ST_TABLE or #newComposition <= 0 then
+		return
+	end
+	
+	g_raidSystem.raiderComposition = newComposition
+	
+end
+
+--? @shortdesc Creates a unit list based on provided composition data
+function _Raiding_GenerateUnitList(customComposition)
+
+	local compositionToUse = g_raidSystem.raiderComposition
+	if scartype(customComposition) == ST_TABLE and #customComposition > 0 then
+		if scartype(customComposition[1].type) == ST_STRING and scartype(customComposition[1].ratio) == ST_NUMBER then
+			compositionToUse = customComposition
+		end
+	end
+	
+	finalUnitList = {}
+	
+	for index, unit in pairs(compositionToUse) do
+		-- Figure out how many units we're sending
+		local unitNumber = unit.number
+		if unitNumber == nil then
+			if scartype(unit.ratio) == ST_NUMBER then
+				unitNumber = unit.ratio * g_raidSystem.partySize
+			else
+				fatal("Missionomatic Raiding system needs either a 'number' or a 'ratio' value for each unit type! This has neither!")
+			end
+		end
+		-- Insert the final list
+		table.insert(finalUnitList, { type = unit.type, numSquads = unitNumber, })
+		
+	end
+	
+	return finalUnitList
+	
+end
+
+--? @shortdesc Adds a new spawn location to the existing raid system
+function Raiding_AddSpawnLocation(newSpawn)
+	
+	if Util_HasPosition(newSpawn) == true then
+		table.insert(g_raidSystem.spawnLocations, newSpawn)
+	end
+	
+end
+
+--? @shortdesc Gets one of the valid spawn locations
+function _Raiding_GetSpawnLocation(closeToPos)
+	
+	if closeToPos == nil then
+		return Table_GetRandomItem(g_raidSystem.spawnLocations)
+	end
+	
+	return World_GetClosest(closeToPos, g_raidSystem.spawnLocations)
+	
+end
+
+--? @shortdesc Resets the scout timer
+function _Raiding_ResetScoutTimer()
+
+	g_raidSystem.scoutTimer.current = g_raidSystem.scoutTimer.max + World_GetRand(-g_raidSystem.scoutTimer.noise, g_raidSystem.scoutTimer.noise)
+	
+end
+
+--? @shortdesc Resets the raid timer
+function _Raiding_ResetRaidTimer()
+
+	g_raidSystem.exclusionTimer.current = g_raidSystem.exclusionTimer.max + World_GetRand(-g_raidSystem.exclusionTimer.noise, g_raidSystem.exclusionTimer.noise)
+	
+end
+
+--? @shortdesc Counts the number of idle raiders
+function Raiding_CountIdleRaiders()
+
+	local idleParties = _Raiding_FindIdleRaiders()
+	return #idleParties
+	
+end
+
+--? @shortdesc Finds any idle raid parties
+function _Raiding_FindIdleRaiders()
+	local idleParties = {}
+	local currentTime = World_GetGameTime()
+	for idxArmy, army in pairs(g_raidSystem.raidParties) do
+		-- We'll consider a raider idle if it has units, and all those units are idle
+		if SGroup_Count(army.sgroup) > 0 and SGroup_IsIdle(army.sgroup, true) and (currentTime - army.timeRaidLaunched) > 5 then
+			table.insert(idleParties, army)
+		end
+	end
+	return idleParties
+end

@@ -1,0 +1,150 @@
+-- Developed by Forgotten Empires
+
+--handles init and logic for rams that target the fortress and units that accompany and attack area near fortress
+function Safed_Init_Enemy_Rams()
+		
+	--the rams
+	UnitEntry_DeploySquads(
+		player2,
+		sg_enemy_rams,
+		SAFED_ENEMY_RAMS[1].units,
+		mkr_enemy_rams
+	)
+	
+	--the units that accompany the rams	
+	local ram_units = {
+		name = "army_enemy_ram_units",
+		player = player2,
+		units = SAFED_ENEMY_RAM_UNITS[1].units,
+		spawn = mkr_enemy_rams_units,
+		combatRangeEnRoute = 10,
+		combatRangeAtTarget = 10,
+		leashRangeEnRoute = 30,
+		leashRangeAtTarget = 30,
+		ramsBuiltWhenBlocked = 0,
+		holdPositionWhileWaiting = true
+	}
+	
+	local army_ram_units = Army_Init(ram_units)
+	local sg_enemy_rams_units = Army_GetSGroup(army_ram_units)
+	
+	local eg_walls = Player_GetEntitiesFromTypeInArea(player1, "wall", mkr_wall_health5, 10)
+	
+	--ram damage against wall
+	mod_ram_damage = Modify_WeaponDamage(sg_enemy_rams, "hardpoint_01", SAFED_RAM_MODIFY_DAMAGE_WALL)
+	
+	Cmd_HoldPosition(sg_enemy_rams_units, true)
+	
+	Rule_AddInterval(Safed_Enemy_Ram_Attack_Monitor, 1, 
+	{
+		sgroup_rams = sg_enemy_rams,
+		sgroup_rams_units = sg_enemy_rams_units,
+		eg_walls = eg_walls,
+		walls_broken = false
+	})
+	
+end
+
+
+
+
+--monitors when the wall is broken, to then proceed to the fortress along with units
+function Safed_Enemy_Ram_Attack_Monitor(context, data)
+	
+	local sgroup_rams = data.sgroup_rams
+	local sgroup_rams_units = data.sgroup_rams_units
+	local eg_walls = data.eg_walls
+	
+	if (SGroup_CountSpawned(sgroup_rams) < 1) then
+		Rule_RemoveMe()
+		return
+	end
+	
+	if (SAFED_STONE_DEPLETED_COUNT == 3) then
+		
+		--attack walls
+		if (EGroup_Count(eg_walls) > 0) then
+			
+			local unit_move_pos = EGroup_GetOffsetPosition(eg_walls, 7, 10) --position for units to move near the wall
+			data.walls_broken = false
+			
+			Cmd_Attack(sgroup_rams, eg_walls)
+			
+			--units moves until at position
+			if (not Prox_AreSquadsNearMarker(sgroup_rams_units, unit_move_pos, true, 12)) then
+				Cmd_Move(sgroup_rams_units, unit_move_pos)
+			end
+			
+			local ram_pos = nil
+			local ram_units_pos = nil
+			
+			if (SGroup_CountSpawned(sgroup_rams) > 0) then
+				ram_pos = SGroup_GetPosition(sgroup_rams)
+				FOW_PlayerRevealArea(player1, ram_pos, 15, 1)
+			end
+			
+			if (SGroup_CountSpawned(sgroup_rams_units) > 0) then
+				ram_units_pos = SGroup_GetPosition(sgroup_rams_units)
+				FOW_PlayerRevealArea(player1, ram_units_pos, 15, 1)
+			end
+			
+		else --attack fortress
+			
+			--this should only run once as walls_broken not set yet
+			if (data.walls_broken == false and EGroup_Count(eg_fortress) > 0) then				
+				
+				--event notify that the city has been breached
+				local safed_walls_breached_event = {
+					lifetime = 8,
+					message = "$11269105", --The walls of Safed have been breached!
+					sfx = SAFED_FORTRESS_NOTIFY_THRESHOLDS[1].sfx[1],
+					icon = "icons/event_queue_high_priority",
+					template = "high_priority",
+					style = ECV_Title
+				}
+			
+				Safed_Show_Event_Cue(safed_walls_breached_event)
+				Sound_Play2D(SAFED_FORTRESS_NOTIFY_THRESHOLDS[1].sfx[2])
+				
+				--view position when clicking cta view
+				local view_position = nil
+				if (SGroup_CountSpawned(sgroup_rams) > 0) then
+					view_position = SGroup_GetPosition(sgroup_rams)
+				elseif (SGroup_CountSpawned(sgroup_rams_units) > 0) then
+					view_position = SGroup_GetPosition(sgroup_rams_units)
+				end
+				
+				--LOC: The walls of Safed have been breached!
+				EventCues_CallToAction("$11269105", CTA_ALARM, nil, nil, view_position, 30, "icons/cta/illustrations/alarm")
+				Music_PlayStinger(STINGER_ALERT)
+				
+				--units move near fortress and perform attack move
+				if (SGroup_CountSpawned(sgroup_rams_units) > 0) then
+				
+					--slower walk speed to give the player time to respond, disabled for CM
+					if (SAFED_CM_ACTIVATED ~= true) then
+						Modify_UnitSpeed(sgroup_rams_units, 0.6)
+					end
+					
+					Cmd_MoveToThenAttackMove(sgroup_rams_units, EGroup_GetOffsetPosition(eg_fortress, 7, 8), 25, true, false)
+				
+				end
+				
+			end
+			
+			if (SGroup_CountSpawned(sg_enemy_rams) > 0) then
+				--previous damage amount removed (wall damage)
+				Modifier_Remove(mod_ram_damage)
+				--modifies ram damage because the fortress has modified received damage
+				mod_ram_damage = Modify_WeaponDamage(sg_enemy_rams, "hardpoint_01", SAFED_RAM_MODIFY_DAMAGE_FORTRESS)
+				--rams continually told to attack fortress
+				Cmd_Attack(sgroup_rams, eg_fortress)
+			end
+			
+			data.walls_broken = true 
+		
+		end
+		
+	end
+		
+end

@@ -1,0 +1,308 @@
+--
+-- Tribute 1375 - Bandit Camps optional objective
+--
+
+
+
+
+function BanditCamps_InitObjectives()
+
+	
+	OBJ_BanditCamps = {
+		
+		Title = "$11201545", --Optional: Destroy the bandit camps
+		Type = ObjectiveType_Optional,
+		
+		SetupUI = BanditCamps_SetupUI,
+		
+	}
+
+	Objective_Register(OBJ_BanditCamps)
+
+
+	
+	i_banditCampBonus_QuietModifier = 0
+	i_numCampsDestroyed = 0
+
+	t_banditCampData = {
+		{
+			id = "Bandit Camp 1",
+			marker = mkr_banditcamp1,
+			egroup = eg_banditcamp1,
+			egroupDressing = eg_banditcamp1_dressing,
+			sgroup = sg_banditcamp1,
+			settlement = "settlement1",
+		},
+		{
+			id = "Bandit Camp 2",
+			marker = mkr_banditcamp2,
+			egroup = eg_banditcamp2,
+			egroupDressing = eg_banditcamp2_dressing,
+			sgroup = sg_banditcamp2,
+			settlement = "settlement3",
+		},
+		{
+			id = "Bandit Camp 3",
+			marker = mkr_banditcamp3,
+			egroup = eg_banditcamp3,
+			egroupDressing = eg_banditcamp3_dressing,
+			sgroup = sg_banditcamp3,
+		},
+		{
+			id = "Bandit Camp 4",
+			marker = mkr_banditcamp4,
+			egroup = eg_banditcamp4,
+			egroupDressing = eg_banditcamp4_dressing,
+			sgroup = sg_banditcamp4,
+		},
+		{
+			id = "Bandit Camp 5",
+			marker = mkr_banditcamp5,
+			egroup = eg_banditcamp5,
+			egroupDressing = eg_banditcamp5_dressing,
+			sgroup = sg_banditcamp5,
+			settlement = "settlement5",
+		},
+		{
+			id = "Bandit Camp 6",
+			marker = mkr_banditcamp6,
+			egroup = eg_banditcamp6,
+			egroupDressing = eg_banditcamp6_dressing,
+			sgroup = sg_banditcamp6,
+		},
+		{
+			id = "Bandit Camp 7",
+			marker = mkr_banditcamp7,
+			egroup = eg_banditcamp7,
+			egroupDressing = eg_banditcamp7_dressing,
+			sgroup = sg_banditcamp7,
+			settlement = "settlement5",
+		},
+		{
+			id = "Bandit Camp 8",
+			marker = mkr_banditcamp8,
+			egroup = eg_banditcamp8,
+			egroupDressing = eg_banditcamp8_dressing,
+			sgroup = sg_banditcamp8,
+		},
+		{
+			id = "Bandit Camp 9",
+			marker = mkr_banditcamp9,
+			egroup = eg_banditcamp9,
+			egroupDressing = eg_banditcamp9_dressing,
+			sgroup = sg_banditcamp9,
+			settlement = "settlement7",
+		},
+		{
+			id = "Bandit Camp 10",
+			marker = mkr_banditcamp10,
+			egroup = eg_banditcamp10,
+			egroupDressing = eg_banditcamp10_dressing,
+			sgroup = sg_banditcamp10,
+			settlement = "settlement5",
+		},
+		{
+			id = "Bandit Camp 11",
+			marker = mkr_banditcamp11,
+			egroup = eg_banditcamp11,
+			egroupDressing = eg_banditcamp11_dressing,
+			sgroup = sg_banditcamp11,
+			settlement = "settlement2",
+		},
+	}
+
+
+	--Rule_AddOneShot(BanditCamps_Init, 0.125)
+	
+end
+
+
+
+function BanditCamps_Init()
+	
+	-- we're going to randomly select a few camps to use this session
+	
+	local originalBanditCamps = Clone(t_banditCampData)		-- we're going to rebuild the t_banditCampData table with just the chosen camps, so clone the original and zero-out the final table
+	t_banditCampData = {}
+
+	for index = 1, t_difficulty.bandits_NumCamps do 
+		
+		if #originalBanditCamps >= 1 then 
+
+			-- pick a camp			
+			local rand = World_GetRand(1, #originalBanditCamps)
+			local camp = originalBanditCamps[rand]
+			
+			-- create defenders and a defend module for this camp
+			local defendModule = {
+				type = "Defend",
+				descriptor = camp.id,
+				player = player2,
+				marker = camp.marker,
+				sgroup = camp.sgroup,
+				units = {
+					{type = "scar_spearman", numSquads = 7},
+					{type = "scar_spearman", numSquads = 3, difficulty = {GD_HARD, GD_EXPERT}},
+					{type = "scar_archer", numSquads = 4, difficulty = {GD_HARD, GD_EXPERT}},
+					{type = "scar_spearman", numSquads = 2, difficulty = GD_EXPERT},
+					{type = "scar_archer", numSquads = 8, difficulty = GD_EXPERT},
+				},
+			}
+			Defend_Init(defendModule)
+			
+			-- set some default variables
+			camp.seen = false
+			camp.destroyed = false
+			camp.hasDroppedPickup = false
+			camp.defendModule = defendModule
+			
+			Rule_AddEGroupEvent(BanditCamps_CampEntityDestroyed, camp.egroup, GE_EntityKilled)		-- add an event when these tents get destroyed (used to spawn a reward in them)
+			
+			table.insert(t_banditSpawnMarkers, camp.marker)			-- add this camp as a potential spawn point for bandits
+			table.insert(t_banditSpawnMarkers, camp.marker)			-- ..twice, to increase the probability of it being chosen
+			table.insert(t_banditCampData, camp)					-- add this camp to the "chosen" camps list
+			table.remove(originalBanditCamps, rand)					-- remove from the potential camps list
+
+			-- remove the remaining potential camp nearest to this one (this helps keep them spread out)
+			local closestDistance = 99999999
+			local closestCampIndex = nil 
+			
+			for index, nearbyCamp in pairs(originalBanditCamps) do 			
+				local distance = Util_GetDistanceSquared(camp.marker, nearbyCamp.marker)
+				if distance < 250^2 and distance < closestDistance then 
+					closestDistance = distance
+					closestCampIndex = index
+				end
+			end
+			
+			if closestCampIndex ~= nil then 
+				local closestCamp = originalBanditCamps[closestCampIndex]
+				EGroup_DestroyAllEntities(closestCamp.egroup)
+				EGroup_DestroyAllEntities(closestCamp.egroupDressing)
+				table.remove(originalBanditCamps, closestCampIndex)					-- remove from the potential camps list
+			end
+			
+		end
+			
+	end
+
+	-- clean up any remaining camps not used...	
+	for index, camp in pairs(originalBanditCamps) do 
+		EGroup_DestroyAllEntities(camp.egroup)
+		EGroup_DestroyAllEntities(camp.egroupDressing)
+	end
+	
+	Rule_AddInterval(BanditCamps_Monitor, 1)
+	
+end
+
+
+
+
+
+function BanditCamps_SetupUI()
+	Objective_SetCounter(OBJ_BanditCamps, i_numCampsDestroyed, t_difficulty.bandits_NumCamps)
+end
+
+
+function BanditCamps_Monitor()
+	
+	local allCampsDestroyed = true 
+	
+	for index, camp in pairs(t_banditCampData) do 
+		
+		if camp.seen == false and camp.destroyed == false and (Player_CanSeeEGroup(player1, camp.egroup, ANY) or Player_CanSeeSGroup(player1, camp.sgroup, ANY)) then 
+			
+			camp.seen = true
+			
+			FOW_PlayerRevealArea(player1, Util_GetPosition(camp.marker), 20, 0.125)
+			
+			if Objective_IsStarted(OBJ_BanditCamps) == false then 
+				Objective_Start(OBJ_BanditCamps)
+			end
+			
+			camp.hpid = Objective_AddUIElements(OBJ_BanditCamps, camp.marker, true, "$11201546", true, 3)	-- "Bandit Camp"
+			
+		end
+		
+		if camp.destroyed == false then 
+			
+			allCampsDestroyed = false
+			
+			if EGroup_CountSpawned(camp.egroup) == 0 and SGroup_CountSpawned(camp.sgroup) == 0 then 
+				
+				camp.destroyed = true
+				
+				-- remove the hintpoint
+				if camp.hpid ~= nil then 
+					Objective_RemoveUIElements(OBJ_BanditCamps, camp.hpid)
+					camp.hpid = nil 
+				end
+
+				-- update the objective
+				i_numCampsDestroyed = i_numCampsDestroyed + 1
+				Objective_SetCounter(OBJ_BanditCamps, i_numCampsDestroyed, t_difficulty.bandits_NumCamps)
+
+				-- remove this spawn location from the list of bandit spawn markers
+				for index = #t_banditSpawnMarkers, 1, -1 do 
+					if t_banditSpawnMarkers[index] == camp.marker then 
+						table.remove(t_banditSpawnMarkers, index)
+					end
+				end
+
+				-- reduce spawns / strengths for the next little while 
+				if timer_banditCampDestructionBonus == nil then 
+					
+					i_banditCampBonus_QuietModifier = t_difficulty.bandits_CampDestructionBonusModifier
+					timer_banditCampDestructionBonus = World_GetGameTime() + t_difficulty.bandits_CampDestructionBonusPeriod
+					
+				else 
+					
+					timer_banditCampDestructionBonus = timer_banditCampDestructionBonus + t_difficulty.bandits_CampDestructionBonusPeriod
+					
+				end
+				
+				-- adjust creation frequency for the associated zone
+				for index, zone in ipairs(t_banditZones) do 
+					if (camp.settlement == nil and zone.settlement == nil) or (camp.settlement ~= nil and zone.settlment ~= nil and camp.settlement == zone.settlement.id) then 
+						zone.banditCampCreationFrequencyModifier = zone.banditCampCreationFrequencyModifier + t_difficulty.bandits_CreationFrequency_CampBonus
+					end
+				end
+				
+			end
+			
+		end
+		
+	end
+
+	if allCampsDestroyed == true then 
+		Objective_Complete(OBJ_BanditCamps)
+	end
+
+	-- if we have come to the end of bonus time, revert the bonus
+	if timer_banditCampDestructionBonus ~= nil and World_GetGameTime() >= timer_banditCampDestructionBonus then
+		
+		i_banditCampBonus_QuietModifier = 0
+		timer_banditCampDestructionBonus = nil
+		
+	end
+	
+end
+
+
+function BanditCamps_CampEntityDestroyed(context)			-- when a tent in a camp is destroyed, randomly spawn a resource pickup at one random tent per camp 
+
+	local pos = Util_GetPosition(context.victim)
+
+	for index, camp in pairs(t_banditCampData) do 
+		if Marker_InProximity(camp.marker, pos) then 
+			if camp.hasDroppedPickup == false and EGroup_CountSpawned(camp.egroup) == 0 then			-- to spawn at a random tent, use: World_GetRand(1, EGroup_CountSpawned(camp.egroup) + 1) == 1
+				Util_CreateEntities(nil, eg_blah, BP_GetEntityBlueprint("resource_pickup_gold"), pos, 1)			
+				camp.hasDroppedPickup = true
+			end
+			break
+		end
+	end
+	
+end
+

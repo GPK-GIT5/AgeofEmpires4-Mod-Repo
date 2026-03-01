@@ -1,0 +1,254 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+----------------------------------------
+--INITIALISES NICOSIA DEFENDERS--
+----------------------------------------
+function Init_Nicosia()
+	
+	--spawn wall defenders
+	Cyprus_SpawnWallLines(player8, CYPRUS_UNITS.NICOSIA_DEFENDERS.WALL_LINE, "mkr_nicosia_wall_spawn", "mkr_nicosia_wall_line", 7, sg_nicosia_wall_defenders)
+	Cyprus_SpawnWallLines(player8, {type = "scar_archer", numSquads = 7}, "mkr_crossroads_spawn", "mkr_crossroads_wall_line", 1, SGroup_CreateUnique("sg_crossroads"))
+	
+	--spawn stand alone siege
+	Cyprus_SpawnStandAloneSiege(player2, "mkr_nicosia_mangonel", "scar_mangonel", "mkr_nicosia_mangonel_target", t_difficulty.nicosia_sa_mangoAmount, sg_nicosia_sa_siege)
+	Cyprus_SpawnStandAloneSiege(player2, "mkr_nicosia_cannon", "scar_cannon", "mkr_nicosia_cannon_target", t_difficulty.nicosia_sa_cannonAmount, sg_nicosia_sa_siege)
+	Cyprus_SpawnStandAloneSiege(player2, "mkr_nicosia_treb", "scar_trebuchet", "mkr_nicosia_treb_target", t_difficulty.nicosia_sa_trebAmount, sg_nicosia_sa_siege)
+	Cyprus_SpawnStandAloneSiege(player2, "mkr_nicosia_culverin", "scar_culverin", "mkr_nicosia_culverin_target", t_difficulty.nicosia_sa_culverinAmount, sg_nicosia_sa_siege)
+	
+	Cyprus_SpawnScatteredDefenders(player8, "scar_crossbowman", nil, "mkr_nicosia_xbow", sg_nicosia_scattered)
+	Cyprus_SpawnScatteredDefenders(player8, "scar_handcannon", nil, "mkr_nicosia_hc", sg_nicosia_scattered)
+	
+	Rule_AddOneShot(Cyprus_StopNicosiaSiege, 5)
+	
+	--spawn keep garrisons
+	if t_difficulty.nicosia_keep_garrisonAmount > 0 then
+		CreateUnits(player2, {type = "scar_manatarms", numSquads = t_difficulty.nicosia_keep_garrisonAmount}, mkr_nicosia_garrison_keep1, sg_nicosia_keep_garrison1)
+		CreateUnits(player2, {type = "scar_manatarms", numSquads = t_difficulty.nicosia_keep_garrisonAmount}, mkr_nicosia_garrison_keep2, sg_nicosia_keep_garrison2)
+		
+		Rule_AddOneShot(Cyprus_GarrisonNicosiaKeeps, 1)
+	end
+	
+end
+
+function Cyprus_GarrisonNicosiaKeeps()
+	Cmd_Garrison(sg_nicosia_keep_garrison1, eg_nicosia_keep1)
+	Cmd_Garrison(sg_nicosia_keep_garrison2, eg_nicosia_keep2)
+end
+
+function Cyprus_UnGarrisonNicosiaKeeps()
+	Cmd_UngarrisonSquad(sg_nicosia_keep_garrison1, mkr_nicosia_garrison_keep1)
+	Cmd_UngarrisonSquad(sg_nicosia_keep_garrison2, mkr_nicosia_garrison_keep2)
+	Rule_AddOneShot(Cyprus_MergeNicosiaGarrisons, 2)
+end
+
+function Cyprus_MonitorNicosiaKeepHealth()
+	
+	if EGroup_GetAvgHealth(eg_nicosia_keep1) < 0.5 or EGroup_GetAvgHealth(eg_nicosia_keep2) < 0.5 then
+		Rule_RemoveMe()
+		Cyprus_UnGarrisonNicosiaKeeps()
+	end
+end
+
+function Cyprus_MergeNicosiaGarrisons()
+	
+	local inf_patrol1 = Army_FindFromName("army_nicosia_inf_patrol")
+	local inf_patrol2 = Army_FindFromName("army_nicosia_inf_patrol2")
+	
+	Army_AddSGroup(inf_patrol1, sg_nicosia_keep_garrison1)
+	Army_AddSGroup(inf_patrol1, sg_nicosia_keep_garrison2)
+	Army_AddSGroup(inf_patrol1, sg_nicosia_scattered)
+	
+	Army_SetTarget(inf_patrol1, mkr_nicosia_defense_keep_final)
+	Army_SetTarget(inf_patrol2, mkr_nicosia_defense_keep_final)
+	
+end
+
+
+function Cyprus_SpawnStandAloneSiege(player, marker_stem, unitType, target_stem, amount, sgroup)
+	
+	for i = 1, amount do
+		
+		local marker = Marker_FromName(marker_stem..tostring(i), "")
+		local target = Marker_FromName(target_stem..tostring(i), "")
+		
+		SGroup_Clear(sg_temp)
+		sg_temp = CreateUnits(player, {type = unitType, numSquads = 1}, marker, sg_temp)
+		SGroup_AddGroup(sgroup, sg_temp)
+		Cmd_Attack(sg_temp, target)
+	end
+end
+
+function Cyprus_SpawnScatteredDefenders(player, unitType, blueprint, marker_name, sgroup)
+	
+	local markers1 = AllMarkers_FromName(marker_name, "")
+	
+	for i, marker in ipairs(markers1) do
+		
+		if blueprint == nil then
+			CreateUnits(player, {type = unitType, numSquads = 1}, marker, sgroup)
+		else
+			CreateUnits(player, {sbp = blueprint, numSquads = 1}, marker, sgroup)
+		end
+	end
+end
+
+function Cyprus_SpawnWallLines(player, unit_table, spawn_stem, dest_stem, numLines, sgroup)
+	
+	for i = 1, numLines do
+		
+		local spawn_marker = Marker_FromName(spawn_stem..tostring(i), "")
+		local dest_name = dest_stem..tostring(i)
+		Cyprus_SpawnWallLine(player, unit_table, spawn_marker, dest_name, sgroup)
+	end
+end
+
+function Cyprus_SpawnWallLine(player, unit_table, spawn, dest_name, sgroup)
+	
+	local sg_defenders = CreateUnits(player, unit_table, spawn, "sg_defenders")
+	SGroup_AddGroup(sgroup, sg_defenders)
+	
+	local marker_index = 1
+	local markers = AllMarkers_FromName(dest_name, "")
+	
+	local _MoveDefender = function(gid, idx, sid)
+		
+		local marker = markers[marker_index]
+		
+		SGroup_Clear(sg_temp)
+		SGroup_Add(sg_temp, sid)
+		Cmd_Move(sg_temp, marker)
+		
+		marker_index = marker_index + 1
+		
+		if marker_index > #markers then
+			marker_index = 1
+		end
+	end
+	SGroup_ForEach(sg_defenders, _MoveDefender)
+	
+	SGroup_Destroy(sg_defenders)
+end
+
+
+function Cyprus_StopNicosiaSiege()
+	Cmd_Stop(sg_nicosia_sa_siege)
+end
+
+function Cyprus_StopFamagustaSiege()
+	Cmd_Stop(sg_famagusta_sa_siege)
+end
+
+-----------------------
+--INIT FAMAGUSTA NAVY--
+-----------------------
+function Init_Famagusta_Navy()
+	famagusta_navy_spawn_delay = famagusta_spawn_delay or 0
+
+	-------------------------
+	--STATIC NAVY DEFENDERS--
+	-------------------------
+	for i, marker in pairs(famagusta_navy_defence_markers) do
+		local params = {
+			player = player5,
+			name = "famagusta_navy_defenders_"..i,
+			spawn = marker,
+			marker = marker,
+			units = CYPRUS_UNITS.FAMAGUSTA_NAVY.DEFENCE,
+			combatRange = 80,
+		}
+		Rule_AddOneShot(Amortise_EnemySpawns, famagusta_navy_spawn_delay*0.125, {sg_navy = sg_famagusta_navy, params = params, index = i})
+		famagusta_navy_spawn_delay = famagusta_navy_spawn_delay+1
+	end
+	-----------
+	--PATROLS--
+	-----------
+	for i, marker in pairs(famagusta_navy_patrol_markers) do
+		local params = {
+			player = player5,
+			name = "famagusta_navy_patrols_"..i,
+			spawn = marker,
+			marker = marker,
+			units = CYPRUS_UNITS.FAMAGUSTA_NAVY.PATROL,
+			targets = {mkr_naval_patrol_dest1, mkr_naval_patrol_dest2, mkr_naval_patrol_dest3,  mkr_naval_patrol_dest4},
+			targetOrder = TARGET_ORDER_LOOP,
+			combatRange = 80,
+		}
+		Rule_AddOneShot(Amortise_EnemySpawns, famagusta_navy_spawn_delay*0.125, {sg_navy = sg_famagusta_navy, params = params, index = i})
+		famagusta_navy_spawn_delay = famagusta_navy_spawn_delay+1
+	end
+end
+
+-----------------------------------
+--INIT FAMAGUSTA STATIC DEFENDERS--
+-----------------------------------
+function Init_Famagusta()
+	famagusta_spawn_delay = famagusta_spawn_delay or 0
+	----------------------
+	---FAMAGUSTA TROOPS---
+	----------------------
+	Cyprus_SpawnWallLines(player5, CYPRUS_UNITS.FAMAGUSTA_DEFENDERS.WALL_LINE, "mkr_famagusta_wall_spawn", "mkr_famagusta_wall_line", 4, sg_famagusta_wall_defenders)
+	Cyprus_SpawnScatteredDefenders(player5, "", SBP.CRUSADER_CMP.UNIT_GENOESE_CROSSBOWMAN_CRU, "mkr_famagusta_xbow", sg_famagusta_scattered)
+	Cyprus_SpawnStandAloneSiege(player5, "mkr_famagusta_mangonel", "scar_mangonel", "mkr_famagusta_mangonel_target", t_difficulty.famagusta_sa_mangoAmount, sg_famagusta_sa_siege)
+	
+	Rule_AddOneShot(Cyprus_StopFamagustaSiege, 5)
+end
+
+----------------------------------
+--INIT LIMASSOL STATIC DEFENDERS--
+----------------------------------
+function Init_Limassol()
+	
+	limassol_spawn_delay = limassol_spawn_delay or 0
+	
+	---------------------
+	---LIMASSOL TROOPS---
+	---------------------
+	--------------------
+	--HORSIE DEFENDERS--
+	--------------------
+	for i, marker in pairs(limassol_defence_horsie_markers) do
+		local params = {
+			player = player7,
+			name = "limassol_horsie_defenders"..i,
+			spawn = marker,
+			units = CYPRUS_UNITS.LIMASSOL_DEFENDERS.HORSIES,
+			combatRange = 90,
+		}
+		Rule_AddOneShot(Amortise_EnemySpawns, limassol_spawn_delay*0.125, {sg_defenders = sg_limassol_defenders, params = params, index = i})
+		limassol_spawn_delay = limassol_spawn_delay+1
+	end
+	
+	-----------------------
+	--ANTI INFANTRY SIEGE--
+	-----------------------
+	for i, marker in pairs(limassol_defence_antiinfantry_markers) do
+		local params = {
+			player = player7,
+			name = "limassol_antiinfantry_defenders_"..i,
+			spawn = marker,
+			units = CYPRUS_UNITS.LIMASSOL_DEFENDERS.ANTIINFANTRY,
+			combatRange = 80,
+		}
+		Rule_AddOneShot(Amortise_EnemySpawns, limassol_spawn_delay*0.125, {sg_defenders = sg_limassol_defenders, params = params, index = i})
+		limassol_spawn_delay = limassol_spawn_delay+1
+	end
+end
+-----------------------------
+--AMORTISE SPAWNS FUNCTION---  --SPAWNS IN ALL OF THE ABOVE ON A DELAY TO AVOID THE GAME CRASHING. IS PROCEDURAL, SO THE ORDER ABOVE IS THE ORDER EVERYTHING SPAWNS
+----------------------------- 
+function Amortise_EnemySpawns(context, data)
+	local params = data.params
+	local index = data.index
+	local sg_defenders = data.sg_defenders
+	local sg_navy = data.sg_navy
+	
+	if sg_defenders then   -- ADD UNITS INTO APPROPRIATE SGROUPS AS YOU SPAWN THEM IN
+		local army = Army_Init(params)
+		SGroup_AddGroup(sg_defenders, army.sgroup)
+	elseif sg_navy then
+		local army = NavalArmy_Init(params)
+		table.insert(naval_armies, army)
+		SGroup_AddGroup(sg_navy, army.sgroup)
+	end
+end

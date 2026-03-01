@@ -1,0 +1,1030 @@
+--
+-- Xiangyang 1267 - Primary Objectives Phase 1
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_xiangyang1_phase2.scar")
+
+FLANK_NONE = "none"
+FLANK_NORTH = "north"
+FLANK_EAST = "east"
+FLANK_FULL = "full"
+
+--? @shortdesc Initializes the main objectives for Xiangyang 1267
+function Xiangyang1267_InitObjectives_Phase1()
+
+	OBJ_Advance = { Title = "$11179207", Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.Clear_Way,
+		--Intel_Complete = EVENTS.Siege_Defend_Complete,
+		
+		PreStart = function()
+			Rule_AddInterval(Xiangyang_WatchForTemple, 0.5)
+			Rule_AddInterval(Xiangyang_WatchForCamp, 0.5)
+			Rule_AddInterval(Xiangyang_CampFlanks, 0.5)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+		--	return Objective_IsComplete(SOBJ_DefendTrebs)
+		end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Siege_Defend_Complete)
+			Xiangyang_HandleLeftovers()
+			EGroup_SetInvulnerable(eg_song_invulnerable_walls, true)
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_ClearApproach = { Title = "$11179210", Type = ObjectiveType_Primary, Parent = OBJ_Advance, StartAlongsideParent = true,
+		
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			Objective_AddUIElements(SOBJ_ClearApproach, mkr_ui_fancheng, true, "$11179210", true)
+			-- This rule separates VO from the defeat-the-enemies condition,
+			-- so that if the player chooses to ignore the enemies and rush past,
+			-- the VO won't trigger and sound out of place even though the objective finishes
+			Rule_AddInterval(Xiangyang1267_WatchRiverPostVO, 1)
+		end,
+		
+		IsComplete = Xiangyang1267_CheckMongolAdvance_Logic,
+		
+		OnComplete = function()
+			if Objective_IsStarted(SOBJ_BaitPlayer) == false then
+				Objective_Start(SOBJ_BaitPlayer)
+			end
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(g_playerMongol)
+			SGroup_Filter(sg_allsquads, "scar_scout", FILTER_REMOVE)
+			local noUnits = (SGroup_Count(sg_allsquads) <= 0)
+			return noUnits == true
+		end,
+		
+		OnFail = function()
+			Objective_Fail(OBJ_Advance, false, false)
+		end,
+	}
+	SOBJ_BaitPlayer = { Title = "$11184463", Type = ObjectiveType_Primary, Parent = OBJ_Advance, StartAlongsideParent = true,
+		
+		Intel_Start = EVENTS.Clear_Way,
+		--Intel_Complete = EVENTS.Allied_Force,
+		
+		PreStart = function()
+			Rule_AddInterval(Xiangyang1267_WatchRiverPostVO, 1)
+		end,
+		
+		OnStart = function()
+			Objective_AddUIElements(SOBJ_BaitPlayer, mkr_mongol_rally_1, true, "$11184463", true)
+		end,
+		
+		IsComplete = function()
+			--Util_StartIntel(EVENTS.Clear_Way)
+			return Player_CanSeeSGroup(g_playerMongol, sg_allies, ANY)
+		end,
+		
+		PreComplete = function()
+			Xiangyang1267_TopUpWithAllies()
+		end,
+		
+		OnComplete = function()
+			-- "Another Mongol detachment has arrived to assault the city!"
+			Sound_Play2D("mus_stinger_campaign_triumph_short")
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			Objective_Start(SOBJ_DefendTrebs, true)
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(g_playerMongol)
+			SGroup_Filter(sg_allsquads, "scar_scout", FILTER_REMOVE)
+			local noUnits = (SGroup_Count(sg_allsquads) <= 0)
+			return noUnits == true
+		end,
+		
+		OnFail = function()
+			Objective_Fail(OBJ_Advance, false, false)
+		end,
+	}
+	SOBJ_WoodenCamp = { Title = "$11179220", Type = ObjectiveType_Battle, Parent = OBJ_Advance,
+		
+		countBuildingsTotal = 0,
+		
+		hint_1 = nil,
+		hint_2 = nil,
+		
+		-- OBJECTIVE 3
+		Cheat = function()
+			Xiangyang1267_CheatDeleteOutlyingUnits(1)
+			-- Finally, teleport the starting units
+			SGroup_FormationWarpToMarker(sg_all_intro_units, mkr_cheat_teleport)
+			Camera_MoveTo(mkr_cheat_teleport)
+		end,
+		
+		PreStart = function()
+			SOBJ_WoodenCamp.countBuildingsTotal = EGroup_Count(eg_post4_buildings)
+			Objective_SetProgressBar(SOBJ_WoodenCamp, 0.0)
+			
+			SOBJ_WoodenCamp.hint_1 = HintPoint_Add(mkr_flank_check_1, true, "$11195802", 2, nil, nil, nil, true, nil)
+			SOBJ_WoodenCamp.hint_2 = HintPoint_Add(mkr_flank_check_2, true, "$11195802", 2, nil, nil, nil, true, nil)
+			
+			-- Also spawn the northern army - moved to .events so everything plays in order
+		end,
+		
+		OnStart = function()
+			-- Plunk down some UI markers
+			Objective_AddUIElements(SOBJ_WoodenCamp, mkr_song_post_4, true, "$11179221", true)
+			-- Also spawn the allies for later
+			Rule_AddInterval(Xiangyang1267_WatchAfterWoodenPost, 1)
+		end,
+		
+		PreComplete = function()
+			Objective_RemoveProgressBar(SOBJ_WoodenCamp)
+		end,
+		
+		IsComplete = function()
+			-- Count buildings and update the progress bar
+			local buildingsLeft = EGroup_Count(eg_post4_buildings)
+			Objective_SetProgressBar(SOBJ_WoodenCamp, (SOBJ_WoodenCamp.countBuildingsTotal - buildingsLeft) / SOBJ_WoodenCamp.countBuildingsTotal)
+			
+			-- Also remove those hints if the player has obviously broken their way in
+			Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_song_post_4, Marker_GetProximityRadiusOrDefault(mkr_song_post_4, 60))
+			local mongolsInCamp = SGroup_Count(sg_temp)
+			if mongolsInCamp > 12 and SOBJ_WoodenCamp.hint_1 ~= nil and SOBJ_WoodenCamp.hint_2 ~= nil then
+				HintPoint_Remove(SOBJ_WoodenCamp.hint_1)
+				HintPoint_Remove(SOBJ_WoodenCamp.hint_2)
+				SOBJ_WoodenCamp.hint_1 = nil
+				SOBJ_WoodenCamp.hint_2 = nil
+				-- Also stop those road patrols, they no longer make sense
+				Rule_Remove(Xiangyang1267_SpawnRoadPatrol)
+				Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			end
+			
+			return buildingsLeft <= 0
+		end,
+		
+		OnComplete = function()
+			--Autosave when this is done
+			Util_AutoSave()
+			
+			Sound_Play2D("sfx_campaign_scripted_large_group_celebrate")
+			Util_StartIntel(EVENTS.Song_Camp_Destroyed)
+			-- Withdraws the garrison from the flank blocking village, and any patrols
+			Xiangyang1267_WithdrawOutlyingSoldiers()
+			-- And don't forget to unreveal the camp
+			FOW_UnRevealMarker(mkr_song_post_4)
+			-- Kick an atmo transition
+			Game_TransitionToState("subtropical_morning_hazy", 120)
+			-- And if this is still running, nuke it
+			if Rule_Exists(Xiangyang1267_SpawnRoadPatrol) == true then
+				Rule_Remove(Xiangyang1267_SpawnRoadPatrol)
+			end
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(g_playerMongol)
+			local noUnits = (SGroup_Count(sg_allsquads) <= 0)
+			return noUnits == true
+		end,
+		
+		OnFail = function()
+			Objective_Fail(OBJ_Advance, false, false)
+		end,
+	}
+	SOBJ_DefendTrebs = { Title = "$11179214", Type = ObjectiveType_Battle, Parent = OBJ_Advance,
+		
+		Intel_Start = EVENTS.Allied_Force,
+		
+		trebsAtStart = 4,
+		failureThreshold = 15,
+		sgroupToWatch = SGroup_CreateUnique("sg_bridge_objective"),
+		
+		-- This is OBJECTIVE 4
+		Cheat = function()
+			print("CHEAT: Cheating into Phase 2")
+			-- Delete all units and buildings outside the city; the player should have killed these off
+			Xiangyang1267_CheatDeleteOutlyingUnits(2)
+			-- Spawn the allies that should be here
+			Xiangyang1267_SpawnAllies()
+			-- Finally, teleport the starting units
+			SGroup_FormationWarpToMarker(sg_all_intro_units, mkr_mongol_cheat_assault)
+			Camera_MoveTo(mkr_mongol_cheat_assault)
+			-- And make sure this stops
+			if Rule_Exists(Xiangyang1267_SpawnRoadPatrol) == true then
+				Rule_Remove(Xiangyang1267_SpawnRoadPatrol)
+			end
+		end,
+		
+		PreStart = function()
+			-- Configure in-world UI
+			Objective_AddUIElements(SOBJ_DefendTrebs, mkr_song_flank_dest, true, "$11179214", true)
+			
+			-- Change up the objective structure
+			Objective_Show(SOBJ_BaitPlayer, false)
+			Objective_Show(SOBJ_WoodenCamp, false)
+			
+			SOBJ_DefendTrebs.trebsAtStart = SGroup_Count(sg_allied_trebuchets)
+			Objective_SetCounter(SOBJ_DefendTrebs, SGroup_Count(sg_allied_trebuchets), SOBJ_DefendTrebs.trebsAtStart)
+			
+			-- Reveal the city just long enough for it to be explored
+			FOW_RevealArea(Util_GetPosition(mkr_base_fancheng), Marker_GetProximityRadiusOrDefault(mkr_base_fancheng, 100), 0.125)
+			World_EnableSharedLineOfSight(g_playerMongol, g_playerAllies, true)
+			
+			-- ATTACK THE CITY!
+			-- Remove the trebuchets so we don't give them the same orders as the cavalry
+			SGroup_Filter(sg_allies, "scar_trebuchet_traction", FILTER_REMOVE, sg_allied_trebs)
+			Cmd_Move(sg_treb_1, mkr_ally_treb_1, false, false, Marker_GetDirection(mkr_ally_treb_1))
+			Cmd_Move(sg_treb_2, mkr_ally_treb_2, false, false, Marker_GetDirection(mkr_ally_treb_2))
+			Cmd_Move(sg_treb_3, mkr_ally_treb_3, false, false, Marker_GetDirection(mkr_ally_treb_3))
+			Cmd_Move(sg_treb_4, mkr_ally_treb_4, false, false, Marker_GetDirection(mkr_ally_treb_4))
+			
+			-- Order them to attack ground afterwards!
+			Cmd_Attack(sg_treb_1, mkr_treb_target_1, true)
+			Cmd_Attack(sg_treb_2, mkr_treb_target_2, true)
+			Cmd_Attack(sg_treb_3, mkr_treb_target_3, true)
+			Cmd_Attack(sg_treb_4, mkr_treb_target_4, true)
+			-- ...In X seconds for everyone else, because trebuchets are slow
+			Rule_AddOneShot(Xiangyang1267_LaunchAlliedAttack, 5)
+			
+			-- Hide the old one
+			Objective_Show(SOBJ_BaitPlayer, false, false)
+			
+		end,
+		
+		OnStart = function()
+			-- Send the units to attack
+			RovingArmy_AddTarget(MissionOMatic_FindModule("SongSiegeAttackers"), sg_allied_trebs)
+			--Also start the breadcrumbing
+			local crumbInterval = 12
+			Rule_AddOneShot(Xiangyang1267_LaunchBreadcrumbers, crumbInterval)
+			Rule_AddInterval(Xiangyang1267_LaunchBreadcrumbers, { delay = crumbInterval * 2, interval = crumbInterval })
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(g_playerMongol)
+			SGroup_Filter(sg_allsquads, "scar_military", FILTER_KEEP)
+			local trebsCurrent = SGroup_Count(sg_allied_trebuchets)
+			if trebsCurrent < Objective_GetCounter(SOBJ_DefendTrebs) then
+				Sound_Play2D("mus_stinger_campaign_alert")
+			end
+			Objective_SetCounter(SOBJ_DefendTrebs, trebsCurrent, SOBJ_DefendTrebs.trebsAtStart)
+			return SGroup_Count(sg_allsquads) <= SOBJ_DefendTrebs.failureThreshold or SGroup_Count(sg_allied_trebuchets) <= 0
+		end,
+		
+		OnFail = function()
+			Objective_Fail(OBJ_Advance, false, false)
+		end,
+		
+		IsComplete = function()
+			g_breadcrumbersLaunched = g_breadcrumbersLaunched or 0
+			local breadcrumbsDefeated = (g_breadcrumbersLaunched ~= nil and g_breadcrumbersLaunched >= g_breadcrumbMax) and SGroup_Count(sg_breadcrumbs) <= 5
+			local sgFirstAttackers = MissionOMatic_FindModule("SongSiegeAttackers").sgroup
+			if g_breadcrumbCTA ~= true and Player_CanSeeSGroup(g_playerMongol, sgFirstAttackers, ANY) == true then
+				EventCues_CallToAction("$11180759", CTA_UNIQUE_STAKES, nil , nil, sgFirstAttackers, nil, "icons/cta/illustrations/12_mongols_charging")
+				g_breadcrumbCTA = true
+				Sound_Play2D("mus_stinger_campaign_warning")
+				Sound_Play2D("sfx_campaign_scripted_medium_group_fear")
+			end
+			return Xiangyang1267_IsBridgeDestroyed() or breadcrumbsDefeated
+		end,
+		
+		PreComplete = function()
+			g_stopAttackingGate = true
+			Cmd_Stop(sg_allied_trebuchets)
+			Cmd_HoldPosition(sg_allied_trebuchets, true, false)
+		end,
+		
+		OnComplete = function()
+			Sound_Play2D("sfx_campaign_scripted_large_group_celebrate")
+			Objective_Complete(SOBJ_DefendTrebs)
+			Objective_Complete(OBJ_Advance, false)
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Advance)
+	Objective_Register(SOBJ_BaitPlayer)
+	Objective_Register(SOBJ_WoodenCamp)
+	Objective_Register(SOBJ_DefendTrebs)
+	
+	Obj_SetVisible(SOBJ_WoodenCamp.ID, false)
+	
+end
+
+--? @shortdesc Watches for the players to spot the monks
+function Xiangyang_WatchForTemple(context, data)
+	
+	if Player_CanSeeEGroup(g_playerMongol, eg_neutral_temple, ANY) then
+		Objective_Start(OBJ_VisitPagoda)
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Watches for the players to spot the wooden camp
+function Xiangyang_WatchForCamp(context, data)
+
+	local playersSpottedCamp = (g_crossingWarningDone ~= true and Player_CanSeeEGroup(g_playerMongol, eg_post4_outposts, ANY))
+	
+	if playersSpottedCamp == true and Objective_IsComplete(SOBJ_BaitPlayer) == false and Objective_IsStarted(SOBJ_DefendTrebs) == false then
+		
+		-- We DEFINITELY want to reveal the camp
+		if g_crossingWarningDone ~= true then
+			FOW_RevealMarker(mkr_song_post_4, -1)
+			FOW_RevealMarker(mkr_song_post_4_reveal, 5)
+			Util_StartIntel(EVENTS.Spot_Camp_Objective)
+			g_crossingWarningDone = true
+		end
+		
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc If the player has either made it to the next part of the map or defeated all the Song, this should return true
+function Xiangyang1267_CheckMongolAdvance_Logic()
+	
+	local songWatchpostDefeated = Defend_IsDefeated(MissionOMatic_FindModule("SongPost1"))
+
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_mongol_advance_1, Marker_GetProximityRadiusOrDefault(mkr_mongol_advance_1, 0))
+	local mongolsGotThrough = SGroup_Count(sg_temp) >= 6
+	
+	if songWatchpostDefeated or mongolsGotThrough or Objective_IsStarted(SOBJ_WoodenCamp) then
+		return true
+	end
+	
+	return false
+	
+end
+
+--? @shortdesc Plays VO if and only if the player has defeated the Song in the initial area (if they bypass them, no VO)
+function Xiangyang1267_WatchRiverPostVO(context, data)
+	
+	local songWatchpostDefeated = Defend_IsDefeated(MissionOMatic_FindModule("SongPost1"))
+	
+	-- Play the VO if the units at the river post are defeated
+	if songWatchpostDefeated then
+		Util_StartIntel(EVENTS.Clear_Way_Complete)
+		Rule_RemoveMe()
+	elseif Objective_IsStarted(SOBJ_WoodenCamp) == true then
+		Rule_RemoveMe()
+	end
+end
+
+--? @shortdesc Checks whether the player has made it into the next part of the map, starting the BaitPlayer objective if necessary
+function Xiangyang1267_CheckMongolAdvance_Proximity()
+
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_mongol_advance_1, Marker_GetProximityRadiusOrDefault(mkr_mongol_advance_1, 0))
+	local mongolsGotThrough = SGroup_Count(sg_temp) >= 6
+	
+	if mongolsGotThrough == true then
+		if Objective_IsStarted(SOBJ_BaitPlayer) == false then
+			Objective_Start(SOBJ_BaitPlayer)
+		end
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Spawns the second player army in the west
+function Xiangyang_SpawnNorthernArmy()
+	
+	-- How many extra players to add?
+	Player_GetAll(g_playerMongol, sg_allsquads)
+	local extraUnits = 75 - SGroup_Count(sg_allsquads)
+	if extraUnits < 0 then
+		extraUnits = 0
+	end
+	
+	-- Basic unit list
+	local unitList = {
+		{ type = "scar_knight", numSquads = 16 + (extraUnits * 0.5), },
+		{ type = "scar_horsearcher", numSquads = 24 + (extraUnits * 0.5), },
+		{ type = "scar_scout", numSquads = 2, },
+	}
+
+	-- Spawn them!
+	UnitEntry_DeploySquads(g_playerMongol, sg_second_army, unitList, mkr_mongol_start_2)
+	Cmd_FormationMove(sg_second_army, mkr_mongol_start_2_dest)
+	
+	-- Call to action: "The Western army has arrived!"
+	Sound_Play2D("mus_stinger_campaign_triumph_short")
+	Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+	EventCues_CallToAction("$11179215", CTA_CELEBRATE, EVENTS.Player_Reinforcements, nil, sg_second_army)
+	
+end
+
+--? @shortdesc Spawns final reinforcements before the bridge attack
+function Xiangyang1267_TopUpWithAllies()
+	
+	-- These should already have been spawned to the correct group when SpawnAllies() is called
+	if scartype(sg_allied_reinforcement_group) == ST_SGROUP and SGroup_Count(sg_allied_reinforcement_group) > 0 then
+		SGroup_SetPlayerOwner(sg_allied_reinforcement_group, g_playerMongol)
+	end
+	
+end
+
+--? @shortdesc Handles the case where the player properly flanks the camp
+function Xiangyang_CampFlanks(context, data)
+
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_flank_check_1, Marker_GetProximityRadiusOrDefault(mkr_flank_check_1, 35))
+	local mongolsFlank1 = SGroup_Count(sg_temp)
+	
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_flank_check_2, Marker_GetProximityRadiusOrDefault(mkr_flank_check_2, 35))
+	local mongolsFlank2 = SGroup_Count(sg_temp)
+	
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_song_post_4, Marker_GetProximityRadiusOrDefault(mkr_song_post_4, 45))
+	local mongolsInsideCamp = SGroup_Count(sg_temp)
+	
+	Player_GetAll(g_playerMongol)
+	local playerTotal = SGroup_Count(sg_allsquads)
+	
+	-- First - are most of the player units inside?
+	-- If so, just get rid of this to stop annoying the player with messages about flanking
+	local ratioInPlaceNorth = mongolsFlank1 / playerTotal
+	local ratioInPlaceEast = mongolsFlank2 / playerTotal
+	local insideRatio = mongolsInsideCamp / playerTotal
+	-- If most of the player's units are either flanking or in the camp, and a whole lot are in the camp, we can cut it out here
+	if (ratioInPlaceNorth + ratioInPlaceEast + insideRatio) > 0.8 and insideRatio > 0.5 then
+		print(string.format("Stopping flank check; %s inside, %s north, %s east", insideRatio, ratioInPlaceNorth, ratioInPlaceEast))
+		HintPoint_Remove(SOBJ_WoodenCamp.hint_1)
+		HintPoint_Remove(SOBJ_WoodenCamp.hint_2)
+		SOBJ_WoodenCamp.hint_1 = nil
+		SOBJ_WoodenCamp.hint_2 = nil
+		Rule_RemoveMe()
+		return 
+	end
+	
+	-- What are the relative sizes of the two forces? This can change for a variety of reasons so just count it here
+	local northRatio = SGroup_Count(sg_second_army) / playerTotal
+	local eastRatio = SGroup_Count(sg_all_intro_units) / playerTotal
+	
+	-- We don't need the player to have absolutely everything in place, but we want it to be close
+	local flankThresholdNorth = northRatio * 0.85
+	local flankThresholdEast = eastRatio * 0.85
+	--print(string.format("Flank ratios required: %s north, %s east", flankThresholdNorth, flankThresholdEast))
+	
+	g_campIsFlanked = g_campIsFlanked or FLANK_NONE
+	
+	-- What if the player is correctly flanking the camp?
+	if g_campIsFlanked ~= FLANK_FULL and ratioInPlaceNorth > flankThresholdNorth and ratioInPlaceEast > flankThresholdEast then
+		
+		UI_CreateEventCue("$11195803", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_med_priority_play", ECV_Title)
+		g_campIsFlanked = FLANK_FULL
+		print("FLANK MODE: "..g_campIsFlanked)
+		
+		-- Set each module to their individual, less effective defense points
+		local supportModule = MissionOMatic_FindModule("SongPost4North")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_north, true)
+		local supportModule = MissionOMatic_FindModule("SongPost4East")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_east, true)
+		
+		local supportModule = MissionOMatic_FindModule("SongPost4NorthBuff")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_southwest, true)
+		local supportModule = MissionOMatic_FindModule("SongPost4EastBuff")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_southwest, true)
+
+		--For now, if the player successfully flanked the camp, end the rule and let them enjoy that advantage
+		HintPoint_Remove(SOBJ_WoodenCamp.hint_1)
+		HintPoint_Remove(SOBJ_WoodenCamp.hint_2)
+		SOBJ_WoodenCamp.hint_1 = nil
+		SOBJ_WoodenCamp.hint_2 = nil
+		Rule_RemoveMe()
+		return
+		
+	-- What if the player is only approaching from the north?
+	elseif g_campIsFlanked ~= FLANK_NORTH and ratioInPlaceNorth > flankThresholdNorth and ratioInPlaceEast < flankThresholdEast then
+		
+		if (g_campIsFlanked == FLANK_FULL) then
+			UI_CreateEventCue("$11195804", Loc_Empty(), "high_priority_negative", "", "sfx_ui_event_queue_campaign_high_priority_negative_play", ECV_Title)
+		end
+		
+		g_campIsFlanked = FLANK_NORTH
+		print("FLANK MODE: "..g_campIsFlanked)
+		
+		-- Set each module to their individual, less effective defense points
+		local supportModule = MissionOMatic_FindModule("SongPost4North")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_north, true)
+		local supportModule = MissionOMatic_FindModule("SongPost4East")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_north, true)
+		
+		local supportModule = MissionOMatic_FindModule("SongPost4NorthBuff")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_north_buff, true)
+		local supportModule = MissionOMatic_FindModule("SongPost4EastBuff")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_north_buff, true)
+
+	-- What if the player is only approaching from the east?
+	elseif g_campIsFlanked ~= FLANK_EAST and ratioInPlaceNorth < flankThresholdNorth and ratioInPlaceEast > flankThresholdEast then
+		
+		if (g_campIsFlanked == FLANK_FULL) then
+			UI_CreateEventCue("$11195804", Loc_Empty(), "high_priority_negative", "", "sfx_ui_event_queue_campaign_high_priority_negative_play", ECV_Title)
+		end
+		
+		g_campIsFlanked = FLANK_EAST
+		print("FLANK MODE: "..g_campIsFlanked)
+		
+		-- Set each module to their individual, less effective defense points
+		local supportModule = MissionOMatic_FindModule("SongPost4North")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_east, true)
+		local supportModule = MissionOMatic_FindModule("SongPost4East")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_east, true)
+		
+		local supportModule = MissionOMatic_FindModule("SongPost4NorthBuff")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_east_buff, true)
+		local supportModule = MissionOMatic_FindModule("SongPost4EastBuff")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_east_buff, true)
+
+		-- If none of those are true, two things are possible
+		-- We're already in one of those states and don't need to change, or we're not flanked in any way at all.
+	elseif 	g_campIsFlanked ~= FLANK_NONE and ratioInPlaceNorth < flankThresholdNorth and ratioInPlaceEast < flankThresholdEast then
+	
+		if (g_campIsFlanked == FLANK_FULL) then
+			UI_CreateEventCue("$11195804", Loc_Empty(), "high_priority_negative", "", "sfx_ui_event_queue_campaign_high_priority_negative_play", ECV_Title)
+		end
+		
+		g_campIsFlanked = FLANK_NONE
+		print("FLANK MODE: "..g_campIsFlanked)
+		
+		-- Set each module to their individual, less effective defense points
+		local supportModule = MissionOMatic_FindModule("SongPost4North")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_north, true)
+		local supportModule = MissionOMatic_FindModule("SongPost4East")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_east, true)
+		
+		local supportModule = MissionOMatic_FindModule("SongPost4NorthBuff")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_north_buff, true)
+		local supportModule = MissionOMatic_FindModule("SongPost4EastBuff")
+		Defend_UpdateTargetLocation(supportModule, mkr_song_post_4_east_buff, true)
+
+	end
+	
+end
+
+--? @shortdesc Removes the defenders of a small village that blocks the player from joining their two flanks
+function Xiangyang1267_WithdrawOutlyingSoldiers()
+
+	sg_disbanded_patrols = SGroup_CreateUnique("sg_disbanded_patrols")
+	-- Also withdraw any surviving road patrols
+	for index, patrol in pairs(g_roadPatrols) do
+		if patrol ~= nil and SGroup_Count(patrol.sgroup) > 0 then
+			RovingArmy_Disband(patrol, sg_disbanded_patrols)
+		end
+	end
+	
+	local specificGroups = {
+		sg_disbanded_patrols,
+		sg_post_6_a,
+		sg_post_6_b,
+		sg_post_6_c,
+		sg_post_6_d,
+		sg_post_6_e,
+		sg_post_6_f,
+		sg_post_7_a,
+		sg_post_7_b,
+		sg_post_7_c,
+	}
+	
+	for index, sgroup in pairs(specificGroups) do
+		if SGroup_Count(sgroup) > 0 then
+			Cmd_FormationAttackMove(sgroup, mkr_song_post_4, false)
+			Cmd_FormationAttackMove(sgroup, mkr_mongol_rally_1, true)
+			Cmd_FormationAttackMove(sgroup, mkr_song_flank_dest, true)
+		end
+	end
+	
+	-- Because that just doesn't work sometimes, keep trying!
+	Rule_AddInterval(Xiangyang1267_WithdrawOutlyingSoldiers_Retry, { delay = 15, interval = 5, })
+	
+end
+
+function Xiangyang1267_WithdrawOutlyingSoldiers_Retry()
+	
+	if SGroup_Count(sg_disbanded_patrols) <= 0 then
+		print("SONG FORTRESS: Disbanded road patrols cleaned up!")
+		Rule_RemoveMe()
+		return
+	end
+	
+	-- Get rid of any units who aren't idle
+	local _IsIdle =  function(gid, idx, sid)
+		if Squad_IsIdle(sid) == false then
+			SGroup_Remove(sg_disbanded_patrols, sid)
+		end
+	end
+	SGroup_ForEach(sg_disbanded_patrols, _IsIdle)
+	
+	-- For everyone left, issue them the order again
+	local specificGroups = {
+		sg_disbanded_patrols,
+		sg_post_6_a,
+		sg_post_6_b,
+		sg_post_6_c,
+		sg_post_7_a,
+		sg_post_7_b,
+		sg_post_7_c,
+	}
+	
+	for index, sgroup in pairs(specificGroups) do
+		if SGroup_Count(sgroup) > 0 then
+			Cmd_FormationAttackMove(sgroup, mkr_song_post_4, false)
+			Cmd_FormationAttackMove(sgroup, mkr_mongol_rally_1, true)
+			Cmd_FormationAttackMove(sgroup, mkr_song_flank_dest, true)
+		end
+	end
+	
+end
+
+--? @shortdesc Flings some allies uselessly at Fancheng
+function Xiangyang1267_AlliedAttackWavePeelOff(context, data)
+	
+	local sg_closest = SGroup_GetClosestSquads(sg_allies_initial, 40, mkr_song_gate_ally_target)
+	if SGroup_Count(sg_closest) <= 0 or g_stopAttackingGate ~= nil then
+		return
+	end
+	
+	SGroup_RemoveGroup(sg_allies_initial, sg_closest)
+	--Cmd_FormationAttackMove(sg_closest, mkr_song_gate_west, true)
+	--Rule_AddOneShot(Xiangyang1267_AlliedAttackWaveGo, 20, {allySGroup = sg_closest})
+	
+	local newAllyWave = RovingArmy_Init({
+			descriptor = "ally_wave_"..tostring(data.idx),
+			type = "RovingArmy",
+			player = g_playerAllies,
+			sgroup = sg_closest,
+			cavalryCanBuildRams = false,
+			attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+			attackMoveAtTarget = attackMoveStyle_attackEverything,
+			idleTimeOverride = 0,
+			targetingType = ARMY_TARGETING_CYCLE,
+			targets = {
+				mkr_song_gate_ally_target,
+			},
+		})
+	
+	if scartype(g_alliedWaveModules) ~= ST_TABLE then
+		g_alliedWaveModules = {}
+	end
+	table.insert(g_alliedWaveModules, newAllyWave)
+	
+end
+
+--? @shortdesc Flings some allies uselessly at Fancheng
+function Xiangyang1267_AlliedAttackWaveGo(context, data)
+	
+	local allySGroup = data.allySGroup
+	if SGroup_Count(allySGroup) <= 0 or g_stopAttackingGate ~= nil then
+		return
+	end
+	
+	Cmd_FormationAttackMove(allySGroup, mkr_song_gate_west, true)
+	Rule_AddOneShot(Xiangyang1267_AlliedAttackWaveGo, 20, data)
+	
+end
+
+--? @shortdesc Sets the leftover Mongol units to patrolling around the city
+function Xiangyang_HandleLeftovers()
+	
+	--
+	-- LEFTOVER ALLIES
+	--
+	
+	--Disband all the RovingArmies
+	if scartype(g_alliedWaveModules) == ST_TABLE then
+		for index, army in pairs(g_alliedWaveModules) do
+			-- Disband this module, returning its units to sg_allies if they aren't already there
+			RovingArmy_Disband(army, sg_allies)
+		end
+	end
+	-- Stop them all
+	Cmd_Stop(sg_allies)
+	Rule_AddOneShot(Xiangyang1267_DelayedAllyHandling, 1)
+	
+	--
+	-- LEFTOVER ENEMIES
+	--
+	-- First, we want whoever is left here to rabidly attack any remaining player units in the area until they are dead,
+	-- so the player isn't left with stuck units
+	Rule_AddInterval(Xiangyang_MopUpPlayer, 5)
+	-- We don't need them revealed anymore
+	if scartype(sg_tracking_revealed) == ST_SGROUP and scartype(sg_leftover_flankers) == ST_SGROUP then
+		SGroup_RemoveGroup(sg_tracking_revealed, sg_leftover_flankers)
+	end
+	
+	-- Disband them all
+	if scartype(g_allSwarmers) == ST_TABLE then
+		for index, module in pairs(g_allSwarmers) do
+			if scartype(module) == ST_TABLE then
+				RovingArmy_Disband(module, sg_all_swarmers)
+			end
+		end
+	end
+	
+	-- Do we have any swarmers left? Get rid of them!
+	SGroup_Filter(sg_all_swarmers, SBP.CHINESE.UNIT_NEST_OF_BEES_4_CHI, FILTER_REMOVE)
+	Cmd_FormationMove(sg_all_swarmers, mkr_song_swarmers_5, false, true)
+	Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_song_mopup)
+	SGroup_Filter(sg_temp, SBP.CHINESE.UNIT_NEST_OF_BEES_4_CHI, FILTER_REMOVE)
+	Cmd_FormationMove(sg_temp, mkr_song_swarmers_5, false, true)
+	
+	-- For some reason this never catches everyone, so try this
+	Rule_AddOneShot(Xiangyang1267_SecondMopupAttempt, 45)
+	
+end
+
+function Xiangyang1267_DelayedAllyHandling(context, data)
+	-- Split up the survivors
+	g_allySurvivorTable = SGroup_Split(sg_allies, 4)
+	-- We want the first one to be double the size of the latter two, to compensate for the fact that enemy sallies will pass through them
+	if scartype(g_allySurvivorTable[1]) == ST_SGROUP and scartype(g_allySurvivorTable[4]) == ST_SGROUP then
+		SGroup_AddGroup(g_allySurvivorTable[1], g_allySurvivorTable[4])
+		-- We don't want them in two separate groups and modules, though, or they'll clash with each other visually!
+		SGroup_Clear(g_allySurvivorTable[4])
+		SGroup_Destroy(g_allySurvivorTable[4])
+		g_allySurvivorTable[4] = nil
+	end
+	
+	Rule_AddInterval(Xiangyang1267_NudgeAlliesAway, 3)
+	for index, allySGroup in pairs(g_allySurvivorTable) do
+		local markerIdx = index
+		if index == 4 then
+			markerIdx = 1
+		end
+		local targetMkr = Marker_FromName("mkr_bridgehead_allies_"..tostring(markerIdx), "")
+		
+		if index == 3 then
+			Cmd_FormationMove(allySGroup, mkr_waypoint_safe, true)
+			Cmd_FormationMove(allySGroup, targetMkr, true)
+		else
+			Cmd_FormationMove(allySGroup, targetMkr, true)
+		end
+		
+		Rule_AddInterval(Xiangyang1267_ToModuleOnArrival, 1, { sgroup = allySGroup, marker = targetMkr, })
+	end
+end
+
+function Xiangyang1267_NudgeAlliesAway(context, data)
+	
+	-- Any stragglers, get them the hell out
+	Player_GetAllSquadsNearMarker(g_playerAllies, sg_temp, mkr_song_gate_west, 40)
+	-- If there was nobody here, there's nobody left to nudge
+	if SGroup_Count(sg_temp) == 0 then
+		Rule_RemoveMe()
+		return
+	end
+	
+	--Otherwise, move those stragglers out
+	Cmd_Move(sg_temp, mkr_bridgehead_1, false)
+	
+	-- Now re-issue the main orders
+	g_allyAttemptCountdown = g_allyAttemptCountdown or 20
+	for index, allySGroup in pairs(g_allySurvivorTable) do
+		
+		local markerIdx = index
+		if index == 4 then
+			markerIdx = 1
+		end
+		local targetMkr = Marker_FromName("mkr_bridgehead_allies_"..tostring(markerIdx), "")
+		
+		if index == 3 then
+			Cmd_FormationMove(allySGroup, mkr_waypoint_safe, true)
+			Cmd_FormationMove(allySGroup, targetMkr, false)
+		else
+			Cmd_FormationMove(allySGroup, targetMkr, false)
+		end
+	end
+	g_allyAttemptCountdown = g_allyAttemptCountdown - 1
+	
+end
+
+--? @shortdesc Because it seems to constantly fail otherwise
+function Xiangyang1267_SecondMopupAttempt(context, data)
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_mongol_evacuation)
+	SGroup_Filter(sg_temp, SBP.CHINESE.UNIT_NEST_OF_BEES_4_CHI, FILTER_REMOVE)
+	Cmd_FormationMove(sg_temp, mkr_song_swarmers_5, false, true)
+end
+
+--? @shortdesc Makes sure the allied SGroups convert to defend modules when they reach their destinations
+function Xiangyang1267_ToModuleOnArrival(context, data)
+	
+	if scartype(data.sgroup) ~= ST_SGROUP and scartype(data.marker) == ST_MARKER then
+		print(string.format("Allied modules have invalid sgroup (%s) or invalid marker (%s)", scartype_tostring(data.sgroup), scartype_tostring(data.marker)))
+		Rule_RemoveMe()
+	elseif SGroup_Count(data.sgroup) <= 0 then
+		print(string.format("Allied module died en route to %s", scartype_tostring(data.marker)))
+		Rule_RemoveMe()
+	elseif Util_GetDistance(data.sgroup, data.marker) < 5 or SGroup_IsIdle(data.sgroup, true) then
+		local newDefend = Defend_Init({
+				descriptor = "AllyBuffer"..tostring(index),
+				type = "Defend",
+				marker = data.marker,
+				player = g_playerAllies,
+				sgroup = data.sgroup,
+				leashRange = 30,
+				idlePosition = data.marker,
+				useCustomDirection = true,
+			})
+		print(string.format("Allied group sucessfully arrived at %s, %s units away", data.marker, Util_GetDistance(data.sgroup, data.marker)))
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Makes the Song mop up any leftover player units on the far edge of Xiangyang before retreating
+function Xiangyang_MopUpPlayer(context, data)
+	
+	sg_player_mopup = SGroup_CreateIfNotFound("sg_player_mopup")
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_player_mopup, mkr_mongol_evacuation)
+	if SGroup_Count(sg_player_mopup) <= 0 then
+		
+		-- Also recalls leftover flankers to Xiangyang
+		Cmd_FormationAttackMove(sg_leftover_flankers, mkr_base_xiangyang, false, true)
+		
+		-- Remove this rule
+		print("XIANGYANG: Done Mopping!")
+		Rule_RemoveMe()
+		
+	else
+		
+		Player_GetAll(g_playerSong, sg_allsquads)
+		local totalCount = SGroup_Count(sg_allsquads)
+		
+		local sg_moppers = SGroup_CreateIfNotFound("sg_moppers")
+		Player_GetAllSquadsNearMarker(g_playerSong, sg_moppers, mkr_song_mopup)
+		print(string.format("XIANGYANG: Mopup start, %s moppers", SGroup_Count(sg_moppers)))
+		if SGroup_Count(sg_allsquads) < 400 then
+			
+			print("XIANGYANG: Adding Moppers!")
+			local sg_new_units = SGroup_CreateIfNotFound("sg_new_units")
+			UnitEntry_DeploySquads(g_playerSong, sg_new_units,
+				{
+					{type = "scar_spearman", numSquads = 10, },
+					{type = "scar_manatarms", numSquads = 10, },
+					{type = "scar_crossbowman", numSquads = 10, },
+				},
+				mkr_base_xiangyang, nil, nil, { dynamicSpawnType = DST_FURTHEST_HIDDEN, destination = mkr_mongol_evacuation, })
+			
+			SGroup_AddGroup(sg_moppers, sg_new_units)
+			SGroup_AddGroup(sg_leftover_flankers, sg_new_units)
+			print("XIANGYANG: New Moppers added! Total is now: "..tostring(SGroup_Count(sg_moppers)))
+			
+		end
+		
+		-- This function will find idle units and send them to attack
+		local _IfIdleAttack = function(gid, idx, sid)
+			if Squad_IsAttacking(sid, 5) == false then
+				SGroup_Clear(sg_temp)
+				SGroup_Single(sg_temp, sid)
+				Cmd_AttackMove(sg_temp, SGroup_GetClosestSquad(sg_player_mopup, Squad_GetPosition(sid)))
+			end
+		end
+		
+		-- Issue the orders to however many units there are hanging around in the mopper group
+		local mopperSGroups = SGroup_SplitUnderCap(sg_moppers, 200)
+		for index, sgroup in pairs(mopperSGroups) do
+			SGroup_ForEach(sgroup, _IfIdleAttack)
+		end
+		
+		print(string.format("XIANGYANG: Mopping the floor, %s moppers", SGroup_Count(sg_moppers)))
+		
+	end
+	
+end
+
+--? @shortdesc Issues delayed patrol orders to the remaining allies
+function Xiangyang_AlliesToModules(context, data)
+	for index, sgroup in pairs(data.allySGroupTable) do
+		local newDefend = Defend_Init({
+				descriptor = "AllyBuffer"..tostring(index),
+				type = "Defend",
+				marker = Marker_FromName("mkr_bridgehead_allies_"..tostring(index), ""),
+				player = g_playerAllies,
+				sgroup = sgroup,
+			})
+	end
+end
+
+--? @shortdesc Destroys the flanking bridge if it's been hit but isn't dead yet, but needs to die!
+function Xiangyang1267_IsBridgeDestroyed(exact)
+	
+	local threshold = 0.05
+	if exact == true then
+		threshold = 0.00
+	end
+	
+	return EGroup_Count(eg_sally_bridge) <= 0 or EGroup_GetAvgHealth(eg_sally_bridge) <= threshold
+	
+end
+
+--? @shortdesc Initiates the attack from the allies on the gate of Fancheng
+function Xiangyang1267_LaunchAlliedAttack(context, data)
+	
+	-- We want to decompose the order into several smaller ones to avoid the formation spilling out on the wrong side of the bridge
+	sg_allies_initial = SGroup_CreateUnique("sg_allies_initial")
+	SGroup_AddGroup(sg_allies_initial, sg_allies)
+	local allySgroupTable = SGroup_SplitUnderCap(sg_allies, 40)
+	local allyWaveInterval = 30
+	for index, sgroup in pairs(allySgroupTable) do
+		local thisDelay = (index - 1) * allyWaveInterval
+		Rule_AddOneShot(Xiangyang1267_AlliedAttackWavePeelOff, thisDelay, {idx = index})
+	end
+	
+end
+
+--? @shortdesc These units should lead the player down to the southern bridge
+function Xiangyang1267_LaunchBreadcrumbers(context, data)
+	
+	g_breadcrumbersLaunched = g_breadcrumbersLaunched or 0
+	if g_breadcrumbersLaunched > g_breadcrumbMax then
+		Rule_RemoveMe()
+		return
+	end
+	
+	-- Create some units to breadcrumb
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(g_playerSong, sg_temp, {
+			{ type = "scar_spearman", numSquads = Util_DifVar({4, 6, 8, 10}), },
+			{ type = "scar_archer", numSquads = Util_DifVar({4, 6, 8, 10}), },
+		}, mkr_song_swarmers_1)
+	-- Make them rush over brainlessly
+	Cmd_FormationAttackMove(sg_temp, mkr_song_flank_dest)
+	g_breadcrumbersLaunched = g_breadcrumbersLaunched + 1
+	SGroup_AddGroup(sg_breadcrumbs, sg_temp)
+	
+end
+
+--? @shortdesc Launches Song swarmers from roughly the direction of Xiangyang
+function Xiangyang1267_LaunchSwarmerArmy(context, data)
+	
+	-- Only send swarmers if there aren't already a ton of them
+	if SGroup_Count(sg_all_swarmers) < 150 then
+		-- Increment the counter
+		g_swarmersLaunched = g_swarmersLaunched or 0
+		
+		local meleeCount = (g_swarmersLaunched * 2) + Util_DifVar({4, 4, 6, 8})
+		if meleeCount > 15 then
+			meleeCount = 15	
+		end
+		
+		local rangedCount = (g_swarmersLaunched * 3) + Util_DifVar({12, 12, 16, 20})
+		if rangedCount > 30 then
+			rangedCount = 30
+		end
+		
+		g_swarmersLaunched = g_swarmersLaunched + 1
+		local markerName = "mkr_song_swarmers_"..tostring(g_swarmersLaunched)
+		if g_swarmersLaunched > 5 then
+			markerName = "mkr_song_swarmers_5"
+		end
+		
+		local newSwarmers = RovingArmy_Init({
+				type = "RovingArmy",
+				descriptor = "SongSwarmers"..tostring(g_swarmersLaunched),
+				player = g_playerSong,
+				sgroup = sg_all_swarmers,
+				spawnLocation = Marker_FromName(markerName, ""),
+				units = {
+					{ type = "scar_manatarms", numSquads = meleeCount * 0.3, },
+					{ type = "scar_spearman", numSquads = meleeCount * 0.7, },
+					{ type = "scar_crossbow", numSquads = rangedCount, },
+				},
+				targetingType = ARMY_TARGETING_DISCARD,
+				targets = {
+					mkr_song_post_5,
+					mkr_song_flank_dest,
+					mkr_mongol_rally_1
+				},
+				onDeathDissolve = true,
+				attackMove = attackMoveStyle_attackEverything,
+			})
+		
+		g_allSwarmers = g_allSwarmers or {}
+		table.insert(g_allSwarmers, newSwarmers)
+	end
+	
+end
+
+function Xiangyang1267_WatchAfterWoodenPost(context, data)
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_song_post_4_otherside)
+	if SGroup_Count(sg_temp) > 1 then
+		Xiangyang1267_SpawnAllies()
+		Rule_RemoveMe()
+	end
+end

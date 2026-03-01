@@ -1,0 +1,144 @@
+--
+-- York 1069 - Reclaim
+--
+
+
+function Reclaim_InitObjectives()
+	
+	hpid_york = nil
+	
+	OBJ_ReclaimYork = {
+		Title = 11172041, -- Reclaim York
+		Type = ObjectiveType_Primary,
+		PreStart = ReclaimYork_PreStart,
+		OnStart = ReclaimYork_Start,
+		OnComplete = function()
+			Mission_Complete()
+			Music_PersistentStop()
+		end,
+	}
+	
+	SOBJ_BreachGates = {
+		Title = 11172042, -- Breach the gates
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ReclaimYork,
+		OnStart = BreachGates_Start,
+		OnComplete = BreachGates_Complete,
+		Intel_Start = EVENTS.StartBreachWalls,
+		Intel_Complete = EVENTS.BreachWalls,
+	}
+	
+	SOBJ_DestroyKeep = {
+		Title = 11172043, -- Destroy the keep
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ReclaimYork,
+		OnStart = DestroyKeep_Start,
+	}
+	
+	Objective_Register(OBJ_ReclaimYork)
+	Objective_Register(SOBJ_BreachGates)
+	Objective_Register(SOBJ_DestroyKeep)
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			Mission_Complete()
+	       end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+	
+end
+function ReclaimYork_PreStart()
+	
+	--Sound_SetMinimumMusicCombatIntensity(801, -1) -- to set music minimum intensity to tense 
+end
+
+function ReclaimYork_Start()
+	hpid_york = Objective_AddUIElements(OBJ_ReclaimYork, mkr_kp_keep, true, 11172044, false, 11.1) -- York
+end
+
+function BreachGates_Complete()
+	
+	Objective_Start(SOBJ_DestroyKeep)
+	Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE)
+	
+	--if initial_dane_raid_complete then
+		--York_AddPatrolTargets()
+	--end
+end
+
+function BreachGates_Start()
+	
+	Rule_AddGlobalEvent(Reclaim_OnEntityKilled, GE_EntityKilled)
+	--Sound_SetMinimumMusicCombatIntensity(801, -1) -- to set music minimum intensity to tense 
+	
+	hpid_gate1 = Objective_AddUIElements(SOBJ_BreachGates, mkr_york_gate1, true, 11195243, false, 5)
+	hpid_gate2 = Objective_AddUIElements(SOBJ_BreachGates, mkr_york_gate2, true, 11195243, false, 5)
+end
+
+function DestroyKeep_Start()
+	
+	Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE, 60)
+	
+	Rule_AddInterval(Reclaim_CheckKeep, 0.5)
+	
+	Objective_RemoveUIElements(OBJ_ReclaimYork, hpid_york)
+	Objective_AddUIElements(OBJ_ReclaimYork, mkr_kp_keep, true, 11172045, true, 11.1) -- York Keep
+end
+
+function Reclaim_OnEntityKilled(context)
+
+	if context.victimOwner == playerCityRebels then
+		
+		if Entity_IsOfType(context.victim, "gate") then
+			Objective_Complete(SOBJ_BreachGates, true)
+			Rule_RemoveMe()
+		elseif Entity_IsOfType(context.victim, "wall") then
+			Objective_Complete(SOBJ_BreachGates, false)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function Reclaim_CheckKeep()
+	
+	if Objective_IsStarted(SOBJ_DestroyKeep) and not Objective_IsComplete(SOBJ_DestroyKeep) then
+	
+		if Entity_GetHealthPercentage(entity_keep) < 0.005 then
+			
+			Reclaim_Complete()
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function Reclaim_Complete()
+	
+	Rule_Remove(York_CheckKeepRepair)
+	Rule_Remove(York_CheckKeepDefendTrigger)
+	
+	--transfer all remaining enemy modules to a withdraw module outside the city?
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_kp_keep, 30) 
+	York_PlayWallaCelebrate(sg_temp)
+	
+	Objective_Complete(SOBJ_DestroyKeep, false, false)
+			
+	--Entity_SetInvulnerableMinCap(entity_keep, 0, 0)
+	Objective_Complete(OBJ_ReclaimYork)
+	
+	--Rule_AddOneShot(Reclaim_StartOutro, 2)
+end
+
+function Reclaim_StartOutro()
+	Util_StartIntel(EVENTS["York_Outro"])
+end
+
+function Reclaim_DestroyKeep()
+	
+	Entity_Kill(entity_keep)
+end
+

@@ -1,0 +1,181 @@
+
+---
+--- Mission Zero
+--- Objective to Age Up to Feudal Age
+---
+
+
+
+function IntroProgressFeudalAge_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_ProgressFeudalAge = {
+		
+		Title = 11192711, --Progress to Feudal Age
+		Type = ObjectiveType_Primary,
+		
+		Intel_Complete = EVENTS.AgeUp_CompletedIntel,
+		
+		OnStart = function ()
+			Objective_Start(SOBJ_AgeUpFeudal)
+		end,
+
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete (OBJ_ProgressFeudalAge, ALL)
+		end,
+
+		OnComplete = IntroProgressToFeudalAge_OnComplete,
+		
+		Cheat = Cheat_Progress_Feudalage,
+	}
+	
+	SOBJ_AgeUpFeudal = {
+		
+		Title = 11192722, -- Age up to Feudal Age
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ProgressFeudalAge,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.AgeUp_IntelStart,
+		
+		SetupUI = AgeUpFeudal_UI,
+		
+		PreStart = function()
+			Rule_AddGlobalEvent(ProgressAgeFeudal_OnConstructionStart, GE_ConstructionStart)
+			Rule_AddGlobalEvent(ProgressAgeFeudal_OnConstructionCancelled, GE_ConstructionCancelled)
+			Player_SetMaximumAge(player1, AGE_FEUDAL)
+			Tutorials_MissionZero_HighlightAgeUp()
+			--enable Abbey of Kings landmark
+			Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_ABBEY_ENG, ITEM_UNLOCKED)
+		end,
+		
+		OnStart = AgeUpFeudal_Start,
+		
+		PreComplete = function()
+			if not Objective_IsComplete(OBJ_Tip_AgeUpFeudal) then
+				Objective_Complete (OBJ_Tip_AgeUpFeudal, false, false)
+			end
+			HintPoint_Remove(hpid_landmark_tip)
+		end,
+		
+		OnComplete = AgeUpFeudal_OnComplete,
+	}
+	
+	Objective_Register(OBJ_ProgressFeudalAge)
+	Objective_Register(SOBJ_AgeUpFeudal)
+	
+end
+
+
+function AgeUpFeudal_UI()
+	
+end
+
+function AgeUpFeudal_Start()
+		
+	Rule_AddInterval(AgeUpFeudal_Monitor,2)
+
+	Objective_Start(OBJ_Tip_AgeUpFeudal, false, false)
+	Rule_AddInterval(MonitorFood,3)
+	Rule_AddInterval(MonitorWood,3)
+end
+
+function MonitorFood()
+	local player_Food = Player_GetResource(player1, RT_Food)
+	local player_FoodRate = Player_GetResourceRate(player1, RT_Food) * 60
+	
+	if player_Food <= 400 and player_FoodRate <= 100 then
+		if Objective_IsStarted(OBJ_Tip_NotEnoughFood) == false then 
+			Objective_Start(OBJ_Tip_NotEnoughFood,false,false)
+		end
+	else
+		if player_Food >= 800 or player_FoodRate >= 120 then
+			if Objective_IsStarted(OBJ_Tip_NotEnoughFood) == true then 
+				Objective_Complete(OBJ_Tip_NotEnoughFood,false,false)
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+function MonitorWood()
+	local player_Wood = Player_GetResource(player1, RT_Wood)
+	local player_WoodRate = Player_GetResourceRate(player1, RT_Wood) * 60
+	
+	if player_Wood <= 400 and player_WoodRate <= 100 then
+		if Objective_IsStarted(OBJ_Tip_NotEnoughWood) == false then 
+			Objective_Start(OBJ_Tip_NotEnoughWood,false,false)
+		end
+	else
+		if player_Wood >= 800 or player_WoodRate >= 120 then
+			if Objective_IsStarted(OBJ_Tip_NotEnoughWood) == true then 
+				Objective_Complete(OBJ_Tip_NotEnoughWood,false,false)
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+
+function AgeUpFeudal_Monitor()
+	
+	if Player_GetCurrentAge(player1) == 2 then
+		Rule_RemoveMe()
+		Rule_RemoveGlobalEvent(ProgressAgeFeudal_OnConstructionStart)
+		Rule_RemoveGlobalEvent(ProgressAgeFeudal_OnConstructionCancelled)
+		Objective_Complete(SOBJ_AgeUpFeudal,false,true)
+	end
+end
+
+function AgeUpFeudal_OnComplete()
+	
+	Objective_Complete(OBJ_ProgressFeudalAge)
+	
+end
+
+
+function IntroProgressToFeudalAge_OnComplete()
+	
+	Rule_AddOneShot(AddLandmarkHintpoint, 2)
+	Objective_Start(OBJ_LearnSpearman)
+end
+
+function AddLandmarkHintpoint()
+	hpid_landmark = HintPoint_Add(eg_landmarkForTutorial, true, "$11197254", 3)
+end
+-- Global event callback for GE_ConstructionStart
+function ProgressAgeFeudal_OnConstructionStart(context)
+
+	local buildingOwner = Entity_GetPlayerOwner(context.entity)
+	if buildingOwner == player1 then
+		
+		if not Objective_IsComplete(SOBJ_AgeUpFeudal) then
+			if Entity_IsOfType(context.entity, "wonder_dark_age") then
+				--remove availability to prevent player from placing duplicates of this landmark once one is placed
+				Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_ABBEY_ENG, ITEM_REMOVED)
+				-- in case the player canceled construction mid-stream and this is a second or later build attempt, we check if we've been here before
+				if feudalAgeStartedConstruction == true then
+					HintPoint_Remove(hpid_landmark_tip)
+					EGroup_Clear (eg_landmarkForTutorial)
+				end
+				-- now we proceed	
+				feudalAgeStartedConstruction = true
+				hpid_landmark_tip = HintPoint_Add(context.entity, true, "$11192775", 3)
+				EGroup_Add(eg_landmarkForTutorial, context.entity)
+
+			end
+		end
+	end
+end
+
+-- Global event callback for GE_ConstructionCancelled
+function ProgressAgeFeudal_OnConstructionCancelled(context)
+	local buildingOwner = Entity_GetPlayerOwner(context.entity)
+	if buildingOwner == player1 then
+		if not Objective_IsComplete(SOBJ_AgeUpFeudal) then
+			if Entity_IsOfType(context.entity, "wonder_dark_age") then
+				--unlock production of the landmark again if the player has cancelled the one under construction
+				Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_ABBEY_ENG, ITEM_UNLOCKED)
+			end
+		end
+	end
+end

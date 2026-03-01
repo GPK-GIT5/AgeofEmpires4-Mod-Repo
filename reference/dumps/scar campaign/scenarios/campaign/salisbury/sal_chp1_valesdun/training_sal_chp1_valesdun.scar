@@ -1,0 +1,1000 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("training.scar")
+import("cardinal.scar")
+import("sal_chp1_valesdun.scar")  
+
+
+-- ///// SelectAllSpearmen //////////////////////////////////////////////
+-- ///// MoveSpearmen //////////////////////////////////////////////
+-- ///// CreateRegiment //////////////////////////////////////////////
+-- ///// SelectAllUnits with Marquee //////////////////////////////////////////////
+-- ///// Snap to... //////////////////////////////////////////////
+-- ///// AttackStructure //////////////////////////////////////////////
+-- ///// AttackMove //////////////////////////////////////////////
+-- ///// CavalryVSArchers //////////////////////////////////////////////
+-- ///// Selection Exploration //////////////////////////////////////////////
+-- ///// TerrainAdvantage //////////////////////////////////////////////
+-- ///// DPadUse //////////////////////////////////////////////
+-- ///// DPadUse Reminder //////////////////////////////////////////////
+-- ///// HeroAbility //////////////////////////////////////////////
+
+
+
+-- ///// SelectAllSpearmen //////////////////////////////////////////////
+function Goals_SelectAllSpearmen()
+
+	local goal_sequence_SelectAllSpearmen_id = "goal_sequence_SelectAllSpearmen"
+
+	local goal_SelectAllSpearmenOnScreen = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_starting_spearmen, 1),
+		{
+			ID = "goal_SelectAllSpearmenOnScreen",
+			Message = "$999475", --Double Press A over a Spearmen to select all on screen
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectAllSpearmen_AreAllOnScreenSelected
+	)
+
+	local goal_SelectAllSpearmen = Training_Goal(
+		"Squad",
+		{
+			ID = "goal_SelectAllSpearmen",
+			Message = "$11255717",--Move your camera to put all spearmen on screen and double press A again.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectAllSpearmen_CompletePredicate
+	)
+
+	local goal_sequence_SelectAllSpearmen = Training_GoalSequence(
+		goal_sequence_SelectAllSpearmen_id,
+		-1,
+		1,
+		ReturnTrue,
+		SelectAllSpearmen_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_SelectAllSpearmenOnScreen, goal_SelectAllSpearmen}
+	)
+
+	Training_AddGoalSequence(goal_sequence_SelectAllSpearmen)
+	Training_EnableGoalSequenceByID(goal_sequence_SelectAllSpearmen, true)
+end
+
+
+function SelectAllSpearmen_AreAllOnScreenSelected(goal)
+	
+	SGroup_Clear(sg_temp)
+	SGroup_AddGroup(sg_temp, sg_starting_spearmen)
+	SGroup_FilterOnScreen(sg_temp, 1, FILTER_KEEP)
+	
+	return Misc_IsSGroupSelected(sg_temp, ALL)
+	
+end
+
+
+function SelectAllSpearmen_CompletePredicate(goal)
+	
+	
+	-- need to reset the key with each check so that we end up pointing to whoever is offscreen
+	
+	local tag_spearman = SelectAllSpearmen_GetOffScreenUnit()
+	
+	if tag_spearman ~= nil then
+		
+		if goal.key ~= tag_spearman then
+			Training_InvalidateCurrentTag()
+			goal.key = tag_spearman
+		end
+		
+	end
+	
+	return false
+end
+
+function SelectAllSpearmen_GetOffScreenUnit()
+	SGroup_Clear(sg_temp)
+	SGroup_AddGroup(sg_temp, sg_starting_spearmen)
+	SGroup_FilterOnScreen(sg_temp, 1, FILTER_REMOVE)
+	
+	if SGroup_Count(sg_temp) > 0 then
+		return SGroup_GetSquadAt(sg_temp, 1)
+	end
+	
+end
+
+
+function SelectAllSpearmen_Trigger(goalSequence)
+
+	return true
+end
+
+function SelectAllSpearmen_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_SelectSpearmen) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+-- ///// MoveSpearmen //////////////////////////////////////////////
+function Goals_MoveSpearmen()
+
+	local goal_sequence_MoveSpearmen_id = "goal_sequence_MoveSpearmen"
+
+	local goal_SelectAllSpearmenAgain = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_starting_spearmen, 1),
+		{
+			ID = "goal_SelectAllSpearmenAgain",
+			Message = "$999475", --Double Press A over a Spearmen to select all on screen
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectAllSpearmenAgain_CompletePredicate
+	)
+	
+	local goal_MoveSpearmen = Training_Goal(
+		Marker_GetPosition(mkr_obj_1b),
+		{
+			ID = "goal_MoveSpearmen",
+			Message = "$999477", --Move the Camera to the Marker and Press A
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		MoveSpearmen_CompletePredicate
+	)
+
+	local goal_sequence_MoveSpearmen = Training_GoalSequence(
+		goal_sequence_MoveSpearmen_id,
+		-1,
+		1,
+		MoveSpearmen_Trigger,
+		MoveSpearmen_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectAllSpearmenAgain, goal_MoveSpearmen}
+	)
+
+	Training_AddGoalSequence(goal_sequence_MoveSpearmen)
+	Training_EnableGoalSequenceByID(goal_sequence_MoveSpearmen, true)
+	
+end
+
+function SelectAllSpearmenAgain_CompletePredicate(goal)
+
+	if Misc_IsSGroupSelected(sg_starting_spearmen, true) then
+		
+		return true
+	end
+	return false
+end
+
+function MoveSpearmen_CompletePredicate(goal)
+	
+	return false
+end
+
+function MoveSpearmen_Trigger(goalSequence)
+
+	return true
+end
+
+function MoveSpearmen_IgnorePredicate(goalSequence)
+
+	if (Objective_IsComplete(SOBJ_MoveSpearmen))then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// CreateRegiment //////////////////////////////////////////////
+function Goals_CreateRegiment()
+
+	local goal_sequence_CreateRegiment_id = "goal_sequence_CreateRegiment"
+
+	local goal_CreateRegiment = Training_Goal(
+		"ControlGroupsHUDElement",
+		{
+			ID = "goal_CreateRegiment",
+			Message = "$999479", --With the Spearmen Selected, Press LT + RT to open the Control Group Menu.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		CreateRegiment_CompletePredicate
+	)
+	
+	local goal_AddUnits = Training_Goal(
+		"ScreenTopCenterTag",
+		{
+			ID = "goal_AddUnits",
+			Message = "$999480", --Hold the LS in the Direction of a Banner, then Press A to Add the Selected Units.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		AddUnits_CompletePredicate
+	)
+	
+	local goal_CloseMenu = Training_Goal(
+		"ScreenTopCenterTag",
+		{
+			ID = "goal_CloseMenu",
+			Message = "$999481", --Press B to Close the menu.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		CloseMenu_CompletePredicate
+	)
+	
+	local goal_SeeRegiments = Training_Goal(
+		"ControlGroupsHUDElement",
+		{
+			ID = "goal_SeeRegiments",
+			Message = "$999482", --You can see your Control Groups in the top right of the screen. Press B to clear your selection of Spearmen.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SeeRegiments_CompletePredicate
+	)
+
+	goal_sequence_CreateRegiment = Training_GoalSequence(
+		goal_sequence_CreateRegiment_id,
+		-1,
+		1,
+		CreateRegiment_Trigger,
+		CreateRegiment_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_CreateRegiment, goal_AddUnits, goal_CloseMenu, goal_SeeRegiments}
+	)
+
+	Training_AddGoalSequence(goal_sequence_CreateRegiment)
+	Training_EnableGoalSequenceByID(goal_sequence_CreateRegiment, true)
+end
+
+function CreateRegiment_CompletePredicate(goal)
+	
+	return UI_GetActiveRadialMenuType() == RMT_RegimentsMenu and all_in_group ~= true
+end
+
+function AddUnits_CompletePredicate(goal)
+	
+	return all_in_group == true
+end
+
+function CloseMenu_CompletePredicate(goal)
+	
+	return UI_GetActiveRadialMenuType() ~= RMT_RegimentsMenu
+end
+
+function SeeRegiments_CompletePredicate(goal)
+	
+	return false
+end
+
+function CreateRegiment_Trigger(goalSequence)
+
+	return true
+end
+
+function CreateRegiment_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_CreateRegiment) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+
+-- ///// SelectAllUnits with Marquee  //////////////////////////////////////////////
+function Goals_UseMarquee()
+	
+	local goal_sequence_UseMarquee_id = "goal_sequence_UseMarquee"
+	
+	-- 1. Create marquee
+	local goal_create_marquee = Training_Goal (
+		"LooseReticle", 
+		{ID = "goal_create_marquee", Message = "$999485", DataTemplate = "GenericTrainingDataTemplate",}, 
+		UseMarquee_IsMarqueeActive	)
+	
+	-- 2. Go over Spearmen
+	local goal_marquee_spearmen = Training_Goal (
+		SGroup_GetPosition(sg_starting_spearmen), 
+		{ID = "goal_marquee_spearmen", Message = "$11254812", DataTemplate = "GenericTrainingDataTemplate",}, 
+		UseMarquee_IsOverSpearmen	)
+	
+	-- 3. Go over Guillaume
+	local goal_marquee_guillaume = Training_Goal (
+		SGroup_GetPosition(sg_william), 
+		{ID = "goal_marquee_guillaume",	Message = "$11254813", DataTemplate = "GenericTrainingDataTemplate",}, 
+		UseMarquee_IsOverGuillaume	)
+	
+	-- 4. Release
+	local goal_marquee_release = Training_Goal (
+		"LooseReticle", 
+		{ID = "goal_marquee_release", Message = "$11254814", DataTemplate = "GenericTrainingDataTemplate",}, 
+		ReturnFalse	)
+	
+	
+	local goal_sequence_UseMarquee = Training_GoalSequence(
+		goal_sequence_UseMarquee_id,
+		-1,
+		1,
+		ReturnTrue,
+		UseMarquee_IgnorePredicate,
+		nil, 
+		nil,
+		true,
+		{goal_create_marquee, goal_marquee_spearmen, goal_marquee_guillaume, goal_marquee_release}
+	)
+
+	Training_AddGoalSequence(goal_sequence_UseMarquee)
+	Training_EnableGoalSequenceByID(goal_sequence_UseMarquee, true)
+	
+	
+end
+
+function UseMarquee_IsMarqueeActive (goal)
+	if UI_GetMarqueeRadius() >= 0.5 then
+		return true
+	else
+		--if we end up regressing to this point, reset these booleans
+		b_spearmen_added = false
+		b_guillaume_added = false
+	end
+end
+
+
+-- NOTE: The logic check for "painting" the spearmen with the marquee is imperfect and can be broken if the player spreads their spearmen out across the field; 
+-- this is not a thing that most players will do at this point, but if they do the objective to select all will still complete naturally, 
+-- it's just the hint progress that won't be perfect. The hint telling them to paint over their spearmen will stay up, basically.
+
+function UseMarquee_IsOverSpearmen (goal)
+	
+	if Prox_AreSquadsNearMarker(sg_starting_spearmen, Camera_GetPivot(), ALL, 8) then
+		b_spearmen_added = true
+	end
+	
+	return b_spearmen_added and (UI_GetMarqueeRadius() >= 0.5) -- this means we will regress if we release LT but once over the spearmen, we can move on.
+end
+
+function UseMarquee_IsOverGuillaume (goal)
+	
+	if Prox_AreSquadsNearMarker(sg_william, Camera_GetPivot(), ALL, 5) then
+		b_guillaume_added = true
+	end
+	
+	return b_guillaume_added and (UI_GetMarqueeRadius() >= 0.5)
+end
+
+
+
+function UseMarquee_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_SelectAll) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+
+
+-- ///// Snap to... //////////////////////////////////////////////
+function Goals_SnapTo()
+
+	local goal_sequence_SnapTo_id = "goal_sequence_SnapTo"
+
+	local goal_SnapToSelected = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_SnapToSelected",
+			Message = "$999488", --If you lose your selected units, you can find them by pressing in the LS.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SnapToSelected_CompletePredicate
+	)
+
+	local goal_sequence_SnapTo = Training_GoalSequence(
+		goal_sequence_SnapTo_id,
+		-1,
+		1,
+		SnapTo_Trigger,
+		SnapTo_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_SnapToSelected}
+	)
+
+	Training_AddGoalSequence(goal_sequence_SnapTo)
+	Training_EnableGoalSequenceByID(goal_sequence_SnapTo, true)
+end
+
+function SnapToSelected_CompletePredicate(goal)
+	-- we flag the variable to true if the player has any units on screen
+	-- we then just return false, so we don't actually complete the goal (which causes a save we don't need)
+	-- the variable set to true will instead cause the Ignore function to succeed and remove the goal sequence entirely
+	Player_GetAll(player1)
+	if SGroup_IsOnScreen(player1, sg_allsquads, ANY) then
+		training_snapToOver = true
+	end
+	
+	return false
+
+end
+
+function SnapTo_Trigger(goalSequence)
+	
+	-- we trigger the sequence if the player has no units on screen
+	Player_GetAll(player1)
+	if SGroup_IsOnScreen(player1, sg_allsquads, ANY) == false then
+		return true
+	end
+
+	return false
+end
+
+function SnapTo_IgnorePredicate(goalSequence)
+
+	if (Objective_IsStarted(SOBJ_DestroyPalisade)) or training_snapToOver == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// AttackStructure //////////////////////////////////////////////
+function Goals_AttackStructure()
+
+	local goal_sequence_AttackStructure_id = "goal_sequence_AttackStructure"
+
+	local goal_HighlightPalisade = Training_Goal(
+		Marker_GetPosition(mkr_palisade),
+		{
+			ID = "goal_HighlightPalisade",
+			Message = "$999491", --With the Spearmen Selected, move the Camera to the Palisades and press A.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		HighlightPalisade_CompletePredicate
+	)
+
+	local goal_AttackPalisade = Training_Goal(
+		"LooseReticleContextualIcon",
+		{
+			ID = "goal_AttackPalisade",
+			Message = "$999492", --The central cursor changes to show the command that can be issued.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		AttackPalisade_CompletePredicate
+	)
+
+	local goal_sequence_AttackStructure = Training_GoalSequence(
+		goal_sequence_AttackStructure_id,
+		-1,
+		1,
+		AttackStructure_Trigger,
+		AttackStructure_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_HighlightPalisade, goal_AttackPalisade}
+	)
+
+	Training_AddGoalSequence(goal_sequence_AttackStructure)
+	Training_EnableGoalSequenceByID(goal_sequence_AttackStructure, true)
+end
+
+function HighlightPalisade_CompletePredicate(goal)
+	
+	return SGroup_IsDoingAttack(sg_starting_spearmen, false, 1) 
+end
+
+function AttackPalisade_CompletePredicate(goal)
+
+	return false
+end
+
+function AttackStructure_Trigger(goalSequence)
+
+	return true
+end
+
+function AttackStructure_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_DestroyPalisade) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+-- ///// AttackMove //////////////////////////////////////////////
+function Goals_AttackMove()
+
+	local goal_sequence_AttackMove_id = "goal_sequence_AttackMove"
+
+	local goal_AttackMoveSpearmen = Training_Goal(
+		Marker_GetPosition(mkr_attack_move_hint),
+		{
+			ID = "goal_AttackMoveSpearmen",
+			Message = "$999494", --With the Spearmen selected, move the camera close to the enemy Horseman and Press X
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		AttackMoveSpearmen_CompletePredicate
+	)
+	
+	local goal_ActivateAttackMove = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_starting_spearmen, 1),
+		{
+			ID = "goal_ActivateAttackMove",
+			Message = "$999496", --Attack Move commands your units to Attack any enemy they encounter as they move
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ActivateAttackMove_CompletePredicate
+	)
+
+	local goal_AttackMoveInfo = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_starting_spearmen, 1),
+		{
+			ID = "goal_AttackMoveInfo",
+			Message = "$999495", --Your Spearmen had a distinct advantage against the enemy Horsemen. This type of unit matchup will be key moving forward
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		AttackMoveInfo_CompletePredicate
+	)
+
+	local goal_sequence_AttackMove = Training_GoalSequence(
+		goal_sequence_AttackMove_id,
+		-1,
+		1,
+		AttackMove_Trigger,
+		AttackMove_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_AttackMoveSpearmen, goal_ActivateAttackMove, goal_AttackMoveInfo}
+	)
+
+	Training_AddGoalSequence(goal_sequence_AttackMove)
+	Training_EnableGoalSequenceByID(goal_sequence_AttackMove, true)
+end
+
+function AttackMoveSpearmen_CompletePredicate(goal)
+
+	return SGroup_IsAttackMoving(sg_starting_spearmen, false) or Objective_IsComplete(SOBJ_DefeatHorseman)
+end
+
+function ActivateAttackMove_CompletePredicate(goal)
+
+	return Timer_GetElapsed(goal.timerID) > 10 or Objective_IsComplete(SOBJ_DefeatHorseman)
+end
+
+function AttackMoveInfo_CompletePredicate(goal)
+
+	attackMoveInfoTimer = Timer_GetElapsed(goal.timerID) > 10
+	return false
+end
+
+function AttackMove_Trigger(goalSequence)
+
+	return true
+end
+
+function AttackMove_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_DefeatHorseman) and attackMoveInfoTimer == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+-- ///// CavalryVSArchers //////////////////////////////////////////////
+function Goals_CavalryVSArchers()
+
+	local goal_sequence_CavalryVSArchers_id = "goal_sequence_CavalryVSArchers"
+	-- first tip to reinforce using double-press A to select all of a type
+	local goal_SelectAllHorsemen = Training_Goal (
+		SGroup_GetSquadAt(sg_horsemen,1),
+			{ID = "goal_SelectAllHorsemen", Message = "$11254815", DataTemplate = "GenericTrainingDataTemplate",},
+			CavalryVSArchers_IsSelectionComplete
+		)
+	
+	local goal_AttackMoveHorsemen = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_enemy_archers, 1),
+		{
+			ID = "goal_AttackMoveHorsemen",
+			Message = "$999501", --With the Horsemen selected, move the camera close to the enemy Archers and Press X
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		AttackMoveHorsemen_CompletePredicate
+	)
+
+	local goal_AttackMoveInfoAgain = Training_Goal(
+		Marker_GetPosition(mkr_enemy_archers),
+		{
+			ID = "goal_AttackMoveInfoAgain",
+			Message = "$999502", --Your Horsemen have a strong advantage against Archers. Another key advantage in winning any battle.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse
+	)
+
+	local goal_sequence_CavalryVSArchers = Training_GoalSequence(
+		goal_sequence_CavalryVSArchers_id,
+		-1,
+		1,
+		ReturnTrue,
+		CavalryVSArchers_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_SelectAllHorsemen, goal_AttackMoveHorsemen, goal_AttackMoveInfoAgain}
+	)
+
+	Training_AddGoalSequence(goal_sequence_CavalryVSArchers)
+	Training_EnableGoalSequenceByID(goal_sequence_CavalryVSArchers, true)
+end
+
+function CavalryVSArchers_IsSelectionComplete(goal)
+	
+	return Misc_IsSGroupSelected(sg_horsemen, ALL)
+end
+
+function AttackMoveHorsemen_CompletePredicate(goal)
+
+	return SGroup_IsAttackMoving(sg_horsemen, false)
+end
+
+function CavalryVSArchers_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(OBJ_CommandHorsemen) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+-- ///// Selection Exploration //////////////////////////////////////////////
+function Goals_ExploreSelection()
+
+	local goal_sequence_ExploreSelection_id = "goal_sequence_ExploreSelection"
+	
+	
+	-- 1. Add to Selection 
+	
+	local goal_ExploreSelectionA = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_ExploreSelectionA",
+			Message = "$11254816", --Try holding LT and using A or B to add and subtract from a selection
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ExploreSelection_AreSomeSelected
+	)
+
+	local goal_ExploreSelectionMoreA = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_ExploreSelectionMoreA",
+			Message = "$11254817", 
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ExploreSelection_AreAllSelected
+	)
+
+	local goal_ExploreSelectionB = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_ExploreSelectionB",
+			Message = "$11254818",
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ExploreSelection_CompletePredicate
+	)
+	local goal_sequence_ExploreSelection = Training_GoalSequence(
+		goal_sequence_ExploreSelection_id,
+		-1,
+		1,
+		ReturnTrue,
+		ExploreSelection_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_ExploreSelectionA, goal_ExploreSelectionMoreA, goal_ExploreSelectionB}
+	)
+
+	Training_AddGoalSequence(goal_sequence_ExploreSelection)
+	Training_EnableGoalSequenceByID(goal_sequence_ExploreSelection, true)
+end
+
+function ExploreSelection_AreSomeSelected (goal)
+	-- advance to the next tip once half the player's squads are selected	
+	Misc_GetSelectedSquads(sg_temp, false)
+	return SGroup_Count(sg_temp) / SGroup_Count (sg_player_units) >= 0.5
+	
+end
+
+
+function ExploreSelection_AreAllSelected(goal)
+	
+	return Misc_IsSGroupSelected(sg_player_units, ALL) 
+
+end
+
+function ExploreSelection_CompletePredicate(goal)
+	
+	selectionExplorationTimer = Timer_GetElapsed(goal.timerID) > 10
+	return false
+end
+
+
+function ExploreSelection_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(OBJ_LocateArchers) or selectionExplorationTimer == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+-- ///// TerrainAdvantage //////////////////////////////////////////////
+function Goals_TerrainAdvantage()
+
+	local goal_sequence_TerrainAdvantage_id = "goal_sequence_TerrainAdvantage"
+
+	local goal_TerrainInfo = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_archers, 1),
+		{
+			ID = "goal_TerrainInfo",
+			Message = "$999510", --Ranged units have their range increased on Higher Terrain
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		TerrainInfo_CompletePredicate
+	)
+
+	local goal_sequence_TerrainAdvantage = Training_GoalSequence(
+		goal_sequence_TerrainAdvantage_id,
+		-1,
+		1,
+		TerrainAdvantage_Trigger,
+		TerrainAdvantage_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_TerrainInfo}
+	)
+	
+	Training_AddGoalSequence(goal_sequence_TerrainAdvantage)
+	Training_EnableGoalSequenceByID(goal_sequence_TerrainAdvantage, true)
+end
+
+function TerrainInfo_CompletePredicate(goal)
+
+	return false
+end
+
+function TerrainAdvantage_Trigger(goalSequence)
+
+	return true
+end
+
+function TerrainAdvantage_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(OBJ_CommandArchers) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+-- ///// DPadUse //////////////////////////////////////////////
+function Goals_DPadUse()
+
+	local goal_sequence_DPadUse_id = "goal_sequence_DPadUse"
+
+	local goal_DPadSelectIndividual = Training_Goal(
+		"DPadLeft",
+		{
+			ID = "goal_DPadSelectIndividual",
+			Message = "$999513", --Press Left on the D-pad to select a single military unit or hold left to select all
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		DPadAllMilitary_CompletePredicate
+	)
+
+	local goal_sequence_DPadUse = Training_GoalSequence(
+		goal_sequence_DPadUse_id,
+		-1,
+		1,
+		DPadUse_Trigger,
+		DPadUse_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_DPadSelectIndividual}
+	)
+
+	Training_AddGoalSequence(goal_sequence_DPadUse)
+	Training_EnableGoalSequenceByID(goal_sequence_DPadUse, true)
+end
+
+function DPadAllMilitary_CompletePredicate(goal)
+
+	return false
+end
+
+function DPadUse_Trigger(goalSequence)
+
+	return true
+end
+
+function DPadUse_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_SelectEntireArmy) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+
+-- ///// DPadUse Reminder //////////////////////////////////////////////
+function Goals_DPadUseReminder()
+
+	local goal_sequence_DPadUseReminder_id = "goal_sequence_DPadUseReminder"
+
+	local goal_DPadHold = Training_Goal(
+		"DPadLeft",
+		{
+			ID = "goal_DPadHold",
+			Message = "$11254820", 
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse -- we don't want to ever complete this because it causes a hiccup on xbox one; ignore predicate cleans it up instead
+	)
+
+	local goal_sequence_DPadUseReminder = Training_GoalSequence(
+		goal_sequence_DPadUseReminder_id,
+		-1,
+		1,
+		ReturnTrue, -- when we ask this to trigger, we always want it to
+		DPadUseReminder_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_DPadHold}
+	)
+
+	Training_AddGoalSequence(goal_sequence_DPadUseReminder)
+	Training_EnableGoalSequenceByID(goal_sequence_DPadUseReminder, true)
+end
+
+
+function DPadUseReminder_IgnorePredicate(goalSequence)
+
+	Player_GetAll(player1)
+	-- trigger ignore if player has all squads selected or lets 2 minutes pass
+	if Misc_IsSGroupSelected (sg_allsquads, ALL) or (Timer_GetElapsed(goalSequence.goals[1].timerID) > 120)then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+-- ///// Defeat Guy //////////////////////////////////////////////
+function Goals_BattleHelp()
+
+	local goal_sequence_BattleHelp_id = "goal_sequence_BattleHelp"
+	
+	local goal_BattleHelp = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_william, 1),
+		{
+			ID = "goal_BattleHelp2",
+			Message = "$999521", --Remember, units are strong / weak against other unit types
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		BattleHelp_CompletePredicate
+	)
+
+	local goal_sequence_BattleHelp = Training_GoalSequence(
+		goal_sequence_BattleHelp_id,
+		-1,
+		1,
+		BattleHelp_Trigger,
+		BattleHelp_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_BattleHelp}
+	)
+
+	Training_AddGoalSequence(goal_sequence_BattleHelp)
+	Training_EnableGoalSequenceByID(goal_sequence_BattleHelp, true)
+end
+
+function BattleHelp_CompletePredicate(goal)
+
+	return false
+end
+
+function BattleHelp_Trigger(goalSequence)
+
+	return training_reached_battle
+end
+
+function BattleHelp_IgnorePredicate(goalSequence)
+
+	if training_started_battle then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+
+-- ///// HeroAbility //////////////////////////////////////////////
+function Goals_HeroAbility()
+
+	local goal_sequence_HeroAbility_id = "goal_sequence_HeroAbility"
+
+	local goal_HeroAbility = Training_Goal(
+		"DPadRight",
+		{
+			ID = "goal_HeroAbility",
+			Message = "$999523", --To use Guillaume's Hero Ability, Select him with dpad right
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		HeroAbility_CompletePredicate
+	)
+	
+	local goal_HeroAbilityActivate = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_william, 1),
+		{
+			ID = "goal_HeroAbilityActivate",
+			Message = "$999524", --Press Y to boost the attack speed of nearby troops
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		HeroAbilityActivate_CompletePredicate
+	)
+
+	local goal_sequence_HeroAbility = Training_GoalSequence(
+		goal_sequence_HeroAbility_id,
+		-1,
+		1,
+		HeroAbility_Trigger,
+		HeroAbility_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_HeroAbility, goal_HeroAbilityActivate}
+	)
+
+	Training_AddGoalSequence(goal_sequence_HeroAbility)
+	Training_EnableGoalSequenceByID(goal_sequence_HeroAbility, true)
+end
+
+function HeroAbility_CompletePredicate(goal)
+	return Misc_IsSGroupSelected(sg_william, true) 
+end
+
+function HeroAbilityActivate_CompletePredicate(goal)
+
+	return false
+end
+
+function HeroAbility_Trigger(goalSequence)
+
+	return true
+end
+
+function HeroAbility_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_HeroAbility) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+end
+
+-- Helper functions
+
+-- simple function for use in complete checks where we want it never to be true
+function ReturnFalse(goal)
+
+	return false
+end
+
+-- simple function for use in trigger checks where we want it to always be true
+function ReturnTrue(goalSequence)
+
+	return true
+end
+

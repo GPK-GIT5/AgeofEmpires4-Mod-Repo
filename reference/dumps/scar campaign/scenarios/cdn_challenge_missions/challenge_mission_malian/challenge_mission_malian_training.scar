@@ -1,0 +1,376 @@
+-------------------------------------------------------------------------
+---- CHALLENGE MISSION: MALIAN - TUTORIAL ELEMENTS
+-------------------------------------------------------------------------
+
+import("training/coretrainingconditions.scar")
+import("training/coretraininggoals.scar")
+
+Core_RegisterModule("MalianTrainingGoals")
+
+local goal_activate_stealth = "activate_stealth"
+
+
+local training_goals_malian =
+{
+	goal_activate_stealth
+}
+
+function TrainingGoal_EnableMalianGoals()
+	for i, goalSequenceID in ipairs(training_goals_malian) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function TrainingGoal_DisableMalianGoals()
+	for i, goalSequenceID in ipairs(training_goals_malian) do
+		Training_EnableGoalSequenceByID(goalSequenceID, false)
+	end
+end
+
+function MalianTrainingGoals_InitMusofadiHint_Xbox()
+	
+	local selectMusofadiUnitGoal = Training_Goal("Squad",
+		{ID= "Musofadi stealth", Message= "$11231334", DataTemplate="GenericTrainingDataTemplate"},
+		UserHasSelectedMusofadiUnit)
+	
+	local openRadialGoal = Training_Goal("Squad",
+		{ID= "Press RT to open the radial menu.", Message= "$1000968", DataTemplate="GenericTrainingDataTemplate"}, 
+		UserHasOpenedContextualRadial)
+	
+	local activateStealthGoal = Training_Goal("PBG",
+		{ID= "activate stealth", Message= "$11249182", DataTemplate="GenericTrainingDataTemplate"},
+		UserActivatedStealth)
+	
+	local activateStealthSequence = Training_GoalSequence(goal_activate_stealth,
+		-1, 0, 
+		CanActivateStealthPredicate_Xbox, 
+		nil, 
+		nil,
+		UserHasCompletedStealth,
+		false, 
+		{selectMusofadiUnitGoal, openRadialGoal, activateStealthGoal})
+	Training_AddGoalSequence(activateStealthSequence)
+end
+
+function MalianTrainingGoals_InitMusofadiHint()
+	
+	local selectMusofadiUnitGoal = Training_Goal("Entity",
+		{ID= "Musofadi stealth", Message= "$11231334", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedMusofadiUnit)
+	local activateStealthGoal = Training_Goal("PBG",
+		{ID= "activate stealth", Message= "$11231335", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserActivatedStealth)
+	local activateStealthSequence = Training_GoalSequence(goal_activate_stealth,
+		-1, 0, 
+		CanActivateStealthPredicate, 
+		nil, 
+		nil,
+		UserHasCompletedStealth,
+		false, 
+		{selectMusofadiUnitGoal, activateStealthGoal})
+	Training_AddGoalSequence(activateStealthSequence)
+end
+
+function MalianTrainingGoals_OnInit()
+	
+	-- Disable core training goals for testing purposes
+	TrainingGoal_DisableCoreControlGoals()
+	TrainingGoal_DisableCoreEconGoals()
+	
+	-------------------------------------------------------------------------
+	---- Goal Sequences
+	-------------------------------------------------------------------------
+	
+	-- activate stealth
+	if UI_IsXboxControllerUI() then
+		--On Xbox we want to delay the stealth hint until the player has interacted with the reinforcement panel
+		Rule_AddInterval(MalianTrainingGoals_DelayMusofadiHint, 1)
+	else
+		MalianTrainingGoals_InitMusofadiHint()
+	end
+	
+	----
+end
+
+function MalianTrainingGoals_DelayMusofadiHint()
+	if _userHasOpenedDiplomacyMenu then
+		MalianTrainingGoals_InitMusofadiHint_Xbox()
+		Rule_RemoveMe()
+	end
+end
+
+selectMusofadiUnitsActive = false
+selectMusofadiUnitsCount = 0
+selectMusofadiUnitsMax = 1
+selectMusofadiUnitsStealthActivated = false
+stealthActivatedStartTime = -1
+--
+
+-----------------------------------------------------------------------
+-- Functions, Goals, & Predicates
+-----------------------------------------------------------------------
+
+-- Activate Stealth Predicate
+function CanActivateStealthPredicate_Xbox(goalSequence)
+	
+	if(selectMusofadiUnitsCount >= selectMusofadiUnitsMax) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+	local stealthBP = BP_GetAbilityBlueprint("activate_stealth_mal")
+				
+	local hasFoundSquad = false
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		if(hasFoundSquad == false) then
+			local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+			-- Check for idle infantry on screen
+			if Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) and Squad_IsOfType(squad, "musofadi_stealth") then
+				
+				-- Assign key to musofadi unit
+				goalSequence.goals[1].key = Squad_GetID(squad)
+				goalSequence.goals[2].key = Squad_GetID(squad)
+				hasFoundSquad = true
+				
+			end
+		end
+	end
+	
+	-- Check if a key was found for unit before continuing
+	if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+		return false
+	end
+	
+	if stealthBP ~= nil then
+		
+		-- Assign key to Stealth ability icon
+		goalSequence.goals[3].key = stealthBP
+		return true
+	end
+	
+	-- End function
+	return false
+	
+end
+
+function CanActivateStealthPredicate(goalSequence)
+	
+	if(selectMusofadiUnitsCount >= selectMusofadiUnitsMax) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+	local stealthBP = BP_GetAbilityBlueprint("activate_stealth_mal")
+				
+	local hasFoundSquad = false
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		if(hasFoundSquad == false) then
+			local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+			-- Check for idle infantry on screen
+			if Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) and Squad_IsOfType(squad, "musofadi_stealth") then
+				
+				-- Assign key to musofadi unit
+				goalSequence.goals[1].key = Squad_GetID(squad)
+				hasFoundSquad = true
+				
+			end
+		end
+	end
+	
+	-- Check if a key was found for unit before continuing
+	if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+		return false
+	end
+	
+	if stealthBP ~= nil then
+		
+		-- Assign key to Stealth ability icon
+		goalSequence.goals[2].key = stealthBP
+		return true
+	end
+	
+	-- End function
+	return false
+	
+end
+
+-- Player has selected a Musofadi unit
+function UserHasSelectedMusofadiUnit(goal)
+	
+	if(selectMusofadiUnitsCount >= selectMusofadiUnitsMax) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	
+	
+	----
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is spearman
+		if Squad_IsOfType(squad, "musofadi_stealth") then 
+			
+			
+			if(selectMusofadiUnitsActive == false) then
+				selectMusofadiUnitsActive = true
+				selectMusofadiUnitsCount = selectMusofadiUnitsCount + 1
+			end
+			-- Player has selected a infantry
+			return true
+			
+		end
+	end
+	if(selectMusofadiUnitsActive == false and selectMusofadiUnitsCount >= selectMusofadiUnitsMax) then
+		Training_RemoveGoalSequence(goalSequence)
+		return false
+	end
+	selectMusofadiUnitsActive = false
+	return false
+end
+
+--Player has clicked Stealth icon in command card
+function UserActivatedStealth(goalSequence)
+	if(selectMusofadiUnitsCount >= selectMusofadiUnitsMax) then
+		local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+		Misc_GetSelectedSquads(sg_currentSelection, false)
+		local hasEngineersSelected = false
+		-- Check player units
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			
+			-- Check that unit is spearman
+			if Squad_IsOfType(squad, "musofadi_stealth") then 
+				
+				
+				if(selectMusofadiUnitsActive == false) then
+					selectMusofadiUnitsActive = true
+					selectMusofadiUnitsCount = selectMusofadiUnitsCount + 1
+				end
+				-- Player has selected a infantry
+				hasEngineersSelected = true
+				
+			end
+		end
+		
+		local stealthBP = BP_GetAbilityBlueprint("activate_stealth_mal")
+		local stealthActivated = false
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			if(Squad_CanCastAbilityOnSGroup(squad, stealthBP, sg_currentSelection) == false) then
+				stealthActivated = true
+			end
+		end
+		if(stealthActivated == true) then
+			selectMusofadiUnitsCount = selectMusofadiUnitsMax + 1
+			return true
+		end
+		
+		if(hasEngineersSelected == false) then
+			selectMusofadiUnitsCount = selectMusofadiUnitsMax + 1
+			return true
+		end
+	end
+	
+	return false
+end
+
+-- Player has activated stealth
+function UserHasCompletedStealth(goalSequence)
+	
+	local currentWorldTime = World_GetGameTime()
+	if(stealthActivatedStartTime >= 0) then
+		if currentWorldTime > stealthActivatedStartTime + __t_trainingShortInterval then
+			
+			selectMusofadiUnitsStealthActivated = true
+			selectMusofadiUnitsCount = selectMusofadiUnitsMax + 1
+			return true
+		end
+	end
+	
+	if(selectMusofadiUnitsCount >= selectMusofadiUnitsMax) then
+		local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+		Misc_GetSelectedSquads(sg_currentSelection, false)
+		local hasEngineersSelected = false
+		-- Check player units
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			
+			-- Check that unit is spearman
+			if Squad_IsOfType(squad, "musofadi_stealth") then 
+				
+				
+				if(selectMusofadiUnitsActive == false) then
+					selectMusofadiUnitsActive = true
+					selectMusofadiUnitsCount = selectMusofadiUnitsCount + 1
+				end
+				-- Player has selected a infantry
+				hasEngineersSelected = true
+				
+			end
+		end
+		if(hasEngineersSelected == false) then
+			selectMusofadiUnitsCount = selectMusofadiUnitsMax + 1
+			return true
+		end
+	end
+	
+	local stealthBP = BP_GetAbilityBlueprint("activate_stealth_mal")
+	local stealthActivated = false
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if(Squad_CanCastAbilityOnSGroup(squad, stealthBP, sg_currentSelection) == false) then
+			stealthActivated = true
+		end
+	end
+	
+	
+	
+	if(stealthActivated == true) then
+		stealthActivatedStartTime = World_GetGameTime()
+		return true
+	else
+		return false
+	end
+	
+end
+
+
+
+function MalianTrainingGoals_AddDiplomacyPanelHint()
+	
+	local open_panel_goal = Training_Goal("DiplomacyButton",
+		{Message = "$11226362", DataTemplate="GenericTrainingDataTemplate"}, 
+		UserHasOpenedTheDiplomacyMenu)
+	
+	local diplomacy_hint_sequence = Training_GoalSequence("reinforce_sequence",
+		1, 0, 
+		AShortPeriodOfTimeHasPassed, -- trigger
+		nil, -- ignore
+		nil, -- remind
+		UserHasOpenedTheDiplomacyMenu, -- bypass
+		true, 
+		{open_panel_goal})
+	Training_AddGoalSequence(diplomacy_hint_sequence)
+	
+	Training_EnableGoalSequenceByID("reinforce_sequence", true)
+end
+
+function UserHasOpenedTheDiplomacyMenu()
+	if not _userHasOpenedDiplomacyMenu and _diplomacy ~= nil and _diplomacy.data_context ~= nil then
+		_userHasOpenedDiplomacyMenu = _diplomacy.data_context.is_ui_expanded
+	end	
+	return _userHasOpenedDiplomacyMenu
+end
+

@@ -1,0 +1,262 @@
+import("cardinal.scar")
+import("rogue/rogue_misc.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+function Steppe_InitializeRaiders()
+	
+	sg_current_raiders = SGroup_CreateUniqueWithPrefix("sg_current_raiders")
+	
+	raid_start_at = GetIntegerInExponentialRange(600, 200)
+	raid_interval = GetIntegerInExponentialRange(450, 150)
+	raid_income = GetFloatInExponentialRange(1.0, 4.0)
+	raid_start_gathering_at = math.floor(raid_start_at - (raid_interval * 2 / 3))
+	
+	raid_defender_count = GetIntegerInExponentialRange(3, 9)
+	raid_resources = 0
+	
+	raid_unit_cost = 150
+	raid_unit_type = "scar_horsearcher"
+	
+	local raid_group_names = { "a", "b", "c", "d" }
+	local raid_group_name = Table_GetRandomItem(raid_group_names)
+	raid_spawn_marker = AllMarkers_FromName("mkr_raid_spawn_"..raid_group_name, "")[1]
+	raid_defend_marker = AllMarkers_FromName("mkr_raid_defend_"..raid_group_name, "")[1]
+	
+	local raid_target_markers = AllMarkers_InSequence("mkr_raid_target_"..raid_group_name.."_")
+	raid_target_options = {}
+	for _, marker in ipairs(raid_target_markers) do
+		table.insert(raid_target_options, { marker = marker, attackBuildings = BUILDINGS_NONE, attackMove = false, leashRange = 100 })
+	end
+	raid_target_final = { 
+		position = Marker_GetPosition(mkr_wonder), 
+		attackBuildingsEnRoute = BUILDINGS_NONE,
+		attackBuildingsAtTarget = BUILDINGS_ALL,
+		attackMoveEnRoute = NONE,
+		attackMoveAtTarget = true,
+		leashRange = 100 
+	}
+
+	raid_egroup = nil
+	raid_spawner_egroup = nil
+	for _, name in ipairs(raid_group_names) do
+		local eg_raid = EGroup_FromName("eg_raid_"..name)
+		local eg_raid_spawner = EGroup_FromName("eg_raid_spawner_"..name)
+		if name ~= raid_group_name then
+			EGroup_DestroyAllEntities(eg_raid)
+			local mkr_poi = AllMarkers_FromName("mkr_raid_site_"..name, "")[1]
+			Marker_Create("mkr_site", "", Marker_GetPosition(mkr_poi), Marker_GetDirection(mkr_poi), 0)
+		else
+			raid_egroup = eg_raid
+			raid_spawner_egroup = eg_raid_spawner
+		end
+	end
+	
+	if Game_GetSPDifficulty() > 5 then
+		EGroup_CompleteUpgrade(raid_egroup, UPG.MONGOL.UPGRADE_OUTPOST_CANNON_MON)
+		EGroup_CompleteUpgrade(raid_egroup, UPG.MONGOL.UPGRADE_OUTPOST_STONE_MON)
+	elseif Game_GetSPDifficulty() > 3 then
+		EGroup_CompleteUpgrade(raid_egroup, UPG.MONGOL.UPGRADE_OUTPOST_SPRINGALD_MON)
+		EGroup_CompleteUpgrade(raid_egroup, UPG.MONGOL.UPGRADE_OUTPOST_STONE_MON)
+	elseif Game_GetSPDifficulty() > 1 then
+		EGroup_CompleteUpgrade(raid_egroup, UPG.MONGOL.UPGRADE_OUTPOST_SPRINGALD_MON)
+	else
+		EGroup_CompleteUpgrade(raid_egroup, UPG.MONGOL.UPGRADE_OUTPOST_ARROWSLITS_MON)
+	end
+	
+	raid_ui_position = EGroup_GetPosition(raid_spawner_egroup)
+
+	sg_raid_defenders = SGroup_CreateUniqueWithPrefix("sg_raid_defenders")
+	sg_raid_attackers = SGroup_CreateUniqueWithPrefix("sg_raid_attackers")
+	
+	local params = {
+		player = ROGUE_ENEMY_RAIDER_PLAYER,
+		units = {{ type = raid_unit_type, numSquads = raid_defender_count }},
+		target = raid_defend_marker,
+	}
+	raid_defender_army = Army_Init(params)
+end
+
+function Steppe_UnpauseRaiders()
+	Rule_AddOneShot(Steppe_WarnAboutRaiders, 60)
+	Rule_AddIntervalWithDelay(Steppe_MonitorRaiders, raid_start_gathering_at, 1)
+	if Game_GetSPDifficulty() > 0 then
+		Rule_AddIntervalWithDelay(Steppe_Attack, raid_start_at, raid_interval)
+	end
+	
+	Rule_AddIntervalWithDelay(Steppe_CheckForIdleRaiders, raid_start_at, 15)
+end
+
+function Steppe_MonitorRaiders()
+	if EGroup_CountSpawned(raid_spawner_egroup) == 0 then
+		Rule_RemoveMe()
+		return
+	end
+	raid_resources = raid_resources + raid_income
+	if raid_resources >= raid_unit_cost then
+		Steppe_SpawnRaider()
+		raid_resources = raid_resources - raid_unit_cost
+	end
+end
+
+function Steppe_SpawnRaider()
+	if SGroup_CountSpawned(raid_defender_army.sgroup) < raid_defender_count then
+		SGroup_Clear(sg_temp)
+		CreateUnits(ROGUE_ENEMY_RAIDER_PLAYER, {{ type = raid_unit_type, numSquads = 1 }}, raid_defend_marker, sg_temp)
+		Army_AddSGroup(raid_defender_army, sg_temp)
+		Rule_AddOneShot(Steppe_RegroupRaidDefenders, 1)
+	elseif Game_GetSPDifficulty() > 0 or raid_attacker_army == nil or SGroup_CountSpawned(raid_attacker_army.sgroup) < raid_defender_count then
+		SGroup_Clear(sg_temp)
+		CreateUnits(ROGUE_ENEMY_RAIDER_PLAYER, {{ type = raid_unit_type, numSquads = 1 }}, raid_spawn_marker, sg_temp)
+		if raid_attacker_army == nil then
+			local params = {
+				player = ROGUE_ENEMY_RAIDER_PLAYER,
+				sgroup = sg_temp,
+				target = raid_spawn_marker,
+			}
+			raid_attacker_army = Army_Init(params)
+		else
+			Army_AddSGroup(raid_attacker_army, sg_temp)
+			Rule_AddOneShot(Steppe_RegroupRaidAttackers, 1)
+		end
+	end
+end
+
+function Steppe_RegroupRaidAttackers()
+	if raid_attacker_army then
+		SGroup_AttackMove(raid_attacker_army.sgroup, raid_spawn_marker, false)
+		SGroup_MoveAndFace(raid_attacker_army.sgroup, raid_spawn_marker, nil, nil, true)
+	end
+end
+
+function Steppe_RegroupRaidDefenders()
+	if raid_defender_army then
+		SGroup_AttackMove(raid_defender_army.sgroup, raid_defend_marker, false)
+		SGroup_MoveAndFace(raid_defender_army.sgroup, raid_defend_marker, nil, nil, true)
+	end
+end
+
+function Steppe_Attack()
+	if raid_attacker_army then
+		local targets = Steppe_GetRaidTargets()
+		Army_SetTargets(raid_attacker_army, targets)
+		
+		SGroup_Clear(sg_current_raiders)
+		SGroup_AddGroup(sg_current_raiders, raid_attacker_army.sgroup)
+		
+		raid_attacker_army = nil
+	end
+	if EGroup_CountSpawned(raid_spawner_egroup) == 0 then
+		Rule_RemoveMe()
+		return
+	end
+end
+
+function Steppe_GetRaidTargets()
+	local raid_targets = {}
+	SGroup_Clear(sg_temp)
+	Players_GetAllSquads(ROGUE_HUMAN_PLAYERS, sg_temp)
+	SGroup_Filter(sg_temp, "villager", FILTER_KEEP)
+	for _, target in ipairs(raid_target_options) do
+		SGroup_Clear(sg_blah)
+		SGroup_FilterByProximity(sg_temp, target.marker, FILTER_REMOVE, nil, sg_blah)
+		if SGroup_CountSpawned(sg_blah) > 0 then
+			table.insert(raid_targets, target)
+		end
+	end
+	if #raid_targets > 0 then
+		Table_Shuffle(raid_targets)
+	else
+		SGroup_Clear(sg_blah)
+		SGroup_FilterByProximity(sg_temp, mkr_wonder, FILTER_REMOVE, nil, sg_blah)
+		if SGroup_CountSpawned(sg_blah) > 0 then
+			local closest_villager = SGroup_GetClosestSquad(sg_blah, Marker_GetPosition(raid_spawn_marker))
+			table.insert(raid_targets, { position = Squad_GetPosition(closest_villager), attackBuildings = BUILDINGS_NONE, attackMove = false, leashRange = 100 })
+		end
+	end
+	table.insert(raid_targets, raid_target_final)
+	print(tostring(#raid_targets).." targets for raiders")
+	return raid_targets
+end
+
+function Steppe_WarnAboutRaiders(context, data)
+	if raid_ui_element then
+		Objective_RemoveUIElements(OBJ_DUMMY_INFORMATION, raid_ui_element)
+	end
+	raid_ui_element = Objective_AddUIElements(OBJ_DUMMY_INFORMATION, raid_ui_position, true, "$11262388", false)
+	Players_RevealArea(ROGUE_HUMAN_PLAYERS, raid_ui_position, 15, 0.25)
+	if Rule_Exists(Steppe_MonitorRaidUI) == false then
+		Rule_Add(Steppe_MonitorRaidUI)
+	end
+	UI_CreateEventCue("$11271455", Loc_Empty(), "high_priority", "icons\\event_queue_high_priority", "", ECV_Title)
+	Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_hattin")
+end
+
+function Steppe_MonitorRaidUI(context, data)
+	if EGroup_CountSpawned(raid_spawner_egroup) == 0 then
+		if raid_ui_element then
+			Objective_RemoveUIElements(OBJ_DUMMY_INFORMATION, raid_ui_element)
+		end
+		for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+			Game_SendCustomChallengeEvent(player, CE_ROGUESTEPPEOFFCOMPLETED, 1)
+		end
+		UI_CreateEventCue("$11271710", Loc_Empty(), "high_priority", "icons\\event_queue_high_priority", "", ECV_Title)
+		Sound_Play2D("sfx_ui_event_queue_high_priority_play")
+		
+		Objective_Complete(OBJ_DUMMY_INFORMATION, false, false)
+		Rule_RemoveMe()
+	end
+end
+
+--? @shortdesc Checks if any raiders have become idle and fixes them
+--? @extdesc Finds any raider squads not currently attacking or moving.
+--? If that squad is not moving or attacking 10 seconds later, it is assumed to be in a
+--? broken state and is assigned to a new army with new raid targets.
+function Steppe_CheckForIdleRaiders()
+	
+	if SGroup_CountSpawned(sg_current_raiders) > 0 then
+	
+		if SGroup_IsIdle(sg_current_raiders, ALL) then
+			Rule_AddOneShot(Steppe_RecoverIdleRaiders, 10)
+		end
+	end
+end
+
+function Steppe_RecoverIdleRaiders()
+	
+	local squadsToRecover = SGroup_CreateUnique("sg_recover")
+	local army = nil
+	
+	for i = 1, SGroup_Count(sg_current_raiders) do
+		local squad = SGroup_GetSquadAt(sg_current_raiders, i)
+		
+		if Rogue_IsSquadIdle(squad) then
+			army = Army_FindArmyFromSquad(squad)
+			
+			local message = "ERROR: Squad " .. Squad_GetID(squad) .. " has been idle for too long"
+			
+			if Misc_IsCommandLineOptionSet("rogue_idle_squads_assert") then
+				fatal(messsage)
+			end
+			
+			print(message)
+			SGroup_Add(squadsToRecover, squad)
+		end
+	end
+		
+	if SGroup_CountSpawned(squadsToRecover) > 0 then
+		
+		local armyData = {
+			player = ROGUE_ENEMY_RAIDER_PLAYER,
+			attackBuildings = BUILDINGS_NONE,
+			targets = Steppe_GetRaidTargets(),
+			onDeathDissolve = true
+		}
+		local raider_army = Army_Init(armyData)
+		Army_AddSGroup(raider_army, squadsToRecover)
+	end
+	
+	if army then
+		Army_Dissolve(army)
+	end
+end
+

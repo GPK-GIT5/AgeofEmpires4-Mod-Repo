@@ -1,0 +1,568 @@
+--
+-- Tribute 1375 - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+
+local goal_sequence_dmitryability = "campaign_gdm_chp2_tribute_dmitry_ability"
+local goal_sequence_paymongols = "campaign_gdm_chp2_tribute_pay_mongols"
+local goal_sequence_buysettlements = "campaign_gdm_chp2_tribute_buy_settlements"
+local goal_sequence_buildtraders = "campaign_gdm_chp2_tribute_build_traders"
+local goal_sequence_usemarket = "campaign_gdm_chp2_tribute_use_market"
+local goal_sequence_reassigntraders = "campaign_gdm_chp2_tribute_reassign_traders"
+local goal_sequence_defendsettlement = "campaign_gdm_chp2_tribute_defend_settlement"
+
+
+function MissionTutorial_Init()	-- called from the mission's Mission_Start() function, so post-intro
+	
+	-- this enables the tutorial system, regardless of preferences
+	
+	--Training_Init()
+	--Training_ForceGoalsActive()	
+	
+	--if Rule_Exists(Training_Update) == false then -- if it hasn't already been started up...
+		--Rule_AddInterval( Training_Update, 0.5)
+	--end
+	
+end
+
+
+function Predicate_UserHasOpenedTheDiplomacyMenu()
+	if not _userHasOpenedDiplomacyMenu and _diplomacy ~= nil and _diplomacy.data_context ~= nil then
+		_userHasOpenedDiplomacyMenu = _diplomacy.data_context.is_ui_expanded
+	end	
+	return _userHasOpenedDiplomacyMenu
+end
+
+
+function Predicate_UserHasSelectedAMarket()
+	Misc_GetSelectedEntities(eg_temp, false)
+	return EGroup_CountSpawned(eg_temp) >= 1 and EGroup_HasBlueprint(eg_temp, EBP.RUS.BUILDING_ECON_MARKET_CONTROL_RUS, ALL)
+end
+
+
+function Predicate_UserHasLookedAtMarketBuySellButtons(goal)
+	
+	local marketBPs = {
+		BP_GetAbilityBlueprint("core_market_sell_food"),
+		BP_GetAbilityBlueprint("core_market_buy_food"),
+		BP_GetAbilityBlueprint("core_market_sell_wood"),
+		BP_GetAbilityBlueprint("core_market_buy_wood"),
+		BP_GetAbilityBlueprint("core_market_sell_stone"),
+		BP_GetAbilityBlueprint("core_market_buy_stone"),
+	}
+	
+	return(PredicateHelper_HasUserHoveredOverBP(goal, marketBPs) or Table_Contains(marketBPs, training_previousAbilityBlueprint))
+	
+end
+
+
+function Predicate_UserHasLookedAtBuildTraderButton(goal)
+	
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_ECON_MARKET_CONTROL_RUS, FILTER_KEEP)
+	
+	local _CheckEntity = function(gid, idx, eid) 
+		return Entity_IsProducingSquad(eid, SBP.RUS.UNIT_TRADE_CART_RUS)
+	end
+	
+	return(PredicateHelper_HasUserHoveredOverBP(goal, SBP.RUS.UNIT_TRADE_CART_RUS) or EGroup_ForEachAllOrAny(eg_allentities, ANY, _CheckEntity))
+	
+end
+
+
+function Ignore_IfMarketIsDestroyed(goalSequence)
+	
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true 
+	end
+
+	local key = goalSequence.goals[1].key
+	
+	if scartype(key) == ST_NUMBER then
+		
+		if Entity_IsValid(key) == false or Entity_IsAlive(Entity_FromID(key)) == false then
+			return true 
+		end
+		
+	end
+	
+end
+
+
+function MissionTutorial_AddHintToDmitry_Xbox()
+	
+	if SGroup_CountSpawned(sg_dmitry) >= 1 then 
+
+		local GoalSelectDmitry = Training_Goal(
+			SGroup_GetSpawnedSquadAt(g_leaderDmitry.sgroup, 1),
+			{
+				ID = "Leaders have unique abilities they can activate at any time. Press D-Pad Right to select Prince Dmitry.",
+				Message = "$11248522",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasSelectedDmitry
+		)
+		
+		local GoalOnOpenRadial = Training_Goal(
+			SGroup_GetSpawnedSquadAt(g_leaderDmitry.sgroup, 1),
+			{
+				ID = "Hold RT to see Prince Dmitry's abilities.",
+				Message = "$11248533",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			UserHasOpenedContextualRadial
+		)
+		
+		local GoalHoverOverAbility = Training_Goal(
+			BP_GetAbilityBlueprint("leader_healing_activated"),
+			{
+				ID = "Prince Dmitry's ability heals nearby units.",
+				Message = "$11197024",
+				DataTemplate = "RadialTrainingDataTemplate",
+			},
+			Predicate_UserHasLookedAtDmitryAbility
+		)
+		
+		local GoalSequenceDmitry = Training_GoalSequence(
+			goal_sequence_dmitryability, 										-- id
+			1, 																	-- repeatMax
+			0, 																	-- remindMax
+			Predicate_UserHasNotActivatedDmitryLeaderAbilityRecently, 			-- trigger
+			CampaignTraining_TimeoutIgnorePredicate, 							-- ignore
+			nil,														 		-- remind
+			Predicate_UserHasLookedAtDmitryAbility, 		 					-- bypass
+			true, 																-- canRegress
+			{GoalSelectDmitry, GoalOnOpenRadial, GoalHoverOverAbility}			-- goals
+		)
+		Training_AddGoalSequence(GoalSequenceDmitry)
+		
+		Training_EnableGoalSequenceByID(goal_sequence_dmitryability, true)
+		
+	end
+		
+end
+
+function MissionTutorial_AddHintToDmitry()
+	
+	if SGroup_CountSpawned(sg_dmitry) >= 1 then 
+
+		local GoalSelectDmitry = Training_Goal(
+			SGroup_GetSpawnedSquadAt(g_leaderDmitry.sgroup, 1),
+			{
+				ID = "Leaders have unique abilities they can activate at any time. Select Prince Dmitry to see his special ability.",
+				Message = "$11204089",
+				DataTemplate = "LeftClickTrainingDataTemplate",
+			},
+			Predicate_UserHasSelectedDmitry
+		)
+		local GoalHoverOverAbility = Training_Goal(
+			BP_GetAbilityBlueprint("leader_healing_activated"),
+			{
+				ID = "Prince Dmitry's ability heals nearby units.",
+				Message = "$11197024",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasLookedAtDmitryAbility
+		)
+		
+		local GoalSequenceDmitry = Training_GoalSequence(
+			goal_sequence_dmitryability, 										-- id
+			1, 																	-- repeatMax
+			0, 																	-- remindMax
+			Predicate_UserHasNotActivatedDmitryLeaderAbilityRecently, 			-- trigger
+			CampaignTraining_TimeoutIgnorePredicate, 							-- ignore
+			nil,														 		-- remind
+			Predicate_UserHasLookedAtDmitryAbility, 		 					-- bypass
+			true, 																-- canRegress
+			{GoalSelectDmitry, GoalHoverOverAbility}							-- goals
+		)
+		Training_AddGoalSequence(GoalSequenceDmitry)
+		
+		Training_EnableGoalSequenceByID(goal_sequence_dmitryability, true)
+		
+	end
+		
+end
+
+
+function Predicate_UserHasSelectedDmitry(goal)
+	
+	Misc_GetSelectedSquads(sg_temp, true)
+	return SGroup_CountSpawned(g_leaderDmitry.sgroup) >= 1 and SGroup_ContainsSGroup(sg_temp, g_leaderDmitry.sgroup, ALL)
+end
+
+function Predicate_UserHasLookedAtDmitryAbility(goal)
+	
+	local abilityBP = BP_GetAbilityBlueprint("leader_healing_activated")
+	return SGroup_CountSpawned(g_leaderDmitry.sgroup) >= 1 and (PredicateHelper_HasUserHoveredOverBP(goal, abilityBP) or training_previousAbilityBlueprint == abilityBP)
+end
+
+function Predicate_UserHasNotActivatedDmitryLeaderAbilityRecently(goalSequence)
+	
+	return Event_IsAnyRunning() == false and SGroup_CountSpawned(g_leaderDmitry.sgroup) >= 1 and Player_OwnsSGroup(player1, g_leaderDmitry.sgroup, ALL)
+end
+
+
+
+function MissionTutorial_AddHintToPayMongols()
+	
+	_userHasOpenedDiplomacyMenu = false
+	
+	local GoalPayMongols = Training_Goal(
+		"DiplomacyButton", 
+		{
+			ID = "Use the diplomacy menu to send gold payments to the Mongols.", 
+			Message = "$11192284", 
+			DataTemplate = "GenericTrainingDataTemplate",
+		}, 
+		Predicate_UserHasOpenedTheDiplomacyMenu
+	)
+	local GoalSequencePayMongols = Training_GoalSequence(
+		goal_sequence_paymongols, 							-- id
+		1,													-- repeatMax
+		0, 													-- remindMax
+		AModeratePeriodOfTimeHasPassed, 					-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		nil, 												-- bypass
+		false, 												-- canRegress
+		{GoalPayMongols}									-- goals
+	)
+	Training_AddGoalSequence(GoalSequencePayMongols)
+		
+	Training_EnableGoalSequenceByID(goal_sequence_paymongols, true)
+	
+end
+
+function Predicate_ShouldHighlightTributeButton(goalSequence)
+	
+	Predicate_UserHasOpenedTheDiplomacyMenu()
+	return _userHasOpenedDiplomacyMenu == false and AModeratePeriodOfTimeHasPassed(goalSequence)
+	
+end
+
+
+function MissionTutorial_AddHintToBuySettlements()
+
+	_userHasOpenedDiplomacyMenu = false 
+	
+	local GoalBuySettlements = Training_Goal(
+		"DiplomacyButton", 
+		{
+			ID = "Use the diplomacy menu to buy settlements.", 
+			Message = "$11192285", 
+			DataTemplate = "GenericTrainingDataTemplate",
+		}, 
+		Predicate_UserHasOpenedTheDiplomacyMenu
+	)
+	local GoalSequenceBuySettlements = Training_GoalSequence(
+		goal_sequence_buysettlements, 						-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		AModeratePeriodOfTimeHasPassed, 					-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		nil, 												-- bypass
+		false, 												-- canRegress
+		{GoalBuySettlements}								-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceBuySettlements)
+		
+	Training_EnableGoalSequenceByID(goal_sequence_buysettlements, true)
+	
+end
+
+
+function MissionTutorial_AddHintToBuildTraders_Xbox()
+
+	Player_GetAll(player1)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_ECON_MARKET_CONTROL_RUS, FILTER_KEEP)
+	
+	if EGroup_CountSpawned(eg_allentities) >= 1 then 
+		
+		local entity = Entity_GetID(EGroup_GetSpawnedEntityAt(eg_allentities, 1))
+		
+		local GoalSelectMarket = Training_Goal(
+			entity, 
+			{
+				ID = "Build more Traders at the Market. More trade routes active equals more income.", 
+				Message = "$11192286",
+				DataTemplate = "GenericTrainingDataTemplate",
+			}, 
+			Predicate_UserHasSelectedAMarket
+			)
+		
+		local GoalOnOpenRadial = Training_Goal(
+			entity,
+			{
+				ID = "Hold RT to open the radial menu.",
+				Message = "$1000968",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			UserHasOpenedContextualRadial
+		)
+		
+		local GoalBuildTrader = Training_Goal(
+			SBP.RUS.UNIT_TRADE_CART_RUS, 
+			{
+				ID = "Select this option to produce a Trader.", 
+				Message = "$11249923", 
+				DataTemplate = "RadialTrainingDataTemplate",
+			},
+			Predicate_UserHasLookedAtBuildTraderButton
+		)
+		
+		local GoalSequenceBuildTraders = Training_GoalSequence(
+			goal_sequence_buildtraders, 						-- id
+			1, 													-- repeatMax
+			0, 													-- remindMax
+			AModeratePeriodOfTimeHasPassed, 					-- trigger
+			Ignore_IfMarketIsDestroyed, 						-- ignore
+			nil,										 		-- remind
+			nil, 												-- bypass
+			true, 												-- canRegress
+			{GoalSelectMarket, GoalOnOpenRadial, GoalBuildTrader}					-- goals
+			)
+		Training_AddGoalSequence(GoalSequenceBuildTraders)
+		
+		Training_EnableGoalSequenceByID(goal_sequence_buildtraders, true)
+		
+	end
+	
+end
+
+function MissionTutorial_AddHintToBuildTraders()
+
+	Player_GetAll(player1)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_ECON_MARKET_CONTROL_RUS, FILTER_KEEP)
+	
+	if EGroup_CountSpawned(eg_allentities) >= 1 then 
+		
+		local entity = Entity_GetID(EGroup_GetSpawnedEntityAt(eg_allentities, 1))
+		
+		local GoalSelectMarket = Training_Goal(
+			entity, 
+			{
+				ID = "Build more Traders at the Market. More trade routes active equals more income.", 
+				Message = "$11192286",
+				DataTemplate = "GenericTrainingDataTemplate",
+			}, 
+			Predicate_UserHasSelectedAMarket
+			)
+		local GoalBuildTrader = Training_Goal(
+			SBP.RUS.UNIT_TRADE_CART_RUS, 
+			{
+				ID = "LEFT-CLICK here to produce a Trader.", 
+				Message = "$11192287",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasLookedAtBuildTraderButton
+		)
+		
+		local GoalSequenceBuildTraders = Training_GoalSequence(
+			goal_sequence_buildtraders, 						-- id
+			1, 													-- repeatMax
+			0, 													-- remindMax
+			AModeratePeriodOfTimeHasPassed, 					-- trigger
+			Ignore_IfMarketIsDestroyed, 						-- ignore
+			nil,										 		-- remind
+			nil, 												-- bypass
+			true, 												-- canRegress
+			{GoalSelectMarket, GoalBuildTrader}					-- goals
+			)
+		Training_AddGoalSequence(GoalSequenceBuildTraders)
+		
+		Training_EnableGoalSequenceByID(goal_sequence_buildtraders, true)
+		
+	end
+	
+end
+
+
+
+function MissionTutorial_AddHintToUseMarket_Xbox()
+
+	Player_GetAll(player1)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_ECON_MARKET_CONTROL_RUS, FILTER_KEEP)
+	
+	if EGroup_CountSpawned(eg_allentities) >= 1 then 
+		
+		local entity = Entity_GetID(EGroup_GetSpawnedEntityAt(eg_allentities, 1))
+		
+		local GoalSelectMarket = Training_Goal(
+			entity, 
+			{
+				ID = "Use the Market to sell resources for gold.", 
+				Message = "$11192288",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasSelectedAMarket
+		)
+		
+		local GoalOnOpenRadial = Training_Goal(
+			entity,
+			{
+				ID = "Hold RT to open the radial menu.",
+				Message = "$1000968",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			UserHasOpenedContextualRadial
+		)
+		
+		local GoalSellWood = Training_Goal(
+			BP_GetAbilityBlueprint("core_market_sell_wood"), 
+			{
+				ID = "Click here to sell wood for gold.", 
+				Message = "$11249922",
+				DataTemplate = "RadialTrainingDataTemplate",
+			},
+			Predicate_UserHasLookedAtMarketBuySellButtons
+		)
+		
+		local GoalSequenceUseMarket = Training_GoalSequence(
+			goal_sequence_usemarket, 							-- id
+			1, 													-- repeatMax
+			0, 													-- remindMax
+			AModeratePeriodOfTimeHasPassed, 					-- trigger
+			Ignore_IfMarketIsDestroyed,				 			-- ignore
+			nil,										 		-- remind
+			nil,							 					-- bypass
+			true, 												-- canRegress
+			{GoalSelectMarket, GoalOnOpenRadial, GoalSellWood}					-- goals
+			)
+		Training_AddGoalSequence(GoalSequenceUseMarket)
+		
+		Training_EnableGoalSequenceByID(goal_sequence_usemarket, true)
+		
+	end
+	
+end
+
+function MissionTutorial_AddHintToUseMarket()
+
+	Player_GetAll(player1)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_ECON_MARKET_CONTROL_RUS, FILTER_KEEP)
+	
+	if EGroup_CountSpawned(eg_allentities) >= 1 then 
+		
+		local entity = Entity_GetID(EGroup_GetSpawnedEntityAt(eg_allentities, 1))
+		
+		local GoalSelectMarket = Training_Goal(
+			entity, 
+			{
+				ID = "Use the Market to sell resources for gold.", 
+				Message = "$11192288",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasSelectedAMarket
+		)
+		local GoalSellWood = Training_Goal(
+			BP_GetAbilityBlueprint("core_market_sell_wood"), 
+			{
+				ID = "Click here to sell wood for gold.", 
+				Message = "$11192289",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			Predicate_UserHasLookedAtMarketBuySellButtons
+		)
+		
+		local GoalSequenceUseMarket = Training_GoalSequence(
+			goal_sequence_usemarket, 							-- id
+			1, 													-- repeatMax
+			0, 													-- remindMax
+			AModeratePeriodOfTimeHasPassed, 					-- trigger
+			Ignore_IfMarketIsDestroyed,				 			-- ignore
+			nil,										 		-- remind
+			nil,							 					-- bypass
+			true, 												-- canRegress
+			{GoalSelectMarket, GoalSellWood}					-- goals
+			)
+		Training_AddGoalSequence(GoalSequenceUseMarket)
+		
+		Training_EnableGoalSequenceByID(goal_sequence_usemarket, true)
+		
+	end
+	
+end
+
+
+
+
+
+
+
+function MissionTutorial_AddHintToBuildDefencesAroundSettlement(settlement)
+	
+	t_hint_settlement = settlement 
+	
+	local GoalBuildDefences = Training_Goal(
+		Util_GetPosition(settlement.marker), 
+		{
+			ID = "Construct some defences around your new settlement.", 
+			Message = "$11192290", 
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		Predicate_UserHasBuiltDefences
+	)
+	
+	local GoalSequenceDefendSettlement = Training_GoalSequence(
+		goal_sequence_defendsettlement, 					-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		ABriefPeriodOfTimeHasPassed, 						-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		nil,							 					-- bypass
+		false, 												-- canRegress
+		{GoalBuildDefences}									-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceDefendSettlement)
+	
+	Training_EnableGoalSequenceByID(goal_sequence_defendsettlement, true)
+			
+end
+
+function Predicate_UserHasBuiltDefences()
+	
+	Player_GetAllEntitiesNearMarker(player1, eg_temp, t_hint_settlement.marker, Marker_GetProximityRadiusOrDefault(t_hint_settlement.marker, 0) * 2)
+	EGroup_Filter(eg_temp, {EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS, EBP.RUS.BUILDING_DEFENSE_WALL_RUS}, FILTER_KEEP)
+	
+	if EGroup_CountSpawned(eg_temp) >= 1 then 
+		return true 
+	end
+
+end
+
+
+
+function Tips_InitObjectives()
+	
+	OBJ_TipTradeRouteLengths = {
+	
+		Title = "$11192283",			-- Tip: Longer trade routes generate more gold for each trip
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_CollectTaxes,
+		
+		showTitle = false,
+		
+	}	
+	
+	OBJ_TipManageGold = {
+	
+		Title = "$11201547",			-- Tip: Manage your Gold to both buy settlements and pay the Mongols
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_CollectTaxes,
+		
+		showTitle = false,
+		
+	}
+
+	Objective_Register(OBJ_TipTradeRouteLengths)
+	Objective_Register(OBJ_TipManageGold)
+	
+end

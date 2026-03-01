@@ -1,0 +1,370 @@
+
+import("training/campaigntraininggoals.scar")
+import("training/coretrainingconditions.scar")
+import("training/mongoltrainingconditions.scar")
+--import("training/mongoltraininggoals.scar")
+
+
+function Tutorials_Kalka_ControlGroups()
+
+	sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	local goal_bandbox_selection = "bandbox_selection_kalka"
+	
+	if UI_IsXboxControllerUI() then -- Xbox
+		
+		-- Control Groups
+		local controlGroupGoal = Training_Goal("Squad", 
+			{ID= "Press LT and RT to open the control groups menu. Here you can assign a group of units to a control group and easily command large forces.",
+				Message="$1001160", DataTemplate="GenericTrainingDataTemplate"}, UserHasCreatedAnyControlGroup)
+	
+		local bandBoxSelectGoalSequence = Training_GoalSequence(goal_bandbox_selection,
+			1, 0, 
+			UserHasMultipleUnitsOnScreen,
+			CampaignTraining_TimeoutIgnorePredicate, 
+			nil, 
+			UserHasCreatedAnyControlGroup,
+			false, 
+			{controlGroupGoal})
+		Training_AddGoalSequence(bandBoxSelectGoalSequence)
+		
+	else -- KBM
+		
+		-- Control Groups
+		local controlGroupGoal = Training_Goal("Squad", 
+			{ID= "Selected units can be moved in groups.Press CTRL + [0-9] to create a Control Group.", Message="$11184916", DataTemplate="GenericTrainingDataTemplate"}, 
+			UserHasCreatedAnyControlGroup)
+
+		local bandBoxSelectGoalSequence = Training_GoalSequence(goal_bandbox_selection,
+			1, 0, 
+			UserHasMultipleUnitsOnScreen,
+			CampaignTraining_TimeoutIgnorePredicate, 
+			nil, 
+			UserHasCreatedAnyControlGroup,
+			false, 
+			{controlGroupGoal})
+		Training_AddGoalSequence(bandBoxSelectGoalSequence)
+		
+	end
+end
+
+function Tutorials_Kalka_KhanAbility_Xbox()
+	
+	Rule_AddGlobalEvent(kalka_OnAbilityExecutedRightTime, GE_AbilityExecuted)
+	
+	local goalSelectKhan = Training_Goal(
+		"Squad", 
+		{
+			ID = "Leaders have unique abilities they can activate at any time. Press D-Pad Right to select General Subutai.", 
+			Message ="$11249016", 
+			DataTemplate ="GenericTrainingDataTemplate"
+		},
+		UserHasSelectedKhan
+	)
+	
+	local GoalOnOpenRadial = Training_Goal(
+		"Squad",
+		{
+			ID = "Hold RT to see General Subutai's abilities.",
+			Message = "$11249017",
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		UserHasOpenedContextualRadial
+	)
+	
+	local sequenceKhanAbility = Training_GoalSequence(
+		"khan_kalka_ability", 
+		1,
+		0, --repeat max and remind max
+		HasIdleKhanOnScreen_Xbox, --trigger
+		TimerORIgnore_UserCannotSeeSquadKey, --ignore
+		nil, --remind
+		UserHasSelectedKhan, --bypass 
+		true, --can regress
+		{goalSelectKhan, GoalOnOpenRadial}
+	)
+	Training_AddGoalSequence(sequenceKhanAbility)
+	
+end
+
+function Tutorials_Kalka_KhanAbility()
+	
+	Rule_AddGlobalEvent(kalka_OnAbilityExecutedRightTime, GE_AbilityExecuted)
+	
+	local goalSelectKhan = Training_Goal(
+		"Squad", 
+		{
+			ID = "Leaders have unique abilities they can activate at any time. Select General Subutai to see his special abilities.", 
+			Message ="$11184917", 
+			DataTemplate ="LeftClickTrainingDataTemplate"
+		},
+		UserHasSelectedKhan
+	)
+	
+	--local goalLookAtAbility = Training_Goal(
+		--BP_GetAbilityBlueprint("khan_maneuver_signal_arrow_mon"),
+		--{
+			--ID = "General Subutai's special ability increases your troops movement speed. Hover over the ability to see more details.", 
+			--Message ="$11184918", 
+			--DataTemplate ="GenericTrainingDataTemplate",
+		--}, 
+		--Predicate_UserHasLookedAtKhanAbility
+	--)
+	
+	local sequenceKhanAbility = Training_GoalSequence(
+		"khan_kalka_ability", 
+		1,
+		0, --repeat max and remind max
+		HasIdleKhanOnScreen, --trigger
+		TimerORIgnore_UserCannotSeeSquadKey, --ignore
+		nil, --remind
+		UserHasSelectedKhan, --bypass 
+		true, --can regress
+		{goalSelectKhan}
+	)
+	Training_AddGoalSequence(sequenceKhanAbility)
+	
+end
+
+function TimerORIgnore_UserCannotSeeSquadKey(goalSequence)
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		return UserCannotSeeSquadKey(goalSequence)
+	end
+end
+
+function UserHasNoUnitSelectedKalka(goalSequence)
+	
+	Misc_GetSelectedSquads(sg_currentSelectionMangudai, false)
+	local spawnedCount = SGroup_CountSpawned(sg_currentSelectionMangudai)
+	return spawnedCount == 0
+end
+
+function UserIsMovingAnySelectedUnitKalka(goalSequence)
+	
+	Misc_GetSelectedSquads(sg_currentSelectionMangudai, false)
+	
+	local count = SGroup_Count(sg_currentSelectionMangudai)
+	for i = 1, count do
+		local squad = SGroup_GetSquadAt(sg_currentSelectionMangudai, i)
+		if Squad_IsAttackMoving(squad) and (Squad_IsOfType(squad, "scar_horsearcher") or Squad_IsOfType(squad, "scar_knight")) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserIsMovingSpecifiedSelectedUnitKalka(goal)
+	
+	--if Squad_IsValid(goal.temp.selectedSquad) then
+	if Squad_IsValid(goal.key) then 
+		local squadIDD = Squad_FromID(goal.key)
+		print(squadIDD)
+		
+		b_attacked = Squad_IsAttackMoving(squadIDD)
+		print(b_attacked)
+	--	return Squad_IsAttackMoving(squadIDD)
+		return b_attacked
+--		return Squad_IsMoving(squadIDD)
+	end
+	
+	return false
+end
+
+
+
+function UserHasSelectedAMangudai_Kalka(goal)
+	print("checking mangudai")
+	Misc_GetSelectedSquads(sg_currentSelectionMangudai, false)
+	for i = 1, SGroup_Count(sg_currentSelectionMangudai) do
+		local squad = SGroup_GetSquadAt(sg_currentSelectionMangudai, i)
+		if Squad_IsOfType(squad, "scar_horsearcher") then
+			return true
+		end
+	end
+	
+	return false
+end
+
+
+--? @shortdesc Marks the arrival of a caravan in Zhongdu by removing the caravan and spawning soldiers to the Jin
+function kalka_OnAbilityExecutedRightTime(context)
+	
+	-- We want to watch this ability
+	g_khan_speed_arrows = BP_GetAbilityBlueprint("khan_attack_speed_signal_arrow_mon")
+	g_khan_maneuver_arrows = BP_GetAbilityBlueprint("khan_maneuver_signal_arrow_mon") 
+	
+	if context.ability == g_khan_maneuver_arrows then
+		
+	--	Rule_RemoveGlobalEvent()
+		print("ABILITY DONE ABILITY DONE")
+		b_used_khan_abilityRightTime = true 
+
+	end
+	
+end
+
+function Predicate_UserHasLookedAtKhanAbility(goal)
+
+	local abilityBP = BP_GetAbilityBlueprint("khan_maneuver_signal_arrow_mon")
+	
+	if b_used_khan_abilityRightTime == true then
+		return true
+	end
+	
+	return SGroup_CountSpawned(sg_subutai) >= 1 and (PredicateHelper_HasUserHoveredOverBP(goal, abilityBP) or training_previousAbilityBlueprint == abilityBP)
+	
+end
+
+--
+-- Misc helper functions
+--
+
+
+function UserHasUsedKhanAbility(goal)
+	
+	if b_used_khan_abilityRightTime == true then
+		return true
+	end
+	
+	return false
+end
+
+function UserHasNotMovedASelectedVisibleUnitRecentlyKalka(goalSequence)
+					
+	if Misc_IsPosOnScreen(Util_GetPosition(mkr_scoutAttack03), 1) then 
+		goalSequence.goals[1].key = Util_GetPosition(mkr_scoutAttack03)
+		return true
+	end
+	
+	return false
+end
+
+function HasIdleKhanOnScreen_Xbox(goalSequence)
+	
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	
+	if currentTime > __t_trainingHoverInterval then	
+		local localPlayer = Game_GetLocalPlayer()
+		Player_GetAll(localPlayer)
+		
+		local squads = Player_GetSquads(localPlayer)
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			
+			if squad ~= nil and Squad_IsOfType(squad, "scar_khan") then
+				if Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) then --and b_used_khan_abilityRightTime == false then
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[2].key = Squad_GetID(squad)
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function HasIdleKhanOnScreen(goalSequence)
+	
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	
+	if currentTime > __t_trainingHoverInterval then	
+		local localPlayer = Game_GetLocalPlayer()
+		Player_GetAll(localPlayer)
+		
+		local squads = Player_GetSquads(localPlayer)
+		
+		goalSequence.goals[1].key = nil
+		--goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			
+			if squad ~= nil and Squad_IsOfType(squad, "scar_khan") then
+				if Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) then --and b_used_khan_abilityRightTime == false then
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					--goalSequence.goals[2].key = BP_GetAbilityBlueprint("khan_maneuver_signal_arrow_mon")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	
+	return false
+end
+
+
+function Tutorials_kalkariver_MoveShoot()
+
+	sg_currentSelectionMoveShoot = SGroup_CreateIfNotFound("sg_currentSelectionMoveShoot")
+	
+	local goal_moveNShooters = "MoveShoot_kalka"
+
+	local moveShootGoal = Training_Goal("Position", 
+		{ID= "Mangudai benefit from moving and shooting at the same time.", Message="$11195010", DataTemplate="GenericTrainingDataTemplate"}, 
+		Predicate_HasMoveShoot)
+
+	local MoveShootGoalSequence = Training_GoalSequence(goal_moveNShooters,
+		1, 1, 
+		Predicate_setKeyMoveShoot,
+		nil, 
+		nil, 
+		nil, --Predicate_HasMoveShoot,
+		false, 
+		{moveShootGoal})
+	Training_AddGoalSequence(MoveShootGoalSequence)
+	
+end
+
+function Predicate_HasMoveShoot(goal)
+	
+	local currentTime = Timer_GetElapsed(goal.timerID)
+   
+    if currentTime >= 10 then
+		
+        return true
+    end
+	
+end
+
+function Predicate_setKeyMoveShoot(goalSequence)
+	
+	Player_GetAllSquadsNearMarker(player1,sg_temp,mkr_moveShootCheck,50)
+	SGroup_Filter(sg_temp, "scar_horsearcher", FILTER_KEEP)
+   
+	if SGroup_CountSpawned(sg_temp) > 0 then
+
+		if Misc_IsPosOnScreen(Util_GetPosition(mkr_moveShoot), 1) then
+			goalSequence.goals[1].key = Util_GetPosition(mkr_moveShoot)
+			return true
+		else
+			if Misc_IsPosOnScreen(Util_GetPosition(mkr_moveShoot02), 1) then
+				goalSequence.goals[1].key = Util_GetPosition(mkr_moveShoot02)
+				return true
+			else
+				if Misc_IsPosOnScreen(Util_GetPosition(mkr_moveShoot03), 1) then
+					goalSequence.goals[1].key = Util_GetPosition(mkr_moveShoot03)
+					return true
+				else
+					
+					return false
+				end
+			end
+		end
+	end
+end

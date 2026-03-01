@@ -1,0 +1,1005 @@
+-- SCAR functions used for narrative moments, primarily in intro/outro "swoopy cams".
+
+
+--? @group SGroup
+
+--? @shortdesc Enables or disables cheering on an Sgroup. Defaults to 60 second duration; pass in -1 for infinite. Defaults to short celebrate walla. WARNING: Units cannot move while cheering. Only works on bipeds. audioDelay delays audio but not animation. 
+--? @result Nil
+--? @args SGROUP sgroup, BOOL enable[, REAL duration, STRING walla, REAL audioDelay]
+function SGroup_EnableCheering (sgroup, enable, duration, walla, audioDelay)
+	
+	
+	local cheer = BP_GetAbilityBlueprint("cheer_toggle")
+	
+	walla = walla or WALLA_CAMP_CELEBRATE_SMALL
+	duration = duration or 60
+	audioDelay = audioDelay or 0
+	
+	-- from now on we consider duration the time after any audioDelay
+	duration = duration - audioDelay
+	
+	if (enable) then
+		if not Event_IsBeingSkipped() then -- don't turn on cheering during a skip, but you can turn it off
+			-- if we are turning on cheer, grant and trigger the ability that causes the animation
+			SGroup_AddAbility (sgroup, cheer)
+			Cmd_Ability (sgroup, cheer)
+			
+			
+			-- if we have a duration, we add a rule to turn them off after that amount of time
+			-- in this instance we want total duration, including the audioDelay		
+			if (duration + audioDelay)>= 0 then
+				Rule_AddOneShot(_CheerTimeOut, (duration + audioDelay), {group = sgroup})
+			end
+			
+			local wallaInterval = _CheerGetInterval(walla)
+			
+			-- if the duration is long enough and we know the rough duration of the walla we add a rule to retrigger walla
+			if ( wallaInterval > 0 ) then 
+				if ( duration > wallaInterval ) then
+					local reps = math.floor(duration/wallaInterval)
+					Rule_AddInterval(_CheerTriggerWalla, {delay = audioDelay, interval = wallaInterval, count = reps}, {group = sgroup, sound = walla})
+				elseif duration < 0 then
+					-- if the duration is infinite (-1) then we don't put a count on the rule
+					Rule_AddInterval(_CheerTriggerWalla, {delay = audioDelay, interval = wallaInterval}, {group = sgroup, sound = walla})
+				end 
+			end
+			
+			-- trigger walla on the sgroup
+			Rule_AddOneShot(_CheerTriggerWalla, audioDelay, {group = sgroup, sound = walla})
+		end	
+	else
+		-- if we are turning off cheering we trigger the ability again (to toggle off) and then remove it from the group
+		_CheerStop (sgroup)
+		
+	end
+	
+end
+
+-- helper function to turn off cheering animation via a rule
+function _CheerTimeOut (context, data)
+	local cheer = BP_GetAbilityBlueprint("cheer_toggle")	
+	if scartype (data.group) == ST_SGROUP then -- make sure we got an sgroup
+		_CheerStop (data.group)
+	end
+end
+
+-- helper function to retrigger walla via a rule
+function _CheerTriggerWalla (context, data)
+	
+	Sound_PlayOnSquad  (data.sound, data.group)
+		
+end
+
+-- helper funtion to get interval to retrigger walla
+function  _CheerGetInterval(walla)
+	
+	if string.find(walla, "small") ~= nil then
+		return 3
+	elseif string.find (walla, "medium") ~= nil then
+		return 4.5
+	elseif string.find (walla, "large") ~= nil then
+		return 9
+	else
+		return 0
+	end
+	
+
+end
+
+-- helper function to iterate through an sgroup and turn off cheering
+function _CheerStop (sgroup)
+	
+	local sg_cheering = SGroup_CreateUnique("sg_cheer_")
+	local cheer = BP_GetAbilityBlueprint("cheer_toggle")	
+	
+	local function _filterCheering (group,index,squad)
+		if Squad_IsAbilityActive_CS (squad, cheer) then
+			SGroup_Add(sg_cheering, squad)
+		end
+	end
+	
+	SGroup_ForEach(sgroup, _filterCheering)
+	
+	if not SGroup_IsEmpty(sg_cheering) then
+		Cmd_Ability (sg_cheering, cheer)
+		SGroup_RemoveAbility (sg_cheering, cheer)	
+	end
+	
+	SGroup_Destroy (sg_cheering)
+	
+end
+
+--? @shortdesc Enable or disable the crown over leader units. The Leader must be the first squad in the sgroup.
+--? @result Nil
+--? @args SGroupID sgroup, Boolean enable
+--? 
+function SGroup_EnableLeaderCrown (sgroup, enable)
+	-- this needs a tick after the unit spawns, so we wrap it in a rule
+	Rule_AddOneShot (_EnableCrown, 0.125, {group = sgroup, isEnable = enable})
+
+end 
+
+-- helper function to enable crown via a rule
+function _EnableCrown (context, data)
+	
+	--Adding a check to make sure the sgroup is valid before attempting to get details from it
+	if SGroup_CountSpawned(data.group) > 0 then
+		local squadLeader = SGroup_GetSpawnedSquadAt(data.group, 1) 
+		local entityLeader = 0
+		local state = "off"
+		
+		entityLeader = Squad_GetFirstEntity(squadLeader)
+		
+		-- Check if the setting (development\capture tool\show leader crown) is turned on for showing leader crown
+		if SystemConfig_GetSettingBool("ShowLeaderCrown", true) and data.isEnable == true then	
+			state = "on"
+		end
+
+		Entity_SetAnimatorState(entityLeader, "regicide_crown_state", state)
+	else
+		print("!NARRATIVE WARNING! Leader unit is dead/destroyed and a script is trying to adjust its crown.")
+	end
+	
+end
+
+
+function _QuickDelay(seconds)
+
+	CTRL.Event_Delay(seconds or 5)
+    CTRL.WAIT()
+	
+end
+
+function _QuickShowAll()
+
+	  FOW_UIRevealAll()
+	
+end
+
+function _QuickHideAll()
+
+    humanPlayer = World_GetPlayerAt(1)
+    
+    FOW_PlayerUnExploreAll(humanPlayer)
+    FOW_UIUnRevealAll()
+	
+end
+
+
+--? @group Mission
+
+--? @shortdesc Enable or diable a group of abilities for one or more players; useful for hiding glows. data can be a string (ability short name), a table of such strings. To deactivate for a player other than Player 1, pass in a table or tables as such: {player = playerID, abilities = {"name","name"}}
+--? @result Nil
+--? @args STRING/TABLE data, BOOL enable
+
+function Mission_EnableAbilities (data, enable)
+	
+	
+	--_dataFormat = {
+		--{
+			--player = playerID,
+			--abilities = {
+				--"name",
+				--"name"
+			--}
+		--},
+	
+	--}
+
+	-- if we get nil or a string of a single ability, format that
+	if data == nil then
+		data = {{player = World_GetPlayerAt(1), abilities = {"general_aura_combat"}}}
+	elseif scartype(data) == ST_STRING then
+		data = {{player = World_GetPlayerAt(1), abilities = {data}}}
+	elseif scartype(data) ~= ST_TABLE then
+		print ("Mission_EnableAbilities did not receive a string or a table.")
+		return
+	end
+	
+
+	-- now we have a table, but it could be a just a table of abilities, so we iterate through it and check	and reformat
+	local tempTable = { player = World_GetPlayerAt(1), abilities = {}}
+		
+	for k,v in pairs (data) do
+		if scartype(v) == ST_STRING then
+			table.insert(tempTable.abilities, v)
+		end
+	end
+		
+	if #tempTable.abilities > 0 then
+		data = tempTable
+	end
+	
+	-- check to see if we got a single player table, if so wrap it in a table
+	if data.player ~= nil then
+		data = {data}
+	end
+	
+	
+	-- double check we have the right format
+	if data[1].player == nil then
+		print ("Mission_EnableAbilities got an improper table.")
+		return
+	end
+	
+	
+	-- now we have the right format
+	
+	-- if we're turning things off, set action one way; if not, set it to turning on
+	local action = ITEM_REMOVED
+	if (enable) then
+		action = ITEM_DEFAULT
+	end
+	
+	-- iterate through the table and turn off or on the abilities
+	for k,v in pairs (data) do
+			for a,b in pairs (v.abilities) do
+				local buff = BP_GetAbilityBlueprint(b)
+				Player_SetAbilityAvailability(v.player, buff, action)
+			end
+	end
+
+end
+
+--? @group MissionOMatic
+ 
+--? @shortdesc Triggers the mission start title card (as long as it is properly defined in mission recipe) 
+--?
+
+function MissionOMatic_ShowTitleCard ()
+
+	local missionData = GetRecipe()
+	
+	if scartype(missionData) ~= ST_TABLE then
+		print ("MissionOMatic_ShowTitleCard: GetRecipe() did not return a table.")
+		return
+	end
+
+	if scartype(missionData.onStart) == ST_TABLE then
+		if scartype(missionData.onStart.titleCard) == ST_TABLE then
+			local titleCard = missionData.onStart.titleCard
+			local title = titleCard.title or titleCard.location or 0
+			local date = titleCard.date or 0
+			local icon = titleCard.icon or ""
+			Game_SubTextFadeWithIcon (title, date, 0, 0.5, 4, 0.5, icon)
+		end
+	end	
+end
+
+--
+-- Callback function triggered by FE after use clicked the skip NIS hot key
+--
+function Action_SkipNIS()
+	if not Event_IsBeingSkipped() then
+		Event_Skip()
+		Util_NormalMode()
+	end
+end
+
+function Action_SkipNIS_Outro()
+	if not Event_IsBeingSkipped() then
+		Event_Skip()
+	end
+end
+
+
+--? @group Util
+
+--? @shortdesc Spawn a series of units and have them move along a path in a parade. Useful for bringing in or out units in a long line rather than a broad formation. marker_table should be the path of the parade. unit_table should follow the format for UnitEntry functions; each entry is a "row" in the parade. Preferably each should have separate spawn point. If there is a destination defined in a unit entry, that row will go to the destination after completing the parade.
+--? @result Nil
+--? @args TABLE marker_table, TABLE unit_table[, OPT_SGROUP parade_sgroup, OPT_REAL delay, OPT_PLAYER player]
+function Util_UnitParade(marker_table, unit_table, parade_sgroup, delay, player)
+
+	if scartype(marker_table) == ST_MARKER then
+		marker_table = {marker_table}
+	elseif scartype(marker_table) ~= ST_TABLE then
+		fatal("Invalid marker_table for Util_UnitParade")
+	end
+	
+	local n_markers = #marker_table
+	local n_rows = #unit_table
+	local destination = nil
+	
+	if n_rows > n_markers then
+		destination = marker_table[n_markers]
+	end
+	
+	parade_sgroup =	parade_sgroup or SGroup_CreateUnique()
+	player = player or World_GetPlayerAt(1)
+	delay = delay or 0.125
+	print("Util_UnitParade: Calling parade in delay "..tostring(delay))
+	
+	for index, unit in pairs (unit_table) do
+		local spawn = unit.spawn or marker_table[1]
+		local row_group = SGroup_CreateUnique("parade_")
+		local endPoint = destination or marker_table[(n_markers + 1 - index)]
+		-- if the unit has a defined definition, this updates endPoint to that and then removes it from the unit data
+		if unit.destination ~= nil then
+			endPoint = unit.destination
+			unit.destination = nil
+		end
+		UnitEntry_DeploySquads(player, row_group, unit, spawn)
+		SGroup_AddGroup(parade_sgroup, row_group)
+		Rule_AddOneShot(__SendParadeUnits, delay, { sgroup = row_group, markerList = marker_table, stop = endPoint, formation = formationAbility } )
+	end
+
+end
+
+function __SendParadeUnits(context, data)
+	
+	-- Add the others as waypoints
+	print("Util_UnitParade: Ordering parade for units of SGroup "..SGroup_GetName(data.sgroup))
+	for index, marker in pairs(data.markerList) do
+		
+		if scartype(marker) == ST_MARKER then
+			local useQueue = true
+			if index == 1 then
+				print("Util_UnitParade: Don't queue for first order to "..Marker_GetName(marker))
+				useQueue = false
+			end
+			Cmd_FormationMove(data.sgroup, marker, useQueue)
+			if marker == data.stop then
+				break
+			end
+		end
+	end
+	
+	-- we only get here if the endpoint isn't in the marker list
+	-- if so we queue one last formation move to that point	
+	Cmd_FormationMove(data.sgroup, data.stop, true)
+	
+end
+
+function AddVectorToPosition(position, vector)
+	return World_Pos(position.x + vector.x, position.y + vector.y, position.z + vector.z)
+end
+
+function MultiplyVectorByFloat(vector, float)
+	return World_Pos(vector.x * float, vector.y * float, vector.z * float)
+end
+
+function ReverseVector(vector)
+	return World_Pos(-vector.x, -vector.y, -vector.z)
+end
+
+--? @shortdesc generates a table of markers relative to the provided marker. New markers will be arrayed behind the original,
+--? where the marker direction is used to determine which direction is 'behind'. you can override this by passing in the 
+--? optional direction param. row_spacing is optional, and defaults to 2
+--? @args Marker marker, int row_count[, float row_spacing, vector direction]
+function GenerateSpacialDataForRows(marker, row_count, row_spacing, direction)
+	assert(row_count > 0)
+	row_spacing = row_spacing or 2
+	
+	if direction then
+		direction = Vector_Normalize(direction)
+	else
+		direction = Marker_GetDirection(marker)
+	end
+	local unit_vector_backward = ReverseVector(direction)
+	local vector_backward = MultiplyVectorByFloat(unit_vector_backward, row_spacing)
+	local origin_position = Marker_GetPosition(marker)
+	local result_table = {}
+	for row_index = 0, row_count - 1 do
+		local offset = MultiplyVectorByFloat(vector_backward, row_index)
+		local position = AddVectorToPosition(origin_position, offset)
+		table.insert(result_table, { position = position, direction = direction })
+	end
+	
+	return result_table
+end
+
+--? @shortdesc spawns a group of units into a grid, and optionally moves them. 'targets' is a table of markers. If
+--? 'targets' is empty or nil, then the units will simply spawn in grid formation. Maximum column_count is 3.
+--? If there are no targets
+--? - the units will use the direction of the spawn marker
+--? - the units will not move
+--? If there is atleast 1 target
+--? - the units will face the first target
+--? - the units will move to the targets in order, after delay seconds
+function Util_UnitParadeGrid(spawn, targets, unit_type, column_count, row_count, row_spacing, sgroup, delay, player)
+	player = player or player1
+	delay = delay or 0
+	targets = targets or {}
+	assert(column_count > 0)
+	assert(row_count > 0)
+	-- initialize waypoints
+	local waypoints = {}
+	for _, target in ipairs(targets) do
+		local direction = nil
+		if target == targets[#targets] then
+			if #targets > 1 then
+				direction = Util_GetDirectionFromAtoB(targets[#targets - 1], target)
+			else
+				direction = Util_GetDirectionFromAtoB(spawn, target)
+			end
+		end
+		table.insert(waypoints, GenerateSpacialDataForRows(target, row_count, row_spacing, direction))
+	end
+
+	-- initialize rows
+	local spawn_direction = nil 
+	if #targets > 0 then
+		spawn_direction = Util_GetDirectionFromAtoB(spawn, targets[1])
+	end
+	local spawn_markers = GenerateSpacialDataForRows(spawn, row_count, row_spacing, spawn_direction)
+	
+	local rows = {}
+	for row_index = 1, row_count do
+		local row = { sgroup = SGroup_CreateUniqueWithPrefix("sg_unit_parade"), targets = {} }
+		row.spawn = spawn_markers[row_index] 
+		for i, waypoint in ipairs(waypoints) do
+			local effective_row_index = 1
+			if i == #waypoints then
+				effective_row_index = row_index
+			end
+			table.insert(row.targets, waypoint[effective_row_index])
+		end
+		table.insert(rows, row)
+	end
+	
+	-- spawn the units
+	for _, row in ipairs(rows) do
+		SGroup_Clear(sg_temp)
+		local units = nil
+		if scartype(unit_type) == ST_STRING then
+			units = {{ type = unit_type, numSquads = column_count }}
+		elseif scartype(unit_type) == ST_PBG then
+			units = {{ sbp = unit_type, numSquads = column_count }}
+		else
+			fatal("invalid unit_type, must be a string or sbp")
+		end
+		CreateUnits(player, units, row.spawn.position, row.sgroup, row.spawn.direction)
+		if sgroup then
+			SGroup_AddGroup(sgroup, row.sgroup)
+		end
+	end
+	
+	-- move the units
+	if delay == 0 then
+		Util_UnitParadeGrid_Delay(nil, { rows = rows })
+	else
+		Rule_AddOneShot(Util_UnitParadeGrid_Delay, delay, { rows = rows })
+	end
+end
+
+function Util_UnitParadeGrid_Delay(context, data)
+	for _, row in ipairs(data.rows) do
+		local queued = false
+		for _, target in ipairs(row.targets) do
+			SGroup_Move(row.sgroup, target.position, queued)
+			queued = true
+		end
+		SGroup_Destroy(row.sgroup)
+		row.sgroup = nil
+	end
+end
+
+
+--? @shortdesc Wrapper to trigger proper audio and video settings for entering or exiting intro and outro cameras. Setting enable to true enters the camera mode; false exits. Pass in CAM_INTRO or CAM_OUTRO for camera_type. Keep_gampelayunits_forOutro removes gameplay units by default unless set to true. fowUnRevealDelay sets the delay for when to hide units in FoW (3.825 seconds is the default).
+--? @result Nil
+--? @args BOOLEAN enable, BOOLEAN camera_type[, OPT_BOOLEAN Keep_gampelayunits_forOutro, OPT_FLOAT fowUnRevealDelay, OPT_BOOLEAN shouldKeepXboxHidden]
+function Util_EnableCardinalCinematicMode(enable, camera_type, Keep_gampelayunits_forOutro, fowUnRevealDelay, shouldKeepXboxHidden)
+	
+	Keep_gampelayunits_forOutro = Keep_gampelayunits_forOutro or false
+	fowUnRevealDelay = fowUnRevealDelay or 3.825
+	
+	-- this handles a command line argument used by presentation team to have intro/outro NISes be fullscreen
+	local isForceFullscreen = Util_GetCommandLineArgument("fullscreen_nis")
+	
+	if (enable) then
+		
+		local skipNISCallback = Action_SkipNIS
+		if camera_type == CAM_OUTRO then
+		    skipNISCallback = Action_SkipNIS_Outro
+		end
+
+		-- track that a cinematic is occuring for the purposes of stopping achievement tracking in challenge system during cine duration
+		local player_local = Game_GetLocalPlayer()
+ 
+		Game_SendCustomChallengeEvent(player_local, CE_ACHIEVCINEISSTARTING, 1)
+	
+		-- turn off interactibility during cinematics because the user can't 
+		-- select anything anyway and having this on makes the camera switchboard 
+		-- do too much work
+		World_SetAllInteractiveStagesVisibility(true)
+				
+		FOW_UIRevealAll()
+		FOW_UIRevealAllEntities()
+
+		if isForceFullscreen then 
+			Util_FullscreenMode(DEFAULT_FULLSCREEN_HIDDEN_GAME_COMPONENT_FLAGS)
+			-- this adds the skipping callback manually since Util_FullscreenMode doesn't handle it
+			-- this way the NIS can still be skipped
+			UI_SetSkipNISCallback(skipNISCallback)
+			hasSetSkipNISCallbackInCinematicMode = true
+		else
+			Util_EnterCinematicMode(DEFAULT_CINEMATIC_HIDDEN_GAME_COMPONENT_FLAGS, skipNISCallback, shouldKeepXboxHidden)
+		end
+		if camera_type == CAM_INTRO then
+			Sound_Play2D(MIX_START_INTRO_CAM)
+		elseif camera_type == CAM_OUTRO then
+			Sound_Play2D(MIX_START_OUTRO_CAM)
+			if _TrainingGoals ~= nil then			
+				for i,goal in pairs(_TrainingGoals) do 
+					if goal.isActive == true then
+						Training_EndGoalSequence(goal, false)
+					end
+				end
+			end
+			if Keep_gampelayunits_forOutro == false then
+				Util_ClearSquadsForCine()
+			end
+		end
+	
+		Util_ApplyNarrativeHorseSpeedModifiers(true)		
+		
+	else
+		
+		-- track that a cinematic is ending for the purposes of turning back on achievement tracking in challenge system
+		local player_local = Game_GetLocalPlayer()
+		
+		Game_SendCustomChallengeEvent(player_local, CE_ACHIEVCINEISENDING, 1)
+
+		Util_ApplyNarrativeHorseSpeedModifiers(false)		
+		
+		-- re-enable interactibility
+		World_SetAllInteractiveStagesVisibility(false)
+		
+		if camera_type == CAM_INTRO then
+			FOW_UIUnRevealAll_Transition(5)
+			Rule_AddOneShot(__UnRevealEntities, fowUnRevealDelay)
+			
+			Util_ExitCinematicMode(false)
+			Sound_Play2D(MIX_RETURN_TO_GAME)
+		elseif camera_type == CAM_OUTRO then
+			isOutro = true
+			Util_FullscreenMode(DEFAULT_FULLSCREEN_HIDDEN_GAME_COMPONENT_FLAGS, isOutro)
+		end
+
+	end
+		
+end
+
+function __UnRevealEntities()
+	FOW_UIUnRevealAllEntities()
+end
+
+--? @group SGroup
+
+--? @shortdesc Plays a speech file on the first squad in an sgroup. Pass in a string with the filepath of the audio file under Cardinal_Speech_Sources e.g. "Civ_Rus/rus_manatarms/rus_manatarms_attack_iHigh_cHigh_03" 
+--? @result Nil
+--? @args SGROUP sgroup, STRING filepath
+function SGroup_PlaySpeech (sgroup, filepath)
+	
+	if not Event_IsBeingSkipped() then
+		if SGroup_CountSpawned(sgroup) < 1 then
+			print ("SGroup_PlaySpeech received an empty sgroup")
+		else
+			local squad = SGroup_GetSquadAt (sgroup, 1)
+			Sound_PlaySquadSpeech(filepath, "spe_campaign_unit", squad)
+		end
+	end
+end
+
+--? @shortdesc Destroy all Squads and disable Mission_Fail rules
+--? @result Nil
+function Util_ClearSquadsForCine()
+   -- Pause All Rules (Mission Complete Rules are unpausable)
+	Rule_PauseAll()
+	
+	-- Function to disable production queues
+	local _DisableProduction = function(gid, idx, eid)
+		if Entity_HasProductionQueue(eid) then
+			local queue = Entity_GetProductionQueueSize(eid)
+			if queue > 0 then
+				for j = queue-1, 0, -1 do 
+					Entity_CancelProductionQueueItem(eid, j)
+				end			
+			end
+		end
+	end
+	
+	--Iterate through players and Get and destroy all squads
+	local i = 1
+	while i <= World_GetPlayerCount() do
+		local player = World_GetPlayerAt(i)
+		Player_GetAll(player)
+		EGroup_ForEach(eg_allentities, _DisableProduction)
+		SGroup_DestroyAllSquads(sg_allsquads)
+		i = i + 1
+	end
+	
+	-- Remove dead bodies/corpses
+	local all_dead_bodies = EGroup_CreateIfNotFound("all_dead_bodies")
+	World_GetAllNeutralEntities(all_dead_bodies)
+	EGroup_Filter(all_dead_bodies, "military", FILTER_KEEP)
+	EGroup_DestroyAllEntities(all_dead_bodies)
+
+	-- Remove player-built Entities
+	-- We'll destroy any player-built entities inside of the marker radius of mkr_cleanupforoutro
+	-- Multiple markers of the same name can be used
+	
+	if mkr_cleanupforoutro_group ~= nil or mkr_cleanupforoutro ~= nil then
+		
+		local eg_playerEntities = EGroup_CreateIfNotFound("eg_playerEntities")
+		local eg_playerFarms = EGroup_CreateIfNotFound("eg_playerFarms")
+		local mkr_cleanupforoutro_group = mkr_cleanupforoutro_group or { mkr_cleanupforoutro }
+			
+		-- Gather player entities inside markers
+		for k,v in pairs(mkr_cleanupforoutro_group) do 
+			EGroup_Clear(eg_temp)
+			Player_GetAllEntitiesNearMarker(World_GetPlayerAt(1), eg_temp, v)
+			EGroup_AddEGroup(eg_playerEntities, eg_temp)
+		end
+		
+		-- Filter buildings from the start of play 
+		EGroup_RemoveGroup(eg_playerEntities, eg_startingBuildings)
+		-- filter any farms into their own egroup
+		EGroup_Filter(eg_playerEntities, "farm", FILTER_REMOVE, eg_playerFarms)
+		-- then destroy the remainder
+		EGroup_DestroyAllEntities(eg_playerEntities)
+		-- now fully kill the Farms (so the wheat is removed too)
+		EGroup_Kill(eg_playerFarms)
+	end
+	
+end
+
+local test_data ={
+	{
+		sbp = BP_GetSquadBlueprint("unit_spearman_2_eng_infinite_corpse"),
+		spawn = mkr_CallToAction2,
+		rad_max = 20,
+		rad_min = 2,
+		numSquads = 20,
+		player = nil,
+	},
+}
+
+--? @shortdesc Spawn (and immediately kill) a series of units to create a field of corpses for outro cameras. units_table can either be a single SBP or a table/tables in the same basic format as UnitDeploy functions. Each entry in that table can optionally have numSqauds (defaults to 15), spawn (an override spawn location), rad_min (radius from center not to spawn in; defaults to 2), rad_max (defaults to marker radius or 20), player (defaults to player 2). cleanLocation allows you to have a marker that will be cleared of corpses.
+--? @result Nil
+--? @args TABLE/SBP units_table, POS/MARKER spawnlocation[, OPT_MARKER cleanlocation]
+function Util_CorpseField(units_table, spawnlocation, cleanlocation)
+	
+	--data validation goes here
+	
+	if scartype(units_table) == ST_PBG then
+		units_table = {{sbp = units_table}}
+	end
+	if scartype (units_table) ~= ST_TABLE then
+		fatal("Util_CorpseField received something other than a table.")
+	end
+	
+	if units_table.sbp ~= nil then 
+		units_table = {units_table}
+	end
+	
+	for k,unit in pairs (units_table) do
+		unit.spawn = unit.spawn or spawnlocation
+		if unit.rad_max == nil then
+			if scartype (unit.spawn) == ST_MARKER then
+				unit.rad_max = Marker_GetProximityRadius(unit.spawn)
+			else
+				unit.rad_max = 20
+			end
+		end
+		unit.rad_min = unit.rad_min or 2
+		unit.numSquads = unit.numSquads or 15
+		unit.player = unit.player or World_GetPlayerAt(2)
+	end
+	
+	sg_corpses = SGroup_CreateUnique("sg_corpses")
+	
+	local function _corpseField_randomSpawn (squadBP, count, spawn_marker, rad_max, rad_min, player)
+		local pos = nil
+		for i=1, count, 1 do
+			pos = Prox_GetRandomPosition(spawn_marker, rad_max, rad_min)
+			pos = Util_ScarPos(pos.x, pos.z)
+			UnitEntry_DeploySquads(player, sg_corpses, {sbp=squadBP}, pos)
+		end
+	end
+
+	
+	for k,v in pairs (units_table) do
+		
+		_corpseField_randomSpawn (v.sbp, v.numSquads, v.spawn, v.rad_max, v.rad_min, v.player)
+		
+	end
+
+	if cleanlocation ~= nil then
+		
+		local function _corpseField_RemoveMisplacedSquads(group, index, squad) 
+			SGroup_Clear(sg_temp)
+			SGroup_Single(sg_temp, squad)
+			if Prox_AreSquadsNearMarker(sg_temp, cleanlocation, ANY, Marker_GetProximityRadius(cleanlocation) ) then
+				SGroup_DestroyAllSquads(sg_temp)
+			end
+		end
+		SGroup_ForEach(sg_corpses, _corpseField_RemoveMisplacedSquads)
+	end
+		
+	SGroup_Kill(sg_corpses)	
+end
+
+
+
+function Util_ApplyNarrativeHorseSpeedModifiers(enable)
+	if content_pack == CONTENT_PACK_VANILLA_CAMPAIGN then
+		
+		if _NarrativeHorseSpeedModifiers == nil then 
+			_NarrativeHorseSpeedModifiers = {}
+		end
+		
+		if enable == true then 
+			
+			local allCivsPresentInMission = {}
+			local allScalesToApply = {
+				{type = "cavalry_light", scale = 0.8667},
+				{type = "cavalry_armored", scale = 0.8846},
+				{type = "khan", scale = 0.8667},
+			}
+			
+			-- figure out all the civs present in this mission
+			for playerIndex = 1, World_GetPlayerCount() do 
+				local race = Player_GetRace(World_GetPlayerAt(playerIndex))
+				if Table_Contains(allCivsPresentInMission, race) == false then
+					table.insert(allCivsPresentInMission, race)
+				end
+			end
+			
+			-- for each type, generate a list of appropriate bps across all civs present in the mission
+			for i, entry in pairs(allScalesToApply) do 
+				entry.bps = {}
+				for index, race in pairs(allCivsPresentInMission) do
+					local thisCivsBlueprints = Cardinal_ConvertTypeToEntityBlueprint({entry.type, "scar_all_ages", "race_"..BP_GetName(race)}, Game_GetLocalPlayer(), true)
+					for i, bp in pairs(thisCivsBlueprints) do 
+						if Table_Contains(entry.bps, bp) == false then 
+							table.insert(entry.bps, bp)
+						end
+					end
+				end
+			end
+	
+			-- debug print this list of bps		
+			print("Applying modifiers to revert horse speed changes for cineamtics:")
+			for index, entry in pairs(allScalesToApply) do 	
+				print("- For unit type "..entry.type..":   (x"..entry.scale.." speed modifiers)")
+				for i, bp in pairs(entry.bps) do
+					print("  - "..BP_GetName(bp))		
+				end
+			end
+			
+			-- for each player, apply all the modifiers
+			for playerIndex = 1, World_GetPlayerCount() do 
+				for index, entry in pairs(allScalesToApply) do 	
+					for i, bp in pairs(entry.bps) do
+						local modifier = Modifier_Create(MAT_EntityType, "speed_maximum_modifier", MUT_Multiplication, false, entry.scale, bp)	
+						local modid = Modifier_ApplyToPlayer(modifier, World_GetPlayerAt(playerIndex), 0)	
+						table.insert(_NarrativeHorseSpeedModifiers, modid)	-- log this modifier id so it can be removed later
+					end
+				end
+			end
+			
+		elseif enable == false then 
+			
+			--
+			-- remove all of the modifiers applied above
+			--
+			
+			for index, modid in ipairs(_NarrativeHorseSpeedModifiers) do 
+				Modifier_Remove(modid)
+			end
+			_NarrativeHorseSpeedModifiers = {}
+			
+		end
+	end
+end
+
+--? @shortdesc Run a series of camera splines, each with optional speech lines and functions
+--? @result Nil
+--? @args TABLE cameraData 
+--? @extdesc
+--? Parameters: TABLE cameraData
+--? VAR spline - Name of the Spline in the associated .spline file
+--? TABLE {voList} - Table containing timed camera operations (Expanded below) 
+--? optional FUNC setupFunction - Function run at the very start of the spline
+--? optional FUNC teardownFunction  - Function run at the very end of the spline
+--? optional BOOL skipFadeOut - Bool to skip the fade to black at the end of the spline
+--? optional ENUM narrator - Enumorator name of the ACTOR performing the Voice Over
+--? optional BOOL showTitleCard - Bool to show the mission title card during the spline
+--? optional BOOL CAM_TYPE - Uses CAM_INTRO (true) or CAM_OUTRO (false), defaults to CAM_INTRO
+--? optional FLOAT fadeInDelay - The amount of delay this camera needs before fading in.
+--?
+--? Parameters: TABLE voList 
+--? optional FLOAT preDelay - How long to delay the start of the current line
+--? optional LOC voLine - The LOC String of the voice over line to be performed
+--? optional FUNC lineFunction - A function to be run when the voice over line is played
+--? 
+--? optional ENUM optCamType must equal either CAM_INTRO or CAM_OUTRO, defaults to CAM_INTRO
+function Util_PlayCameras(cameraData, optCamType)
+	
+	local narrator = cameraData.narrator or ACTOR.NARR
+	local CAM_TYPE = CAM_INTRO
+	if optCamType ~= nil then
+		CAM_TYPE = optCamType
+	end	
+	
+	if CAM_TYPE == CAM_OUTRO then
+		Game_FadeToBlack(FADE_OUT, 1)
+		CTRL.Event_Delay(1)
+		CTRL.WAIT()
+	else
+		Game_FadeToBlack(FADE_OUT, 0)
+	end
+		
+	Util_EnableCardinalCinematicMode(true, CAM_TYPE)
+	
+	-- Iterate through spline list
+	for i, cameraSpline in ipairs(cameraData) do
+		
+		local spline = cameraSpline.spline
+		local voList = cameraSpline.voList
+		local setupFunction = cameraSpline.setupFunction
+		local teardownFunction = cameraSpline.teardownFunction
+		local skipFadeOut = cameraSpline.skipFadeOut or false
+		local showTitleCard = cameraSpline.showTitleCard or false
+		local fadeInDelay = cameraSpline.fadeInDelay or 0
+		local fadeInSpeed = cameraSpline.fadeInSpeed or 2
+		local fadeOutSpeed = cameraSpline.fadeOutSpeed or 2
+		
+		Game_FadeToBlack(FADE_OUT, 0)
+		
+		--Resolve function typing in case of a list of functions, and run each in order
+		if setupFunction ~= nil then
+			setupFunction()
+		end
+		
+		CTRL.Event_Delay(0.75)
+		CTRL.WAIT()
+		
+		-- Start camera spline
+		Camera_Push("camera_spline")
+		local time = 0
+		time = Camera_ExecuteCaptureCameraPan(spline)
+		
+		if time > 0 then
+			if showTitleCard then
+				MissionOMatic_ShowTitleCard()
+			end
+			
+			CTRL.Event_Delay(time)
+			CTRL.SUB()
+			
+			if fadeInDelay > 0 then
+				CTRL.Event_Delay(fadeInDelay)
+				CTRL.WAIT()
+			end 
+			
+			Game_FadeToBlack(FADE_IN, fadeInSpeed)
+			Sound_Play2D("mix_nis_shared_fade_in_play")
+			
+			--Iterate through vo list, playing each in order with optional delays
+			for j,vo in ipairs(voList) do
+				
+				if scartype(vo) ~= ST_TABLE then 
+					vo = { vo }
+				end
+				
+				local line = vo.voLine
+				local lineFunction = vo.lineFunction
+				local delay = vo.preDelay or 0.5	
+				
+				if delay > 0 then
+					CTRL.Event_Delay(delay)
+					CTRL.WAIT()
+				end
+				
+				if lineFunction ~= nil then
+					lineFunction()
+				end
+				
+				if line ~= nil then
+					CTRL.Actor_PlaySpeech(narrator, line)
+					CTRL.WAIT()
+				end
+				
+			end
+		end
+		
+		-- End Camera Spline
+		CTRL.END()
+		CTRL.WAIT()
+		
+		if skipFadeOut ~= true then
+			CTRL.Game_FadeToBlack(FADE_OUT, fadeOutSpeed)
+		end
+		
+		Sound_Play2D("mix_nis_shared_fade_out_play")
+		CTRL.WAIT()
+		
+		--Resolve function typing in case of a list of functions, and run each in order
+		if teardownFunction ~= nil then
+			teardownFunction()
+		end
+		
+		if CAM_TYPE == CAM_INTRO then
+			Camera_Pop()	
+		end
+		
+	end
+	
+	-- Exit Camera Chain
+	Util_EnableCardinalCinematicMode(false, CAM_TYPE)
+end
+
+import("cardinal.scar")
+
+function Util_AdjustCaptureCameraPanToEndAtDefault(spline, pos)
+	
+	if pos ~= nil then 
+		Camera_MoveTo(pos)	-- refocus the camera at this position, if it was provided
+		CTRL.Event_Delay(0.5)
+		CTRL.WAIT()
+	end
+	
+	-- get the relevant indices in the positions and rotations tables for the final set of entries
+	local index_x = #spline.positions - 2								-- the values in the positions table are in triplets - x, y, z - so the indexes of the last set of values in the positions table are...
+	local index_y = #spline.positions - 1
+	local index_z = #spline.positions - 0
+		
+	local index_declination = #spline.rotations	- 1						-- the values in the rotations table are in pairs - declination, orbit - so the indexes of the last set of values in this table are...
+	local index_orbit = #spline.rotations - 0
+	
+	
+	-- get the rotation and declination values for a default camera
+	local eye = Camera_GetCurrentPos()									-- Use current position (assuming that's at the start position already, at default)
+
+	local newDeclination = -Camera_GetDeclination()						-- need to negate this value to translate between Camera function values and spline values!
+
+	local newOrbit = 180 - Camera_GetDefaultOrbit()						-- need to negate this value AND adjust it by 180 degrees as well to translate between Camera function orbit values and spline orbit values
+	local oldOrbit = spline.rotations[index_orbit]
+	
+	-- adjust the orbit value to remove any excess 360 degree full rotations	
+	while newOrbit - oldOrbit > 180 do
+		newOrbit = newOrbit - 360 
+	end 
+	while newOrbit - oldOrbit <= -180 do
+		newOrbit = newOrbit + 360 
+	end 
+	
+	
+	-- overwrite the last position and rotation in the data
+	spline.positions[index_x] = eye.x
+	spline.positions[index_y] = eye.y
+	spline.positions[index_z] = eye.z
+	
+	spline.rotations[index_declination] = newDeclination
+	spline.rotations[index_orbit] = newOrbit
+	
+end
+
+--? @shortdesc Used to trigger the fall to knees animation on Reynald.
+--? @result Nil
+--? @args SGroupID sgroup
+--? 
+function SGroup_ReynaldFallToKnees(sgroup)
+
+	--Adding a check to make sure the sgroup is valid before attempting to get details from it
+	if SGroup_CountSpawned(sgroup) > 0 then
+		local squadLeader = SGroup_GetSpawnedSquadAt(sgroup, 1) 
+		local entityLeader = 0
+		
+		local function _filterReynald (group,index,squad)
+			local filterdEntity
+			filterdEntity = Squad_GetFirstEntity(squad)
+			if Entity_IsOfType(filterdEntity, "reynald_in_chains") then
+				Entity_SetStateModelBool(filterdEntity, "fall_to_knees", true)
+			end
+		end
+		
+		SGroup_ForEach(sgroup, _filterReynald)
+		
+	else
+		print("!NARRATIVE WARNING! Unit is dead/destroyed and a script is trying to set animation state.")
+	end
+
+end

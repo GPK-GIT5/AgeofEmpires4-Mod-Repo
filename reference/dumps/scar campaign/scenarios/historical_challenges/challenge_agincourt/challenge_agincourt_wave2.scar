@@ -1,0 +1,1047 @@
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("missionomatic/missionomatic_artofwar.scar")
+import("training/coretraininggoals.scar")
+import("challenge_agincourt.events")
+import("cardinal.scar")
+
+function HC_Agincourt_SpawnFrenchWave2()
+	
+	HC_Agincourt_Wave2_SpawnUnits()
+
+	-- Update leader health
+	Modify_EntityMaxHealth(sg_enemyRow2_leader, 3.5, MUT_Multiplication)
+	Modify_EntityMaxHealth(sg_enemyRow2_leader2, 3.5, MUT_Multiplication)
+	
+	local leader_unit_types = {
+		SBP.FRENCH.UNIT_JOHN_I_CMP_FRE,
+		SBP.FRENCH.UNIT_EDWARD_III_CMP_FRE,
+		SBP.FRENCH.UNIT_OLIVIER_ARREL_CMP_FRE,
+		SBP.FRENCH.UNIT_CARON_DE_BOSDEGAS_CMP_FRE,
+	}
+	
+	for i, sbp in ipairs(leader_unit_types) do
+		local mod_speed_leader = Modifier_Create(MAT_EntityType, "speed_maximum_modifier", MUT_Multiplication, true, 1.3, sbp)	
+		Modifier_ApplyToPlayer(mod_speed_leader, enemyPlayer, 0)
+	end
+	
+	
+	sg_wave2_AllUnits = SGroup_CreateIfNotFound("sg_wave2_AllUnits")
+	SGroup_AddGroups(sg_wave2_AllUnits, {sg_enemyRow2_horsemen1Spawn, sg_enemyRow2_menatarms2Spawn, sg_enemyRow2_menatarms3Spawn, sg_enemyRow2_archers4Spawn, sg_enemyRow2_spearmen5Spawn})
+	
+	sg_wave2_AllWaitingUnits = SGroup_CreateIfNotFound("sg_wave2_AllWaitingUnits")
+	SGroup_AddGroups(sg_wave2_AllWaitingUnits, {sg_enemyRow2_horsemen1Spawn, sg_enemyRow2_menatarms2Spawn, sg_enemyRow2_menatarms3Spawn, sg_enemyRow2_archers4Spawn, sg_enemyRow2_spearmen5Spawn})
+	
+	Cmd_FormationMove(sg_enemyRow2_horsemen1Spawn, mkr_frenchArmy2_1, true, false, mkr_playerBase)
+	Cmd_FormationMove(sg_enemyRow2_menatarms2Spawn, mkr_frenchArmy2_2, true, false, mkr_playerBase)
+	Cmd_FormationMove(sg_enemyRow2_menatarms3Spawn, mkr_frenchArmy2_3, true, false, mkr_playerBase)
+	Cmd_FormationMove(sg_enemyRow2_archers4Spawn, mkr_frenchArmy2_4, true, false, mkr_playerBase)
+	Cmd_FormationMove(sg_enemyRow2_spearmen5Spawn, mkr_frenchArmy2_5, true, false, mkr_playerBase)
+	Cmd_FormationMove(sg_enemyRow2_leader, mkr_frenchArmyL2, true, false, mkr_playerBase)
+	Cmd_FormationMove(sg_enemyRow2_leader2, mkr_frenchArmy2_5, true, false, mkr_playerBase)
+	
+	--keep track of leader health at the start of each attack to retreat based on damage taken
+	wave2LeaderStartingHealth = 1
+	wave2Leader2StartingHealth = 1
+	wave2LeaderRetreating = false
+	wave2Leader2Retreating = false
+	wave2Leader2UsingAbility = false
+	wave2Leader2DamageAbilityTime = 0
+	wave2LeaderHealingAbilityTime = 0
+	wave2HealingUsed = false
+	wave2DamageUsed = false
+	
+	wave2_Group1Attacking = false
+	wave2_Group2Attacking = false
+	wave2_Group3Attacking = false
+	wave2_Group4Attacking = false
+	wave2StartTime = World_GetGameTime()
+	--if the player attacks early, we modify the break off times
+	wave2EarlyAttackTime = 0
+	wave2EarlyAttackCooldownStart = -10
+	wave2StartTimeMultiplier = 80
+	
+	--set up the number of units to split off in each mini-wave in a table
+	wave2SplitUnitCounts = {}
+	wave2SplitUnitCounts[1] = {5,5,6,5,6}
+	wave2SplitUnitCounts[2] = {8,7,9,8,9}
+	wave2SplitUnitCounts[3] = {9,8,10,9,10}
+	wave2SplitUnitCounts[4] = {9,9,10,9,10}
+	
+end
+
+function HC_Agincourt_Wave2_SpawnUnits()
+	
+	sg_enemyRow2_horsemen1Spawn = SGroup_CreateIfNotFound("sg_enemyRow2_horsemen1Spawn")
+	sg_enemyRow2_menatarms2Spawn = SGroup_CreateIfNotFound("sg_enemyRow2_menatarms2Spawn")
+	sg_enemyRow2_menatarms3Spawn = SGroup_CreateIfNotFound("sg_enemyRow2_menatarms3Spawn")
+	sg_enemyRow2_archers4Spawn = SGroup_CreateIfNotFound("sg_enemyRow2_archers4Spawn")
+	sg_enemyRow2_spearmen5Spawn = SGroup_CreateIfNotFound("sg_enemyRow2_spearmen5Spawn")
+	
+	sg_enemyRow2_horsemen1SpawnCenter = SGroup_CreateIfNotFound("sg_enemyRow2_horsemen1SpawnCenter")
+	sg_enemyRow2_menatarms2SpawnCenter = SGroup_CreateIfNotFound("sg_enemyRow2_menatarms2SpawnCenter")
+	sg_enemyRow2_menatarms3SpawnCenter = SGroup_CreateIfNotFound("sg_enemyRow2_menatarms3SpawnCenter")
+	sg_enemyRow2_archers4SpawnCenter = SGroup_CreateIfNotFound("sg_enemyRow2_archers4SpawnCenter")
+	sg_enemyRow2_spearmen5SpawnCenter = SGroup_CreateIfNotFound("sg_enemyRow2_spearmen5SpawnCenter")
+	
+	sg_enemyRow2_horsemen1 = SGroup_CreateIfNotFound("sg_enemyRow2_horsemen1")
+	sg_enemyRow2_menatarms2 = SGroup_CreateIfNotFound("sg_enemyRow2_menatarms2")
+	sg_enemyRow2_menatarms3 = SGroup_CreateIfNotFound("sg_enemyRow2_menatarms3")
+	sg_enemyRow2_archers4 = SGroup_CreateIfNotFound("sg_enemyRow2_archers4")
+	sg_enemyRow2_spearmen5 = SGroup_CreateIfNotFound("sg_enemyRow2_spearmen5")
+	sg_enemyRow2_leader = SGroup_CreateIfNotFound("sg_enemyRow2_leader")
+	sg_enemyRow2_leader2 = SGroup_CreateIfNotFound("sg_enemyRow2_leader2")
+	
+	local sbp_manatarms_fre = SBP.FRENCH.UNIT_MANATARMS_3_FRE
+	local sbp_spearmen_fre = SBP.FRENCH.UNIT_SPEARMAN_2_FRE
+	local sbp_archer_fre = SBP.FRENCH.UNIT_ARCHER_2_FRE
+	local sbp_horseman_fre = SBP.FRENCH.UNIT_HORSEMAN_3_FRE
+	local sbp_leader2 = SBP.FRENCH.UNIT_EDWARD_III_CMP_FRE
+	local sbp_leader2B = SBP.FRENCH.UNIT_JOHN_I_CMP_FRE
+	
+	local facingPos = Marker_GetPosition(mkr_playerBase)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemyRow2_horsemen1Spawn, {sbp = sbp_horseman_fre, numSquads = 22, facing = facingPos }, mkr_frenchArmyS2_1)
+	--
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemyRow2_menatarms2Spawn, {sbp = sbp_spearmen_fre, numSquads = 10, facing = facingPos }, mkr_frenchArmyS2_2)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemyRow2_menatarms2Spawn, {sbp = sbp_manatarms_fre, numSquads = 10, facing = facingPos }, mkr_frenchArmyS2_2)
+	--
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemyRow2_menatarms3Spawn, {sbp = sbp_spearmen_fre, numSquads = 10, facing = facingPos }, mkr_frenchArmyS2_3)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemyRow2_menatarms3Spawn, {sbp = sbp_manatarms_fre, numSquads = 15, facing = facingPos }, mkr_frenchArmyS2_3)
+	--
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemyRow2_archers4Spawn, {sbp = sbp_archer_fre, numSquads = 20, facing = facingPos }, mkr_frenchArmyS2_4)
+	--
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemyRow2_spearmen5Spawn, {sbp = sbp_spearmen_fre, numSquads = 25, facing = facingPos }, mkr_frenchArmyS2_5)
+	
+	local options = {
+		destination = mkr_frenchArmyL2,
+	}
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemyRow2_leader, {sbp = sbp_leader2, numSquads = 1, facing = facingPos }, mkr_frenchArmyL2S, nil, nil, options)
+	UnitEntry_DeploySquads(enemyPlayer, sg_enemyRow2_leader2, {sbp = sbp_leader2B, numSquads = 1, facing = facingPos }, mkr_frenchArmyL2S, nil, nil, options)
+	
+end
+
+function HC_Agincourt_RevealFrenchWave2()
+	
+	if(conquerorModeActivated == false) then
+		--this line only needs to play here if the conqueror mode activated line isn't playing
+		Util_StartIntel(EVENTS.French_Battalion)
+	end
+	
+	Objective_Start(SOBJ_AttackWave2, true, true)
+	Objective_StartTimer(SOBJ_AttackWave2, COUNT_DOWN, (60 * 8) + 30)
+	
+	UI_CreateMinimapBlip(sg_enemyRow2_horsemen1Spawn, 10, "threat_group")
+	UI_CreateMinimapBlip(sg_enemyRow2_menatarms2Spawn, 10, "threat_group")
+	UI_CreateMinimapBlip(sg_enemyRow2_menatarms3Spawn, 10, "threat_group")
+	UI_CreateMinimapBlip(sg_enemyRow2_archers4Spawn, 10, "threat_group")
+	UI_CreateMinimapBlip(sg_enemyRow2_spearmen5Spawn, 10, "threat_group")
+	
+	FOW_PlayerRevealSGroup(localPlayer, sg_enemyRow2_horsemen1Spawn,20,-1)
+	FOW_PlayerRevealSGroup(localPlayer, sg_enemyRow2_menatarms2Spawn,20,-1)
+	FOW_PlayerRevealSGroup(localPlayer, sg_enemyRow2_menatarms3Spawn,20,-1)
+	FOW_PlayerRevealSGroup(localPlayer, sg_enemyRow2_archers4Spawn,20,-1)
+	FOW_PlayerRevealSGroup(localPlayer, sg_enemyRow2_spearmen5Spawn,20,-1)
+	
+	wave2StartTime = World_GetGameTime()
+	
+	if(conquerorModeActivated == true) then
+		wave2StartTimeMultiplier = 70
+	end
+	
+	SGroup_AddAbility(sg_enemyRow2_leader2, ABILITY.JEANNE_D_ARC_AOE_DAMAGE_ABILITY_FRE_HA_01)
+	SGroup_AddAbility(sg_enemyRow2_leader2, ABILITY.DEPLOY_PAVISE_FRE)
+	
+	
+	Rule_AddInterval(HC_Agincourt_Wave2_Update, 0.125)
+	
+	Rule_AddOneShot(HC_Agincourt_Wave2_CheckCenter, 2)
+end
+
+
+function HC_Agincourt_Wave2_Start()
+	
+	Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_high")
+	Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+	Sound_Play2D(MUS_STINGER_ALERT)
+	
+	Cmd_FormationAttackMove(sg_enemyRow2_horsemen1, mkr_ArmyAttack1_4, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_menatarms2, mkr_ArmyAttack2_4, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_menatarms3, mkr_ArmyAttack3_4, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_archers4, mkr_ArmyAttack4_4, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_spearmen5, mkr_ArmyAttack5_4, true, false)
+	
+	Cmd_FormationAttackMove(sg_enemyRow2_horsemen1, mkr_playerBase, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_menatarms2, mkr_playerBase, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_menatarms3, mkr_playerBase, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_archers4, mkr_playerBase, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_spearmen5, mkr_playerBase, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_leader, mkr_playerBase, true, false)
+	Cmd_FormationAttackMove(sg_enemyRow2_leader2, mkr_playerBase, true, false)
+	
+	
+	rallyStartTime = World_GetGameTime()
+	
+	--track each group's progress down the battlefield
+	w2_lane1_fit = 0
+	w2_lane2_fit = 0
+	w2_lane3_fit = 0
+	w2_lane4_fit = 0
+	w2_lane5_fit = 0
+	
+	reformingLanes = false
+	
+	w2_leader_target = 3
+	w2_leader_target_changed = false
+	w2_leader_target_time = World_GetGameTime()
+	w2_leader2_target = 3
+	w2_leader2_target_changed = false
+	w2_leader2_target_time = World_GetGameTime()
+	
+	if(conquerorModeActivated == true or wave2HealingUsed == false) then
+		if(Rule_Exists(HC_Agincourt_Wave2HealingAbilities) == false) then
+			Rule_AddInterval(HC_Agincourt_Wave2HealingAbilities, 1)
+		end
+	end
+	if(conquerorModeActivated == true or wave2DamageUsed == false) then
+		if(Rule_Exists(HC_Agincourt_Wave2DamageAbilities) == false) then
+			Rule_AddInterval(HC_Agincourt_Wave2DamageAbilities, 1)
+		end
+	end
+	
+	--reset starting health to each leader's current health
+	if(SGroup_CountSpawned(sg_enemyRow2_leader) > 0) then
+		wave2LeaderStartingHealth = SGroup_GetAvgHealth(sg_enemyRow2_leader)
+		wave2LeaderRetreating = false
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_leader2) > 0) then
+		wave2Leader2StartingHealth = SGroup_GetAvgHealth(sg_enemyRow2_leader2)
+		wave2Leader2Retreating = false
+	end
+	
+	if(Rule_Exists(HC_Agincourt_Wave2_UpdateLeader) == false) then
+		Rule_AddInterval(HC_Agincourt_Wave2_UpdateLeader, .25)
+	end
+	if(Rule_Exists(HC_Agincourt_Wave2_UpdateLeader2) == false) then
+		Rule_AddInterval(HC_Agincourt_Wave2_UpdateLeader2, .25)
+	end
+	
+	Rule_AddOneShot(HC_Agincourt_Wave2_CheckCenter, 2)
+end
+
+
+
+function HC_Agincourt_Wave2_Update()
+	
+	if(wave2EarlyAttackCooldownStart + 10 < World_GetGameTime()) then
+		if((SGroup_IsUnderAttack(sg_wave2_AllWaitingUnits, ANY, 1) == true or SGroup_IsUnderAttack(sg_wave3_AllUnits, ANY, 1) == true) and SGroup_IsIdle(sg_wave2_AllWaitingUnits, ANY) == true) then
+			--advance the timers just enough so the next subgroup is split off of each lane
+			if((missionTime - wave2StartTime) + wave2EarlyAttackTime > (6 * wave2StartTimeMultiplier)) then
+				wave2EarlyAttackTime = (8 * wave2StartTimeMultiplier)
+			elseif((missionTime - wave2StartTime) + wave2EarlyAttackTime > (4 * wave2StartTimeMultiplier)) then
+				wave2EarlyAttackTime = (6 * wave2StartTimeMultiplier)
+			elseif((missionTime - wave2StartTime) + wave2EarlyAttackTime > (2 * wave2StartTimeMultiplier)) then
+				wave2EarlyAttackTime = (4 * wave2StartTimeMultiplier)
+			else
+				wave2EarlyAttackTime = (2 * wave2StartTimeMultiplier)
+			end
+			
+			wave2EarlyAttackCooldownStart = World_GetGameTime()
+			
+			--send the entire attacked lane to attack the player base
+			if(SGroup_IsUnderAttack(sg_enemyRow2_horsemen1Spawn, ANY, 1) == true or SGroup_IsUnderAttack(sg_wave3_AllUnits, ANY, 1) == true) then
+				SGroup_AddGroup(sg_enemyRow2_horsemen1, sg_enemyRow2_horsemen1Spawn)
+				SGroup_RemoveGroup(sg_wave2_AllWaitingUnits, sg_enemyRow2_horsemen1Spawn)
+				SGroup_Clear(sg_enemyRow2_horsemen1Spawn)
+			end
+			--
+			if(SGroup_IsUnderAttack(sg_enemyRow2_menatarms2Spawn, ANY, 1) == true or SGroup_IsUnderAttack(sg_wave3_AllUnits, ANY, 1) == true) then
+				SGroup_AddGroup(sg_enemyRow2_menatarms2, sg_enemyRow2_menatarms2Spawn)
+				SGroup_RemoveGroup(sg_wave2_AllWaitingUnits, sg_enemyRow2_menatarms2Spawn)
+				SGroup_Clear(sg_enemyRow2_menatarms2Spawn)
+			end
+			--
+			if(SGroup_IsUnderAttack(sg_enemyRow2_menatarms3Spawn, ANY, 1) == true or SGroup_IsUnderAttack(sg_wave3_AllUnits, ANY, 1) == true) then
+				SGroup_AddGroup(sg_enemyRow2_menatarms3, sg_enemyRow2_menatarms3Spawn)
+				SGroup_RemoveGroup(sg_wave2_AllWaitingUnits, sg_enemyRow2_menatarms3Spawn)
+				SGroup_Clear(sg_enemyRow2_menatarms3Spawn)
+			end
+			--
+			if(SGroup_IsUnderAttack(sg_enemyRow2_archers4Spawn, ANY, 1) == true or SGroup_IsUnderAttack(sg_wave3_AllUnits, ANY, 1) == true) then
+				SGroup_AddGroup(sg_enemyRow2_archers4, sg_enemyRow2_archers4Spawn)
+				SGroup_RemoveGroup(sg_wave2_AllWaitingUnits, sg_enemyRow2_archers4Spawn)
+				SGroup_Clear(sg_enemyRow2_archers4Spawn)
+			end
+			--
+			if(SGroup_IsUnderAttack(sg_enemyRow2_spearmen5Spawn, ANY, 1) == true or SGroup_IsUnderAttack(sg_wave3_AllUnits, ANY, 1) == true) then
+				SGroup_AddGroup(sg_enemyRow2_spearmen5, sg_enemyRow2_spearmen5Spawn)
+				SGroup_RemoveGroup(sg_wave2_AllWaitingUnits, sg_enemyRow2_spearmen5Spawn)
+				SGroup_Clear(sg_enemyRow2_spearmen5Spawn)
+			end
+			--
+		end
+	end
+	
+	HC_Agincourt_Wave2_BreakOffGroup(1)
+	HC_Agincourt_Wave2_BreakOffGroup(2)
+	HC_Agincourt_Wave2_BreakOffGroup(3)
+	
+	HC_Agincourt_Wave2_CheckFit()
+	
+	if(SGroup_CountSpawned(sg_wave2_AllUnits) == 0) then
+		--reveal and mark next wave
+		HC_Agincourt_RevealFrenchWave3()
+		
+		Rule_RemoveMe()
+	end
+end
+
+
+function HC_Agincourt_Wave2_BreakOffGroup(inSubGroup)
+	
+	
+	local subGroupStartTime = 1 * 60
+	local waveAlreadyAttacking = false
+	
+	if(inSubGroup == 1) then
+		subGroupStartTime = (2 * wave2StartTimeMultiplier)
+		waveAlreadyAttacking = wave2_Group1Attacking
+	elseif(inSubGroup == 2) then
+		subGroupStartTime = (4 * wave2StartTimeMultiplier)
+		waveAlreadyAttacking = wave2_Group2Attacking
+	elseif(inSubGroup == 3) then
+		subGroupStartTime = (6 * wave2StartTimeMultiplier)
+		waveAlreadyAttacking = wave2_Group3Attacking
+	elseif(inSubGroup == 4) then
+		subGroupStartTime = (8 * wave2StartTimeMultiplier)
+		waveAlreadyAttacking = wave2_Group4Attacking
+	end
+	
+	--send smaller groups to attack after the preset time
+	if(waveAlreadyAttacking == false and missionTime - wave2StartTime >= (subGroupStartTime - wave2EarlyAttackTime)) then
+		
+		--move part of each waiting group into the attacking group
+		for i = 1, wave2SplitUnitCounts[inSubGroup][1] do
+			if(SGroup_CountSpawned(sg_enemyRow2_horsemen1Spawn) > 0) then
+				SGroup_Add(sg_enemyRow2_horsemen1, SGroup_GetSquadAt(sg_enemyRow2_horsemen1Spawn, 1))
+				SGroup_Remove(sg_wave2_AllWaitingUnits, SGroup_GetSquadAt(sg_enemyRow2_horsemen1Spawn, 1))
+				SGroup_Remove(sg_enemyRow2_horsemen1Spawn, SGroup_GetSquadAt(sg_enemyRow2_horsemen1Spawn, 1))
+			end
+		end
+		--
+		for i = 1, wave2SplitUnitCounts[inSubGroup][2] do
+			if(SGroup_CountSpawned(sg_enemyRow2_menatarms2Spawn) > 0) then
+				SGroup_Add(sg_enemyRow2_menatarms2, SGroup_GetSquadAt(sg_enemyRow2_menatarms2Spawn, 1))
+				SGroup_Remove(sg_wave2_AllWaitingUnits, SGroup_GetSquadAt(sg_enemyRow2_menatarms2Spawn, 1))
+				SGroup_Remove(sg_enemyRow2_menatarms2Spawn, SGroup_GetSquadAt(sg_enemyRow2_menatarms2Spawn, 1))
+			end
+		end
+		--
+		for i = 1, wave2SplitUnitCounts[inSubGroup][3] do
+			if(SGroup_CountSpawned(sg_enemyRow2_menatarms3Spawn) > 0) then
+				SGroup_Add(sg_enemyRow2_menatarms3, SGroup_GetSquadAt(sg_enemyRow2_menatarms3Spawn, 1))
+				SGroup_Remove(sg_wave2_AllWaitingUnits, SGroup_GetSquadAt(sg_enemyRow2_menatarms3Spawn, 1))
+				SGroup_Remove(sg_enemyRow2_menatarms3Spawn, SGroup_GetSquadAt(sg_enemyRow2_menatarms3Spawn, 1))
+			end
+		end
+		--
+		for i = 1, wave2SplitUnitCounts[inSubGroup][4] do
+			if(SGroup_CountSpawned(sg_enemyRow2_archers4Spawn) > 0) then
+				SGroup_Add(sg_enemyRow2_archers4, SGroup_GetSquadAt(sg_enemyRow2_archers4Spawn, 1))
+				SGroup_Remove(sg_wave2_AllWaitingUnits, SGroup_GetSquadAt(sg_enemyRow2_archers4Spawn, 1))
+				SGroup_Remove(sg_enemyRow2_archers4Spawn, SGroup_GetSquadAt(sg_enemyRow2_archers4Spawn, 1))
+			end
+		end
+		--
+		for i = 1, wave2SplitUnitCounts[inSubGroup][5] do
+			if(SGroup_CountSpawned(sg_enemyRow2_spearmen5Spawn) > 0) then
+				SGroup_Add(sg_enemyRow2_spearmen5, SGroup_GetSquadAt(sg_enemyRow2_spearmen5Spawn, 1))
+				SGroup_Remove(sg_wave2_AllWaitingUnits, SGroup_GetSquadAt(sg_enemyRow2_spearmen5Spawn, 1))
+				SGroup_Remove(sg_enemyRow2_spearmen5Spawn, SGroup_GetSquadAt(sg_enemyRow2_spearmen5Spawn, 1))
+			end
+		end
+		--
+		
+		--move waiting units farther down the battlefield
+		
+		if(SGroup_CountSpawned(sg_enemyRow2_horsemen1Spawn) > 0) then
+			HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_horsemen1Spawn, 1, inSubGroup * .15, true, true)
+		end
+		if(SGroup_CountSpawned(sg_enemyRow2_menatarms2Spawn) > 0) then
+			HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_menatarms2Spawn, 2, inSubGroup * .15, true, true)
+		end
+		if(SGroup_CountSpawned(sg_enemyRow2_menatarms3Spawn) > 0) then
+			HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_menatarms3Spawn, 3, inSubGroup * .15, true, true)
+		end
+		if(SGroup_CountSpawned(sg_enemyRow2_archers4Spawn) > 0) then
+			HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_archers4Spawn, 4, inSubGroup * .15, true, true)
+		end
+		if(SGroup_CountSpawned(sg_enemyRow2_spearmen5Spawn) > 0) then
+			HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_spearmen5Spawn, 5, inSubGroup * .15, true, true)
+		end
+		
+		HC_Agincourt_Wave2_Start()
+		
+		if(inSubGroup == 1) then
+			wave2_Group1Attacking = true
+		elseif(inSubGroup == 2) then
+			wave2_Group2Attacking = true
+		elseif(inSubGroup == 3) then
+			wave2_Group3Attacking = true
+		elseif(inSubGroup == 4) then
+			wave2_Group4Attacking = true
+		end
+		
+	end
+end
+
+function HC_Agincourt_Wave2_CheckCenter()
+	
+	--get the center unit in each group
+	if(SGroup_CountSpawned(sg_enemyRow2_horsemen1Spawn) > 0) then
+		SGroup_Clear(sg_enemyRow2_horsemen1SpawnCenter)
+		squad = SGroup_GetClosestSquad(sg_enemyRow2_horsemen1Spawn, SGroup_GetPosition(sg_enemyRow2_horsemen1Spawn))
+		SGroup_Add(sg_enemyRow2_horsemen1SpawnCenter, squad)
+		if(wave2Label1 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label1)
+		end
+		wave2Label1 = Objective_AddUIElements(SOBJ_AttackWave2, sg_enemyRow2_horsemen1SpawnCenter, false, "$11268425", true, 5)--French Army
+	else
+		if(wave2Label1 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label1)
+		end
+	end
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_menatarms2Spawn) > 0) then
+		SGroup_Clear(sg_enemyRow2_menatarms2SpawnCenter)
+		squad = SGroup_GetClosestSquad(sg_enemyRow2_menatarms2Spawn, SGroup_GetPosition(sg_enemyRow2_menatarms2Spawn))
+		SGroup_Add(sg_enemyRow2_menatarms2SpawnCenter, squad)
+		if(wave2Label2 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label2)
+		end
+		wave2Label2 = Objective_AddUIElements(SOBJ_AttackWave2, sg_enemyRow2_menatarms2SpawnCenter, false, "$11268425", true, 5)--French Army
+	else
+		if(wave2Label2 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label2)
+		end
+	end
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_menatarms3Spawn) > 0) then
+		SGroup_Clear(sg_enemyRow2_menatarms3SpawnCenter)
+		squad = SGroup_GetClosestSquad(sg_enemyRow2_menatarms3Spawn, SGroup_GetPosition(sg_enemyRow2_menatarms3Spawn))
+		SGroup_Add(sg_enemyRow2_menatarms3SpawnCenter, squad)
+		if(wave2Label3 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label3)
+		end
+		wave2Label3 = Objective_AddUIElements(SOBJ_AttackWave2, sg_enemyRow2_menatarms3SpawnCenter, false, "$11268425", true, 5)--French Army
+	else
+		if(wave2Label3 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label3)
+		end
+	end
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_archers4Spawn) > 0) then
+		SGroup_Clear(sg_enemyRow2_archers4SpawnCenter)
+		squad = SGroup_GetClosestSquad(sg_enemyRow2_archers4Spawn, SGroup_GetPosition(sg_enemyRow2_archers4Spawn))
+		SGroup_Add(sg_enemyRow2_archers4SpawnCenter, squad)
+		if(wave2Label4 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label4)
+		end
+		wave2Label4 = Objective_AddUIElements(SOBJ_AttackWave2, sg_enemyRow2_archers4SpawnCenter, false, "$11268425", true, 5)--French Army
+	else
+		if(wave2Label4 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label4)
+		end
+	end
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_spearmen5Spawn) > 0) then
+		SGroup_Clear(sg_enemyRow2_spearmen5SpawnCenter)
+		squad = SGroup_GetClosestSquad(sg_enemyRow2_spearmen5Spawn, SGroup_GetPosition(sg_enemyRow2_spearmen5Spawn))
+		SGroup_Add(sg_enemyRow2_spearmen5SpawnCenter, squad)
+		if(wave2Label5 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label5)
+		end
+		wave2Label5 = Objective_AddUIElements(SOBJ_AttackWave2, sg_enemyRow2_spearmen5SpawnCenter, false, "$11268425", true, 5)--French Army
+	else
+		if(wave2Label5 ~= nil) then
+			Objective_RemoveUIElements(SOBJ_AttackWave2, wave2Label5)
+		end
+	end
+	
+end
+
+--send leader A to the largest group
+function HC_Agincourt_Wave2_UpdateLeader()
+	
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_leader) == 0) then
+		Rule_RemoveMe()
+		return
+	end
+	
+	local currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_leader)
+	local previousLaneTarget = w2_leader_target
+	
+	local highestGroupCount = 0
+	w2_leader_target = 0
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_horsemen1) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_horsemen1)
+		w2_leader_target = 1
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_menatarms2) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_menatarms2)
+		w2_leader_target = 2
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_menatarms3) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_menatarms3)
+		w2_leader_target = 3
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_archers4) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_archers4)
+		w2_leader_target = 4
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_spearmen5) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_spearmen5)
+		w2_leader_target = 5
+	end
+	
+	if(SGroup_CountSpawned(sg_wave2_AllWaitingUnits) > 0) then
+		--if each group is < 3, return to the waiting groups
+		if(highestGroupCount < 3) then
+			w2_leader_target = 0
+		end
+		
+		--if leader has been heavily damaged in this attack, return to the waiting groups
+		if(SGroup_GetAvgHealth(sg_enemyRow2_leader) < wave2LeaderStartingHealth - .4 or wave2LeaderRetreating) then
+			w2_leader_target = 0
+			wave2LeaderRetreating = true
+		end
+		currentGroupPos = SGroup_GetAvgPosition(sg_wave2_AllWaitingUnits)
+	end
+	
+	if(w2_leader_target == 1) then
+		if(SGroup_CountSpawned(sg_enemyRow2_horsemen1) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_horsemen1)
+		end
+	end
+	if(w2_leader_target == 2) then
+		if(SGroup_CountSpawned(sg_enemyRow2_menatarms2) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_menatarms2)
+		end
+	end
+	if(w2_leader_target == 3) then
+		if(SGroup_CountSpawned(sg_enemyRow2_menatarms3) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_menatarms3)
+		end
+	end
+	if(w2_leader_target == 4) then
+		if(SGroup_CountSpawned(sg_enemyRow2_archers4) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_archers4)
+		end
+	end
+	if(w2_leader_target == 5) then
+		if(SGroup_CountSpawned(sg_enemyRow2_spearmen5) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_spearmen5)
+		end
+	end
+	
+	
+	
+	if(previousLaneTarget == w2_leader_target) then
+		--update move orders less frequently if the target group hasn't changed
+		if(w2_leader_target_changed == false) then
+			if(w2_leader_target_time < World_GetGameTime() - 3) then
+				w2_leader_target_time = World_GetGameTime()
+			else
+				return
+			end
+		end
+		w2_leader_target_changed = false
+		
+		local leaderDistToTarget = Util_GetDistance(sg_enemyRow2_leader, currentGroupPos)
+		if(leaderDistToTarget > 15) then
+			Cmd_FormationMove(sg_enemyRow2_leader, currentGroupPos, false, false)
+		elseif(leaderDistToTarget < 10 and leaderDistToTarget > 5) then
+			Cmd_FormationAttackMove(sg_enemyRow2_leader, currentGroupPos, false, false)
+		end
+	else
+		w2_leader_target_changed = true
+		Cmd_FormationMove(sg_enemyRow2_leader, currentGroupPos, false, false)
+	end
+	
+end
+
+
+--send leader B to the smallest group
+function HC_Agincourt_Wave2_UpdateLeader2()
+	
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_leader2) == 0) then
+		Rule_RemoveMe()
+		return
+	end
+	
+	local currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_leader2)
+	local previousLaneTarget = w2_leader2_target
+	
+	local lowestGroupCount = 0
+	w2_leader2_target = 0
+	
+	if((SGroup_CountSpawned(sg_enemyRow2_horsemen1) < lowestGroupCount and SGroup_CountSpawned(sg_enemyRow2_horsemen1) > 0) or 
+			(lowestGroupCount == 0 and SGroup_CountSpawned(sg_enemyRow2_horsemen1) > 0)) then
+		lowestGroupCount = SGroup_CountSpawned(sg_enemyRow2_horsemen1)
+		w2_leader2_target = 1
+	end
+	if((SGroup_CountSpawned(sg_enemyRow2_menatarms2) < lowestGroupCount and SGroup_CountSpawned(sg_enemyRow2_menatarms2) > 0) or 
+			(lowestGroupCount == 0 and SGroup_CountSpawned(sg_enemyRow2_menatarms2) > 0)) then
+		lowestGroupCount = SGroup_CountSpawned(sg_enemyRow2_menatarms2)
+		w2_leader2_target = 2
+	end
+	if((SGroup_CountSpawned(sg_enemyRow2_menatarms3) < lowestGroupCount and SGroup_CountSpawned(sg_enemyRow2_menatarms3) > 0) or 
+			(lowestGroupCount == 0 and SGroup_CountSpawned(sg_enemyRow2_menatarms3) > 0)) then
+		lowestGroupCount = SGroup_CountSpawned(sg_enemyRow2_menatarms3)
+		w2_leader2_target = 3
+	end
+	if((SGroup_CountSpawned(sg_enemyRow2_archers4) < lowestGroupCount and SGroup_CountSpawned(sg_enemyRow2_archers4) > 0) or 
+			(lowestGroupCount == 0 and SGroup_CountSpawned(sg_enemyRow2_archers4) > 0)) then
+		lowestGroupCount = SGroup_CountSpawned(sg_enemyRow2_archers4)
+		w2_leader2_target = 4
+	end
+	if((SGroup_CountSpawned(sg_enemyRow2_spearmen5) < lowestGroupCount and SGroup_CountSpawned(sg_enemyRow2_spearmen5) > 0) or 
+			(lowestGroupCount == 0 and SGroup_CountSpawned(sg_enemyRow2_spearmen5) > 0)) then
+		lowestGroupCount = SGroup_CountSpawned(sg_enemyRow2_spearmen5)
+		w2_leader2_target = 5
+	end
+	
+	
+	
+	local highestGroupCount = 0
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_horsemen1) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_horsemen1)
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_menatarms2) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_menatarms2)
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_menatarms3) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_menatarms3)
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_archers4) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_archers4)
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_spearmen5) > highestGroupCount) then
+		highestGroupCount = SGroup_CountSpawned(sg_enemyRow2_spearmen5)
+	end
+	
+	
+	if(SGroup_CountSpawned(sg_wave2_AllWaitingUnits) > 0) then
+		--if each group is < 3, return to the waiting groups
+		if(highestGroupCount < 3) then
+			w2_leader2_target = 0
+		end
+		
+		--if leader has been heavily damaged in this attack, return to the waiting groups
+		if(SGroup_GetAvgHealth(sg_enemyRow2_leader2) < wave2Leader2StartingHealth - .4 or wave2Leader2Retreating) then
+			w2_leader2_target = 0
+			wave2Leader2Retreating = true
+		end
+		currentGroupPos = SGroup_GetAvgPosition(sg_wave2_AllWaitingUnits)
+	end
+	
+	
+	if(w2_leader2_target == 1) then
+		if(SGroup_CountSpawned(sg_enemyRow2_horsemen1) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_horsemen1)
+		end
+	end
+	if(w2_leader2_target == 2) then
+		if(SGroup_CountSpawned(sg_enemyRow2_menatarms2) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_menatarms2)
+		end
+	end
+	if(w2_leader2_target == 3) then
+		if(SGroup_CountSpawned(sg_enemyRow2_menatarms3) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_menatarms3)
+		end
+	end
+	if(w2_leader2_target == 4) then
+		if(SGroup_CountSpawned(sg_enemyRow2_archers4) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_archers4)
+		end
+	end
+	if(w2_leader2_target == 5) then
+		if(SGroup_CountSpawned(sg_enemyRow2_spearmen5) > 0) then
+			currentGroupPos = SGroup_GetAvgPosition(sg_enemyRow2_spearmen5)
+		end
+	end
+	
+	
+	if(previousLaneTarget == w2_leader2_target) then
+		--update move orders less frequently if the target group hasn't changed
+		if(w2_leader2_target_changed == false) then
+			if(w2_leader2_target_time < World_GetGameTime() - 3) then
+				w2_leader2_target_time = World_GetGameTime()
+			else
+				return
+			end
+		end
+		w2_leader2_target_changed = false
+		
+		if(wave2Leader2UsingAbility == false) then
+			local leaderDistToTarget = Util_GetDistance(sg_enemyRow2_leader2, currentGroupPos)
+			if(leaderDistToTarget > 15) then
+				Cmd_FormationMove(sg_enemyRow2_leader2, currentGroupPos, false, false)
+			elseif(leaderDistToTarget < 10 and leaderDistToTarget > 5) then
+				Cmd_FormationAttackMove(sg_enemyRow2_leader2, currentGroupPos, false, false)
+			end
+		end
+	else
+		if(wave2Leader2UsingAbility == false) then
+			w2_leader2_target_changed = true
+			Cmd_FormationMove(sg_enemyRow2_leader2, currentGroupPos, false, false)
+		end
+	end
+	
+end
+
+
+function HC_Agincourt_Wave2HealingAbilities()
+	
+	sg_wave2_NearbyEnemyUnits = SGroup_CreateIfNotFound("sg_wave2_NearbyEnemyUnits")
+	
+	if(wave2LeaderHealingAbilityTime + 30 < World_GetGameTime()) then
+		if(SGroup_CountSpawned(sg_enemyRow2_leader) > 0) then
+			
+			Player_GetAllSquadsNearMarker(enemyPlayer, sg_wave2_NearbyEnemyUnits, Util_GetPosition(sg_enemyRow2_leader), 10)
+			
+			if(SGroup_CountSpawned(sg_wave2_NearbyEnemyUnits) > 0) then
+				if(SGroup_GetAvgHealth(sg_wave2_NearbyEnemyUnits) < 1) then
+					
+					Player_ResetAbilityCooldowns(enemyPlayer, ABILITY.LEADER_HEALING_ACTIVATED_LOWCD)
+					local abilityBP = BP_GetAbilityBlueprint("leader_healing_activated_lowcd")
+					Cmd_Ability(sg_enemyRow2_leader, abilityBP, nil, nil, true)
+					
+					wave2LeaderHealingAbilityTime = World_GetGameTime()
+					wave2HealingUsed = true
+					
+					--on normal mode abilities only activate once
+					if(conquerorModeActivated == false) then
+						Rule_RemoveMe()
+					end
+				end
+			end
+		end
+	end
+	
+end
+
+function HC_Agincourt_Wave2DamageAbilities()
+	
+	sg_wave2_NearbyPlayerUnits = SGroup_CreateIfNotFound("sg_wave2_NearbyPlayerUnits")
+	
+	if(wave2Leader2DamageAbilityTime + 15 < World_GetGameTime()) then
+		if(SGroup_CountSpawned(sg_enemyRow2_leader2) > 0) then
+			
+			Player_GetAllSquadsNearMarker(localPlayer, sg_wave2_NearbyPlayerUnits, Util_GetPosition(sg_enemyRow2_leader2), 4)
+			
+			if(SGroup_CountSpawned(sg_wave2_NearbyPlayerUnits) > 0) then
+				
+				Player_ResetAbilityCooldowns(enemyPlayer, ABILITY.LEADER_REDUCE_ARMOR_ACTIVATED_LOWCD)
+				local abilityBP2 = BP_GetAbilityBlueprint("leader_reduce_armor_activated_lowcd")
+				Cmd_Ability(sg_enemyRow2_leader2, abilityBP2, nil, nil, true)
+				
+				Player_ResetAbilityCooldowns(enemyPlayer, ABILITY.JEANNE_D_ARC_AOE_DAMAGE_ABILITY_FRE_HA_01)
+				HC_Agincourt_Wave2_Begin_AoE()
+				
+				wave2Leader2DamageAbilityTime = World_GetGameTime()
+				wave2DamageUsed = true
+				
+				--on normal mode abilities only activate once
+				if(conquerorModeActivated == false) then
+					Rule_RemoveMe()
+				end
+			end
+		end
+	end
+	
+end
+
+
+
+
+function HC_Agincourt_Wave2_Begin_AoE()
+	
+	Player_ResetAbilityCooldowns(enemyPlayer, ABILITY.DEPLOY_PAVISE_FRE)
+	Cmd_Ability(sg_enemyRow2_leader2, ABILITY.DEPLOY_PAVISE_FRE, sg_enemyRow2_leader2, nil, true)
+	SGroup_SetInvulnerable(sg_enemyRow2_leader2, true, 10)
+	wave2Leader2UsingAbility = true
+	
+	w2LeaderDamageTimeLimit = 5
+	Rule_AddOneShot(HC_Agincourt_Wave2_Apply_AoE, w2LeaderDamageTimeLimit)
+	
+	w2ChargeUpStartTime = World_GetGameTime()
+	Rule_AddInterval(HC_Agincourt_Wave2_UpdateLeaderReticule, .125)
+	
+	if(w2RallyReticuleID1 ~= nil) then
+		UI_ModalVisual_Destroy(w2RallyReticuleID1)
+	end
+	if(SGroup_CountSpawned(sg_enemyRow2_leader2) > 0) then
+		--set reticule
+		local bp_reticule = BP_GetReticuleBlueprint("marquee_subtractive")
+		local reticulePos = Util_GetPosition(sg_enemyRow2_leader2)
+		local size = 8
+		if(w2RallyReticuleID1 ~= nil) then
+			UI_ModalVisual_Destroy(w2RallyReticuleID1)
+		end
+		w2RallyReticuleID1 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+		UI_ModalVisual_SetPosition(w2RallyReticuleID1, reticulePos)
+	end
+	
+end
+
+function HC_Agincourt_Wave2_UpdateLeaderReticule()
+	
+	w2ChargeUpTime = World_GetGameTime() - w2ChargeUpStartTime
+	if(SGroup_CountSpawned(sg_enemyRow2_leader2) > 0) then
+		if(w2ChargeUpTime < w2LeaderDamageTimeLimit) then
+			
+			--set reticule
+			local bp_reticule = BP_GetReticuleBlueprint("em_border_red_standard")
+			local reticulePos = Util_GetPosition(sg_enemyRow2_leader2)
+			local size = 8 * (w2ChargeUpTime / w2LeaderDamageTimeLimit)
+			
+			if(rallyReticuleID2 ~= nil) then
+				UI_ModalVisual_Destroy(rallyReticuleID2)
+			end
+			
+			rallyReticuleID2 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+			UI_ModalVisual_SetPosition(rallyReticuleID2, reticulePos)
+		else
+			if(rallyReticuleID2 ~= nil) then
+				UI_ModalVisual_Destroy(rallyReticuleID2)
+			end
+			
+			if(w2RallyReticuleID1 ~= nil) then
+				UI_ModalVisual_Destroy(w2RallyReticuleID1)
+			end
+			Rule_RemoveMe()
+		end
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function HC_Agincourt_Wave2_Apply_AoE()
+	
+	Player_ResetAbilityCooldowns(enemyPlayer, ABILITY.JEANNE_D_ARC_AOE_DAMAGE_ABILITY_FRE_HA_01)
+	Cmd_Ability(sg_enemyRow2_leader2, ABILITY.JEANNE_D_ARC_AOE_DAMAGE_ABILITY_FRE_HA_01, sg_enemyRow2_leader2, nil, true)
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_leader2) > 0) then
+		sg_wave2_DamagedUnits = SGroup_CreateIfNotFound("sg_wave2_DamagedUnits")
+		
+		SGroup_Clear(sg_wave2_DamagedUnits)
+		--add ability damage
+		local abilityDamage = 30
+		if(conquerorModeActivated == true) then
+			abilityDamage = 50
+		end
+		Player_GetAllSquadsNearMarker(localPlayer, sg_wave2_DamagedUnits, Util_GetPosition(sg_enemyRow2_leader2), 7)
+		for i = 1, SGroup_CountSpawned(sg_wave2_DamagedUnits) do
+			local squad = SGroup_GetSquadAt(sg_wave2_DamagedUnits, i)
+			local maxHealth = Squad_GetHealthMax(squad)
+			local currentHealth = Squad_GetHealth(squad)
+			if(currentHealth > abilityDamage) then
+				local newHealthPercent = (currentHealth - abilityDamage) / maxHealth
+				Squad_SetHealth(squad, newHealthPercent)
+			else
+				Squad_Kill(squad)
+			end
+		end
+	end
+	
+	Rule_AddOneShot(HC_Agincourt_Wave2_End_AoE, .5)
+end
+
+function HC_Agincourt_Wave2_End_AoE()
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_leader2) > 0) then
+		Cmd_AttackMove(sg_enemyRow2_leader2, Util_GetPosition(sg_enemyRow2_leader2), false)
+		SGroup_SetInvulnerable(sg_enemyRow2_leader2, false)
+		wave2Leader2UsingAbility = false
+	end
+end
+
+
+
+function HC_Agincourt_Wave2_CheckFit()
+	
+	--ignore groups with less than this many units for tracking progress
+	local w1_minGroupCount = 5
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_horsemen1) >= w1_minGroupCount) then
+		w2_lane1_fit = HC_Agincourt_Wave2_CheckLaneFit(SGroup_GetAvgPosition(sg_enemyRow2_horsemen1), 1, SOBJ_Fit1)
+	else
+		w2_lane1_fit = 0
+	end
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_menatarms2) >= w1_minGroupCount) then
+		w2_lane2_fit = HC_Agincourt_Wave2_CheckLaneFit(SGroup_GetAvgPosition(sg_enemyRow2_menatarms2), 2, SOBJ_Fit2)
+	else
+		w2_lane2_fit = 0
+	end
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_menatarms3) >= w1_minGroupCount) then
+		w2_lane3_fit = HC_Agincourt_Wave2_CheckLaneFit(SGroup_GetAvgPosition(sg_enemyRow2_menatarms3), 3, SOBJ_Fit3)
+	else
+		w2_lane3_fit = 0
+	end
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_archers4) >= w1_minGroupCount) then
+		w2_lane4_fit = HC_Agincourt_Wave2_CheckLaneFit(SGroup_GetAvgPosition(sg_enemyRow2_archers4), 4, SOBJ_Fit4)
+	else
+		w2_lane4_fit = 0
+	end
+	
+	if(SGroup_CountSpawned(sg_enemyRow2_spearmen5) >= w1_minGroupCount) then
+		w2_lane5_fit = HC_Agincourt_Wave2_CheckLaneFit(SGroup_GetAvgPosition(sg_enemyRow2_spearmen5), 5, SOBJ_Fit5)
+	else
+		w2_lane5_fit = 0
+	end
+	
+	
+	if(w2_lane1_fit > .5) then
+		HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_horsemen1, 1, nil, true, false)
+	end
+	if(w2_lane2_fit > .5) then
+		HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_menatarms2, 2, nil, true, false)
+	end
+	if(w2_lane3_fit > .5) then
+		HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_menatarms3, 3, nil, true, false)
+	end
+	if(w2_lane4_fit > .5) then
+		HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_archers4, 4, nil, true, false)
+	end
+	if(w2_lane5_fit > .5) then
+		HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_spearmen5, 5, nil, true, false)
+	end
+	
+end
+
+function HC_Agincourt_Wave2_SendBackToLane(sg_LaneSGroup, in_laneNumber, in_avgProgress, in_UseFormation, in_UseAttackMove)
+	
+	if(in_laneNumber == 1) then
+		in_startMarker = mkr_frenchArmyS2_1
+		in_endMarker = mkr_ArmyAttack1_4
+	elseif(in_laneNumber == 2) then
+		in_startMarker = mkr_frenchArmyS2_2
+		in_endMarker = mkr_ArmyAttack2_4
+	elseif(in_laneNumber == 3) then
+		in_startMarker = mkr_frenchArmyS2_3
+		in_endMarker = mkr_ArmyAttack3_4
+	elseif(in_laneNumber == 4) then
+		in_startMarker = mkr_frenchArmyS2_4
+		in_endMarker = mkr_ArmyAttack4_4
+	elseif(in_laneNumber == 5) then
+		in_startMarker = mkr_frenchArmyS2_5
+		in_endMarker = mkr_ArmyAttack5_4
+	end
+	
+	if(sg_LaneSGroup ~= nil) then
+		if(SGroup_CountSpawned(sg_LaneSGroup) > 0) then
+			
+			
+			local attackingCount = 0
+			for i = 1, SGroup_CountSpawned(sg_LaneSGroup) do
+				local squad = SGroup_GetSquadAt(sg_LaneSGroup, i)
+				if(Squad_IsAttacking(squad, 5)) then
+					attackingCount = attackingCount + 1
+				end
+			end
+			
+			local pA = Util_GetPosition(in_startMarker)
+			local pB = Util_GetPosition(in_endMarker)
+			local distFromStart = Util_GetDistance(sg_LaneSGroup, in_startMarker)
+			local distToEnd = Util_GetDistance(in_startMarker, in_endMarker)
+			
+			if(distFromStart < distToEnd) then
+				if(attackingCount < SGroup_CountSpawned(sg_LaneSGroup) * .25) then
+					
+					local groupAveragePos = SGroup_GetAvgPosition(sg_LaneSGroup)
+					local projectedPoint = HC_Agincourt_GetPointOnLane(pA, pB, groupAveragePos)
+					
+					if(in_avgProgress ~= nil) then
+						local avgPointOnLine = Util_GetPosition(in_startMarker)
+						avgPointOnLine["x"] = (pB["x"] - pA["x"]) * in_avgProgress
+						avgPointOnLine["z"] = (pB["z"] - pA["z"]) * in_avgProgress
+						
+						avgPointOnLine["x"] = avgPointOnLine["x"] + pA["x"]
+						avgPointOnLine["z"] = avgPointOnLine["z"] + pA["z"]
+						
+						projectedPoint = avgPointOnLine
+					end
+
+					if(in_UseFormation == true) then
+						if(in_UseAttackMove == true) then
+							Cmd_FormationAttackMove(sg_LaneSGroup, projectedPoint, false, false)
+							Cmd_FormationMove(sg_LaneSGroup, projectedPoint, true, false, in_endMarker)
+						else
+							Cmd_FormationMove(sg_LaneSGroup, projectedPoint, false, false, in_endMarker)
+							Cmd_FormationAttackMove(sg_LaneSGroup, in_endMarker, true)
+							Cmd_FormationAttackMove(sg_LaneSGroup, mkr_playerBase, true)
+						end
+					else
+						if(in_UseAttackMove == true) then
+							Cmd_AttackMove(sg_LaneSGroup, projectedPoint, false, false)
+							Cmd_FormationMove(sg_LaneSGroup, projectedPoint, true, false, in_endMarker)
+						else
+							Cmd_Move(sg_LaneSGroup, projectedPoint, false, false, in_endMarker)
+							Cmd_AttackMove(sg_LaneSGroup, in_endMarker, true)
+							Cmd_AttackMove(sg_LaneSGroup, mkr_playerBase, true)
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+
+
+function HC_Agincourt_Wave2_CheckLaneFit(in_Position, in_laneNumber, in_Objective)
+	
+	local in_startMarker = mkr_frenchArmyS1_1
+	local in_endMarker = mkr_ArmyAttack1_4
+	
+	if(in_laneNumber == 1) then
+		in_startMarker = mkr_frenchArmyS2_1
+		in_endMarker = mkr_ArmyAttack1_4
+	elseif(in_laneNumber == 2) then
+		in_startMarker = mkr_frenchArmyS2_2
+		in_endMarker = mkr_ArmyAttack2_4
+	elseif(in_laneNumber == 3) then
+		in_startMarker = mkr_frenchArmyS2_3
+		in_endMarker = mkr_ArmyAttack3_4
+	elseif(in_laneNumber == 4) then
+		in_startMarker = mkr_frenchArmyS2_4
+		in_endMarker = mkr_ArmyAttack4_4
+	elseif(in_laneNumber == 5) then
+		in_startMarker = mkr_frenchArmyS2_5
+		in_endMarker = mkr_ArmyAttack5_4
+	end
+	
+	local pA = Util_GetPosition(in_startMarker)
+	local pB = Util_GetPosition(in_endMarker)
+	local groupAveragePos = in_Position
+	local projectedPoint = HC_Agincourt_GetPointOnLane(pA, pB, groupAveragePos)
+
+	--UI_ModalVisual_SetPosition(testReticule, projectedPoint)
+	local distFromPath = Util_GetDistance(groupAveragePos, projectedPoint)
+	
+	if(in_Objective ~= nil) then
+		Objective_SetProgressBar(in_Objective, (distFromPath / LANE_MAX_WIDTH))
+	end
+	return (distFromPath / LANE_MAX_WIDTH)
+	
+end
+
+

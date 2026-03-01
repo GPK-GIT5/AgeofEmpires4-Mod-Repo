@@ -1,0 +1,666 @@
+--
+-- Moscow 1238 - Mongol Attacks objective
+--
+
+
+
+
+function MongolCountdown_InitObjectives()
+
+	OBJ_MongolCountdown = {
+		
+		Title = "$11201354", -- Mongol attack incoming
+		Type = ObjectiveType_Information,
+		
+		Intel_Start = EVENTS.MongolAttacks_PreAnnounce,
+		
+		SetupUI = MongolCountdown_SetupUI,
+		OnStart = MongolCountdown_Start,
+		
+		IsComplete = function()
+			return Objective_GetTimerSeconds(OBJ_MongolCountdown) <= 0
+		end,
+		OnComplete = function()
+			Objective_Start(OBJ_MongolAttacks)
+		end,
+		
+		showTitle = false,
+		
+	}	
+	
+	Objective_Register(OBJ_MongolCountdown)	
+	
+end
+
+function MongolAttacks_InitObjectives()
+
+	OBJ_MongolAttacks = {
+		
+		Title = "$11180194", -- Defend against Mongol attacks
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.MongolAttacks_ObjectiveStart,
+		SetupUI = MongolAttacks_SetupUI,
+		
+		OnStart = MongolAttacks_Start,
+	
+		
+		PreComplete = MongolAttacks_PreComplete,
+		OnComplete = MongolAttacks_Complete,
+		
+		OnFail = MongolAttacks_Fail,
+		
+		Cheat = function()
+			SGroup_DestroyAllSquads(sg_start_mongols)
+			SGroup_DestroyAllSquads(sg_start_mongols_khan)
+		end,
+		
+	}	
+
+	Objective_Register(OBJ_MongolAttacks)
+	
+end
+
+
+
+
+--
+-- Note: The probing attacks are triggered after the Landmark is built
+--
+
+function MongolCountdown_TriggerObjective()
+
+	Objective_Start(OBJ_MongolCountdown)
+	
+end
+
+function MongolCountdown_SetupUI()
+	
+	local timeInSeconds = t_difficulty.mongolAttackDelay * 60
+	Objective_StartTimer(OBJ_MongolCountdown, COUNT_DOWN, timeInSeconds)
+	Game_TransitionToState("taiga_winter_sunset", timeInSeconds)	
+	
+end
+
+function MongolCountdown_Start()
+	
+	MongolCountdown_StartProbingAttacks()
+	
+
+	
+end
+
+
+
+function MongolCountdown_StartProbingAttacks()
+	
+	if Game_GetSPDifficulty() ~= GD_EASY then 		-- no probing attacks in story mode
+		
+		i_numProbingAttacks = 0
+		threatID_probingAttacks = ThreatArrow_CreateGroup("threat_group", sg_probing_mongol_attacks_threatgroup)
+		
+		-- create an attack now, and schedule future attacks
+		MongolCountdown_CreateProbingAttack()
+		Rule_AddInterval(MongolCountdown_CreateProbingAttack, t_difficulty.probingAttackFrequency * 60)	
+		
+		-- add the rule to monitor these attacks	
+		Rule_AddInterval(MongolCountdown_MonitorProbingAttacks, 1)
+		
+	end
+		
+end
+
+function MongolCountdown_CreateProbingAttack()
+	
+	if Objective_IsComplete(OBJ_MongolCountdown) or (Objective_IsTimerSet(OBJ_MongolCountdown) and Objective_GetTimerSeconds(OBJ_MongolCountdown) < 60) then 
+		Rule_RemoveMe()
+	else
+		Rule_AddOneShot(MongolCountdown_CreateProbingAttack_Delayed, World_GetRand(0, 10))	-- add a rule to do the actual creation somewhere in the next few seconds (so it's isn't rigidly on the same schedule)
+	end
+	
+end
+
+
+function MongolCountdown_CreateProbingAttack_Delayed()
+	
+	i_numProbingAttacks = i_numProbingAttacks + 1
+	
+	local units
+	local potentialSpawnLocations
+	local targets
+	local level = i_numProbingAttacks + t_difficulty.probingAttackLevelAdjustment
+	
+	if level <= 2 then 
+		
+		units = {
+			{type = "scar_scout", numSquads = 1},
+		}
+		potentialSpawnLocations = {
+			mkr_mongol_spawn1,							-- use the two potential spawn locations on the east edge of the map
+			mkr_mongol_spawn2,
+		}
+		targets = {"OuterCity", "InnerCity"}
+		
+	elseif level <= 4 then
+		
+		units = {
+			{type = "scar_scout", numSquads = 1},
+			{type = "scar_spearman", numSquads = 2},
+		}
+		potentialSpawnLocations = {
+			mkr_mongol_spawn1,			
+			mkr_mongol_spawn2,
+			mkr_mongol_spawn4,							-- add in the spawn location at the north edge of the map
+		}
+		targets = {"OuterCity", "InnerCity"}
+		
+	elseif level <= 5 then
+		
+		units = {
+			{type = "scar_horseman", numSquads = 2},
+			{type = "scar_spearman", numSquads = 2},
+		}
+		potentialSpawnLocations = {
+			mkr_mongol_spawn1,
+			mkr_mongol_spawn2,
+			mkr_mongol_spawn4,
+		}
+		targets = {"InnerCity"} 
+		
+	elseif level <= 6 then
+		
+		units = {
+			{type = "scar_horsearcher", numSquads = 3},
+		}
+		potentialSpawnLocations = {
+			mkr_mongol_spawn1,
+			mkr_mongol_spawn2,
+			mkr_mongol_spawn4,
+		}
+		targets = {"InnerCity"} 
+		
+	else
+		
+		units = {
+			{type = "scar_horsearcher", numSquads = 4},
+		}
+		potentialSpawnLocations = {
+			mkr_mongol_spawn1,
+			mkr_mongol_spawn2,
+			mkr_mongol_spawn4,
+		}
+		targets = {"InnerCity"} 
+		
+	end
+	
+	-- create new probing attack
+	local newModule = {
+		type = "RovingArmy",
+		descriptor = "ProbingMongolAttacks",
+		player = player2,
+		spawnLocation = Table_GetRandomItem(potentialSpawnLocations),
+		units = units,
+		sgroup = sg_probing_mongol_attacks,
+		attackMove = attackMoveStyle_normal,
+		targets = targets, 
+	}
+	RovingArmy_Init(newModule)
+	
+	
+	
+end
+
+function MongolCountdown_MonitorProbingAttacks()
+	
+	local module = MissionOMatic_FindModule("ProbingMongolAttacks")
+	
+	if Objective_IsStarted(OBJ_MongolAttacks) == true then
+		
+		Rule_RemoveMe()
+		
+	else
+		
+		SGroup_Duplicate(module.sgroup, sg_temp)
+		SGroup_RemoveGroup(sg_temp, sg_probing_mongol_attacks_threatgroup)
+		
+		local _CheckSquad = function(gid, idx, sid)
+			if Player_CanSeeSquad(player1, sid, ANY) then 
+				SGroup_Add(sg_probing_mongol_attacks_threatgroup, sid)
+			end
+		end
+		SGroup_ForEach(sg_temp, _CheckSquad)		
+		
+	end
+	
+end 
+
+
+
+-- 
+-- The Final Big Mongol Attack
+--
+
+function MongolAttacks_SetupUI()
+	
+		-- hide any lingering objectives, because this is the end phase of the mission
+	
+		Objective_Show(OBJ_FindVillagers, false, false)
+		OBJ_FindVillagers.showTitle = false
+		OBJ_FindVillagers.playIntel = false
+		
+		Objective_Show(OBJ_BuildDefences, false, false)
+		OBJ_BuildDefences.showTitle = false
+		OBJ_BuildDefences.playIntel = false
+		
+		Objective_Show(SOBJ_BuildDefensiveStructures, false, false)
+		SOBJ_BuildDefensiveStructures.showTitle = false
+		SOBJ_BuildDefensiveStructures.playIntel = false
+
+		Objective_Show(SOBJ_BuildMilitaryUnits, false, false)
+		SOBJ_BuildMilitaryUnits.showTitle = false
+		SOBJ_BuildMilitaryUnits.playIntel = false
+	
+	
+end
+
+
+
+
+function MongolAttacks_Start()
+
+	module_mongolAttackers1a = MissionOMatic_FindModule("MongolAttackers1a")
+	module_mongolAttackers1b = MissionOMatic_FindModule("MongolAttackers1b")
+	module_mongolAttackers1c = MissionOMatic_FindModule("MongolAttackers1c")
+	module_mongolAttackers2a = MissionOMatic_FindModule("MongolAttackers2a")
+	module_mongolAttackers2b = MissionOMatic_FindModule("MongolAttackers2b")
+	module_mongolAttackers2c = MissionOMatic_FindModule("MongolAttackers2c")
+	module_mongolAttackers2d = MissionOMatic_FindModule("MongolAttackers2d")
+	module_mongolAttackers2e = MissionOMatic_FindModule("MongolAttackers2e")
+	module_mongolAttackers3a = MissionOMatic_FindModule("MongolAttackers3a")
+	module_mongolAttackers3b = MissionOMatic_FindModule("MongolAttackers3b")
+	module_mongolAttackers3c = MissionOMatic_FindModule("MongolAttackers3c")
+	module_mongolAttackers3d = MissionOMatic_FindModule("MongolAttackers3d")
+	module_mongolAttackers3e = MissionOMatic_FindModule("MongolAttackers3e")
+	module_mongolAttackers4a = MissionOMatic_FindModule("MongolAttackers4a")
+	module_mongolAttackers4b = MissionOMatic_FindModule("MongolAttackers4b")
+	module_mongolAttackers4c = MissionOMatic_FindModule("MongolAttackers4c")
+	module_mongolAttackers4d = MissionOMatic_FindModule("MongolAttackers4d")
+	module_mongolAttackers4e = MissionOMatic_FindModule("MongolAttackers4e")
+	
+	-- upgrade some of the Mongol units to Age II variants
+	Player_CompleteUpgrade(player2, UPG.MONGOL.UPGRADE_UNIT_HORSEMAN_2_MON)
+	Player_CompleteUpgrade(player2, UPG.MONGOL.UPGRADE_UNIT_SPEARMAN_2_MON)
+
+	Rule_AddOneShot(MongolAttacks_StartAttacks_PartB, 5)
+	
+end
+
+function MongolAttacks_StartAttacks_PartB()
+
+	-- set up some data for holding threat group and blip IDs associated with units coming from each of the potential spawn locations 
+	t_endMongolSpawnLocations = {
+		{
+			marker = mkr_mongol_spawn1,
+			threatGroup = ThreatArrow_CreateGroup("threat_group", sg_end_mongols),
+			previouslyUsed = false
+		},
+		{
+			marker = mkr_mongol_spawn2,
+			threatGroup = ThreatArrow_CreateGroup("threat_group", sg_end_mongols),
+			previouslyUsed = false
+		},
+		{
+			marker = mkr_mongol_spawn3,
+			threatGroup = ThreatArrow_CreateGroup("threat_group", sg_end_mongols),
+			previouslyUsed = false
+		},
+		{
+			marker = mkr_mongol_spawn4,
+			threatGroup = ThreatArrow_CreateGroup("threat_group", sg_end_mongols),
+			previouslyUsed = false
+		},
+	}
+	
+	
+	--
+	-- create the first wave
+	--
+	local spawns = {		-- these sets of units are spawned in a staggered fashion, two seconds apart
+		{
+			units = {
+				{type = "scar_horseman", numSquads = Util_DifVar({3, 4, 4, 4})},
+				{type = "scar_horsearcher", numSquads = 2, difficulty = {GD_HARD, GD_EXPERT}},
+				{type = "scar_horsearcher", numSquads = 2, difficulty = {GD_EXPERT}},
+			},
+			module = module_mongolAttackers1a,
+			spawnGroup = t_endMongolSpawnLocations[1],
+		},
+		{
+			units = {
+				{type = "scar_horseman", numSquads = Util_DifVar({4, 5, 5, 5})},
+				{type = "scar_horsearcher", numSquads = 3, difficulty = {GD_HARD, GD_EXPERT}},
+				{type = "scar_horsearcher", numSquads = 1, difficulty = {GD_EXPERT}},
+				{type = "scar_khan", numSquads = 1},
+			},
+			module = module_mongolAttackers1b,
+			spawnGroup = t_endMongolSpawnLocations[1],
+		},
+		{
+			units = {
+				{type = "scar_horseman", numSquads = Util_DifVar({3, 4, 4, 4})},
+				{type = "scar_horsearcher", numSquads = 2, difficulty = {GD_HARD, GD_EXPERT}},
+				{type = "scar_horsearcher", numSquads = 2, difficulty = {GD_EXPERT}},
+			},
+			module = module_mongolAttackers1c,
+			spawnGroup = t_endMongolSpawnLocations[1],
+		},
+	}
+
+	local delay = 0
+	for index, spawn in ipairs(spawns) do 
+		Rule_AddOneShot(MongolAttacks_SpawnUnits, delay, {units = spawn.units, module = spawn.module, spawnGroup = spawn.spawnGroup})
+		delay = delay + 2
+	end
+	
+	
+	--
+	-- set up future attack waves
+	--
+	t_mongolAttackWaves = {
+		
+		{
+			timeThreshold = 30,
+			unitCountThreshold = 15,
+			spawns = {		-- these sets of units are spawned in a staggered fashion, two seconds apart
+				{
+					units = {
+						{type = "scar_spearman", numSquads = Util_DifVar({3, 4, 4, 4})},
+						{type = "scar_spearman", numSquads = 2, difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_spearman", numSquads = 2, difficulty = {GD_EXPERT}},
+					},
+					module = module_mongolAttackers2a,
+					spawnGroup = t_endMongolSpawnLocations[1],
+				},
+				{
+					units = {
+						{type = "scar_spearman", numSquads = Util_DifVar({4, 5, 5, 5})},
+						{type = "scar_spearman", numSquads = 1, difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_spearman", numSquads = 3, difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers2b,
+					spawnGroup = t_endMongolSpawnLocations[2],
+				},
+				{
+					units = {
+						{type = "scar_spearman", numSquads = Util_DifVar({3, 4, 4, 4})},
+						{type = "scar_spearman", numSquads = 2, difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_spearman", numSquads = 2, difficulty = {GD_EXPERT}},
+					},
+					module = module_mongolAttackers2c,
+					spawnGroup = t_endMongolSpawnLocations[1],
+				},
+				{
+					units = {
+						{type = "scar_spearman", numSquads = Util_DifVar({4, 5, 5, 5})},
+						{type = "scar_spearman", numSquads = 1, difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_spearman", numSquads = 3, difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers2d,
+					spawnGroup = t_endMongolSpawnLocations[2],
+				},
+				{
+					units = {
+						{type = "scar_spearman", numSquads = Util_DifVar({3, 4, 4, 4})},
+						{type = "scar_spearman", numSquads = 2, difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_spearman", numSquads = 2, difficulty = {GD_EXPERT}},
+					},
+					module = module_mongolAttackers2e,
+					spawnGroup = t_endMongolSpawnLocations[1],
+				},
+			},
+		},
+		{
+			timeThreshold = 60,
+			unitCountThreshold = 15,
+			spawns = {		-- these sets of units are spawned in a staggered fashion, two seconds apart
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = Util_DifVar({3, 4, 4, 4})},
+						{type = "scar_horsearcher", difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_horsearcher", difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers3a,
+					spawnGroup = t_endMongolSpawnLocations[2],
+				},
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = Util_DifVar({3, 4, 4, 4})},
+						{type = "scar_horsearcher", numSquads = 2, difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_horsearcher", numSquads = 2, difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers3b,
+					spawnGroup = Util_DifVar({t_endMongolSpawnLocations[1], t_endMongolSpawnLocations[1], t_endMongolSpawnLocations[4], t_endMongolSpawnLocations[4]}),
+				},
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = Util_DifVar({3, 4, 4, 4})},
+						{type = "scar_horsearcher", difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_horsearcher", difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers3c,
+					spawnGroup = t_endMongolSpawnLocations[2],
+				},
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = Util_DifVar({3, 4, 4, 4})},
+						{type = "scar_horsearcher", numSquads = 2, difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_horsearcher", numSquads = 2, difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers3d,
+					spawnGroup = Util_DifVar({t_endMongolSpawnLocations[1], t_endMongolSpawnLocations[1], t_endMongolSpawnLocations[4], t_endMongolSpawnLocations[4]}),
+				},
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = Util_DifVar({3, 4, 4, 4})},
+						{type = "scar_horsearcher", difficulty = {GD_HARD, GD_EXPERT}},
+						{type = "scar_horsearcher", difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers3e,
+					spawnGroup = t_endMongolSpawnLocations[2],
+				},
+			},
+		},
+		{
+			timeThreshold = 60,
+			unitCountThreshold = 15,
+			difficulty = {GD_HARD, GD_EXPERT},																-- this wave only occurs on normal and hard difficulties
+			spawns = {		-- these sets of units are spawned in a staggered fashion, two seconds apart
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = 4},
+						{type = "scar_horsearcher", numSquads = 2, difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers4a,
+					spawnGroup = t_endMongolSpawnLocations[2],
+				},
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = 4},
+						{type = "scar_horsearcher", numSquads = 2, difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers4b,
+					spawnGroup = t_endMongolSpawnLocations[1],
+				},
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = 3},
+						{type = "scar_horsearcher", numSquads = 2, difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers4c,
+					spawnGroup = t_endMongolSpawnLocations[4],
+				},
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = 2},
+						{type = "scar_horsearcher", numSquads = 4, difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers4d,
+					spawnGroup = Util_DifVar({t_endMongolSpawnLocations[1], t_endMongolSpawnLocations[1], t_endMongolSpawnLocations[4], t_endMongolSpawnLocations[3]}),
+				},
+				{
+					units = {
+						{type = "scar_horsearcher", numSquads = 2},
+						{type = "scar_horsearcher", numSquads = 4, difficulty = GD_EXPERT},
+					},
+					module = module_mongolAttackers4e,
+					spawnGroup = Util_DifVar({t_endMongolSpawnLocations[1], t_endMongolSpawnLocations[1], t_endMongolSpawnLocations[4], t_endMongolSpawnLocations[3]}),
+				},
+			},
+		},
+		
+	}
+	
+	
+
+	Rule_AddInterval(MongolAttacks_AttackSpotted, 1)
+	
+end
+
+
+
+function MongolAttacks_AttackSpotted() 
+	
+	SGroup_Clear(sg_temp)
+	
+	SGroup_AddGroup(sg_temp, Prefab_DoAction(module_mongolAttackers1a, "GetSGroup"))
+	SGroup_AddGroup(sg_temp, Prefab_DoAction(module_mongolAttackers1b, "GetSGroup"))
+	SGroup_AddGroup(sg_temp, Prefab_DoAction(module_mongolAttackers1c, "GetSGroup"))
+
+	
+	if Player_CanSeeSGroup(player1, sg_temp, ANY) then
+		
+		Music_PlayStinger("mus_camp_cust_mongol_drum_short_cavalry")	
+
+		--Music_LockIntensity(MUSIC_COMBAT, 30)
+		EventCues_CallToAction("$11180195", CTA_ALARM, nil, nil, sg_end_mongols, 8) -- The Mongols are attacking
+		Sound_Play2D("sfx_campaign_scripted_large_group_engage")
+		Sound_Play2D("mus_stinger_campaign_warning")
+		
+		time_lastMongolAttackWave = World_GetGameTime()
+		Rule_AddInterval(MongolAttacks_Monitor, 0.5)
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+
+
+
+function MongolAttacks_Monitor()
+	
+	local mongolCount = SGroup_CountSpawned(sg_end_mongols)
+	
+	if mongolCount == 0 and #t_mongolAttackWaves == 0 then 
+
+		Rule_RemoveMe()
+		Objective_Complete(OBJ_MongolAttacks)
+		
+	else
+		
+		local timeSinceLastWave = World_GetGameTime() - time_lastMongolAttackWave
+		
+		if timeSinceLastWave >= 10 and #t_mongolAttackWaves >= 1 then 
+			
+			local wave = t_mongolAttackWaves[1]
+			
+			if (scartype(wave.difficulty) == ST_NUMBER and wave.difficulty ~= Game_GetSPDifficulty()) 
+			   or (scartype(wave.difficulty) == ST_TABLE and Table_Contains(wave.difficulty, Game_GetSPDifficulty()) == false) then		
+				
+				table.remove(t_mongolAttackWaves, 1)		-- this wave is NOT for this difficulty mode, so just remove it and try the next wave next time
+				
+			elseif (wave.timeThreshold ~= nil and timeSinceLastWave >= wave.timeThreshold)
+			   or (wave.unitCountThreshold ~= nil and mongolCount <= wave.unitCountThreshold) then  
+				
+				local delay = 4
+				
+				for index, spawn in ipairs(wave.spawns) do 
+					
+					Rule_AddOneShot(MongolAttacks_SpawnUnits, delay, {units = spawn.units, module = spawn.module, spawnGroup = spawn.spawnGroup, useHiddenPos = true})
+					delay = delay + 2
+					
+				end
+				
+				time_lastMongolAttackWave = World_GetGameTime()				
+				
+				table.remove(t_mongolAttackWaves, 1)
+				
+			end
+			
+		end
+		
+	 	-- check for mission fail
+		Player_GetAll(player1)
+		EGroup_Filter(eg_allentities, {EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS, EBP.RUS.BUILDING_LANDMARK_AGE1_NOVGOROD_KREMLIN_CONTROL_RUS}, FILTER_KEEP)
+		EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+		
+		if EGroup_Count(eg_allentities) == 0 then 
+			Rule_RemoveMe()
+			Objective_Fail(OBJ_MongolAttacks)
+		end
+		
+	end
+		
+end
+
+
+function MongolAttacks_SpawnUnits(context, data)
+	
+	SGroup_Clear(sg_temp)
+	
+	if data.useHiddenPos == true then 
+		local hiddenPos = World_GetHiddenPositionOnPath(player1, data.spawnGroup.marker, mkr_location_moscow, CHECK_IN_FOW)
+		if hiddenPos ~= nil then 
+			data.spawnLocation = hiddenPos
+		end
+	end
+	
+	UnitEntry_DeploySquads(player2, {sg_temp, sg_end_mongols}, data.units, data.spawnGroup.marker, nil, nil, {facing = Util_GetPosition(mkr_location_moscow)})
+
+	-- add units to module
+	Prefab_DoAction(data.module, "AddSGroup", sg_temp)	
+
+	-- add to threat arrow group
+	ThreatArrow_Add(data.spawnGroup.threatGroup, sg_temp)
+
+	-- if this is the first spawn at this location, add a minimap blip
+	if data.spawnGroup.previouslyUsed ~= true then 
+		UI_CreateMinimapBlip(data.spawnGroup.marker, 10, "threat_group")
+		data.spawnGroup.previouslyUsed = true
+	end	
+	
+end
+
+
+function MongolAttacks_PreComplete()
+	
+	Music_LockIntensity(MUSIC_COMBAT_RARE)
+	
+end
+
+function MongolAttacks_Complete()
+	
+	for index, location in pairs(t_endMongolSpawnLocations) do 
+		ThreatArrow_DestroyGroup(location.threatGroup)
+	end
+	
+	Mission_Complete()
+	
+end
+
+function MongolAttacks_Fail()
+	
+	Mission_Fail()
+	
+end

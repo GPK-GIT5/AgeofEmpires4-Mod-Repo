@@ -1,0 +1,794 @@
+-------------------------------------------------------------------------
+-------------------------------------------------------------------------
+
+-- Initial Mission Script Setup functionality, P28 edition!
+-- (c) 2013 Relic Entertainment Inc.
+--[[ 
+	Order of operations:
+		Mission_SetupPlayers() 		-- Called by OnGameSetup() on frame1
+		Mission_SetupVariables()
+		Mission_SetDifficulty()
+		Mission_SetupRestrictions()
+		Mission_Preset()
+		Objectives are registered
+		Intro Movie
+		Intro NIS
+		Mission_Start()
+]]--
+-------------------------------------------------------------------------
+-------------------------------------------------------------------------
+
+-------------------------------------------------------------------------
+-- [[ IMPORTS ]]
+-------------------------------------------------------------------------
+import("GameScarUtil.scar") 		-- Scar functionality
+import("Prefabs.scar")
+import("GameFunctions.scar")		-- Game specific specific functions
+
+-------------------------------------------------------------------------
+-- [[ CONSTANTS ]]
+-------------------------------------------------------------------------
+
+-- Mission Types
+MT_CAMPAIGN = 0
+MT_TUTORIAL = 1
+MT_MULTIPLAYER = 2
+
+-- NIS types (defined in NIS.scar)
+--	NIS_OPENING	= 0
+--	NIS_MID			= 1
+--	NIS_CLOSING	= 2
+
+
+-------------------------------------------------------------------------
+-- [[ VARIABLES ]]
+-------------------------------------------------------------------------
+--None so far!
+
+-------------------------------------------------------------------------
+-- [[ SETUP ]]
+-------------------------------------------------------------------------
+
+function OnGameSetup()	--Automatically called when game loads
+
+	if(scartype(Mission_SetupPlayers) == ST_FUNCTION) then 
+		Mission_SetupPlayers()
+	else
+		print("#### WARNING! ScriptSetup could not find 'Mission_SetupPlayers()'. Check your mission script file.\n")
+	end	
+	
+end
+
+
+function OnGameRestore()	--Called after a session is restored from a save file
+
+	print("Restoring game from a saved session...")	-- Restoring all global mission parameters after a save/load
+	Game_DefaultGameRestore()
+	
+end
+
+
+-------------------------------------------------------------------------
+-- [[ ONINIT ]]
+-------------------------------------------------------------------------
+
+function PreInit()	--The mission init is delayed a single frame to ensure that all necessary ScarInit functions have been called.
+	CheatMenu_GetValues()	-- retrieve any cheat mode values now, as they won't be present until the next frame
+	Rule_Add(OnInit)
+end
+Scar_AddInit(PreInit)
+
+
+function OnInit()	--Main initialization routine. Called 1 frame after all files have been loaded.
+
+	Rule_RemoveMe()
+	print("Initializing mission...")
+	
+	__IsDebug = Misc_IsCommandLineOptionSet("debug")
+	__SecondaryObjective = nil
+	
+	if(scartype(Override_Player_Setup) == ST_FUNCTION) then Override_Player_Setup() end
+	
+	g_missionData = {}
+	if(scartype(Mission_SetupVariables) == ST_FUNCTION) then Mission_SetupVariables() end
+	
+	-- if there is no explicit starting position stated, use the current position (which will be from the starting marker for the player)
+	if g_missionData.startCamera == nil then
+		g_missionData.startCamera = Camera_GetCurrentTargetPos()
+	end
+	
+	--Precaching
+	_InitNIS()
+		
+	-- set AI players to the front-end specified SP difficulty mode (may be changed by the Mission_SetDifficulty() function)
+	for index = 1, World_GetPlayerCount() do
+		local player = World_GetPlayerAt(index)
+		if AI_IsLocalAIPlayer(player) then
+			print("Setting AI for player"..index)
+			AI_SetDifficulty(player, Game_GetSPDifficulty())
+		end
+	end
+	
+	--Call mission startup functions. These should be defined in the mission script.
+	if(scartype(Mission_SetDifficulty) == ST_FUNCTION) then Mission_SetDifficulty() end				-- Difficulty table/values
+	
+	Prefab_InitAll()		-- instantiate all the prefabs
+	
+	if(scartype(Mission_SetupRestrictions) == ST_FUNCTION) then Mission_SetupRestrictions() end		-- Restrictions
+	
+	if(scartype(Mission_Preset) == ST_FUNCTION) then Mission_Preset() end							-- Initial unit setup
+	
+	_InitializeObjectives()			-- Register objectives
+	
+	_collectPlayerHQ()		-- Collect the player HQ
+	
+	_spawnCampaignEliteDeploymentObject()			-- Spawn the Elite Spawner Object
+	
+	
+	
+	-- set the game to be a black screen, ready to fade up
+	FOW_PlayerExploreAll(Game_GetLocalPlayer())
+	Game_FadeToBlack(FADE_OUT, 0)
+	Util_FullscreenMode(DEFAULT_FULLSCREEN_HIDDEN_GAME_COMPONENT_FLAGS)
+
+	
+	if(__IsDebug) then
+		
+		_ShowDebugMenu()
+		
+	elseif CheatMenu_IsSet() == true then
+		
+		-- we've been invoked with a cheat-to-objective command!
+		
+		Rule_AddOneShot(_StartMission_Cheat, 1.0)
+		CheatMenu_ClearValues()
+		
+	else
+		
+		-- normal start - either fade up into the game, or into the opening NIS
+		
+		if scartype(g_missionData.introMovie) ~= ST_NIL then		-- If there's an intro movie - play it now
+			local event = function()
+				CTRL.SitRep_PlayMovie(g_missionData.introMovie)
+				CTRL.WAIT()
+			end
+			
+			Event_Start(event, 0)
+			
+			Rule_Add(_PostOpeningMovie)
+		else
+			_RunPlayNISOrMissionStart()
+		end
+
+
+	end
+
+	-- tell the game that we are now finished initializing
+	Scar_InitComplete()
+end
+
+function _PostOpeningMovie()
+	if Event_IsAnyRunning() == false then
+		Rule_RemoveMe()
+	
+		_RunPlayNISOrMissionStart()
+	end	
+end
+
+function _RunPlayNISOrMissionStart()
+	if g_missionData.musicMovementStart ~= nil then
+		Music_SetDefaultMovement(g_missionData.musicMovementStart)
+		Music_PlayDefaultMovement()
+	end
+	
+	if g_missionData.introNIS ~= nil  then
+				
+		Util_StartNIS(g_missionData.introNIS)
+		
+		Rule_Add(_PostOpeningNIS)
+		
+	else
+	
+		_StartMission()
+		
+	end
+end
+
+function _PostOpeningNIS()
+	
+	if Event_IsAnyRunning() == false then
+		
+		Rule_RemoveMe()
+		_StartMission()
+		
+	end
+	
+end
+
+
+-- We want the game to always start on the HQ (unless flagged in missionData)
+function _collectPlayerHQ()
+	if g_missionData.startAtHQ ~= false and g_missionData.missionType == MT_CAMPAIGN_MISSION then
+		
+		__eg_playerHQ = EGroup_CreateIfNotFound("__eg_playerHQ")
+		Player_GetAll(player1)
+	end
+end
+
+-- Spawns the elite spawner object to the world
+function _spawnCampaignEliteDeploymentObject()
+	_egEliteSpawner = EGroup_CreateIfNotFound("__egEliteSpawner")
+	if g_missionData.eliteDeploymentObject ~= false and g_missionData.missionType == MT_CAMPAIGN then
+		for index = 1, World_GetPlayerCount() do
+			local player = World_GetPlayerAt(index)
+			EGroup_Clear(_egEliteSpawner)
+			Util_CreateEntities(player, _egEliteSpawner, BP_GetEntityBlueprint("campaign_elite_spawn_map_wide"), World_Pos(0,0,0), 1)
+		end
+	end
+end
+
+-- Precache NIS files
+function _InitNIS()
+
+	if scartype(g_missionData) == ST_TABLE then 
+		
+		if Event_IsAnyRunning() == true then
+			
+			print("WARNING - NIS files were not reloaded because an event was running")
+			
+		else
+			
+			nisFiles = {}
+			
+			-- nisFiles is used in other scar scripts to play NISes. This transfer needs to stay
+			if scartype(g_missionData.nisFiles) == ST_TABLE then
+				for name, path in pairs(g_missionData.nisFiles) do
+					nisFiles[name] = path
+				end
+				
+				--Set the in/out transition time
+				if(g_missionData.nisInTransitionTime ~= nil) then nis_setintransitiontime(g_missionData.nisInTransitionTime) end
+				if(g_missionData.nisOutTransitionTime ~= nil) then nis_setouttransitiontime(g_missionData.nisOutTransitionTime) end
+			end
+		end
+		
+	end
+	
+end
+
+_InitNIS()	-- calling this from global scope causes NIS files to be reloaded when you hit the Reload Script key combo
+
+
+
+-- Initialize objectives
+function _InitializeObjectives()
+
+	if g_missionData.objectives == nil or #g_missionData.objectives == 0 then
+		print("#### WARNING! ScriptSetup: No Objectives found! Make sure they are added to g_missionData.objectives.")
+	end
+	
+	if g_missionData.objectives ~= nil then
+	
+		for index, objective in pairs(g_missionData.objectives) do
+		
+			Objective_Register(objective, objective.OwnerOverride)
+			
+			-- if this is a subobjective (i.e. has a Parent objective set), add it to the parent's sub-objective list
+			if objective.Parent ~= nil then
+				
+				if objective.Parent.subObjectives == nil then
+					objective.Parent.subObjectives = {}
+				end
+				table.insert(objective.Parent.subObjectives, objective)
+				
+			end
+			
+			-- if this objective has a cheat key function, add it to the menu
+			if scartype(objective.Cheat) == ST_FUNCTION then
+				
+				local cheatObjectiveTitle = Loc_ToAnsi(objective.Title)
+				local cheatObjectiveID = tostring(objective.ID)
+				local cheatObjectivePrefix = "Objective - "
+				if objective.CheatTitle ~= nil then
+					cheatObjectiveTitle = objective.CheatTitle
+					cheatObjectivePrefix = "Skip to - "
+				end
+				
+				print("Registering cheat for objective "..cheatObjectiveTitle.." (id:"..cheatObjectiveID..")")
+				CheatMenu_AddMenuItem(cheatObjectivePrefix..cheatObjectiveTitle, "obj", cheatObjectiveID)
+
+			end
+			
+		end
+		
+	end
+	
+end
+
+
+
+-------------------------------------------------------------------------
+-- MISSION START
+-------------------------------------------------------------------------
+
+--Displayer a debug menu on screen
+function _ShowDebugMenu()
+	print("DEBUG MODE IS ON - Showing debug menu...")
+	UI_MessageBoxSetText(LOC("SELECT START"), LOC("Select how the mission starts"))
+	UI_MessageBoxSetButton(DB_Button1, LOC("WITH INTRO"), LOC("Play intro"), "", true)
+	UI_MessageBoxSetButton(DB_Button2, LOC("NO INTRO"), LOC("Don't play intro NIS"), "", true)
+	UI_MessageBoxSetButton(DB_Button3, LOC("NO MISSION"), LOC("No mission logic"), "", true)
+	UI_MessageBoxShow(DC_Default, _DebugMenuSelect)
+end
+
+--Handles debug menu option selection
+function _DebugMenuSelect(button)
+	if button == DB_Button1 then
+		print("Play intro")
+		Rule_AddOneShot(_PlayIntroNIS, 1)
+	elseif button == DB_Button2 then
+		print("Skip intro")
+		Rule_AddOneShot(_StartMission, 1)
+	elseif button == DB_Button3 then
+		print("No mission!")
+	end
+end
+
+
+
+
+function _StartMission()
+	
+	print("Starting mission...")
+	
+	FOW_UIUnRevealAll()
+	
+	if(scartype(Mission_Start) == ST_FUNCTION) then
+	
+		-- set the camera to the start location
+		if g_missionData.missionType == MT_CAMPAIGN then
+		
+			if g_missionData.startCamera ~= nil then
+				Camera_MoveTo(Util_GetPosition(g_missionData.startCamera), false)
+			else
+				print("#### WARNING! No startCamera found in g_missionData. This should either be set by the mission script OR it's auto-generated at mission start (before the NIS plays).\n")
+			end
+		end
+		
+		Rule_AddOneShot(Mission_Start, 1.0)
+		
+	else
+		print("#### WARNING! ScriptSetup could not find 'Mission_Start()'. Check your mission script file.\n")
+	end
+	
+	if g_missionData.introNIS == nil then
+		
+		-- there was no intro NIS, so do a manual fade in (rather than relying on the NIS wrapper to do it)
+		
+		Game_FadeToBlack(FADE_IN, 2)
+		Rule_AddOneShot(Util_NormalMode, 0.75)
+		Rule_AddOneShot(_DisplayTitleCards, 1.5)
+		
+	end
+	
+end
+
+function _StartMission_Cheat()
+
+	print("Starting mission with cheat mode "..tostring(_CheatMenuMode)..":"..tostring(_CheatMenuValue).."...")
+	
+	FOW_UIUnRevealAll()
+	
+	Game_FadeToBlack(FADE_IN, 2)
+	Rule_AddOneShot(Util_NormalMode, 0.75)
+
+	if _CheatMenuMode == "obj" then
+		
+		local id = tonumber(_CheatMenuValue)
+		local objective = __FindObjectiveTable(id)								-- find the actual objective from the id passed in
+		
+		if scartype(objective.Cheat) == ST_FUNCTION then
+			objective.Cheat()																	-- call the cheat setup script
+		end
+		
+		if objective.Parent ~= nil then													-- if this objective has a parent objective, cheat that one first!
+			Objective_Start(objective.Parent, false, false)
+		end
+		
+		Objective_Start(objective)														-- start the objective
+		
+	elseif _CheatMenuMode == "func" then
+		
+		local index = tonumber(_CheatMenuValue)
+		local func = _CheatMenu_RegisteredFunctions[index].func
+		
+		if scartype(func) == ST_FUNCTION then
+			func()
+		end
+		
+	end
+
+end
+
+function _DisplayTitleCards()
+	
+	if scartype(g_missionData) == ST_NIL then
+		return
+	end
+	
+	if scartype(g_missionData.titleCards) == ST_TABLE then
+		
+		-- run the title card sequence
+		local planet = LOC("")
+		local location = LOC("")
+		
+		if g_missionData.titleCards.planet ~= nil then
+			planet = g_missionData.titleCards.planet
+		end
+		if g_missionData.titleCards.location ~= nil then
+			location = g_missionData.titleCards.location
+		end
+		
+		Game_SubTextFade(location, planet, 0.5, 4, 0.5)
+		
+	end
+	
+end
+
+
+-------------------------------------------------------------------------
+-- MISSION END
+-------------------------------------------------------------------------
+--? @shortdesc Plays the defined end cinematic and ends an SP scenario with a Victory. Waits for no intel events to be playing.
+--? @result Void
+function Mission_Complete()
+	
+	if __missionIsEnding == nil then
+		
+		__missionIsEnding = "Complete" 
+		
+		Rule_Add(__Mission_Complete_Internal)
+		
+	end
+	
+end
+
+function __Mission_Complete_Internal()
+
+	if Event_IsAnyRunning() == false then
+		
+		Rule_RemoveMe()
+		Util_FullscreenMode(DEFAULT_FULLSCREEN_HIDDEN_GAME_COMPONENT_FLAGS)
+		
+		if g_missionData.endNIS ~= nil then
+		
+			print("\tPlaying end NIS...")
+			
+			Util_StartNIS(g_missionData.endNIS)
+			
+			Rule_AddInterval(Mission_PlayOutroMovie, 0.5)
+			
+--~ 			Game_FadeToBlack(FADE_OUT, 1.0)
+--~ 			__nisStage = NIS_CLOSING
+--~ 			Rule_AddOneShot(PlayNIS, 1.5)
+			
+		else
+			
+			print("\tNo end NIS.")
+			
+			Mission_PlayOutroMovie()
+			
+		end
+
+		
+	end
+end
+
+function Mission_PlayOutroMovie()
+	if(not Event_IsAnyRunning()) then
+		Rule_RemoveMe()
+		if scartype(g_missionData.endMovie) ~= ST_NIL then		-- If there's an outro movie - play it now
+			SitRep_PlayMovie(g_missionData.endMovie)
+		end
+		Rule_AddInterval(Mission_Win, 0.5)
+	end
+end
+
+function Mission_Win()
+	if(not Event_IsAnyRunning()) then
+		Rule_RemoveMe()
+		
+		-- TODO: Temporary Victory Stinger
+		Sound_Play2D("t01mus_Victory")
+		
+		Game_EndSP(true, WR_OBJECTIVECOMPLETE)
+	end
+end
+
+--~ --? @shortdesc Called when a Mission Fails (immediately, usually within an intel event).  Will pan to a given target (if any) as well as set the UI to hidden
+--~ --? @args [Position/EGroup/Entity/SGroup/Squad/Marker panTarget]
+function Mission_PreFail(panTarget)
+	
+	Util_FullscreenMode(DEFAULT_FULLSCREEN_HIDDEN_GAME_COMPONENT_FLAGS)
+	
+	if panTarget ~= nil then
+		Camera_PanOverTimeTo(panTarget, 0.5)
+	end
+	
+end
+
+--? @shortdesc Ends an SP scenario with a Failure. Waits for no intel events to be playing.
+--? @result Void
+function Mission_Fail()
+	
+	if __missionIsEnding == nil then
+		
+		__missionIsEnding = "Fail" 
+		
+		Rule_Add(__Mission_Fail_Internal)
+		
+	end
+	
+end
+
+function __Mission_Fail_Internal()
+
+	if(not Event_IsAnyRunning()) then
+		Rule_RemoveMe()
+		
+		Game_EndSP(false, WR_OBJECTIVEFAILED)
+	end
+end
+
+
+--~ -------------------------------------------------------------------------
+--~ -- SLOTTABLE SECONDARY OBJECTIVES
+--~ -------------------------------------------------------------------------
+--~ --? @shortdesc Selects a possible secondary objective and starts it.
+--~ --? @extdesc 'index' can be used to override the random selection and load a specific secondary objective.
+--~ --? @refs http://relicwiki.relic.sega.us/display/REL/Slottable+Secondary+Objectives
+--~ --? @args Bool showTitle, Bool skipIntel[, Int index]
+--~ function Mission_StartSecondaryObjective(showTitle, skipIntel, index)
+--~ 	if(scartype(g_missionData.secondaryObjectives) ~= ST_TABLE or #g_missionData.secondaryObjectives == 0) then
+--~ 		print("Unable to start Bonus Objective. Check your g_missionData.bonusObjectives table." )
+--~ 	else
+--~ 		if scartype(__secObjOverride) == ST_NUMBER then
+--~ 			print("Using secondaryObjective override (" .. __secObjOverride .. ")")
+--~ 			index = __secObjOverride
+--~ 		else
+--~ 			index = index or World_GetRand(1, #g_missionData.secondaryObjectives)
+--~ 		end
+--~ 		
+--~ 		__SecondaryObjective = g_missionData.secondaryObjectives[index].obj
+--~ 		__SecondaryObjective.data = g_missionData.secondaryObjectives[index].data
+--~ 		
+--~ 		local onStart = g_missionData.secondaryObjectives[index].onStart
+--~ 		if scartype(onStart) == ST_FUNCTION then
+--~ 			onStart()
+--~ 		end
+--~ 		
+--~ 		Objective_Register(__SecondaryObjective)
+--~ 		if (scartype(__SecondaryObjective.subObjectives) == ST_TABLE) then
+--~ 			for i = 1, (#__SecondaryObjective.subObjectives) do
+--~ 				Objective_Register(__SecondaryObjective.subObjectives[i])
+--~ 			end
+--~ 		end
+--~ 		
+--~ 		Objective_Start(__SecondaryObjective, showTitle, skipIntel)
+--~ 	end
+--~ end
+
+--~ --? @shortdesc Return a reference to the Secondary Objective table. Nil if objective has not been started yet.
+--~ --? @result Table objective
+--~ function Mission_GetSecondaryObjective()
+--~ 	return __SecondaryObjective
+--~ end
+
+
+--~ --? @shortdesc Overrides the Slottable Secondary Objective. Receives a STRING with the objective table name [SecondaryObj_CaptureIntel / SecondaryObj_DemolitionMan / SecondaryObj_DestroyTank / SecondaryObj_KillVIP / SecondaryObj_RescueSquads]
+--~ --? @args String secObjTableName
+--~ function Mission_SetSecondaryObjectiveOverride(secObjTableName)
+--~ 	__secObjOverride = nil
+--~ 	for k,v in pairs(g_missionData.secondaryObjectives) do
+--~ 		if v.obj == _G[secObjTableName] then
+--~ 			print("Overriding secondary objective. Index " .. k)
+--~ 			__secObjOverride = k
+--~ 		end
+--~ 	end
+
+--~ 	if(__secObjOverride == nil) then
+--~ 		print("## WARNING ## - Mission does not support Slottable Secondary Objective '" .. secObjTableName .. "'")
+--~ 	end
+--~ end
+
+-------------------------------------------------------------------------
+-- MISSION UTIL FUNCTIONS
+-------------------------------------------------------------------------
+function Mission_IsDebug()
+	return __IsDebug
+end
+
+function Mission_SetDebug(debugVal)
+	if(scartype(debugVal) == ST_BOOLEAN) then
+		__IsDebug = debugVal
+	else
+		fatal("Unable to set debug mode. Value must be BOOLEAN.")
+	end
+end
+
+function Mission_ApplyDifficultyUpgrades(difficulty, playerlist)
+
+	if playerlist == nil then
+		playerlist = {
+			Game_GetLocalPlayer(),
+		}
+	end
+
+end
+
+--Cheat function called from CheatMenu. Completes all objective without any onComplete logic and calls Mission_complete.
+-- The parameter determine the medal received (XPT_MSL_BRONZE, XPT_MSL_SILVER, XPT_MSL_GOLD)
+function Mission_CheatWin(successLevel)
+	Rule_RemoveAll()
+	
+	--Only run successLevel stuff for 'Ardennes Assault' missions
+	if (g_missionData and (g_missionData.missionType == MT_XP1_CHALLENGE or g_missionData.missionType == MT_XP1_BATTLE or g_missionData.missionType == MT_XP1_CHALLENGE)) then
+--~ 		XP1_SetMissionSuccessLevel(successLevel)
+	end
+	
+	if scartype(__t_Objectives) == ST_TABLE then
+		for k,obj in pairs(__t_Objectives) do
+			obj.OnComplete = nil
+			obj.PreComplete = nil
+			Objective_Complete(obj, false, true)
+			
+			if(scartype(obj.subObjectives) == ST_TABLE) then
+				for i, sobj in pairs(obj.subObjectives) do
+					sobj.OnComplete = nil
+					sobj.PreComplete = nil
+					Objective_Complete(sobj, false, true)
+				end
+			end
+		end
+	end
+	
+	Rule_AddInterval(Mission_Complete, 1)
+end
+
+--Sames as Mission_CheatWin(), except with failure.
+function Mission_CheatLose()
+	Rule_RemoveAll()
+	
+	if scartype(__t_Objectives) == ST_TABLE then
+		for k,obj in pairs(__t_Objectives) do
+			obj.OnFail = nil
+			obj.PreFail = nil
+			Objective_Fail(obj, false, true)
+			
+			if(scartype(obj.subObjectives) == ST_TABLE) then
+				for i, sobj in pairs(obj.subObjectives) do
+					sobj.OnFail = nil
+					sobj.PreFail = nil
+					Objective_Fail(sobj, false, true)
+				end
+			end
+		end
+	end
+	
+	Rule_AddInterval(Mission_Fail, 1)
+end
+
+
+
+
+
+--
+-- Cheat menu functions
+--
+
+function CheatMenu_SetValues(mode, value)						-- Store some values in the persistent console context
+
+	local remote_execute_string = "MissionCheat_SetValues_Receiver([["..mode.."]], [["..value.."]])"
+	Scar_DebugConsoleExecute(remote_execute_string)
+
+end
+
+-- Retrieve the persistent values from the debug console context. This doesn't happen inline - you have to wait until the next frame for the values to be there.
+function CheatMenu_GetValues()
+	
+	if Misc_IsCommandLineOptionSet("missioncheat") then
+		
+		local cheatstring = Misc_GetCommandLineString("missioncheat")
+		
+		-- split the string up and find the two constituent parts
+		local split = cheatstring:find(":")
+		if split ~= nil then
+			_CheatMenuMode = cheatstring:sub(1, split - 1)
+			_CheatMenuValue = cheatstring:sub(split + 1)		
+			print("Command line cheat found - Mode ".._CheatMenuMode.."   Value ".._CheatMenuValue)
+		end
+		
+	else
+		
+		Scar_DebugConsoleExecute("if _Persistent_CheatMenuMode ~= nil then MissionCheat_SendValues() end")
+		
+	end	
+	
+end
+
+function _CheatMenu_GetValues_Reciever(mode, value)		-- that triggers THIS function to be called with the values that were in the persistent lua console. 
+
+	_CheatMenuMode = mode
+	_CheatMenuValue = value
+	
+end
+
+
+function CheatMenu_ClearValues()										-- Remove any values, so they don't affect the NEXT restart. Leave no trace! 
+
+	Scar_DebugConsoleExecute("MissionCheat_ClearValues()")
+
+end
+
+
+function CheatMenu_RestartGame()									-- Cause the game to restart
+
+	Scar_DebugConsoleExecute("restart")
+
+end
+
+
+
+
+
+-- this function adds a menu item to the cheat menu. All three values should be strings.
+function CheatMenu_AddMenuItem(title, mode, value)
+
+	--print("GAME SETUP Cheat - Title: "..title..", Mode: "..mode..", Value: "..value)
+	
+	Scar_DebugConsoleExecute("table.insert(SubMenuItems.MissionCheats.SubMenuItems, newelement([[" .. mode .. ":" .. value .. "	" .. title .. "]], [[]], 'MissionCheat_ActivateMenuItem([[" .. mode .. "]], [[" .. value .. "]])'))")
+	Scar_DebugConsoleExecute("CheatMenu_ReloadFromContext()")	
+
+end
+
+-- this function gets called by the cheat menu (written in cheatmenu.lua)
+function CheatMenu_ActivateMenuItem(mode, value)
+	
+	CheatMenu_SetValues(mode, value)		-- set the persistent values to catch on the other side...
+	CheatMenu_RestartGame()								-- ...and restart the mission
+	
+end
+
+-- return true if we have some cheat menu values set
+function CheatMenu_IsSet() 
+
+	return _CheatMenuMode ~= nil and _CheatMenuMode ~= "" and _CheatMenuValue ~= nil and _CheatMenuValue ~= ""
+	
+end
+
+
+
+--? @group scardoc;Prefab System
+
+--? @args Function cheat_function, String title
+--? @shortdesc Adds a function to the Mission Cheat menu, under the title you provide. These should be registered in the Mission_Preset function.
+--? @extdesc When activated, the mission is restarted. Most of the startup script happens as normal: Mission_SetupVariables,  Mission_SetDifficulty, Mission_SetupRestrictions and Mission_Preset are all called as normal, but the supplied function is called INSTEAD OF the regular Mission_Start function.
+function CheatMenu_RegisterCheatFunction(func, title)
+
+	if _CheatMenu_RegisteredFunctions == nil then
+		_CheatMenu_RegisteredFunctions = {}
+	end
+	
+	local new_cheat = {
+		title = title,
+		func = func,
+	}
+	
+	table.insert(_CheatMenu_RegisteredFunctions, new_cheat)
+	local index = #_CheatMenu_RegisteredFunctions
+	
+	CheatMenu_AddMenuItem(title, "func", index)
+	
+end
+	
+	

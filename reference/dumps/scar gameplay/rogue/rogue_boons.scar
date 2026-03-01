@@ -1,0 +1,163 @@
+import("cardinal.scar")
+import("missionomatic/missionomatic.scar")
+
+function Boons_OnInit()
+	BOON_UPGRADE_ROULETTE = false
+	
+	if boon_rule_running ~= true then
+		boon_rule_running = true
+		Rule_AddGlobalEvent(Boons_OnUpgradeComplete,GE_UpgradeComplete)
+	end
+	Rule_AddOneShot(Boons_FirstSelection, 1.6)
+	--Boons_FirstSelection()
+end
+
+function Boons_FirstSelection()
+	Rule_Add(Boons_Monitor)
+	boon_count = 0
+end
+
+function Boons_Monitor()
+	local last_event_index = Game_TickBoonEvent()
+	if last_event_index ~= boon_event_index then
+		boon_event_index = last_event_index
+		boon_count = boon_count + 1		
+
+		if boon_count == 1 then
+			Rogue_Unpause()		
+		end
+	end
+end
+
+-- IMPORTANT: When adding new upgrades here, ensure to add them to the army bag to trigger the global event.
+function Boons_OnUpgradeComplete(context)
+	-- Only process for player
+	if Table_Contains(ROGUE_HUMAN_PLAYERS, context.executer) == false and Table_Contains(ROGUE_HUMAN_PLAYERS, Util_GetPlayerOwner(context.executer)) == false then
+		return
+	end
+	
+	local upgrade_roulette = BP_GetUpgradeBlueprint("upgrade_roulette")
+	if context.upgrade == upgrade_roulette then
+		BOON_UPGRADE_ROULETTE = true
+		return
+	end
+	
+	local golden_parachute = BP_GetUpgradeBlueprint("golden_parachute")
+	if context.upgrade == golden_parachute then
+		print("Applying Boon - Golden Parachute")
+		Boon_GoldenParachute(context.executer)
+		return
+	end
+	
+	local cache_converters = BP_GetUpgradeBlueprint("cache_converters")
+	if context.upgrade == cache_converters then
+		print("Applying Boon - Cache Converters")
+		Boon_CacheConverters(context.executer)
+		return
+	end
+	
+	local sticks_and_stones = BP_GetUpgradeBlueprint("sticks_and_stones")
+	if context.upgrade == sticks_and_stones then
+		print("Applying Boon - Sticks and Stones")
+		Boon_SticksAndStones(context.executer)
+		return
+	end
+	
+	local fruits_of_labor = BP_GetUpgradeBlueprint("fruits_of_labor")
+	if context.upgrade == fruits_of_labor then
+		print("Applying Boon - Fruits of Labor")
+		Boon_FruitsOfLabor(context.executer)
+		return
+	end
+	
+	-- Process Upgrade Roulette at end so other boons don't trigger it
+	if BOON_UPGRADE_ROULETTE then
+		
+		local upgrade_type_valid = true
+		local ignored_upgrade_types = {
+			"emplacement_upgrade", -- Ignore emplacements
+			"wonder_age_upgrade", -- Ignore age ups
+			"torch_upgrade", -- Ignore the automatic torch upgrade on age up
+		}
+		
+		for i = 1, #ignored_upgrade_types do
+			if BP_IsUpgradeOfType(context.upgrade, ignored_upgrade_types[i]) then
+				upgrade_type_valid = false
+			end
+		end
+		
+		if upgrade_type_valid then
+			print("Applying Boon - Upgrade Roulette")
+			Boon_UpgradeRoulette(Util_GetPlayerOwner(context.executer))
+		end
+	end
+
+end
+
+function Boon_GoldenParachute(executer)
+	local eg_all_mines = EGroup_Create("eg_all_mines")
+	eg_all_mines = World_GetAllEntitiesOfType("eg_all_mines", "gold")
+	EGroup_Filter("eg_all_mines", BP_GetEntityBlueprint("resource_meteorite_rogue"), FILTER_REMOVE) -- Ensures meteorite entity is not removed
+	EGroup_DestroyAllEntities("eg_all_mines")
+end
+
+function Boon_SticksAndStones(executer)
+	Rule_AddGlobalEvent(Boons_OnUnitKilled, GE_EntityKilled)
+end
+
+function Boon_FruitsOfLabor(executer)
+	local eg_all_berries = EGroup_Create("eg_all_berries")
+	eg_all_berries = World_GetAllEntitiesOfType("eg_all_berries", "forage_bush")
+	local _apply_to_each = function(gid, idx, eid)
+		Entity_SetRemainingResourceDepositAmount(eid,Entity_GetRemainingResourceDepositAmount(eid) +250)
+	end
+	
+	EGroup_ForEach("eg_all_berries", _apply_to_each)
+end
+
+function Boons_OnUnitKilled(context)
+	-- Only process for player
+	if Table_Contains(ROGUE_HUMAN_PLAYERS, context.victimOwner) then
+		Player_AddResource(context.victimOwner, RT_Wood, 10, RES_GIFT)
+		Player_AddResource(context.victimOwner, RT_Stone, 10, RES_GIFT)
+	end
+	
+end
+
+function Boon_CacheConverters(executer)
+	local _apply_to_each = function(gid, idx, eid)
+		FOW_RevealArea(Util_GetPosition(eid),4,1)
+	end
+	local eg_all_pickups_cache = EGroup_Create("eg_all_pickups_cache")
+	eg_all_pickups_cache = World_GetAllEntitiesOfType("eg_all_pickups_cache", "resource_pickup")
+	EGroup_ForEach("eg_all_pickups_cache", _apply_to_each)
+end
+
+function Boon_UpgradeRoulette(executer)
+	local _apply_to_each = function(gid, idx, sid)
+		if not Squad_IsAlive(sid) then
+			return	
+		end
+		
+		local entity = Squad_GetFirstEntity(sid)
+		if not Entity_IsOfType(entity, "military") then
+			return
+		end
+		
+		local outcome = World_GetRand(1,100) -- 5% chance to kill entity instantly
+		
+		if outcome <= 5 then
+			Squad_Kill(sid)
+		else
+			local health_modifier = Modifier_Create(MAT_Entity,"health_maximum_modifier", MUT_MultiplicationAddition, false, 0.05, entity)
+			Modifier_ApplyToEntity(health_modifier, entity, 0)
+			local damage_modifier = Modifier_Create(MAT_Weapon,"damage_weapon_modifier", MUT_MultiplicationAddition, false, 0.05, entity)
+			Modifier_ApplyToEntity(damage_modifier, entity, 0)
+		end
+	end
+	
+	Player_GetAll(executer)
+	SGroup_ForEach("sg_allsquads",_apply_to_each)
+end
+
+

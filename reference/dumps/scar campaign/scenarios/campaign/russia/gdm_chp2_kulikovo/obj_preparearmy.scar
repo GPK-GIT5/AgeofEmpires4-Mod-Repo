@@ -1,0 +1,396 @@
+--
+-- Battle of Kulikovo 1380 - Prepare Army
+--
+
+function PrepareArmy_InitObjectives()
+	
+	OBJ_PrepareArmy = {
+		Title = "$11176774", -- Prepare to fight the Mongol threat
+		Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.FirstObjective,
+		
+		PreStart = function()
+			if Game_GetSPDifficulty() <= GD_NORMAL then
+				Rule_AddInterval(PrepareArmy_PlayerGoldPickup, 1)
+			end
+		end,
+		
+		OnStart = function() --Handles checking when to convert the villagers to the player
+			Objective_Start(OBJ_HiddenVillage, false, false)
+			Rule_AddInterval(PrepareArmy_HillContext, 1)
+		end,
+		
+		IsComplete = function() --Completes once the player has collected the villagers
+			return Objective_AreSubObjectivesComplete(OBJ_PrepareArmy, ALL)
+		end,
+		
+		PreComplete = function() --Silently complete the subobjective
+			Objective_Complete(SOBJ_RecruitSoldiers, false)
+		end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.MongolDrums)
+			Objective_Start(OBJ_RepelMongols, false)
+			Objective_Start(OBJ_HoldDon, false, false)
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(player1)
+			return SGroup_IsEmpty(sg_allsquads)
+		end,
+		
+		OnFail = Mission_Fail,
+	}
+	SOBJ_RecruitSoldiers = {
+		Title = "$11176408", -- Regroup with the Rus armies
+		Type = OT_Secondary,
+		Parent = OBJ_PrepareArmy,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			--Objective_SetCounter(SOBJ_RecruitSoldiers, 0, 3)
+			--hp_ally_left = Objective_AddUIElements(SOBJ_RecruitSoldiers, Marker_GetPosition(mkr_ally_left_idle), true, "$11176405")
+			hp_ally_center = Objective_AddUIElements(SOBJ_RecruitSoldiers, Marker_GetPosition(mkr_ally_center_idle), true, "$11193108")
+			--hp_ally_right = Objective_AddUIElements(SOBJ_RecruitSoldiers, Marker_GetPosition(mkr_ally_right_idle), true, "$11193108")
+		end,
+		
+		OnStart = function()
+			--Rule_AddInterval(PrepareArmy_CheckNearArmy, 1, {marker = mkr_ally_left_idle, sgroup = sg_ally_left, sgroup_add = sg_scout_left, module = ally_left, target = mkr_ally_ford_left, hintpoint = hp_ally_left, spawn = mkr_ally_left_spawn})
+			--Rule_AddInterval(PrepareArmy_CheckNearArmy, 1, {marker = mkr_ally_center_idle, sgroup = sg_ally_center, sgroup_add = sg_scout_center, module = ally_center, target = mkr_ally_ford_center, hintpoint = hp_ally_center, spawn = mkr_ally_center_spawn})
+			--Rule_AddInterval(PrepareArmy_CheckNearArmy, 1, {marker = mkr_ally_right_idle, sgroup = sg_ally_right, sgroup_add = sg_scout_right, module = ally_right, target = mkr_ally_ford_right, hintpoint = hp_ally_right, spawn = mkr_ally_right_spawn})
+		end,
+		
+		IsComplete = function()
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_ally_center_idle)
+			SGroup_Filter(sg_temp, SBP.RUS.UNIT_PRINCE_DMITRI_CMP_RUS, FILTER_KEEP)
+			if not SGroup_IsEmpty(sg_temp) then
+				
+				--Play Wallas
+				Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_scout_left)
+				Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_scout_center)
+				Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_scout_right)
+				
+				--Set player / module owners
+				SGroup_SetPlayerOwner(sg_scout_left, player3)
+				SGroup_SetPlayerOwner(sg_scout_center, player3)
+				SGroup_SetPlayerOwner(sg_scout_right, player3)
+				
+				RovingArmy_AddSGroup(ally_left, sg_scout_left)
+				RovingArmy_AddSGroup(ally_center, sg_scout_center)
+				RovingArmy_AddSGroup(ally_right, sg_scout_right)
+				
+				--Set module targets
+				RovingArmy_SetTarget(ally_left, mkr_ally_ford_left)
+				RovingArmy_SetTarget(ally_center, mkr_ally_ford_center)
+				RovingArmy_SetTarget(ally_right, mkr_ally_ford_right)
+				
+				--Remove UI Element
+				Objective_RemoveUIElements(SOBJ_RecruitSoldiers, hp_ally_center)
+				
+				return true
+			end
+			return false
+		end,
+		
+		PreComplete = function()
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+		end,
+		
+		OnComplete = function()
+			
+			Util_StartIntel(EVENTS.Allied_Army_Complete)
+						
+			if Objective_IsComplete(SOBJ_VisitVillages) then
+				Objective_Start(SOBJ_RallyFords, true)
+				--Rule_AddOneShot(PrepareArmy_RevealFords, 6.2)
+			end
+		end,
+	}
+	SOBJ_VisitVillages = {
+		Title = "$11176409", --Visit Rus villages with Dmitry to recruit soldiers
+		Type = OT_Secondary,
+		Parent = OBJ_PrepareArmy,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			
+			--hp_v_3 = Objective_AddUIElements(SOBJ_VisitVillages, Marker_GetPosition(mkr_village_03), true, "$11176406")
+			--hp_v_4 = Objective_AddUIElements(SOBJ_VisitVillages, Marker_GetPosition(mkr_village_04), true)
+			--hp_v_5 = Objective_AddUIElements(SOBJ_VisitVillages, Marker_GetPosition(mkr_village_05), true)
+		end,
+		
+		PreStart = function()
+			hp_v_1 = Objective_AddUIElements(SOBJ_VisitVillages, Marker_GetPosition(mkr_village_01), true, "$11176406")
+			hp_v_2 = Objective_AddUIElements(SOBJ_VisitVillages, Marker_GetPosition(mkr_village_02), true, "$11176406")
+			
+			Rule_AddInterval(PrepareArmy_CheckCaptured, 1, { marker = mkr_village_01, sgroup = sg_village_01_army, hpid = hp_v_1 })
+			Rule_AddInterval(PrepareArmy_CheckCaptured, 1, { marker = mkr_village_02, sgroup = sg_village_02_army, hpid = hp_v_2 })
+			--Rule_AddInterval(PrepareArmy_CheckCaptured, 1, { marker = mkr_village_03, sgroup = sg_village_03_army, hpid = hp_v_3 })
+			--Rule_AddInterval(PrepareArmy_CheckCaptured, 1, { marker = mkr_ally_center_idle, sgroup = sg_village_04_army })
+			--Rule_AddInterval(PrepareArmy_CheckCaptured, 1, { marker = mkr_ally_right_idle, sgroup = sg_village_05_army })
+		end,
+		
+		IsComplete = function()
+			return villages_visited == 2
+		end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Recruit_Soldiers_Complete)
+			
+			if Objective_IsComplete(SOBJ_RecruitSoldiers) then
+				Objective_Start(SOBJ_RallyFords, true)
+			end
+		end,
+	}
+	SOBJ_RallyFords = {
+		Title = "$11176413", --Rally at the fords along the Smolka river
+		Type = OT_Secondary,
+		Parent = OBJ_PrepareArmy,
+		showTitle = true,
+		
+		
+		Intel_Start = EVENTS.FirstObjective_Complete,
+		
+		SetupUI = function()			
+			Obj_SetProgressVisible(SOBJ_RallyFords.ID, true)
+			Obj_SetProgress(SOBJ_RallyFords.ID, 0)
+			Objective_AddGroundReticule(SOBJ_RallyFords, mkr_ford_center, Marker_GetProximityRadius(mkr_ford_center), BP_GetReticuleBlueprint("campaign_capturelocation_self"))
+		
+			Rule_AddOneShot(PrepareArmy_RevealFord, 0.0, {marker = mkr_ford_center})
+			Rule_AddOneShot(PrepareArmy_RevealFord, 0.4, {marker = mkr_ford_right})
+			Rule_AddOneShot(PrepareArmy_RevealFord, 0.8, {marker = mkr_ford_left})
+			
+		end,
+		
+		OnStart = function()
+			Objective_RemoveUIElements(SOBJ_RallyFords, hpid_ford_center)
+			hpid_ford_center = Objective_AddUIElements(SOBJ_RallyFords, Marker_GetPosition(mkr_ford_center), true)
+						
+			--Music_Stop()
+			Music_StopMedium()
+			Rule_AddOneShot(PrepareArmy_DelayedMusicReset, 8)
+			Objective_Start(OBJ_FordStrength_L)
+			Objective_Start(OBJ_FordStrength_C)
+			Objective_Start(OBJ_FordStrength_R)
+		end,
+		
+		IsComplete = function()
+			local ally_ready = Kulikovo_CountMarker(player3, mkr_ford_left) >= 5 and Kulikovo_CountMarker(player3, mkr_ford_center) >= 5 and Kulikovo_CountMarker(player3, mkr_ford_right) >= 5
+			--local player_ready = Kulikovo_CountMarker(player1, mkr_ford_left) >= 10 or Kulikovo_CountMarker(player1, mkr_ford_center) >= 10 or Kulikovo_CountMarker(player1, mkr_ford_right) >= 10
+			local player_ready = Kulikovo_CountMarker(player1, mkr_ford_center) >= 10
+			
+			Obj_SetProgress(SOBJ_RallyFords.ID, Kulikovo_CountMarker(player1, mkr_ford_center) / 10)
+			
+			return ally_ready and player_ready
+		end,
+		
+		OnComplete = function()
+			holdStatus[LOCATION_FORDS] = true
+			Music_StopMedium()
+			
+			Util_AutoSave()
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, SBP.RUS.UNIT_PRINCE_DMITRI_CMP_RUS, FILTER_REMOVE)
+			return SGroup_CountSpawned(sg_allsquads) < 10
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	OBJ_HiddenVillage = {
+		Title = "$11176410", -- Find the hidden village
+		Type = OT_Primary,
+		IsSecret = true,
+		showTitle = false,
+		
+		Intel_Complete = EVENTS.HiddenVillage_Visible,
+		
+		OnStart = function()
+			local _spawn = function(max, marker)
+				local _range = Marker_GetProximityRadiusOrDefault(marker, 0)
+				for i = 1, max, 1 do
+					UnitEntry_DeploySquads(player4, sg_player_spearmen, {type = "scar_spearman", numSquads = 1}, Prox_GetRandomPosition(marker, _range, _range))
+				end
+			end
+			
+			--local _damageSGroup = function(gid, idx, sid)
+				--Squad_SetHealth(sid, (World_GetRand(2, 8) / 10))
+			--end
+			
+			--Spawn all of the spearmen in a random position at the hidden village
+			_spawn(4, mkr_secret_spawn_1)
+			_spawn(3, mkr_secret_spawn_2)
+			_spawn(6, mkr_secret_spawn_3)
+			_spawn(3, mkr_secret_spawn_4)
+			_spawn(2, mkr_secret_spawn_5)
+			
+			----Set the health of all of the hidden spearmen villagers from anywhere between 0.3 and 0.5
+			--SGroup_ForEach(sg_player_spearmen, _damageSGroup)
+			
+		end,
+		
+		IsComplete = function()
+			Player_GetAllSquadsNearMarker(player1, sg_hidden_village_rescuers, mkr_village_06)
+			return SGroup_CountSpawned(sg_hidden_village_rescuers) > 0
+		end,
+		
+		PreComplete = function()
+			SGroup_SetPlayerOwner(sg_player_spearmen, player1)
+			Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_player_spearmen)
+			Rule_AddOneShot(PrepareArmy_DelayedMoveArmy, .1, {sgroup = sg_player_spearmen, target_sgroup = sg_hidden_village_rescuers})
+			EGroup_SetPlayerOwner(eg_blacksmith, player1)
+			
+			MissionTutorial_Blacksmith()
+		end,
+		
+		OnComplete = function()
+			if Objective_IsVisible(SOBJ_RallyFords) then
+				Music_StopAfterObjective()
+			end
+			if Objective_IsVisible(OBJ_OptionalFindVillage) then
+				Objective_Complete(OBJ_OptionalFindVillage)
+			end
+		end,
+	}
+	OBJ_OptionalFindVillage = {
+		Title = "$11201898",
+		Type = ObjectiveType_Optional,
+	}
+	
+	Objective_Register(OBJ_PrepareArmy)
+	Objective_Register(SOBJ_RecruitSoldiers)
+	Objective_Register(SOBJ_VisitVillages)
+	Objective_Register(SOBJ_RallyFords)
+	Objective_Register(OBJ_HiddenVillage)
+	Objective_Register(OBJ_OptionalFindVillage)
+	
+end
+
+function PrepareArmy_FindHiddenVillage()
+	
+end
+
+--function PrepareArmy_RevealFords()
+	--Rule_AddOneShot(PrepareArmy_RevealFord, 0.0, {marker = mkr_ford_center})
+	--Rule_AddOneShot(PrepareArmy_RevealFord, 0.4, {marker = mkr_ford_right})
+	--Rule_AddOneShot(PrepareArmy_RevealFord, 0.8, {marker = mkr_ford_left})
+--end
+
+function PrepareArmy_RevealFord(context, data)
+	FOW_RevealArea(Marker_GetPosition(data.marker), 25, 5)
+	
+	if data.marker == mkr_ford_left then
+		hpid_ford_left = Objective_AddUIElements(SOBJ_RallyFords, Marker_GetPosition(mkr_ford_left), true)
+	elseif data.marker == mkr_ford_center then
+		hpid_ford_center = Objective_AddUIElements(SOBJ_RallyFords, Marker_GetPosition(mkr_ford_center), true)
+	elseif data.marker == mkr_ford_right then
+		hpid_ford_right = Objective_AddUIElements(SOBJ_RallyFords, Marker_GetPosition(mkr_ford_right), true)
+	end
+end
+
+function PrepareArmy_CheckNearArmy(context, data)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, data.marker)
+	SGroup_Filter(sg_temp, SBP.RUS.UNIT_PRINCE_DMITRI_CMP_RUS, FILTER_KEEP)
+	if not SGroup_IsEmpty(sg_temp) then
+		
+		--Play sequential armies gathered vo based on however many times an army has been gathered
+		armies_gathered = armies_gathered or 1
+		if armies_gathered == 1 then
+		--	Util_StartIntel(EVENTS.AIArmy_1)
+			armies_gathered = armies_gathered + 1
+		elseif armies_gathered == 2 then
+			--Util_StartIntel(EVENTS.AIArmy_2)
+			armies_gathered = armies_gathered + 1
+		elseif armies_gathered == 3 then
+			--Util_StartIntel(EVENTS.AIArmy_3)
+			armies_gathered = armies_gathered + 1
+		end
+		
+		--SGroup_SetPlayerOwner(data.sgroup, player3)
+		SpawnUnitsToModule(laning_starting_group, data.module, data.spawn)
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, data.sgroup)
+		SGroup_SetPlayerOwner(data.sgroup_add, player3)
+		RovingArmy_AddSGroup(data.module, data.sgroup_add)
+		
+		RovingArmy_SetTarget(data.module, data.target)
+		Objective_RemoveUIElements(SOBJ_RecruitSoldiers, data.hintpoint)
+		Objective_IncreaseCounter(SOBJ_RecruitSoldiers, 1)
+		
+		Rule_RemoveMe()
+	end
+end
+
+function PrepareArmy_CheckCaptured(context, data)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, data.marker)
+	SGroup_Filter(sg_temp, SBP.RUS.UNIT_PRINCE_DMITRI_CMP_RUS, FILTER_KEEP)
+	if not SGroup_IsEmpty(sg_temp) then
+		villages_visited = villages_visited or 0
+		
+		--Set up the unit conversion / movement
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, data.sgroup)
+		SGroup_SetPlayerOwner(data.sgroup, player1) --Give the player the units from the village
+		
+		if data.hpid ~= nil then
+			Objective_RemoveUIElements(SOBJ_VisitVillages, data.hpid) --Removes the hintpoint clues
+		end
+		
+		Cmd_FormationMove(data.sgroup, SGroup_GetPosition(sg_temp))
+		
+		--Play some VO
+		--if not first_village_vo_played then
+			--Util_StartIntel(EVENTS.Village1_Recruit)
+			--first_village_vo_played = true
+		--elseif not second_village_vo_played and villages_visited > 2 then
+			--Util_StartIntel(EVENTS.Village2_Recruit)
+			--second_village_vo_played = true
+		--end
+		villages_visited = villages_visited + 1
+		
+		--Stop checking this village for player presence
+		Rule_RemoveMe() 
+	end
+end --PrepareArmy_CheckCaptured()
+
+function PrepareArmy_DelayedMoveArmy(context, data)
+	Cmd_FormationMove(data.sgroup, SGroup_GetPosition(data.target_sgroup))
+end
+
+function PrepareArmy_HillContext(context, data)
+	--Checks the hill for any of the player's units, and if there are some then play some hint VO
+	local hill_crossed = false
+	local forest_crossed = false
+	
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_mainline_area)
+	hill_crossed = not SGroup_IsEmpty(sg_temp)
+	
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_forest_crossed)
+	forest_crossed = not SGroup_IsEmpty(sg_temp)
+	
+	if hill_crossed or forest_crossed then
+		--Util_StartIntel(EVENTS.Dmitry_OnHill)
+		Rule_RemoveMe()
+	end
+	
+	SGroup_Clear(sg_temp)
+end
+
+function PrepareArmy_DelayedMusicReset(context, data)
+	Music_RestartAfterObjective(1)
+	Sound_SetMinimumMusicCombatIntensity(0, 0)
+end
+
+-- Checks if the player has picked up gold -- and starts an objective to find a place to spend gold
+function PrepareArmy_PlayerGoldPickup(context, data)
+	if Player_GetResource(player1, RT_Gold) > 0 then
+		Objective_Start(OBJ_OptionalFindVillage)
+		Rule_RemoveMe()
+	end
+end

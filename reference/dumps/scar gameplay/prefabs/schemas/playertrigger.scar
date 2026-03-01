@@ -1,0 +1,238 @@
+--
+-- "PlayerTrigger"
+--	
+--  Prefab Script
+--
+
+
+--? @group scardoc;Prefabs
+
+
+-- Initializer function should ALWAYS be named after the prefab name with _Init appended on the end
+function playertrigger_Init(data)	
+
+	local instance = Prefab_GetInstance(data)
+	
+	-- set up instance's data
+	instance.data = {}
+	instance.data.triggerCount = 0 -- number of times trigger has been triggered so far
+	instance.data.lastTriggerTime = -1000 -- game time of last trigger
+	instance.data.stillPresent = false -- flag that indicates if a unit is still in the trigger zone after a trigger has been fired off
+	instance.data.external_interest_list = {} -- store any prefabs to trigger that have been registered externally at runtime, rather than in the WB
+	
+	
+	if instance.repeatable == false then
+	
+		instance.repeat_count = 1	
+	
+	end
+	
+	-- register the trigger zone if there was one
+	-- handles if unit is a plane too
+	if instance.active == "Immediately" then
+		PrefabHelper_StandardTriggerSystem(instance)
+	end
+	
+end
+
+function playertrigger_Stop(data)
+	local instance = Prefab_GetInstance(data)
+	
+	instance.repeat_count = 1
+	instance.data.triggerCount = 1
+	
+end
+
+--? @args Table/String instance
+--? @shortdesc Start running the PlayerTrigger prefab
+function playertrigger_Activate(data)
+	local instance = Prefab_GetInstance(data)
+	
+	PrefabHelper_StandardTriggerSystem(instance)
+end
+
+
+--? @args Table/String instance
+--? @shortdesc Start triggering the items listed in the PlayerTrigger prefab
+--? @extdesc This prefab can only be triggered once, either by the trigger zone or by script, whichever is first
+function playertrigger_Trigger(data)
+
+	local instance = Prefab_GetInstance(data)
+	local trigger = false
+
+	if instance.repeat_count == 0 or instance.data.triggerCount < instance.repeat_count then
+	
+		if instance.repeat_type == "Timed Delay" then
+		
+			if World_GetGameTime() - instance.data.lastTriggerTime >= instance.repeat_delay then
+			
+				trigger = true
+			
+			end
+		
+		elseif instance.repeat_type == "Leave and Re-enter" then
+		
+			if instance.data.stillPresent == false then
+				
+				trigger = true		
+		
+			end	
+			
+		end
+		
+	end
+	
+	if trigger == true then
+	
+		instance.data.triggerCount = instance.data.triggerCount + 1
+		instance.data.lastTriggerTime = World_GetGameTime()
+		instance.data.stillPresent = true
+		
+		-- trigger anything specified in the prefab
+		for index, item in pairs(instance.things_to_trigger) do
+		
+			if item.trigger_type == "Scar Function" then
+				
+				local event_data = {
+					instance = instance,
+					trigger_scar = item.trigger_scar,
+				}
+				Rule_AddOneShot(playertrigger_TriggerScarFunction, item.delay, event_data)
+				
+			elseif item.trigger_type == "Prefab" then
+
+				local event_data = {
+					instance = instance,
+					trigger_prefab = item.trigger_prefab,
+				}
+				Rule_AddOneShot(playertrigger_TriggerPrefab, item.delay, event_data)
+				
+			elseif item.trigger_type == "Call Intel Table" then																-- Call a SCAR function
+				
+				local intel_table = EVENTS[item.action_callinteltable]
+				if scartype(intel_table) == ST_FUNCTION then
+					Util_StartIntel(intel_table)
+				end
+			end
+		
+		end
+		
+		
+		-- trigger anything that was registered externally
+		for index, item in pairs(instance.data.external_interest_list) do 
+			
+			local delay = item.delay or 0
+			Rule_AddOneShot(playertrigger_TriggerExternalInterest, delay, item)
+			
+		end
+		
+		
+		-- if this is a repeating trigger, set up the conditions to repeat
+		if instance.repeat_count == 0 or instance.data.triggerCount < instance.repeat_count then -- we haven't overrun our repeat count yet, then
+		
+			if instance.repeat_type == "Leave and Re-enter" then				
+				Rule_AddOneShot(playertrigger_TriggerExited, 0.1, {instance = instance})				
+			else			
+				PrefabHelper_StandardTriggerSystem(instance)				
+			end			
+		end	
+	end		
+end
+
+
+--? @args Table/String instance
+--? @result Integer
+--? @shortdesc Returns how many times this trigger zone instance has been triggered
+function playertrigger_GetTriggerCount(data)
+
+	local instance = Prefab_GetInstance(data)
+	return instance.data.triggerCount
+	
+end
+
+
+
+
+function playertrigger_TriggerExited(id, data)
+
+	local instance = Prefab_GetInstance(data)
+	local sgroup = SGroup_Create("")
+	
+	Player_GetAllSquadsNearMarker(instance.trigger_player, sgroup, instance.trigger_zone)
+	SGroup_Filter(sgroup, LIST.AIRCRAFT, FILTER_REMOVE)
+	
+	if instance.custom_trigger == "Ignore Blueprint(s)" then
+		for k,v in pairs(instance.custom_trigger_list) do
+			SGroup_Filter(sgroup, v.blueprint, FILTER_REMOVE)
+		end
+	elseif instance.custom_trigger == "Require Blueprint(s)" then
+		local tBPs = {}
+		for k,v in pairs(instance.custom_trigger_list) do
+			table.insert(tBPs, v.blueprint)
+		end
+		SGroup_Filter(sgroup, tBPs, FILTER_KEEP)
+	end
+	
+	if SGroup_CountSpawned(sgroup) == 0 then
+		
+		instance.data.stillPresent = false
+		
+		-- starts monitoring for another trigger
+		PrefabHelper_StandardTriggerSystem(instance)
+		
+	else 
+		-- if there are still units around check again in a short while
+		Rule_AddOneShot(playertrigger_TriggerExited, 0.1, {instance = instance})
+	
+	end
+	
+	SGroup_Destroy(sgroup)
+	
+end
+
+
+
+
+
+function playertrigger_RegisterExternalInterest(data, params)
+
+	local instance = Prefab_GetInstance(data)
+	
+	local item = {
+		instance = params.instance,
+		action = params.action,
+		delay = params.delay,
+		params = params.params,
+	}
+	table.insert(instance.data.external_interest_list, item)
+	
+	print("Registering interest in trigger "..instance.instanceName.." from prefab "..params.instance.instanceName.." - "..params.action)
+	
+end
+
+function playertrigger_TriggerExternalInterest(id, data)
+	
+	print("Triggering external interest on "..data.instance.instanceName.." - "..data.action)
+	Prefab_DoAction(data.instance, data.action, data.params)
+	
+end
+
+
+function playertrigger_TriggerScarFunction(id, data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	local func = _G[data.trigger_scar]
+	
+	if scartype(func) == ST_FUNCTION then
+		func(instance)
+	end
+
+end
+
+
+function playertrigger_TriggerPrefab(id, data)
+
+	Prefab_DoAction(data.trigger_prefab, "Trigger")
+
+end

@@ -1,0 +1,231 @@
+--
+-- Moscow 1238 - Find Villagers objective
+--
+
+
+
+
+function FindVillagers_InitObjectives()
+
+	OBJ_FindVillagers = {
+		
+		Title = Loc_FormatText("$11180193", Loc_FormatNumber(t_difficulty.numberOfScaredVillagers, 0)), -- Optional: Locate %1AMOUNT% Hunting Cabins sheltering Villagers
+		Type = ObjectiveType_Optional,
+		
+		Intel_Start = EVENTS.FindVillagers_ObjectiveStart,
+		
+		OnStart = function()
+			MissionTutorial_AddHintToBuildScouts()
+		end,
+		
+	}	
+	
+	Objective_Register(OBJ_FindVillagers)
+	
+	
+	t_scaredVillagers = {
+		{numSquads = 2, spawn = mkr_intro_scaredvillager1},
+		{numSquads = 3, spawn = mkr_intro_scaredvillager2},
+		{numSquads = 2, spawn = mkr_intro_scaredvillager3},
+		{numSquads = 3, spawn = mkr_intro_scaredvillager4},		-- only used on NORMAL and EASY
+		{numSquads = 2, spawn = mkr_intro_scaredvillager5},		-- only used on NORMAL and EASY
+		{numSquads = 3, spawn = mkr_intro_scaredvillager6},		-- only used on EASY
+	}
+	
+	-- trim this table according 
+	while #t_scaredVillagers > t_difficulty.numberOfScaredVillagers do 
+		table.remove(t_scaredVillagers, #t_scaredVillagers)		
+	end
+	
+	i_numVillagersFound = 0
+	i_numVillagersToFind = #t_scaredVillagers
+	
+	Objective_SetCounter(OBJ_FindVillagers, i_numVillagersFound, i_numVillagersToFind)
+	
+	-- reserve some max popcap for the free villagers we give the player
+	local freeVillagers = 0
+	for index, villagerGroup in pairs(t_scaredVillagers) do 
+		freeVillagers = freeVillagers + villagerGroup.numSquads
+	end
+	Mission_AdjustPlayerMaxPopCap(player1, -freeVillagers)
+
+	
+	Rule_AddOneShot(FindVillagers_MakeVillagersRunAway, 5)
+	
+end
+
+function FindVillagers_MakeVillagersRunAway()
+	
+	EGroup_Clear(eg_temp)
+	EGroup_Duplicate(eg_forestHouses, eg_temp)
+	
+	for index, villager in pairs(t_scaredVillagers) do 
+		
+		if EGroup_CountSpawned(eg_temp) == 0 then 
+			fatal("OBJ_FindVillagers: Not enough destination markers to send villagers to")
+		end
+		
+		villager.sgroup = SGroup_CreateUnique("Scared Villagers")
+		villager.egroup = EGroup_CreateUnique("Scared Villagers")
+
+		local entity = EGroup_GetRandomSpawnedEntity(eg_temp)
+		EGroup_Remove(eg_temp, entity)
+		EGroup_Add(villager.egroup, entity)
+		
+		villager.rallyPoint = Util_GetOffsetPosition(villager.egroup, OFFSET_BACK, 4)
+
+		local units = {
+			{type = "scar_villager", spawn = villager.spawn, destination = villager.rallyPoint, numSquads = villager.numSquads},
+		}
+		UnitEntry_DeploySquads(player3, villager.sgroup, units, villager.spawn)
+		
+		local rand = World_GetRand(1, 16) / 4
+		Rule_AddOneShot(FindVillagers_MakeVillagersRunAway_TriggerScream, rand, {sgroup = villager.sgroup})
+		
+		villager.speedModifier = Modify_UnitSpeed(villager.sgroup, 1.5)
+		SGroup_SetInvulnerable(villager.sgroup, 0.75)
+		
+	end
+
+	-- remove any remaining houses
+	EGroup_DestroyAllEntities(eg_temp)
+	
+	Rule_AddInterval(FindVillagers_Monitor, 0.5)	
+	
+	
+end
+
+function FindVillagers_MakeVillagersRunAway_TriggerScream(context, data)
+	Sound_PlayOnSquad(WALLA_CAMP_FEAR_SMALL, data.sgroup)	-- trigger some screams, oh the humanity!
+end
+
+
+
+-- if you haven't already triggered this objective by stumbling across a villager, then start it now
+function FindVillagers_StartIfNotAlreadyStarted()
+	
+	if Objective_IsStarted(OBJ_FindVillagers) == false and Objective_IsComplete(OBJ_FindVillagers) == false then 
+		
+		Objective_Start(OBJ_FindVillagers)
+		
+	end
+	
+end
+
+
+
+
+
+
+
+
+function FindVillagers_Monitor()
+	
+	for index = #t_scaredVillagers, 1, -1 do 
+
+		local villager = t_scaredVillagers[index]
+		
+		-- Has the villager arrives at their destination?
+		if villager.speedModifier ~= nil then 
+			
+			if Prox_AreSquadsNearMarker(villager.sgroup, villager.rallyPoint, ANY, 10) then
+				
+				Modifier_Remove(villager.speedModifier)			-- remove the "sprint" speed modifier
+				villager.speedModifier = nil 
+				
+				villager.arrivedAtDestination = true
+				
+			else
+				
+				Cmd_FormationMove(villager.sgroup, villager.rallyPoint)	-- reissue their move order to their rally point if they got interrupted en route
+				
+			end
+			
+		end
+		
+		
+		if SGroup_CountSpawned(villager.sgroup) == 0 then 
+			
+			-- villagers were killed somehow
+			
+			table.remove(t_scaredVillagers, index)
+			
+		elseif villager.arrivedAtDestination == true then
+				
+			local villagerPos = Util_GetPosition(villager.sgroup)
+		
+			if Player_CanSeeSGroup(player1, villager.sgroup, ANY) and Prox_ArePlayersNearMarker(player1, villagerPos, ANY, 14) then 
+				
+				-- player has got close enough to the villagers to "rescue" them 
+				
+				Player_GetAllSquadsNearMarker(player1, sg_temp, villagerPos, 17)	-- find a nearby player unit and run the villagers to them
+				if SGroup_CountSpawned(sg_temp) >= 1 then 
+					local closestPlayerUnit = SGroup_GetClosestSquad(sg_temp, villagerPos)
+					local rendezvousPoint = Util_GetPositionFromAtoB(villagerPos, Util_GetPosition(closestPlayerUnit), 0.5)
+					Cmd_FormationMove(villager.sgroup, rendezvousPoint)
+				end
+				
+				SGroup_SetInvulnerable(villager.sgroup, false)
+				if Player_HasUpgrade(player1, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1) then
+					if Player_HasUpgrade(player3, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1) == false then
+						Player_CompleteUpgrade(player3, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1)
+					end
+				end
+				SGroup_SetPlayerOwner(villager.sgroup, player1)
+				EGroup_SetPlayerOwner(villager.egroup, player1)
+				
+				-- LW: Trying the positive stinger here as the 'small' walla sounds like many more voices that we are looking at
+				Sound_PlayOnSquad("sfx_walla_celebrate_small_mixed_gender_cabin_discovery", villager.sgroup)
+				Music_PlayStinger(MUS_STING_POSITIVE)
+
+				Mission_AdjustPlayerMaxPopCap(player1, SGroup_CountSpawned(villager.sgroup))
+				
+				i_numVillagersFound = i_numVillagersFound + 1
+				Objective_SetCounter(OBJ_FindVillagers, i_numVillagersFound, i_numVillagersToFind)
+				
+				if Objective_IsStarted(OBJ_FindVillagers) == false then 
+					Objective_Start(OBJ_FindVillagers)
+				elseif i_numVillagersFound >= i_numVillagersToFind then 
+					Objective_Complete(OBJ_FindVillagers)
+				end
+				
+				if i_numVillagersFound == 1 then
+					Util_StartIntel(EVENTS.FindVillagers_HuntingCabins)
+					MissionTutorial_AddHintToGoldGenHuntingCabins()
+				end
+				
+				if villager.speedModifier ~= nil then	
+					Modifier_Remove(villager.speedModifier)
+					villager.speedModifier = nil 
+				end
+				
+				if villager.nearbyBlipID ~= nil then 
+					Objective_RemovePing(OBJ_FindVillagers, villager.nearbyBlipID)
+					villager.nearbyBlipID = nil
+				end
+				
+				table.remove(t_scaredVillagers, index) 
+				
+	
+			elseif Util_GetDistance(villager.sgroup, villager.egroup) >= 8  then 
+				
+				Cmd_FormationMove(villager.sgroup, villager.rallyPoint)	-- move them back to their rally point if they stray too far
+				
+			elseif villager.nearbyBlipID == nil and Objective_IsStarted(OBJ_FindVillagers) then
+					
+				-- check if the player is sort of close-ish, and add a hint to guide the player to the settlement		
+				if t_difficulty.findVillagers_NearbyDistance > 0 and Prox_ArePlayersNearMarker(player1, Util_GetPosition(villager.egroup), ANY, t_difficulty.findVillagers_NearbyDistance) then 	
+					villager.nearbyBlipID = Objective_AddPing(OBJ_FindVillagers, Util_GetPosition(villager.egroup))
+				end
+					
+			end
+			
+		end
+		
+	end
+	
+	if #t_scaredVillagers == 0 then 
+		Rule_RemoveMe()
+	end
+	
+end

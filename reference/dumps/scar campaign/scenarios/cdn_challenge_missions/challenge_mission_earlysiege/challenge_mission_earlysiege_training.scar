@@ -1,0 +1,980 @@
+-------------------------------------------------------------------------
+---- CHALLENGE MISSION: EARLY SIEGE - TUTORIAL ELEMENTS
+-------------------------------------------------------------------------
+
+import("training/coretrainingconditions.scar")
+import("training/coretraininggoals.scar")
+
+Core_RegisterModule("EarlySiegeTrainingGoals")
+
+
+local goal_sequence_siege_engineers = "build_siege_engineers"
+local goal_sequence_battering_ram = "build_battering_ram_early"
+local goal_sequence_siege_tower = "build_siege_tower_early"
+local goal_sequence_springald = "build_springald_early"
+local goal_sequence_mangonel = "build_mangonel_early"
+
+local trainedSiegeTower = false
+local trainedRam = false
+local trainedSpringald = false
+local trainedMangonel = false
+
+local selectedSiegeWorkshop = false
+local selectedSpearman = false
+
+local siegeTowerButtonClicked = false
+
+local training_goals_early_siege =
+{
+	goal_sequence_siege_engineers,
+	goal_sequence_battering_ram,
+	goal_sequence_siege_tower,
+	goal_sequence_springald,
+	goal_sequence_mangonel
+}
+
+function TrainingGoal_EnableEarlySiegeGoals()
+	for i, goalSequenceID in ipairs(training_goals_early_siege) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function TrainingGoal_DisableEarlySiegeGoals()
+	for i, goalSequenceID in ipairs(training_goals_early_siege) do
+		Training_EnableGoalSequenceByID(goalSequenceID, false)
+	end
+end
+
+function EarlySiegeTrainingGoals_InitRamHint_Xbox()
+	
+	local selectSiegeEngineerGoal = Training_Goal("Squad",
+		{ID= "Select a military unit to build a Battering Ram.", Message= "$11202436", DataTemplate="GenericTrainingDataTemplate"},
+		UserHasSelectedSiegeEngineer)
+	
+	local openRadialGoal = Training_Goal("Squad",
+		{ID= "Press RT to open the radial menu.", Message= "$1000968", DataTemplate="GenericTrainingDataTemplate"}, 
+		UserHasOpenedContextualRadial)
+	
+	local selectBatteringRamGoal = Training_Goal("PBG",
+		{ID= "Select this option to build a Battering Ram.", Message= "$11249143", DataTemplate="GenericTrainingDataTemplate"},
+		UserIsBuildingBatteringRam)
+	
+	local buildBatteringRamGoal = Training_Goal("LooseReticle",
+		{ID= "Press A in a valid location to start construction.", Message= "$1001021", DataTemplate="GenericTrainingDataTemplate"},
+		UserHasBuiltBatteringRam)
+	
+	local selectSiegeEngineerSequence = Training_GoalSequence(goal_sequence_siege_engineers,
+		-1, 0,
+		UserHasIdleSiegeEngineers_Xbox, 
+		RamStartedIgnorePredicate, 
+		nil,
+		nil,
+		true,
+		{selectSiegeEngineerGoal, openRadialGoal, selectBatteringRamGoal, buildBatteringRamGoal})
+	Training_AddGoalSequence(selectSiegeEngineerSequence)
+end
+
+function EarlySiegeTrainingGoals_InitRamHint()
+	
+	local selectSiegeEngineerGoal = Training_Goal("Squad",
+		{ID= "Select a military unit to build a Battering Ram.", Message= "$11202436", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedSiegeEngineer)
+	local selectBatteringRamGoal = Training_Goal("PBG",
+		{ID= "Click here to build a Battering Ram.", Message= "$11202437", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserIsBuildingBatteringRam)
+	local buildBatteringRamGoal = Training_Goal("Cursor",
+		{ID= "Click a valid location to start construction.", Message= "$11202438", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasBuiltBatteringRam)
+	local selectSiegeEngineerSequence = Training_GoalSequence(goal_sequence_siege_engineers,
+		-1, 0,
+		UserHasIdleSiegeEngineers, 
+		RamStartedIgnorePredicate, 
+		nil,
+		nil,
+		true,
+		{selectSiegeEngineerGoal, selectBatteringRamGoal, buildBatteringRamGoal})
+	Training_AddGoalSequence(selectSiegeEngineerSequence)
+end
+
+function EarlySiegeTrainingGoals_OnInit()
+	
+	-- Disable core training goals for testing purposes
+	--TrainingGoal_DisableCoreControlGoals()
+	--TrainingGoal_DisableCoreEconGoals()
+	
+	
+	-------------------------------------------------------------------------
+	---- Goal Sequences
+	-------------------------------------------------------------------------
+	
+	
+	-- Build a ram
+	if UI_IsXboxControllerUI() then
+		EarlySiegeTrainingGoals_InitRamHint_Xbox()
+	else
+		EarlySiegeTrainingGoals_InitRamHint()
+	end
+	
+	
+	----
+	-- Player built a battering ram "Garrison infantry inside this ram to protect them from arrow fire."
+	local builtBatteringRamGoal = Training_Goal("Squad",
+		{ID= "Garrison infantry", Message= "$11202430", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedBatteringRam)
+	local builtBatteringRamSequence = Training_GoalSequence(goal_sequence_battering_ram,
+		-1, 0, 
+		RamBuiltPredicate, 
+		nil, 
+		nil,
+		UserHasSelectedBatteringRam,
+		false, 
+		{builtBatteringRamGoal})
+	Training_AddGoalSequence(builtBatteringRamSequence)
+	
+	----
+	
+	-- Player built a siege tower "Siege Towers are only effective again Stone Walls, not palisades."
+	local builtSiegeTowerGoal = Training_Goal("PBG",
+		{ID= "Siege Towers are only effective again Stone Walls, not palisades.", Message= "$11202431", DataTemplate="RightClickTrainingDataTemplate"},
+		UserHasSelectedSiegeTower)
+	local builtSiegeTowerSequence = Training_GoalSequence(goal_sequence_siege_tower,
+		-1, 0, 
+		SiegeTowerBuiltPredicate, 
+		UserHasSelectedSiegeTower,
+		nil, 
+		nil,
+		true, 
+		{builtSiegeTowerGoal})
+	Training_AddGoalSequence(builtSiegeTowerSequence)
+	--]]
+	----
+	
+	
+	-- Player built a springald "Springalds are specialized at taking out enemy soldiers but are weak against walls and buildings."
+	local builtSpringaldGoal = Training_Goal("Entity",
+		{ID= "Springalds are specialized at taking out enemy soldiers but are weak against walls and buildings.", Message= "$11202428", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedSpringald)
+	local builtSpringaldSequence = Training_GoalSequence(goal_sequence_springald,
+		-1, 0, 
+		SpringaldBuiltPredicate, 
+		UserHasSelectedSpringald,
+		nil, 
+		nil,
+		true, 
+		{builtSpringaldGoal})
+	Training_AddGoalSequence(builtSpringaldSequence)
+	
+	----
+	
+	
+	-- Player built a mangonel "Mangonels are good against groups of slow-moving soldiers."
+	local builtMangonelGoal = Training_Goal("Entity",
+		{ID= "Mangonels are good against groups of slow-moving soldiers.", Message= "$11202429", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedMangonelIntro)
+	local builtMangonelSequence = Training_GoalSequence(goal_sequence_mangonel,
+		-1, 0, 
+		MangonelBuiltPredicate, 
+		UserHasSelectedMangonelIntro,
+		nil, 
+		nil,
+		true, 
+		{builtMangonelGoal})
+	Training_AddGoalSequence(builtMangonelSequence)
+	----
+	
+end
+
+selectSiegeEngineersActive = false
+selectSiegeEngineersCount = 0
+selectSiegeEngineersMax = 2
+
+garrisonRamActive = false
+garrisonRamCount = 0
+garrisonRamMax = 1
+garrisonRamCreated = false
+
+selectSpringaldActive = false
+selectSpringaldCount = 0
+selectSpringaldMax = 1
+
+selectMangonelActive = false
+selectMangonelCount = 0
+selectMangonelMax = 1
+
+-----------------------------------------------------------------------
+-- Functions, Goals, & Predicates
+-----------------------------------------------------------------------
+
+
+-----------------------------------------------------------------------
+--Training tips for building different siege units
+-----------------------------------------------------------------------
+
+
+-----------------------------------------------------------------------
+-- Build Battering Ram Predicate
+flagResetTags = false
+flagResetTags2 = false
+lastEngineerSelectedTime = -1
+__t_challengeStartIdleSiegeEngineer= 15
+__t_challengeIntervalIdleSiegeEngineer = 15
+placingRamPhaseActive = false
+
+-- Predicate - If a Siege Engineer is idle it will prompt the player to use it.
+function UserHasIdleSiegeEngineers_Xbox(goalSequence)
+	placingRamPhaseActive = false
+	selectSiegeEngineersActive = false
+	
+	--run through once
+	if(flagResetTags2 == true) then
+		
+		Misc_ClearSelection()
+		
+		local sg_player_units = Player_GetSquads(localPlayer)
+		SGroup_Filter(sg_player_units, "infantry", FILTER_KEEP)
+		if(SGroup_Count(sg_player_units) > 0) then
+			Misc_SelectSGroup(sg_player_units, true)
+		end
+		
+		flagResetTags2 = false
+		return true
+	end
+	
+	if(flagResetTags == true) then
+		
+		--reselect the siege workshop
+		eg_siegeWorkshop = EGroup_CreateIfNotFound("eg_siegeWorkshop")
+		Player_GetAllEntities(localPlayer)
+		EGroup_Filter(eg_siegeWorkshop, "siege_workshop", FILTER_KEEP)
+		
+		Misc_ClearSelection()
+		Misc_SelectEGroup(eg_siegeWorkshop)
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		goalSequence.goals[3].key = nil
+		flagResetTags = false
+	end
+	
+	if(selectSiegeEngineersCount >= selectSiegeEngineersMax) then
+		return false
+	end
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			if player._challenge ~= nil then
+				local timeElapsed = World_GetGameTime() - player._challenge.startTime
+				local currentTime = Timer_GetElapsed(goalSequence.timerID)
+				-- give the player some time at the start
+				if timeElapsed >= __t_challengeStartIdleSiegeEngineer then
+					
+					local scoutIsIdle = false
+					local localPlayer = Game_GetLocalPlayer()
+					local scoutBP = Cardinal_ConvertTypeToSquadBlueprint("scout", localPlayer)
+					local squads = Player_GetSquads(localPlayer)
+					
+					goalSequence.goals[1].idleScout = {}
+					
+					local scout = nil
+					-- Check player units
+					for i = 1, SGroup_Count(squads) do
+						local squad = SGroup_GetSquadAt(squads, i)
+						
+						-- Check that unit is spearman
+						if Squad_IsOfType(squad, "infantry") then 
+							
+							if Squad_IsIdle(squad) then
+								scoutIsIdle = true
+								scout = SGroup_GetSquadAt(squads, i)
+								break
+							end
+						end
+					end
+					
+					if scoutIsIdle then
+						if Timer_IsPaused(goalSequence.timerID) then
+							Timer_Resume(goalSequence.timerID)
+						end
+					else
+						if not Timer_IsPaused(goalSequence.timerID) then
+							Timer_Pause(goalSequence.timerID)
+						end
+					end
+					
+					local currentTime2 = World_GetGameTime()
+					if currentTime2 > __t_challengeIntervalIdleSiegeEngineer + lastEngineerSelectedTime and scoutIsIdle then
+						goalSequence.goals[1].key = Squad_GetID(scout)
+						goalSequence.goals[2].key = Squad_GetID(scout)
+						
+						-- Check if ram can be constructed
+						local ramBP = Cardinal_ConvertTypeToEntityBlueprint("ram", localPlayer)
+						
+						if ramBP ~= nil and Player_CanConstruct(localPlayer, ramBP) then
+							
+							-- Assign key to battering ram icon
+							goalSequence.goals[3].key = ramBP
+							return true
+						end
+						
+						
+						return true
+					end
+					
+					goalSequence.goals[1].key = nil
+					goalSequence.goals[2].key = nil
+					goalSequence.goals[3].key = nil
+				end
+			end
+		end
+	end
+	return false	
+end
+
+function UserHasIdleSiegeEngineers(goalSequence)
+	placingRamPhaseActive = false
+	selectSiegeEngineersActive = false
+	
+	--run through once
+	if(flagResetTags2 == true) then
+		
+		Misc_ClearSelection()
+		
+		local sg_player_units = Player_GetSquads(localPlayer)
+		SGroup_Filter(sg_player_units, "infantry", FILTER_KEEP)
+		if(SGroup_Count(sg_player_units) > 0) then
+			Misc_SelectSGroup(sg_player_units, true)
+		end
+		
+		flagResetTags2 = false
+		return true
+	end
+	
+	if(flagResetTags == true) then
+		
+		--reselect the siege workshop
+		eg_siegeWorkshop = EGroup_CreateIfNotFound("eg_siegeWorkshop")
+		Player_GetAllEntities(localPlayer)
+		EGroup_Filter(eg_siegeWorkshop, "siege_workshop", FILTER_KEEP)
+		
+		Misc_ClearSelection()
+		Misc_SelectEGroup(eg_siegeWorkshop)
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		flagResetTags = false
+	end
+	
+	if(selectSiegeEngineersCount >= selectSiegeEngineersMax) then
+		return false
+	end
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			if player._challenge ~= nil then
+				local timeElapsed = World_GetGameTime() - player._challenge.startTime
+				local currentTime = Timer_GetElapsed(goalSequence.timerID)
+				-- give the player some time at the start
+				if timeElapsed >= __t_challengeStartIdleSiegeEngineer then
+					
+					local scoutIsIdle = false
+					local localPlayer = Game_GetLocalPlayer()
+					local scoutBP = Cardinal_ConvertTypeToSquadBlueprint("scout", localPlayer)
+					local squads = Player_GetSquads(localPlayer)
+					
+					goalSequence.goals[1].idleScout = {}
+					
+					local scout = nil
+					-- Check player units
+					for i = 1, SGroup_Count(squads) do
+						local squad = SGroup_GetSquadAt(squads, i)
+						
+						-- Check that unit is spearman
+						if Squad_IsOfType(squad, "infantry") then 
+							
+							if Squad_IsIdle(squad) then
+								scoutIsIdle = true
+								scout = SGroup_GetSquadAt(squads, i)
+								break
+							end
+						end
+					end
+					
+					if scoutIsIdle then
+						if Timer_IsPaused(goalSequence.timerID) then
+							Timer_Resume(goalSequence.timerID)
+						end
+					else
+						if not Timer_IsPaused(goalSequence.timerID) then
+							Timer_Pause(goalSequence.timerID)
+						end
+					end
+					
+					local currentTime2 = World_GetGameTime()
+					if currentTime2 > __t_challengeIntervalIdleSiegeEngineer + lastEngineerSelectedTime and scoutIsIdle then
+						goalSequence.goals[1].key = Squad_GetID(scout)
+						
+						
+						-- Check if ram can be constructed
+						local ramBP = Cardinal_ConvertTypeToEntityBlueprint("ram", localPlayer)
+						
+						if ramBP ~= nil and Player_CanConstruct(localPlayer, ramBP) then
+							
+							-- Assign key to battering ram icon
+							goalSequence.goals[2].key = ramBP
+							return true
+						end
+						
+						
+						return true
+					end
+					
+					goalSequence.goals[1].key = nil
+					goalSequence.goals[2].key = nil
+				end
+			end
+		end
+	end
+	return false	
+end
+
+-- Player has selected a Siege Engineer
+function UserHasSelectedSiegeEngineer(goal)
+	placingRamPhaseActive = false
+	if(selectSiegeEngineersCount >= selectSiegeEngineersMax) then
+		return true
+	end
+	
+	if(flagResetTags == true) then
+		return true
+	end
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	
+	local ramBP = BP_GetSquadBlueprint("unit_ram_3")
+	local ramCost = Player_GetSquadBPCost(localPlayer, ramBP)
+	-- Check if player has enough resources to build a battering ram
+	if Player_GetResource(localPlayer, RT_Wood) < ramCost.wood then
+		
+		selectSiegeEngineersCount = selectSiegeEngineersMax + 1
+		return true
+	end
+	
+	
+	----
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	local currentTime = World_GetGameTime()
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is spearman
+		if Squad_IsOfType(squad, "infantry") then 
+			
+			
+			if(selectSiegeEngineersActive == false) then
+				selectSiegeEngineersActive = true
+				selectSiegeEngineersCount = selectSiegeEngineersCount + 1
+			end
+			-- Player has selected infantry
+			
+			lastEngineerSelectedTime = currentTime
+			return true
+			
+		end
+	end
+	
+	if(currentTime < lastEngineerSelectedTime + 15) then
+		return true
+		
+	end
+	
+	return false
+end
+
+--Player has clicked Battering Ram icon in command card
+function UserIsBuildingBatteringRam(goalSequence)
+	placingRamPhaseActive = true
+	if(selectSiegeEngineersCount > selectSiegeEngineersMax) then
+		return true
+	end
+	
+	if(flagResetTags == true) then
+		return true
+	end
+	
+	if(selectSiegeEngineersCount > selectSiegeEngineersMax) then
+		local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+		Misc_GetSelectedSquads(sg_currentSelection, false)
+		local hasEngineersSelected = false
+		-- Check player units
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			
+			-- Check that unit is infantry
+			if Squad_IsOfType(squad, "infantry") then 
+				
+				
+				if(selectSiegeEngineersActive == false) then
+					selectSiegeEngineersActive = true
+					selectSiegeEngineersCount = selectSiegeEngineersCount + 1
+				end
+				-- Player has selected a infantry
+				hasEngineersSelected = true
+				
+			end
+		end
+		if(hasEngineersSelected == false) then
+			selectSiegeEngineersCount = selectSiegeEngineersMax + 1
+			--the current construction blueprint needs to be reset when selection is changed
+			OnConstructionPhaseChange(nil, TP_Issued, 0)
+			return true
+		end
+	end
+	
+	
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	local hasEngineersSelected = false
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is spearman
+		if Squad_IsOfType(squad, "infantry") then 
+			
+			-- Player has selected a infantry
+			hasEngineersSelected = true
+			
+		end
+	end
+	if(hasEngineersSelected == false) then
+		
+		--the current construction blueprint needs to be reset when selection is changed
+		OnConstructionPhaseChange(nil, TP_Issued, 0)
+		
+		--check for siege workshop selected (this can cause a visual bug)
+		eg_siegeWorkshop = EGroup_CreateIfNotFound("eg_siegeWorkshop")
+		Misc_GetSelectedEntities(eg_siegeWorkshop, false)
+		EGroup_Filter(eg_siegeWorkshop, "siege_workshop", FILTER_KEEP)
+		if(EGroup_Count(eg_siegeWorkshop) > 0) then
+			--prevent GUI arrow from remaining behind if siege workshop is selected
+			--flagResetTags = true
+			--flagResetTags2 = true
+		end
+		
+		return true
+	end
+	
+	local ramBP = BP_GetSquadBlueprint("unit_ram_3")
+	local ramCost = Player_GetSquadBPCost(localPlayer, ramBP)
+	-- Check if player has enough resources to build a battering ram
+	if Player_GetResource(localPlayer, RT_Wood) < ramCost.wood then
+		selectSiegeEngineersCount = selectSiegeEngineersMax + 1
+		return true
+	end
+	
+	if(training_currentConstructionPhase == "PLACING") then
+		return true
+	else
+		return false
+	end
+	
+    --return UserIsGoingToBuildBuildingType("ram")
+end
+
+-- Player has begun constructing a ram
+function UserHasBuiltBatteringRam(goalSequence)
+	if(selectSiegeEngineersCount > selectSiegeEngineersMax) then
+		return true
+	end
+	
+	if(flagResetTags == true) then
+		return true
+	end
+	
+	if(training_currentConstructionPhase == "PLACING") then
+		
+	else
+		return true
+	end
+	
+	
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	local hasEngineersSelected = false
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is infantry
+		if Squad_IsOfType(squad, "infantry") then 
+			
+			-- Player has selected an infantry
+			hasEngineersSelected = true
+			
+		end
+	end
+	if(hasEngineersSelected == false) then
+		return true
+	end
+	
+	local ramBP = BP_GetSquadBlueprint("unit_ram_3")
+	local ramCost = Player_GetSquadBPCost(localPlayer, ramBP)
+	-- Check if player has enough resources to build a battering ram
+	if Player_GetResource(localPlayer, RT_Wood) < ramCost.wood then
+		selectSiegeEngineersCount = selectSiegeEngineersMax + 1
+		return true
+	end
+	
+	if(UserHasStartedToBuildABuilding("ram") == true) then
+		selectSiegeEngineersCount = selectSiegeEngineersMax + 1
+		return true
+	else
+		return false
+	end
+	
+end
+
+
+-- Ram Started Predicate
+function RamStartedIgnorePredicate(goalSequence)
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	local sg_player_units = Player_GetSquads(localPlayer)
+	--exclude cinematic untis
+	Player_GetAllSquadsNearMarker(localPlayer, sg_player_units, Util_GetPosition(mkr_player_spearmen2_spawn), 200)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		if(squad ~= nil) then
+			-- Check for unit
+			if Squad_IsOfType(squad, "ram") then
+				--prevent hint from showing in the future
+				selectSiegeEngineersCount = selectSiegeEngineersMax + 1
+				return true
+			end
+		end
+	end
+	
+	-- End function
+	return false
+end
+-----------------------------------------------------------------------
+
+-- Ram Built Predicate
+function RamBuiltPredicate(goalSequence)
+	if(garrisonRamCount >= garrisonRamMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	local sg_player_units = Player_GetSquads(localPlayer)
+	--exclude cinematic untis
+	Player_GetAllSquadsNearMarker(localPlayer, sg_player_units, Util_GetPosition(mkr_player_spearmen2_spawn), 200)
+	
+	SGroup_Filter(sg_player_units, "infantry", FILTER_REMOVE)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		if(squad ~= nil) then
+			-- Check for unit on screen
+			if Squad_IsOfType(squad, "ram") then
+				
+				local healthPercent = Squad_GetHealthPercentage(squad, false)
+				if(healthPercent == 1) then
+					
+					--only pass predicate if no rams are selected
+					local hasRamSelected = false
+					for i = 1, SGroup_Count(sg_currentSelection) do
+						local squad2 = SGroup_GetSquadAt(sg_currentSelection, i)
+						if(squad2 ~= nil) then
+							-- Check for unit on screen
+							if Squad_IsOfType(squad2, "ram") then
+								hasRamSelected = true
+							end
+						end
+					end
+					
+					if(hasRamSelected == false) then
+						-- Assign key to ram
+						goalSequence.goals[1].key = Squad_GetID(squad)
+						-- Check if a key was found for unit before continuing
+						if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+							return false
+						end
+						
+						garrisonRamCreated = true
+						
+						return true
+					end
+				end
+			end
+		end
+	end
+	
+	-- End function
+	return false
+end
+
+-- Player has selected a Battering Ram
+function UserHasSelectedBatteringRam(goal)
+	if(garrisonRamCount >= garrisonRamMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	if(garrisonRamCreated == true) then
+		
+		Misc_GetSelectedSquads(sg_currentSelection, false)
+		-- Check player units
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			if(squad ~= nil) then
+				-- Check that unit is a battering ram
+				if Squad_IsOfType(squad, "ram") then 
+					-- Player has selected the battering ram
+					if(garrisonRamActive == false) then
+						garrisonRamActive = true
+						garrisonRamCount = garrisonRamCount + 1
+					end
+					garrisonRamCreated = false
+					return true
+				end
+			end
+		end
+	end
+	garrisonRamActive = false
+	return false
+end
+
+
+
+-----------------------------------------------------------------------
+
+-- Springald Built Predicate
+function SpringaldBuiltPredicate(goalSequence)
+	if(selectSpringaldCount >= selectSpringaldMax) then
+		return true
+	end
+
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+	--exclude cinematic untis
+	Player_GetAllSquadsNearMarker(localPlayer, sg_player_units, Util_GetPosition(mkr_player_spearmen2_spawn), 200)
+		
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		if(squad ~= nil) then
+			-- Check for unit on screen
+			if Squad_IsOfType(squad, "springald") then
+				
+				-- Assign key to springald
+				goalSequence.goals[1].key = Squad_GetID(squad)
+				-- Check if a key was found for unit before continuing
+				if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+					return false
+				end
+				return true
+			end
+		end
+	end
+	-- End function
+	return false
+end
+
+-- Player has selected a springald
+function UserHasSelectedSpringald(goal)
+	if(selectSpringaldCount >= selectSpringaldMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if(squad ~= nil) then
+		-- Check that unit is a springald
+			if Squad_IsOfType(squad, "springald") then 
+				
+				if(selectSpringaldActive == false) then
+					selectSpringaldActive = true
+					selectSpringaldCount = selectSpringaldCount + 1
+				end
+				-- Player has selected the springald
+				return true
+			end
+		end
+	end
+	selectSpringaldActive = false
+	return false
+end
+
+-----------------------------------------------------------------------
+
+-- Mangonel Built Predicate
+function MangonelBuiltPredicate(goalSequence)
+	if(selectMangonelCount >= selectMangonelMax) then
+		return true
+	end
+
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+	--exclude cinematic untis
+	Player_GetAllSquadsNearMarker(localPlayer, sg_player_units, Util_GetPosition(mkr_player_spearmen2_spawn), 200)
+		
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		if(squad ~= nil) then
+			-- Check for unit on screen
+			if Squad_IsOfType(squad, "mangonel") then
+				
+				-- Assign key to springald
+				goalSequence.goals[1].key = Squad_GetID(squad)
+				-- Check if a key was found for unit before continuing
+				if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+					return false
+				end
+				
+				return true
+			end
+		end
+	end
+	
+	-- End function
+	return false
+end
+
+-- Player has selected a mangonel
+function UserHasSelectedMangonelIntro(goal)
+	if(selectMangonelCount >= selectMangonelMax) then
+		return true
+	end
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if(squad ~= nil) then
+		-- Check that unit is a mangonel
+			if Squad_IsOfType(squad, "mangonel") then 
+				
+				if(selectMangonelActive == false) then
+					selectMangonelActive = true
+					selectMangonelCount = selectMangonelCount + 1
+				end
+				-- Player has selected the mangonel
+				return true
+			end
+		end
+	end
+	
+	selectMangonelActive = false
+	return false
+end
+
+-----------------------------------------------------------------------
+
+--Player has clicked Siege Tower icon in command card
+function SiegeTowerBuiltPredicate(goalSequence)
+	--first check if any valid units are selected
+	local hasInfantrySelected = false
+	
+	--remove warning if no infantry are selected
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check for selected infantry
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if(squad ~= nil) then
+			-- Check if unit is infantry
+			if Squad_IsOfType(squad, "infantry") then 
+				hasInfantrySelected = true
+			end
+		end
+	end
+	
+	if(hasInfantrySelected == true) then
+		
+		if(UserIsGoingToBuildBuildingType("siege_tower")) then
+			
+			-- Check if siege tower can be constructed
+			local siegeTowerBP = Cardinal_ConvertTypeToEntityBlueprint("siege_tower", localPlayer)
+			
+			if siegeTowerBP ~= nil then
+				-- Assign key to Battering Ram icon
+				goalSequence.goals[1].key = siegeTowerBP
+				siegeTowerButtonClicked = true
+				return true
+			end
+			
+		end
+	end
+	return false
+end
+
+-- remove warning when player is no longer about to build a siege tower
+function UserHasSelectedSiegeTower(goal)
+	
+	--first check if any valid units are selected
+	local hasInfantrySelected = false
+	
+	--remove warning if no infantry are selected
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check for selected infantry
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if(squad ~= nil) then
+			-- Check if unit is infantry
+			if Squad_IsOfType(squad, "infantry") then 
+				hasInfantrySelected = true
+			end
+		end
+	end
+	
+	if(hasInfantrySelected == false) then
+			return true
+	end
+	
+	if(siegeTowerButtonClicked == true) then
+		if(UserIsGoingToBuildBuildingType("siege_tower") == false) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+-----------------------------------------------------------------------
+
+----------------------------------------------------------------------------------------------
+

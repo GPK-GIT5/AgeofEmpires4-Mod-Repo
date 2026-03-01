@@ -1,0 +1,136 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+
+function UpgradeUnits_InitObjectives()
+
+	OBJ_UpgradeUnits = {
+		Title = LOC("Upgrade your Units"),
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.HardenedStart,
+
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_UpgradeUnits, ALL)
+		end
+	}
+
+	SOBJ_Hardened = {
+		Title = LOC("Research the Hardened Upgrade at the Barracks"),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_UpgradeUnits,
+		StartAlongsideParent = true,
+		SetupUI = Hardened_UI,
+		OnStart = Hardened_Start,
+
+		OnComplete = function()
+			Objective_Start(SOBJ_BuildBlacksmith, true, true)
+		end
+	}
+
+	SOBJ_BuildBlacksmith = {
+		Title = LOC("Build a Blacksmith"),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_UpgradeUnits,
+		StartAlongsideParent = false,
+		SetupUI = BuildBlacksmith_UI,
+		OnStart = BuildBlacksmith_Start,
+		Intel_Start = EVENTS.BuildBlacksmithStart,
+
+		OnComplete = function()
+			Objective_Start(SOBJ_Research, true, true)
+		end
+	}
+
+	SOBJ_Research = {
+		Title = LOC("Research Technology"),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_UpgradeUnits,
+		StartAlongsideParent = false,
+		SetupUI = Research_UI,
+		OnStart = Research_Start,
+
+		OnComplete = function()
+			Music_LockIntensity(MUSIC_TENSE) --Raise Music Intensity
+			Objective_Start(OBJ_Capture, true, true)
+		end
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_UpgradeUnits)
+	Objective_Register(SOBJ_Hardened)
+	Objective_Register(SOBJ_Veteran)
+	Objective_Register(SOBJ_Chivalry)
+	Objective_Register(SOBJ_BuildBlacksmith)
+	Objective_Register(SOBJ_Research)
+end
+
+-- ///// Hardened //////////////////////////////////////////////
+function Hardened_UI()
+	
+	
+end
+
+function Hardened_Start()
+
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_UNIT_SPEARMAN_2, ITEM_UNLOCKED)
+	Goals_UpgradeUnits()
+	eg_barracks = EGroup_CreateIfNotFound("eg_barracks")
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "scar_barracks", FILTER_KEEP)
+	EGroup_AddEGroup(eg_barracks, eg_allentities)
+	
+	Objective_AddUIElements(SOBJ_Hardened, eg_barracks, true, LOC("Research"), true, 5)
+	
+	Rule_Add(Hardened_Monitor)
+end
+
+function Hardened_Monitor()
+
+	local barracks = EGroup_GetEntityAt(eg_barracks, 1)
+	local alreadyUpgraded = Player_HasUpgrade(player1, UPG.COMMON.UPGRADE_UNIT_SPEARMAN_2)
+	
+	if Entity_GetProductionQueueSize(barracks) > 0 or alreadyUpgraded then
+		if Entity_GetProductionQueueItem(barracks, 0) == UPG.COMMON.UPGRADE_UNIT_SPEARMAN_2 or alreadyUpgraded then
+
+			Objective_Complete(SOBJ_Hardened, true, true)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+-- ///// BuildBlacksmith //////////////////////////////////////////////
+function BuildBlacksmith_UI()
+	
+end
+
+function BuildBlacksmith_Start()
+
+		Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_FRE, ITEM_UNLOCKED)
+	Objective_SetCounter(SOBJ_BuildBlacksmith, 0, 1)
+	Goals_BuildBlacksmiths()
+	Rule_AddOneShot(ProduceBuildingsObjectiveTracker, 0, {objective = SOBJ_BuildBlacksmith, building_type = "scar_blacksmith", desired_amount = 1})
+end
+
+-- ///// Research //////////////////////////////////////////////
+function Research_UI()
+	
+	
+end
+
+function Research_Start()
+
+	
+	eg_blacksmith = EGroup_CreateIfNotFound("eg_blacksmith")
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "scar_blacksmith", FILTER_KEEP)
+	EGroup_AddEGroup(eg_blacksmith, eg_allentities)
+	Goals_Research()
+	
+	Rule_Add(Research_Monitor)
+end
+
+function Research_Monitor()
+
+	if Entity_GetProductionQueueSize(EGroup_GetEntityAt(eg_blacksmith, 1)) > 0 then
+
+		Objective_Complete(SOBJ_Research, true, true)
+		Rule_RemoveMe()
+	end
+end

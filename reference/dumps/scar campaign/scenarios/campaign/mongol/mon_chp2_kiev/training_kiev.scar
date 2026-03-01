@@ -1,0 +1,392 @@
+--
+-- Kiev - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+
+local goal_sequence_arsenal = "kiev_arsenal_training_id"
+local goal_sequence_incendiary_weapon = "incendiary_weapon_training_id"
+local goal_sequence_kiev_leader = "kiev_leader_training_id"
+
+function Kiev_InitializeArsenalTrainingHints()
+	
+	--Goals
+	local selectArsenal = Training_Goal("Entity", {Message = "$11191315", DataTemplate="LeftClickTrainingDataTemplate"}, Kiev_PlayerIsSelectingArsenal)
+	local researchArrows = Training_Goal("PBG", {Message = "$11191316", DataTemplate = "LeftClickTrainingDataTemplate"}, Kiev_PlayerIsResearchingUpgrade)
+	
+	--Goal Sequence
+	local arsenalSequence = Training_GoalSequence(goal_sequence_arsenal, 1, 0, Kiev_PlayerHasArsenal, CampaignTraining_TimeoutIgnorePredicate, nil, Kiev_SkipTraining, false, {selectArsenal, researchArrows})
+	
+	--Initialize
+	Training_AddGoalSequence(arsenalSequence)
+	Training_EnableGoalSequenceByID(goal_sequence_arsenal, true)
+	
+end
+
+function Kiev_InitializeIncendiaryWeaponTrainingHints()
+
+	--Goals
+	local selectRangedSiege = Training_Goal(
+		"Squad",
+		{Message = "$11191317", DataTemplate = "GenericTrainingDataTemplate"},
+		Kiev_PlayerHasSelectedRanged)
+	
+	local burnStructure = Training_Goal(
+		"Entity",
+		{Message = UI_PickIDForInputMode(11191318, 1000610), DataTemplate = "RightClickTrainingDataTemplate"},
+		Kiev_PlayerHasAttackedStructuresWithArrows)
+	
+	--Goal Sequence
+	local incendiaryWeaponSequence = Training_GoalSequence(
+		goal_sequence_incendiary_weapon, 			--id
+		1, 0, 										--repeatMax, remindMax
+		Kiev_PlayerHasIncendiaryUpgrade, 			--trigger
+		CampaignTraining_TimeoutIgnorePredicate, 	--ignore
+		nil, 										--remind
+		Kiev_SkipTraining, 							--bypass
+		true, 										--canRegress
+		{selectRangedSiege, burnStructure}			--goals
+	)
+	
+	--Initialize
+	Training_AddGoalSequence(incendiaryWeaponSequence)
+	Training_EnableGoalSequenceByID(goal_sequence_incendiary_weapon, true)
+	
+end
+
+
+function Kiev_InitializeLeaderTrainingHints_Xbox()
+
+	--Goals
+	local select_leader_goal = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_leaderMongke.sgroup, 1), {
+			Message = "$11248647",
+			DataTemplate = "GenericTrainingDataTemplate"
+		},
+		Kiev_PlayerHasSelectedLeader
+	)
+	
+	local GoalOnOpenRadial = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_leaderMongke.sgroup, 1),
+		{
+			Message = "$11248648",
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		UserHasOpenedContextualRadial
+	)
+	
+	local leader_efficiency_goal = Training_Goal(
+		BP_GetAbilityBlueprint("leader_production_mon_activated"), {
+			Message = "$11191320",
+			DataTemplate = "RadialTrainingDataTemplate"
+		}, 
+		Kiev_LeaderIsNearStructures
+	)
+	
+	--Goal Sequence
+	local leader_training_sequence = Training_GoalSequence(
+		goal_sequence_kiev_leader, 
+		1, 0, 
+		Kiev_LeaderAndStructuresExist_Xbox, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		Kiev_SkipTraining, 
+		true, 
+		{select_leader_goal, GoalOnOpenRadial, leader_efficiency_goal}
+	)
+	
+	--Initialize
+	Training_AddGoalSequence(leader_training_sequence)
+	Training_EnableGoalSequenceByID(goal_sequence_kiev_leader, true)
+	
+end
+
+function Kiev_InitializeLeaderTrainingHints()
+
+	--Goals
+	local select_leader_goal = Training_Goal("Squad", {Message = "$11191319", DataTemplate = "LeftClickTrainingDataTemplate"}, Kiev_PlayerHasSelectedLeader)
+	local leader_efficiency_goal = Training_Goal("Squad", {Message = "$11191320", DataTemplate = "LeftClickTrainingDataTemplate"}, Kiev_LeaderIsNearStructures)
+	
+	--Goal Sequence
+	local leader_training_sequence = Training_GoalSequence(
+		goal_sequence_kiev_leader, 
+		1, 0, 
+		Kiev_LeaderAndStructuresExist, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		Kiev_SkipTraining, 
+		true, 
+		{select_leader_goal, leader_efficiency_goal}
+	)
+	
+	--Initialize
+	Training_AddGoalSequence(leader_training_sequence)
+	Training_EnableGoalSequenceByID(goal_sequence_kiev_leader, true)
+	
+end
+
+function Kiev_SkipTraining(goalSequence)
+	return Objective_IsComplete(OBJ_DestroyKiev)
+end
+
+--------------------------------------------------------------
+-- Arsenal training hints
+--------------------------------------------------------------
+
+-- Arsenal training hints
+function Kiev_PlayerHasArsenal(goalSequence) -- Arsenal goal sequence
+	
+	local arsenalBP = Cardinal_ConvertTypeToEntityBlueprint("bowyer", player1)
+	local arsenalExists = false
+	local canResearch = false
+	
+	--Check if the player has an arsenal
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "bowyer", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		goalSequence.goals[1].key = EGroup_GetEntityAt(eg_allentities, 1)
+		goalSequence.goals[2].key = BP_GetUpgradeBlueprint("upgrade_ranged_incendiary_mon")
+		arsenalExists = true
+	end
+	
+	--Check if the player has enough resources
+	if Player_GetResource(player1, RT_Food) >= 50 and Player_GetResource(player1, RT_Gold) >= 450 then
+		canResearch = true
+	end
+	
+	--Trigger the training hint if both prerequisites are true
+	return arsenalExists and canResearch
+end
+
+function Kiev_PlayerIsSelectingArsenal(goal) -- Goal 1
+	local player_is_selecting_arsenal = false
+	local arsenalBP = Cardinal_ConvertTypeToEntityBlueprint("bowyer", player1)
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+	
+	for i = 1, EGroup_Count(eg_currentSelection) do
+		local entity = EGroup_GetEntityAt(eg_currentSelection, i)
+		if Entity_GetBlueprint(entity) == arsenalBP then
+			player_is_selecting_arsenal = true
+			break
+		end
+	end
+	EGroup_Clear(eg_currentSelection)
+	
+	return player_is_selecting_arsenal
+end
+
+function Kiev_PlayerIsResearchingUpgrade(goal) -- Goal 2
+	
+	--Check if the player is researching the tip
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	EGroup_Filter(eg_currentSelection, "bowyer", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		local entity = EGroup_GetSpawnedEntityAt(eg_currentSelection, 1)
+		if Entity_HasProductionQueue(entity) then
+			local production_queue_size = Entity_GetProductionQueueSize(entity)
+			print("Production queue size: "..production_queue_size)
+			for i = 0, production_queue_size - 1 do
+				if Entity_GetProductionQueueItem(entity, i) == UPG.MONGOL.UPGRADE_RANGED_INCENDIARY_MON then
+					return true
+				end
+			end
+		end
+	end
+	
+	--Check if the player is mousing over the tip
+	if training_currentHoverBlueprint == BP_GetUpgradeBlueprint("upgrade_ranged_incendiary_mon") then
+		return true
+	end
+	
+	--Check if the tip timed out
+	local currentTime = Timer_GetElapsed(goal.timerID)
+	if currentTime >= __t_trainingModerateInterval then
+		return true
+	end
+	
+	return false
+end
+
+--------------------------------------------------------------
+-- Incendiary weapon training hints
+--------------------------------------------------------------
+
+-- Incendiary weapon training hints
+function Kiev_PlayerHasIncendiaryUpgrade(goalSequence) -- Incendiary weapons goal sequence
+	Player_GetAll(player1)
+	SGroup_Duplicate(sg_allsquads, sg_temp)
+	SGroup_Filter(sg_temp, {"scar_archer", "scar_crossbowman", "scar_khan", "scar_horsearcher"}, FILTER_KEEP)
+	
+	if Player_HasUpgrade(player1, BP_GetUpgradeBlueprint("upgrade_ranged_incendiary_mon")) and SGroup_CountSpawned(sg_temp) > 0 then
+		
+		-- Pick a ranged unit to highlight
+		goalSequence.goals[1].key = SGroup_GetSquadAt(sg_temp, 1)
+		
+		-- Pick a nearby building to target with the second part of the hint
+		Player_GetAll(player2)
+		EGroup_Filter(eg_allentities, "wall", FILTER_REMOVE)
+		goalSequence.goals[2].key = EGroup_GetClosestEntity(eg_allentities, Util_GetPosition(goalSequence.goals[1].key))
+		
+		return true
+	end
+	
+	return false
+end
+
+function Kiev_PlayerHasSelectedUnitWithIncendiaryUpgrade(goal) -- Goal 1
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	SGroup_Filter(sg_currentSelection, "ranged", FILTER_KEEP)
+	
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		if b_CheckingStructureAttack ~= true then
+			b_CheckingStructureAttack = true
+			print("Spooling up a new rule")
+			Rule_AddGlobalEvent(Structure_AttackedByArchers, GE_DamageReceived)
+			Rule_AddEventFilter_EntityType(Structure_AttackedByArchers, FC_Victim, FO_AND, { }, { "wall" })
+			Rule_AddEventFilter_EntityType(Structure_AttackedByArchers, FC_Attacker, FO_AND, { "ranged" }, { })
+		end
+		return true
+	end
+	
+	return false
+end
+	
+function Kiev_PlayerHasAttackedStructuresWithArrows(goal) -- Goal 2
+	
+	if b_EntityAttackedByRanged == true then
+		return true
+	end
+	
+	-- Make sure SOMETHING is being pointed to
+	Player_GetAll(player2)
+	EGroup_Filter(eg_allentities, "wall", FILTER_REMOVE)
+	if scartype(goal.key) ~= ST_ENTITY then
+		Player_GetAll(player2)
+		EGroup_Filter(eg_allentities, "wall", FILTER_REMOVE)
+		if EGroup_Count(eg_allentities) <= 0 then
+			return true
+		end
+		goal.key = EGroup_GetClosestEntity(eg_allentities, Util_GetPosition(Camera_GetCurrentTargetPos()))
+	end
+	
+	-- If not, also escape if the player has just ignored this entirely
+	local currentTime = Timer_GetElapsed(goal.timerID)	
+	if currentTime >= __t_trainingShortInterval then
+		return true
+	end
+	
+	-- Otherwise we're not done yet
+	return false
+end
+
+function Structure_AttackedByArchers(context)
+	local victim = context.victim
+	local attacker = context.attacker
+	
+	if victim ~= nil and attacker ~= nil then
+		if not Entity_IsOfType(victim, "wall") and Entity_IsOfType(attacker, "ranged") then
+			b_EntityAttackedByRanged = true
+			Rule_RemoveMe()
+		end
+	end
+end
+
+--------------------------------------------------------------
+-- Unique leader training hints
+--------------------------------------------------------------
+
+-- Mongke leader training hints
+function Kiev_LeaderAndStructuresExist_Xbox(goalSequence) -- Leader goal sequence
+	if Objective_IsComplete(OBJ_ForwardBase) and Squad_GetPlayerOwner(SGroup_GetSquadAt(sg_leaderMongke.sgroup, 1)) == player1 and SGroup_IsOnScreen(player1, sg_leaderMongke.sgroup, ANY, 0.8) then
+		goalSequence.goals[1].key = SGroup_GetSquadAt(sg_leaderMongke.sgroup, 1)
+		goalSequence.goals[2].key = SGroup_GetSquadAt(sg_leaderMongke.sgroup, 1)
+		goalSequence.goals[3].key = BP_GetAbilityBlueprint("leader_production_mon_activated")
+		return true
+	end
+	return false
+end
+
+function Kiev_LeaderAndStructuresExist(goalSequence) -- Leader goal sequence
+	if Objective_IsComplete(OBJ_ForwardBase) and Squad_GetPlayerOwner(SGroup_GetSquadAt(sg_leaderMongke.sgroup, 1)) == player1 and SGroup_IsOnScreen(player1, sg_leaderMongke.sgroup, ANY, 0.8) then
+		goalSequence.goals[1].key = SGroup_GetSquadAt(sg_leaderMongke.sgroup, 1)
+		--goalSequence.goals[2].key = SGroup_GetSquadAt(sg_leaderMongke.sgroup, 1)
+		goalSequence.goals[2].key = BP_GetAbilityBlueprint("leader_production_mon_activated")
+		return true
+	end
+	return false
+end
+
+function Kiev_PlayerHasSelectedRanged(goal)
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	SGroup_Filter(sg_currentSelection, "ranged", FILTER_KEEP)
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		Rule_AddGlobalEvent(Structure_AttackedByArchers, GE_DamageReceived)
+		Rule_AddEventFilter_EntityType(Structure_AttackedByArchers, FC_Victim, FO_AND, { }, { "wall" })
+		Rule_AddEventFilter_EntityType(Structure_AttackedByArchers, FC_Attacker, FO_AND, { "ranged" }, { })
+		return true
+	end
+	
+	-- If not, also escape if the player has just ignored this entirely
+	local currentTime = Timer_GetElapsed(goal.timerID)	
+	if currentTime >= __t_trainingShortInterval then
+		return true
+	end
+	
+	-- Otherwise we're not done yet
+	return false
+end
+
+function Kiev_PlayerHasSelectedLeader(goal) -- Goal 1
+	
+	return Misc_IsSGroupSelected(sg_leaderMongke.sgroup, ALL)
+	
+end
+
+function Kiev_LeaderIsNearStructures(goal) -- Goal 2
+	
+	--Is the player mousing over the blueprint?
+	if training_currentHoverBlueprint == goal.key then
+		return true
+	end
+	
+	--Is/Has the player used the ability?
+	if training_previousAbilityBlueprint == goal.key or training_currentAbilityBlueprint == goal.key then
+		return true
+	end
+	
+	--Has the tip been displaying for a while?
+	local currentTime = Timer_GetElapsed(goal.timerID)	
+	
+	if currentTime >= __t_trainingShortInterval then
+		return true
+	end
+	
+	return false
+	
+	--Player_GetAllSquadsNearMarker(player1, sg_temp, Util_GetPosition(sg_leaderMongke.sgroup), 20)
+	--Player_GetAllEntitiesNearMarker(player1, eg_temp, Util_GetPosition(sg_leaderMongke.sgroup), 20)
+	--SGroup_Filter(sg_temp, "mongol_moving_structure", FILTER_KEEP)
+	--EGroup_Filter(eg_temp, {"production_building", "military_production_building"}, FILTER_KEEP)
+	
+	--if SGroup_CountSpawned(sg_temp) > 0 or EGroup_CountSpawned(eg_temp) > 0 then -- Are there mobile structures or production buildings nearby?
+		--SGroup_Clear(sg_temp)
+		--EGroup_Clear(eg_temp)
+		
+		--if _g_tempLeaderTimer == nil then -- Start a timer to wait a few seconds
+			--_g_tempLeaderTimer = Training_GetNewTimerID()
+			--Timer_Start(_g_tempLeaderTimer, 3)
+		--else
+			--if Timer_GetRemaining(_g_tempLeaderTimer) <= 0 then
+				--_g_tempLeaderTimer = nil
+				--return true
+			--end
+		--end
+	--end
+	
+	--SGroup_Clear(sg_temp)
+	--EGroup_Clear(eg_temp)
+	--return false
+end

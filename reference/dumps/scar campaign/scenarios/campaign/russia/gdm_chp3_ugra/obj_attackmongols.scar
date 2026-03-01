@@ -1,0 +1,340 @@
+--
+-- Ugra - Attack Mongols
+--
+
+import("MissionOMatic/MissionOMatic.scar")	
+
+function AttackMongols_InitObjectives()
+	
+	OBJ_AttackMongols = {
+		
+		Title = 11180255, -- Destroy the Mongol Encampment
+		Type = ObjectiveType_Battle,
+		showTitle = false,
+		PreStart = function()
+			Util_AutoSave()
+		end,
+		OnStart = function()
+			Ugra_PackUpBuildings()
+			Music_LockIntensity(MUSIC_TENSE_COMBAT, 120)
+			Rule_AddInterval(Ugra_DefendersRetreatOnEngage, 1)
+			Rule_AddInterval(Ugra_ConvoyRetreat, 1)
+		end,
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_DestroyTownCenter)
+		end,
+		OnComplete = function()
+			Mission_Complete()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+		end
+	}
+	
+	SOBJ_DestroyTownCenter = {
+		
+		Title = 11180256, -- Destroy Mongol Town Center
+		Type = ObjectiveType_Battle,
+		showTitle = false,
+		Parent = OBJ_AttackMongols,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			Objective_AddUIElements(SOBJ_DestroyTownCenter, eg_mon_towncenter, true, 11119069, true, 3) -- Town Center						
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(Ugra_CheckTownCenterDestroyed, 4)
+		end,
+	}	
+	
+	
+	OBJ_DebugComplete = {
+		Title = LOC("Debug Complete"),
+		Type = ObjectiveType_Primary,
+		showTitle = false,
+		Cheat = function()
+			--Ugra_SpawnExtraMongols()
+			--Ugra_InitOutro()
+			Player_GetAll(player2)
+   			Player_GetAllEntitiesNearMarker(player2, eg_temp, mkr_outro_burn, 70)
+    		EGroup_DestroyAllEntities(eg_temp)
+			--Util_StartIntel(EVENTS.Victory)
+			Mission_Complete()
+		end,
+	}
+	
+	Objective_Register(OBJ_AttackMongols)
+	Objective_Register(SOBJ_DestroyTownCenter)
+	Objective_Register(OBJ_DebugComplete)
+	
+end
+
+function AttackMongols_Start()
+end
+
+function Ugra_CheckTownCenterDestroyed()
+	if EGroup_IsEmpty(eg_mon_towncenter) then
+		Rule_RemoveMe()
+		Objective_Complete(OBJ_AttackMongols)
+	end
+end
+
+
+--? @shortdesc Checks for destroyed entities (usually buildings), which are important for some objectives
+function Ugra_OnEntityKilled(context)
+
+	-- Only count kills/losses due to player activity (not debug or surrender kills) 
+	if scartype(context.killer) ~= ST_NIL then
+		-- We don't need to know who the killer is. It's actually easier to debug if we don't care
+		if scartype(context.victimOwner) == ST_PLAYER then
+			if SGroup_ContainsSquad(MissionOMatic_FindModule("DefendMonFort").sgroup, context.victimSquad.SquadID, true) then
+				if scartype(SOBJ_DefeatAllCombatants) ~= ST_NIL and Objective_IsCounterSet(SOBJ_DefeatAllCombatants) then
+					Objective_IncreaseCounter(SOBJ_DefeatAllCombatants)
+				end
+			end
+		end
+	end
+end
+
+function Ugra_ConvoyRetreat()
+	if Player_CanSeeSGroup(player1, sg_mon_packedbuildings, false) then
+		Rule_AddOneShot(Ugra_DelayRetreat, 6)
+		Rule_RemoveMe()
+	end
+end
+
+function Ugra_DelayRetreat()
+	Cmd_MoveToAndDestroy(sg_mon_packedbuildings, mkr_retreat_nw)
+end
+
+function Ugra_DefendersRetreatOnEngage()
+	--print("Evaluate Defender Retreat")
+	local retreatValue = 1
+	for i,v in ipairs(retreaterModuleList) do
+		sgroup = v.sgroup
+		if SGroup_IsUnderAttack(sgroup, false, 5) then
+			Ugra_SGroupRetreatFraction(v, retreatValue)
+			
+			table.remove(retreaterModuleList, i)
+			if #retreaterModuleList == 0 then
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+function Ugra_SGroupRetreatFraction(module, numToOne)
+	local i = 0
+	local sgroup = module.sgroup
+	local _RandomRetreat = function(gid, idx, sid)
+		if i >= numToOne or Squad_IsOfType(sid, "villager") then
+			i = 0
+			SGroup_Single(sg_single, sid)
+			Defend_RemoveSGroup(module, sg_single)
+			Cmd_MoveToAndDestroy(sg_single, Ugra_GetRandomRetreatPoint())
+		else
+			i = i + 1
+		end
+	end
+	SGroup_ForEach(sgroup, _RandomRetreat)
+end
+	
+function Ugra_PackUpBuildings()
+	local convoyMarkerList = {
+		mkr_mon_caravan1,
+		mkr_mon_caravan2,
+		mkr_mon_caravan3,
+		mkr_mon_caravan4,
+		mkr_mon_caravan5,
+		mkr_mon_caravan6,
+		mkr_mon_caravan7,
+		mkr_mon_caravan8,
+		mkr_mon_caravan9,
+		mkr_mon_caravan10,
+	}
+	local _PackBuildings = function(gid, idx, eid)
+		local position = Entity_GetPosition(eid)
+		local unitBP = nil
+		if Entity_HasBlueprint(eid, EBP.MONGOL.BUILDING_UNIT_RANGED_MON) then
+			unitBP = BP_GetSquadBlueprint("building_unit_ranged_moving_mon")
+		elseif Entity_HasBlueprint(eid, EBP.MONGOL.BUILDING_UNIT_INFANTRY_MON) then
+			unitBP = BP_GetSquadBlueprint("building_unit_infantry_moving_mon")
+		elseif Entity_HasBlueprint(eid, EBP.MONGOL.BUILDING_UNIT_CAVALRY_MON) then
+			unitBP = BP_GetSquadBlueprint("building_unit_cavalry_moving_mon")
+		elseif Entity_HasBlueprint(eid, EBP.MONGOL.BUILDING_PASTURE_MON) then
+			unitBP = BP_GetSquadBlueprint("building_pasture_moving_mon")
+		end
+		
+		Entity_Destroy(eid)
+		if unitBP ~= nil then
+			UnitEntry_DeploySquads(player2, sg_mon_packedbuildings, { sbp = unitBP, numsquads = 1 }, position)
+		end
+	end
+	local _ArrangeConvoy = function(gid, idx, sid)
+		outroConvoyIndex = outroConvoyIndex + 1
+		SGroup_Single(sg_single, sid)
+		Cmd_Move(sg_single, convoyMarkerList[outroConvoyIndex], false, nil, Marker_GetPosition(mkr_retreat_nw))
+	end
+	eg_mon_buildings = EGroup_CreateIfNotFound("eg_mon_buildings")
+	sg_mon_packedbuildings = SGroup_CreateIfNotFound("sg_mon_packedbuildings")
+	eg_mon_buildings = Player_GetAllEntities(player2)
+	EGroup_RemoveGroup(eg_mon_buildings, eg_mon_towncenter)
+	EGroup_Filter(eg_mon_buildings, "packable_building", FILTER_KEEP)
+	--Cmd_Ability(eg_mon_buildings, BP_GetAbilityBlueprint("pack_building_mon"))
+	EGroup_ForEach(eg_mon_buildings, _PackBuildings)
+	
+	Modify_UnitSpeed(sg_mon_packedbuildings, 0.4)
+	outroConvoyIndex = 0
+	SGroup_ForEach(sg_mon_packedbuildings, _ArrangeConvoy)
+end
+
+function Ugra_InitOutro()
+	--Spawn extra Rus
+	UnitEntry_DeploySquads(player1, sg_rus_outro, {{ type = "scar_handcannon", numSquads = 8, spawn = mkr_rus_strel_spawn1 }, { type = "scar_handcannon", numSquads = 8, spawn = mkr_rus_strel_spawn2 }, { type = "scar_cannon", numSquads = 3, spawn = mkr_rus_cannon_spawn, sgroup = sg_outro_cannon, facing = Marker_GetPosition(mkr_cav_spawn1) }})
+	
+	--Cmd_HoldPosition(sg_rus_outro)
+	
+	--sg_ivan_outro = SGroup_CreateIfNotFound(sg_ivan_outro)
+	sg_ivan_guards = SGroup_CreateIfNotFound("sg_ivan_guards")
+	sg_ivan_scout = SGroup_CreateIfNotFound("sg_ivan_scout")
+	sg_cheer01 = SGroup_CreateIfNotFound("sg_cheer01")
+	sg_cheer02 = SGroup_CreateIfNotFound("sg_cheer02")
+	sg_background = SGroup_CreateIfNotFound("sg_background")
+	
+	UnitEntry_DeploySquads(player1, g_leaderIvan.sgroup, { sbp = BP_GetSquadBlueprint("unit_ivan_the_great_cmp_rus"), numSquads = 1 }, mkr_ivan_spawn )
+	UnitEntry_DeploySquads(player1, sg_ivan_guards, {type = "scar_spearman", numSquads = 2, spawn = mkr_ivan_guards01})
+	UnitEntry_DeploySquads(player1, sg_ivan_scout, {type = "scar_scout", numSquads = 1, spawn = mkr_ivan_guards02})
+	UnitEntry_DeploySquads(player1, sg_cheer01, {type = "scar_villager", numSquads = 6, spawn = mkr_outro_cheer01})
+	UnitEntry_DeploySquads(player1, sg_cheer02, {type = "scar_villager", numSquads = 10, spawn = mkr_outro_cheer02})
+	
+	UnitEntry_DeploySquads(player1, sg_background, {type = "scar_horseman", numSquads = 2, spawn = mkr_parade_spawn})
+	UnitEntry_DeploySquads(player1, sg_background, {type = "scar_horseman", numSquads = 2, spawn = mkr_parade_spawn})
+	
+	--Retreat all Mongol units
+	Player_GetAll(player2)
+	
+	local _RandomRetreat = function(gid, idx, sid)
+		SGroup_Single(sg_single, sid)
+		Cmd_Move(sg_single, Marker_GetPosition(Ugra_GetRandomRetreatPoint()))
+	end
+	
+	SGroup_ForEach(sg_allsquads, _RandomRetreat)
+	
+	
+	local pos = nil
+	local dest = nil
+	
+	local _spawnBatch = function(unit, count, spawn_marker, destination_marker)
+		for i=1, count, 1 do
+			pos = Prox_GetRandomPosition(spawn_marker, 40, 5)
+			dest = Prox_GetRandomPosition(destination_marker, 30, 2)
+			UnitEntry_DeploySquads(player2, sg_mon_outro_cav, unit, pos, nil, nil, {destination= dest})
+		end
+	end
+	
+	local knight = {type = "scar_knight"}
+	local horse = {type = "scar_horseman"}
+	local mangudai = {type = "scar_horsearcher"}
+
+	--_spawnBatch(mangudai, 20, 	mkr_cav_spawn1, mkr_retreat_sw)
+	_spawnBatch(mangudai, 20, 	mkr_cav_spawn2, mkr_retreat_sw)
+	_spawnBatch(mangudai, 20, 	mkr_cav_spawn3, mkr_retreat_sw)
+	--_spawnBatch(horse, 10, 	mkr_cav_spawn1, mkr_retreat_sw)
+	_spawnBatch(horse, 10, 	mkr_cav_spawn2, mkr_retreat_sw)
+	_spawnBatch(horse, 10, 	mkr_cav_spawn3, mkr_retreat_sw)
+	--_spawnBatch(knight, 5, 	mkr_cav_spawn1, mkr_retreat_sw)
+	_spawnBatch(knight, 5, 	mkr_cav_spawn2, mkr_retreat_sw)
+	_spawnBatch(knight, 5, 	mkr_cav_spawn3, mkr_retreat_sw)
+	
+	Rule_AddOneShot(Cannon_Fire_Outro, 8)
+	
+	Rule_AddOneShot(Late_Cav_Outro, 4)
+	
+	Rule_AddOneShot(Outro_Ivan_Parade, 10)
+	
+end
+
+function Late_Cav_Outro()
+	
+	local _RandomRetreat = function(gid, idx, sid)
+		SGroup_Single(sg_single, sid)
+		Cmd_Move(sg_single, mkr_retreat_sw)
+	end
+	
+	SGroup_ForEach(sg_allsquads, _RandomRetreat)
+	
+	
+	local pos = nil
+	local dest = nil
+	
+	local _spawnBatch = function(unit, count, spawn_marker, destination_marker)
+		for i=1, count, 1 do
+			pos = Prox_GetRandomPosition(spawn_marker, 20, 5)
+			dest = Prox_GetRandomPosition(destination_marker, 30, 2)
+			UnitEntry_DeploySquads(player2, sg_mon_outrocav02, unit, pos, nil, nil, {destination= dest})
+		end
+	end
+	
+	local knight = {type = "scar_knight"}
+	local horse = {type = "scar_horseman"}
+	local mangudai = {type = "scar_horsearcher"}
+
+	_spawnBatch(mangudai, 20, 	mkr_cav_spawn1, mkr_retreat_sw)
+	_spawnBatch(horse, 10, 	mkr_cav_spawn1, mkr_retreat_sw)
+	_spawnBatch(knight, 5, 	mkr_cav_spawn1, mkr_retreat_sw)
+end
+
+function Cannon_Fire_Outro()
+	
+	--Cmd_InstantSetupTeamWeapon(sg_outro_cannon)
+
+	Cmd_Attack(sg_outro_cannon, mkr_cannon_target, true)
+	
+	Cmd_Attack(sg_rus_outro, mkr_streltsy_target, true)
+	
+	--Rule_AddOneShot(Cannon_Fire_Stop, 4)
+	
+end
+
+function Cannon_Fire_Stop()
+	
+	--Cmd_Stop(sg_outro_cannon)
+	
+end
+
+function Outro_Ivan_Parade()
+	
+	Cmd_FormationMove(g_leaderIvan.sgroup, mkr_ivan_destination)
+	Cmd_FormationMove(sg_ivan_guards, mkr_ivan_destination)
+	Cmd_FormationMove(sg_ivan_scout, mkr_ivan_destination)
+	
+	Cmd_FormationMove(sg_background, mkr_parade_mid01, false)
+	Cmd_FormationMove(sg_background, mkr_parade_mid02, true)
+	Cmd_FormationMove(sg_background, mkr_parade_mid03, true)
+	
+	Modify_UnitSpeed(g_leaderIvan.sgroup, 0.4)
+	Modify_UnitSpeed(sg_ivan_guards, 0.4)
+	Modify_UnitSpeed(sg_ivan_scout, 0.3)
+	Modify_UnitSpeed(sg_background, 0.45)
+	
+end
+		
+function Ugra_GetRandomRetreatPoint()
+	
+	local chosenOptions = World_GetRand(1,4)
+	local markerOptions = {
+		mkr_retreat_nw,
+		mkr_retreat_s,
+		mkr_retreat_se,
+		mkr_retreat_sw
+	}
+	
+	return markerOptions[chosenOptions]
+end
+
+
+function Ugra_SpawnExtraMongols()
+	
+	UnitEntry_DeploySquads(player2, sg_mon_outro_south, {{ type = "scar_horseman", numSquads = 8 }, { type = "scar_horsearcher", numSquads = 4 }}, mkr_mon_river4 )
+	
+	
+end

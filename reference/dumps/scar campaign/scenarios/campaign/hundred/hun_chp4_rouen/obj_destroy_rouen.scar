@@ -1,0 +1,1014 @@
+--
+-- Mission Retake Normandy and 1448 - Objective Destroy Rouen
+--
+
+function RetakeNormandy_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_RetakeNormandy = {
+	
+		Title = 11172307, --("Retake Normandy"),
+		Type = ObjectiveType_Battle,
+		
+		--Intel_Complete = ,
+		
+		OnComplete = RetakeNormandy_OnComplete,
+		
+		SetupUI = DestroyWalls_UI,
+		
+		OnStart = DestroyWalls_Start,
+		
+	}
+	
+	SOBJ_GetCannons = {
+	
+		Title = 11172308, --("Build Cannons"),
+		Type = ObjectiveType_Build,
+		Parent = OBJ_RetakeNormandy,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.NewObj_BuildCannons,
+		Intel_Complete = EVENTS.GetCannonsCompleted,
+		
+		SetupUI = GetCannons_SetUI,
+		
+		OnStart = GetCannons_Start,
+		OnComplete = GetCannons_Complete,
+	}
+	
+	SOBJ_DestroyRouenWalls = {
+	
+		Title = "$11172347", --Breach Rouen's Walls --11172309, --("Destroy Rouen"),
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_RetakeNormandy,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.NewObj_BreachRouen,
+		
+		--SetupUI = DestroyWalls_UI,
+		
+		--OnStart = DestroyWalls_Start,
+		
+		OnComplete = DestroyWalls_OnComplete,
+	}
+	
+	SOBJ_DestroyLandmarks= {
+	
+		Title = 11172310, --("Destroy Rouen's landmarks"),
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_RetakeNormandy,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.DestroyLandmarks,
+		
+		SetupUI = DestroyLandmarks_UI,
+				
+		OnComplete = DestroyLandmarks_OnComplete,
+	}
+		
+	
+	Objective_Register(OBJ_RetakeNormandy)
+	Objective_Register(SOBJ_GetCannons)
+	Objective_Register(SOBJ_DestroyRouenWalls)
+	Objective_Register(SOBJ_DestroyLandmarks)
+		
+	--
+	-- any other variable initialization can go in here
+	--
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Player_GetAll(player2)
+			SGroup_DestroyAllSquads(sg_allsquads)
+			EGroup_SetPlayerOwner(eg_allentities, player1)
+			RetakeNormandy_OnComplete()
+			end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+	
+end
+
+
+function GetCannons_SetUI()
+	
+	Objective_SetCounter(SOBJ_GetCannons, 0, numberOfCannonsObj)
+	
+end
+
+function GetCannons_Start()
+	
+	Rule_AddInterval(GetCannons_Monitor,1)	
+	
+end
+
+function GetCannons_Complete()
+	Objective_Start(SOBJ_DestroyRouenWalls, true)
+	Game_TransitionToState("sunset", 600)
+end
+
+function GetCannons_Monitor()
+	
+	--{SBP.FRENCH.UNIT_CANNON_4_FRE, SBP.FRENCH.UNIT_CANNON_4_BUILDABLE_FRE}
+	Player_GetAll(player1,sg_allsquads)
+	SGroup_Filter(sg_allsquads, {"scar_culverin", "scar_ribauldequin", "scar_cannon"}, FILTER_KEEP)
+	local numberCannons = SGroup_CountSpawned(sg_allsquads)
+	cannonLastCount = cannonLastCount or 0
+   
+	if numberCannons > cannonLastCount then
+		cannonLastCount = numberCannons
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		
+	end
+	
+	if numberCannons >= numberOfCannonsObj then
+		Objective_Complete(SOBJ_GetCannons,true,true)
+		Rule_RemoveMe()
+	else
+		if Objective_IsCounterSet(SOBJ_GetCannons) then 
+			
+			if numberCannons >= 1 then
+				Intel_CannonUpgrade()
+				--if b_IntelStartOnFirstCannon == false then
+					--b_IntelStartOnFirstCannon = true
+					--Util_StartIntel(EVENTS.FirstCannon)
+				--end
+			end
+			Objective_SetCounter(SOBJ_GetCannons, numberCannons, numberOfCannonsObj)
+			
+			
+		end
+	end
+	
+end
+
+function Intel_CannonUpgrade()
+	if b_cannonUpgradeIntelPlayed == false then
+		if Player_HasUpgrade(player1, UPG.COMMON.UPGRADE_SIEGE_CORNED_GUNPOWDER) == false and Player_HasUpgrade(player1, UPG.COMMON.UPGRADE_SIEGE_STEEL_BORE) == false then
+			b_cannonUpgradeIntelPlayed = true	
+			--Util_StartIntel(EVENTS.FirstCannon)
+		end
+	end
+end
+
+function DestroyWalls_UI()
+		
+	hpid_Rouen = Objective_AddUIElements(OBJ_RetakeNormandy, mkr_enemy_base, true,11172311, true) --"Rouen"
+	
+end
+
+function DestroyWalls_Start()
+	Rule_Add(GetNearRouen_Monitor)	
+end	
+
+--ask to get more units to defend Rouen (timer of 360 seconds) will need to request units in v3
+function AddUnitsToDefendRouen()
+	
+	if Objective_IsComplete(SOBJ_DestroyRouenWalls) == false then
+		if Prox_ArePlayersNearMarker(player1, mkr_enemy_base_approach, ANY, nil, "gaia", FILTER_REMOVE ) == false then
+			
+			local choice = World_GetRand(1,3)
+			
+			if choice == 1 then
+				units = {
+					{type = "scar_manatarms", numSquads = Util_DifVar({1,1,3,5}), difficulty = {GD_HARD, GD_EXPERT}},
+					{type = "scar_spearman", numSquads = Util_DifVar({4,4,3,5}) }, --was 3
+				}
+				
+				
+			elseif choice == 2 then
+				units = {
+					{type = "scar_knight", numSquads = Util_DifVar({2,2,2,5}) }, --was 2
+					{type = "scar_horseman", numSquads = Util_DifVar({3,3,3,5}) }, --was 3
+				}
+				
+			else
+				units = {
+					{type = "scar_archer", numSquads = Util_DifVar({2,2,3,4}) }, --was 2
+					{type = "scar_crossbowman", numSquads = Util_DifVar({2,2,3,4}) }, --was 2
+				}
+			end
+			
+			SpawnUnitsToModule(units, "enemy_base",mkr_enemy_base_garrison)
+
+		end
+	else
+		Rule_RemoveMe()
+	end
+end
+
+
+function MonitorTown02()
+	
+	if EGroup_CountSpawned(eg_defendCity_2) == 0 then
+		Rule_RemoveMe()
+		defend2VillageDestroyed = true
+		Rule_AddInterval(MonitorTown04,5)
+		--Util_StartIntel(EVENTS.Village2_Destroyed)
+		
+		Rule_AddOneShot(SendTown02UnitsOff,10)
+	end
+end
+
+function SendTown02UnitsOff()
+
+	LaneTimerMiddle = Util_DifVar({180,180,150,140}) --was 150
+	
+	if SGroup_CountSpawned(sg_enemy_defend_2) >= 1 then
+		
+		DissolveModuleIntoModule("enemy_defend_2","enemy_defend_4")
+	end
+	
+	if SGroup_CountSpawned(sg_enemy_townlife_defend2) >= 1 then
+		DissolveModuleIntoModule("enemy_townlife_village2", "enemy_townlife_village4")
+	end
+end
+
+
+function MonitorTown03()
+	if EGroup_CountSpawned(eg_defendCity_3) == 0 then
+		Rule_RemoveMe()
+		defend3VillageDestroyed = true
+		--Util_StartIntel(EVENTS.Village1_Destroyed)
+		
+		Rule_AddOneShot(SendTown03UnitsOff,10)
+	end
+end
+
+function SendTown03UnitsOff()
+	
+	LaneTimerTop = Util_DifVar({180,180,150,140}) --was 150
+	
+	if SGroup_CountSpawned(sg_enemy_defend_3) >= 1 then
+		
+		DissolveModuleIntoModule("enemy_defend_3","enemy_base")
+	end
+	
+	if SGroup_CountSpawned(sg_enemy_townlife_defend3) >= 1 then
+		DissolveModuleIntoModule("enemy_townlife_village3", "enemy_townlife")
+	end
+
+end
+
+function MonitorTown04()
+	if EGroup_CountSpawned(eg_defendCity_4) == 0 then
+		Rule_RemoveMe()
+		defend4VillageDestroyed = true
+		--Util_StartIntel(EVENTS.Village3_Destroyed)
+		
+		Rule_AddOneShot(SendTown04UnitsOff,10)
+
+	end
+end
+
+function SendTown04UnitsOff()
+
+	LaneTimerMiddle = Util_DifVar({220,220,200,180}) --was 200
+	
+	if SGroup_CountSpawned(sg_defend_town4) >= 1 then
+		
+		DissolveModuleIntoModule("enemy_defend_4","enemy_base")
+	end
+	
+	if SGroup_CountSpawned(sg_enemy_townlife_defend4) >= 1 then
+		DissolveModuleIntoModule("enemy_townlife_village4", "enemy_townlife")
+	end
+
+	
+end
+
+
+function MonitorTown05()
+	if EGroup_CountSpawned(eg_defendCity_5) == 0 then
+		Rule_RemoveMe()
+		defend5VillageDestroyed = true 
+		--Util_StartIntel(EVENTS.Village5_Destroyed)
+		
+		Rule_AddOneShot(SendTown05UnitsOff,10)
+	else
+		if EGroup_CountSpawned(eg_defendCity_5) == 1 and EGroup_CountSpawned(eg_defendCity_5_TC) > 0 then
+			if Villagers05BuildingNow == false then 
+				Villagers05BuildingNow = true
+				
+				if SGroup_CountSpawned(sg_defend5_villager_prodbuilding) < 1 then
+					UnitEntry_DeploySquads(player2, sg_defend5_villager_prodbuilding, {{type = "scar_villager", numSquads = 2 }}, mkr_enemy_defend_5_villagers)
+				end
+				
+				Rule_AddOneShot(SendVillagersDefend05_ToBuildProdBuild,15)
+				
+			end
+		end
+		
+	end
+end
+
+function SendVillagersDefend05_ToBuildProdBuild()
+
+	if defend5VillageDestroyed == false then 
+		if SGroup_CountSpawned(sg_defend5_villager_prodbuilding) > 0 then
+			Cmd_Construct(sg_defend5_villager_prodbuilding, EBP.ENGLISH.BUILDING_UNIT_INFANTRY_CONTROL_ENG, mkr_enemy_defend_5_infantrybuildings, nil, false)
+			Cmd_Construct(sg_defend5_villager_prodbuilding, EBP.ENGLISH.BUILDING_UNIT_CAVALRY_CONTROL_ENG, mkr_enemy_defend_5_cavalrybuildings, nil, true)
+			
+			Rule_AddInterval(MonitorConstructionDefend5, 10)
+		else
+			Villagers05BuildingNow = false
+		end
+	end
+end
+
+function MonitorConstructionDefend5()
+
+	local eg_player_structures = EGroup_CreateUnique("eg_player_structures")
+	
+	--EGroup_FilterUnderConstruction
+	--Player_HasBuildingUnderConstruction
+		
+	Player_GetAll(player2, sg_allsquads, eg_player_structures)
+	
+	--Filter out any non-unit producing structures that aren't fully constructed
+	EGroup_Filter(eg_player_structures, "production_building", FILTER_KEEP)
+	
+	EGroup_FilterUnderConstruction(eg_player_structures, FILTER_KEEP )
+	
+	
+	if EGroup_IsEmpty(eg_player_structures) == true then
+		
+		Player_GetAllEntitiesNearMarker(player2,eg_temp, mkr_enemy_defend_5)
+		EGroup_Filter(eg_temp,EBP.ENGLISH.BUILDING_UNIT_INFANTRY_CONTROL_ENG, FILTER_KEEP)
+		
+		if EGroup_CountSpawned(eg_temp) > 0 then
+			EGroup_Add( eg_defendCity_5, EGroup_GetSpawnedEntityAt(eg_temp,1) )
+		end
+		
+		EGroup_Clear(eg_temp)
+		Player_GetAllEntitiesNearMarker(player2,eg_temp, mkr_enemy_defend_5)
+		EGroup_Filter(eg_temp,EBP.ENGLISH.BUILDING_UNIT_CAVALRY_CONTROL_ENG, FILTER_KEEP)
+		
+		if EGroup_CountSpawned(eg_temp) > 0 then
+			EGroup_Add( eg_defendCity_5, EGroup_GetSpawnedEntityAt(eg_temp,1) )
+		end
+
+		Villagers05BuildingNow = false
+		
+		Rule_RemoveMe()
+	end
+		
+end
+
+
+
+function SendTown05UnitsOff()
+
+	LaneTimerBelow = Util_DifVar({220,220,200,180}) --was 200
+	
+	if SGroup_CountSpawned(sg_defend_town5) >= 1 then
+		
+		DissolveModuleIntoModule("enemy_defend_5","enemy_base")
+	end
+	
+	if SGroup_CountSpawned(sg_enemy_townlife_defend5) >= 1 then
+		DissolveModuleIntoModule("enemy_townlife_village5", "enemy_townlife")
+	end
+
+end
+
+function MonitorTown06()
+	if EGroup_CountSpawned(eg_defendCity_6) == 0 then
+		Rule_RemoveMe()
+		defend6VillageDestroyed = true 
+		Rule_AddInterval(MonitorTown05,5)
+		--Util_StartIntel(EVENTS.Village4_Destroyed)
+		
+		Rule_AddOneShot(SendTown06UnitsOff,10)
+
+	end
+end
+
+function SendTown06UnitsOff()
+	
+	LaneTimerBelow = Util_DifVar({180,180,150,130}) --was 150
+	
+	if SGroup_CountSpawned(sg_enemy_defend_6) >= 1 then
+		
+		DissolveModuleIntoModule("enemy_defend_6","enemy_defend_5")	
+	end
+	
+	if SGroup_CountSpawned(sg_enemy_townlife_defend6) >= 1 then
+		DissolveModuleIntoModule("enemy_townlife_village6", "enemy_townlife_village5")
+	end
+
+end
+
+	
+function GetNearRouen_Monitor()
+	
+	if Prox_ArePlayersNearMarker(player1, mkr_enemy_base_approach, ANY, nil, "gaia", FILTER_REMOVE ) == true then
+		--Objective_UpdateText(SOBJ_DestroyRouenWalls, 11172347,11172348, true,true) -- "Breach Rouen's walls" , "Use cannons to breach Rouen's walls"
+		Rule_RemoveMe()
+		Util_AutoSave(true, true, 30)
+		checkWallsID = Rule_AddEGroupEvent(DestroyWallRouen_EntityKill, eg_rouenwalls ,GE_EntityKilled)
+		--Rule_Add(PlayerGetsInsideRouenNoDestruction)
+		Util_StartIntel(EVENTS.DestroyWalls_IntelStart)
+	end
+end
+
+
+
+function PlayerGetsInsideRouenNoDestruction()
+	
+	if Prox_ArePlayersNearMarker(player1, mkr_enemy_base_inside_01, ANY ) == true or Prox_ArePlayersNearMarker(player1, mkr_enemy_base_inside_02, ANY ) == true then
+		if Objective_IsComplete(SOBJ_DestroyRouenWalls) == false then
+			Objective_Fail(SOBJ_DestroyRouenWalls,false,false)
+		end
+		
+		if Objective_IsComplete(SOBJ_GetCannons) == false then
+			Objective_Fail(SOBJ_GetCannons,false,false)
+		end
+		
+		DestroyWalls_OnComplete()
+		Rule_RemoveEGroupEvent(DestroyWallRouen_EntityKill)
+		Rule_RemoveMe()
+	end
+end
+
+
+function DestroyWallRouen_EntityKill(context) --Checks to see if the entity killed was the gate and completes the objective
+	
+	if context.victim ~= nil then
+		local victimBP = Entity_GetBlueprint(context.victim)
+		if context.killer == nil then
+			SGroup_Clear(sg_temp)
+			Entity_GetLastAttackers(context.victim,sg_temp,4)
+			if SGroup_CountSpawned(sg_temp) >= 1 then
+				if SGroup_ContainsBlueprints(sg_temp, SBP.FRENCH.UNIT_CANNON_4_FRE, ANY) == true then
+					SGroup_Filter(sg_temp,SBP.FRENCH.UNIT_CANNON_4_FRE, FILTER_KEEP)
+					context.killer = SGroup_GetSpawnedSquadAt(sg_temp, 1)
+				end
+			end
+		end
+		
+		if victimBP == EBP.ENGLISH.BUILDING_DEFENSE_WALL_ENG or victimBP == EBP.ENGLISH.BUILDING_DEFENSE_WALL_GATE_ENG then
+		
+			if context.killer ~= nil then
+				
+				if Squad_GetBlueprint(Entity_GetSquad(context.killer)) == SBP.FRENCH.UNIT_CANNON_4_FRE then 
+					b_CannonDestroyedWall = true
+				end
+			end
+			
+			i_numberWallPieces = i_numberWallPieces + 1
+			
+			if i_numberWallPieces >= i_numberWallPiecesToDestroy then
+				
+				CelebrateOnPosition(context.victim, 60)
+				Objective_Complete(SOBJ_DestroyRouenWalls)
+				Rule_Remove(PlayerGetsInsideRouenNoDestruction)
+				Rule_RemoveMe()
+				
+			end
+		end
+	end
+end -- 
+
+function DestroyWalls_OnComplete()
+	
+	--[[ only use generic 'breachWall' line.
+	
+	if b_CannonDestroyedWall == true then
+		Util_StartIntel(EVENTS.BreachWall_Cannon)
+	else
+		Util_StartIntel(EVENTS.BreachWall)
+	end
+	]]--
+	
+	Util_StartIntel(EVENTS.BreachWall)
+	
+	Rule_AddOneShot(StartDestroyLandmarkObj,3)
+	Objective_RemoveUIElements(OBJ_RetakeNormandy,hpid_Rouen)
+	
+	--send reinforcements for city
+	if SGroup_CountSpawned(sg_defend_town5) > 0 then
+		DissolveModuleIntoModule("enemy_defend_5","enemy_base")
+	end
+	--send reinforcements for city
+	if SGroup_CountSpawned(sg_defend_town4) > 0 then
+		DissolveModuleIntoModule("enemy_defend_4","enemy_base")
+	end
+	
+end
+
+function StartDestroyLandmarkObj()
+	Objective_Start(SOBJ_DestroyLandmarks)
+end
+
+
+function DestroyLandmarks_UI()
+	Player_GetAll(player2, sg_allsquads, eg_enemy_landmarks)
+	EGroup_Filter(eg_enemy_landmarks, "landmark", FILTER_KEEP)
+	local numberLandmarksDestroyed = i_maxNumberLandmarks - EGroup_CountSpawned(eg_enemy_landmarks)
+	
+	Objective_SetCounter(SOBJ_DestroyLandmarks, numberLandmarksDestroyed, i_maxNumberLandmarks)
+	
+	if EGroup_CountSpawned(eg_enemy_landmarks) > 0 then
+		
+		landmarkUI = Objective_AddUIElements(SOBJ_DestroyLandmarks, eg_enemy_landmarks, true, "$11197408", true, 5)
+		Rule_AddEGroupEvent(DestroyRouenLandmark_EntityKill, eg_enemy_landmarks, GE_EntityKilled)
+	else
+		Objective_Complete(SOBJ_DestroyLandmarks, false)
+	end
+end
+
+
+function DestroyRouenLandmark_EntityKill(context) --Checks to see if the entity killed was the gate and completes the objective
+	if context.victim ~= nil then
+		local victimBP = Entity_GetBlueprint(context.victim)
+		
+		--if victimBP == EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_HALL_ENG or victimBP == EBP.ENGLISH.BUILDING_LANDMARK_AGE2_WHITE_TOWER_ENG or victimBP == EBP.ENGLISH.BUILDING_TOWN_CENTER_CAPITAL_ENG then
+			
+			if Objective_IsCounterSet(SOBJ_DestroyLandmarks) == true then
+				
+				Objective_IncreaseCounter(SOBJ_DestroyLandmarks, 1 )
+				local numberLandmarksDestroyed = Objective_GetCounter(SOBJ_DestroyLandmarks)
+				
+				Objective_RemoveUIElements(SOBJ_DestroyLandmarks, landmarkUI)
+				landmarkUI = Objective_AddUIElements(SOBJ_DestroyLandmarks, eg_enemy_landmarks, true, "$11197408", true, 5)
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+				Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+				
+				if numberLandmarksDestroyed == i_maxNumberLandmarks then
+					Objective_Complete(SOBJ_DestroyLandmarks, false)
+					Rule_RemoveMe()
+				end
+				
+			end
+		
+		--end
+	end
+end
+
+function DestroyLandmarks_OnComplete()
+	Objective_Complete(OBJ_RetakeNormandy)
+	Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+	
+end
+
+
+function RetakeNormandy_OnComplete()
+	Sound_Play2D("sfx_campaign_scripted_large_group_celebrate")
+	--Music_StopMedium()
+	Util_StartIntel(EVENTS.Victory)
+end
+
+function WaitFirstSendArmy()
+	--Rule_AddOneShot(ChooseWhereToSendUnitsToPlayer,5)
+	
+end
+
+function MonitorFirstAttackers()
+	
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_player_base, 100)
+	SGroup_Filter(sg_temp, "scar_villager", FILTER_REMOVE)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		Rule_RemoveMe()
+		Util_StartIntel(EVENTS.FirstWave)
+	end
+end
+
+function ChooseWhereToSendUnitsToPlayer()
+	
+	choiceAttack = World_GetRand(1,15)
+	
+--	choiceAttack = 14 ---- COMMMMMMENT!!!
+	
+	--PrepareWaves()
+	
+	if firstAttackDone == false then 
+		firstAttackDone = true
+		Rule_AddOneShot(StartNextWave,20)
+
+	else
+		if choiceAttack <= 5 then --was 5
+			Rule_AddOneShot(StartNextWave,LaneTimerTop)
+		else 
+			if choiceAttack <= 10 then
+				Rule_AddOneShot(StartNextWave,LaneTimerMiddle)
+			else
+				Rule_AddOneShot(StartNextWave, LaneTimerBelow)
+			end
+		end
+	end
+end
+
+function PrepareWaves()
+
+	----waves setup from Rouen
+	local units01 = {
+		{type = "scar_horseman", numSquads = Util_DifVar({5,5,6,10})} -- was 6
+	}
+			
+	local units02 = { 
+		{type = "scar_knight", numSquads = Util_DifVar({2,2,3,6})}, -- was 2
+		{type = "scar_horseman", numSquads = Util_DifVar({3,3,4,6})}, --was 3
+		{type = "scar_manatarms", numSquads = Util_DifVar({2,2,6,6}) }, ---was 3
+		{type = "scar_spearman", numSquads = Util_DifVar({4,4,1,1}), difficulty = {GD_EASY, GD_NORMAL} }, --was 3
+
+	}
+
+	local units03 = { 
+		{type = "scar_knight", numSquads = Util_DifVar({2,2,2,4})}, --was 2
+		{type = "scar_horseman", numSquads = Util_DifVar({1,1,3,6}), difficulty = {GD_HARD, GD_EXPERT} },  --was 3
+		{type = "scar_manatarms", numSquads = Util_DifVar({1,1,4,6}), difficulty = {GD_HARD, GD_EXPERT} }, --was 4
+		{type = "scar_spearman", numSquads = Util_DifVar({4,4,1,1}), difficulty = {GD_EASY, GD_NORMAL} }, --was 4
+		{type = "scar_archer", numSquads = Util_DifVar({4,4,4,6}) }, --was 4
+
+	}
+	
+	local units04 = { 
+		{type = "scar_knight", numSquads = Util_DifVar({3,3,3,5}) }, --was 3 
+		{type = "scar_manatarms", numSquads = Util_DifVar({2,2,4,5}) }, --was 4
+		{type = "scar_horseman", numSquads = Util_DifVar({3,3,3,5}) }, --was 3
+		{type = "scar_crossbowman", numSquads = Util_DifVar({3,3,3,5}) }, --was 3
+		{type = "scar_spearman", numSquads = Util_DifVar({3,3,4,5}) }, --was 4
+
+	}
+	
+	local lane = 1
+	moduleUsed = wave_rouen_middle_base
+	
+
+	if Objective_IsComplete(SOBJ_DestroyRouenWalls) == false then 
+		
+		
+		if choiceAttack <= 5 then --was 5
+			lane = 1
+						
+			if defend3VillageDestroyed == false then
+				
+				moduleUsed = wave_defend3_base
+				
+				units01 = {
+					{type = "scar_horseman", numSquads = Util_DifVar({4,4,5,8}) }, --was 5
+				}
+				
+				units02 = { 
+					{type = "scar_knight", numSquads = Util_DifVar({2,2,3,4}) }, --was 3
+					{type = "scar_horseman", numSquads = Util_DifVar({4,4,5,6}) }, --was 5
+				}
+				
+				units03 = { 
+					{type = "scar_knight", numSquads = Util_DifVar({4,4,5,5})}, --was 5
+					{type = "scar_horseman", numSquads = Util_DifVar({4,4,5,8}) }, --was 5
+				}
+				
+				units04 = { 
+					{type = "scar_knight", numSquads = Util_DifVar({6,6,6,12}) }, --was 10
+				}
+				
+			else
+				moduleUsed = wave_rouen_defend3_base
+				
+			end
+		else 
+			if choiceAttack <= 10  then
+				lane = 2
+				
+				if defend2VillageDestroyed == false then
+
+					moduleUsed = wave_defend2_base
+				
+					units01 = {
+						{type = "scar_manatarms", numSquads = Util_DifVar({1,1,3,4}), difficulty = {GD_HARD, GD_EXPERT} }, --was 7
+						{type = "scar_spearman", numSquads = Util_DifVar({5,5,5,6}) }, --was 7
+					}
+							
+					units02 = { 
+						{type = "scar_spearman", numSquads = Util_DifVar({8,8,5,8}) }, --was 5
+						{type = "scar_manatarms", numSquads = Util_DifVar({1,1,5,4}), difficulty = {GD_HARD, GD_EXPERT}}, --was 5
+
+					}
+				
+					units03 = { 
+						{type = "scar_manatarms", numSquads = Util_DifVar({2,2,5,6})}, --was 6
+						{type = "scar_spearman", numSquads = Util_DifVar({8,8,7,10}) }, --was 6
+
+					}
+					
+					units04 = { 
+						{type = "scar_manatarms", numSquads = Util_DifVar({1,1,6,8}), difficulty = {GD_HARD, GD_EXPERT} }, --was 8
+						{type = "scar_spearman", numSquads = Util_DifVar({12,12,8,12}) }, --was 8
+
+					}
+					
+				elseif defend4VillageDestroyed == false then
+					
+					moduleUsed = wave_defend4_base
+
+					units01 = {
+						{type = "scar_manatarms", numSquads = Util_DifVar({1,1,5,6}), difficulty = {GD_HARD, GD_EXPERT} }, --was 4
+						{type = "scar_spearman", numSquads = Util_DifVar({8,8,4,8}) }, --was 4
+					}
+							
+					units02 = { 
+						{type = "scar_spearman", numSquads = Util_DifVar({6,6,6,8})}, --was 6
+						{type = "scar_archer", numSquads = Util_DifVar({4,4,6,8}) }, --was 6
+
+					}
+				
+					units03 = { 
+						{type = "scar_crossbowman", numSquads = Util_DifVar({5,5,5,10}) }, --was 5
+						{type = "scar_spearman", numSquads = Util_DifVar({5,5,7,10}) }, --was 6
+
+					}
+					
+					units04 = { 
+						{type = "scar_manatarms", numSquads = Util_DifVar({2,2,6,8}) }, --was 6
+						{type = "scar_spearman", numSquads = Util_DifVar({6,6,5,8}) }, --was 5
+						{type = "scar_crossbowman", numSquads = Util_DifVar({4,4,5,8}) }, --was 5
+					}
+					
+				else
+					moduleUsed = wave_rouen_middle_base
+				end
+		
+			else
+				lane = 3
+			
+				if defend6VillageDestroyed == false then
+
+					moduleUsed = wave_defend6_base
+				
+					units01 = {
+						{type = "scar_spearman", numSquads = Util_DifVar({6,6,8,8}) }, --was 8
+					}
+							
+					units02 = { 
+						{type = "scar_spearman", numSquads = Util_DifVar({8,8,8,8}) }, --was 5
+						{type = "scar_manatarms", numSquads = Util_DifVar({1,1,2,4}), difficulty = {GD_HARD, GD_EXPERT} }, --was 5
+
+					}
+				
+					units03 = { 
+						{type = "scar_manatarms", numSquads = Util_DifVar({2,2,4,8}) }, --was 9
+						{type = "scar_spearman", numSquads = Util_DifVar({6,6,8,8}) }, --was 6
+
+					}
+					
+					units04 = { 
+						{type = "scar_manatarms", numSquads = Util_DifVar({4,4,6,8}) }, --was 9
+						{type = "scar_spearman", numSquads = Util_DifVar({6,6,8,10}) }, --was 9
+
+					}
+					
+				elseif defend5VillageDestroyed == false then
+					
+					moduleUsed = wave_defend5_base
+
+					units01 = {
+						{type = "scar_horseman", numSquads = Util_DifVar({6,6,8,10}) }, --was 7
+					}
+					
+					units02 = { 
+						{type = "scar_spearman", numSquads = Util_DifVar({4,4,6,8}) }, --was 5
+						{type = "scar_horseman", numSquads = Util_DifVar({4,4,4,6}) }, --was 6
+
+					}
+					
+					units03 = { 
+						{type = "scar_horseman", numSquads = Util_DifVar({4,4,6,8}) }, --was 6
+						{type = "scar_spearman", numSquads = Util_DifVar({6,6,6,8}) }, --was 6
+						{type = "scar_manatarms", numSquads = Util_DifVar({2,2,3,4}) }, --was 5
+
+					}
+					
+					units04 = { 
+						{type = "scar_manatarms", numSquads = Util_DifVar({2,2,4,6}) }, --was 6
+						{type = "scar_spearman", numSquads = Util_DifVar({6,6,6,8}) }, --was 6
+						{type = "scar_knight", numSquads = Util_DifVar({1,1,4,4}) }, --was 5
+						{type = "scar_horseman", numSquads = Util_DifVar({3,3,4,6}) }, --was 5
+					}
+					
+				else
+					
+					moduleUsed = wave_rouen_lower_base
+				end
+			end
+		end	
+		
+	end
+	
+	if i_rouen_phase[lane] <= 2 then
+		if scartype(moduleUsed) == ST_STRING then
+			print(moduleUsed)
+		end
+		Wave_SetUnits(moduleUsed, units01)
+		Wave_Prepare(moduleUsed)
+	else
+		if i_rouen_phase[lane] <= 6 then 
+			Wave_SetUnits(moduleUsed, units02)
+			Wave_Prepare(moduleUsed)
+				
+		else
+			if i_rouen_phase[lane] <= 9 then 
+								
+				Wave_SetUnits(moduleUsed, units03)
+				Wave_Prepare(moduleUsed)
+			else
+				Wave_SetUnits(moduleUsed, units04)
+				Wave_Prepare(moduleUsed)
+			end
+		end
+	end
+	
+	i_rouen_phase[lane] = i_rouen_phase[lane] + 1
+	
+end
+
+function StartNextWave()
+	
+	if Objective_IsComplete(SOBJ_DestroyRouenWalls) == true then 
+		Rule_RemoveMe()
+		print("rouen wall destroyed so stop waves")
+	else
+		
+		if #moduleUsed.queued_waves > 0 then
+			if #moduleUsed.queued_waves[1].units == 0 then
+
+				Wave_Launch(moduleUsed)
+				Rule_AddOneShot(ChooseWhereToSendUnitsToPlayer,5)
+				
+			else
+				Rule_AddOneShot(retrySendingUnitsWaves,15)
+			end
+		--else
+			--Rule_AddOneShot(ChooseWhereToSendUnitsToPlayer,5)
+		end
+		
+	end
+	
+end
+
+function retrySendingUnitsWaves()
+	Wave_Launch(moduleUsed)
+	Rule_AddOneShot(ChooseWhereToSendUnitsToPlayer,5)
+end
+
+
+function FrenchMovesOnTown()
+
+	
+	--Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_enemy_base_approach, 160)
+	--SGroup_DestroyAllSquads(sg_temp)
+	
+	Player_GetAll(player2)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	EGroup_Filter(eg_allentities, BP_GetEntityBlueprint("holy_site"), FILTER_REMOVE)
+	EGroup_SetPlayerOwner(eg_allentities, player1)
+
+	sg_outro_parade01 = SGroup_CreateIfNotFound("sg_outro_parade01")
+	sg_outro_parade02 = SGroup_CreateIfNotFound("sg_outro_parade02")
+	sg_outro_parade03 = SGroup_CreateIfNotFound("sg_outro_parade03")
+	sg_outro_parade04 = SGroup_CreateIfNotFound("sg_outro_parade04")
+	sg_outro_cheer_right = SGroup_CreateIfNotFound("sg_outro_cheer_right")
+	sg_outro_cheer_left = SGroup_CreateIfNotFound("sg_outro_cheer_left")
+	sg_outro_cheer_wall = SGroup_CreateIfNotFound("sg_outro_cheer_wall")
+	sg_outro_cheer_central = SGroup_CreateIfNotFound("sg_outro_cheer_central")
+	sg_outro_eng_flee01 = SGroup_CreateIfNotFound("sg_outro_eng_flee01")
+	sg_outro_eng_flee02 = SGroup_CreateIfNotFound("sg_outro_eng_flee02")
+	sg_outro_infantry = SGroup_CreateIfNotFound("sg_outro_infantry")
+	sg_outro_infantry02 = SGroup_CreateIfNotFound("sg_outro_infantry02")
+	sg_outro_infantry03 = SGroup_CreateIfNotFound("sg_outro_infantry03")
+	sg_outro_infantry04 = SGroup_CreateIfNotFound("sg_outro_infantry04")
+	sg_outro_infantry05 = SGroup_CreateIfNotFound("sg_outro_infantry05")
+	sg_outro_infantry06 = SGroup_CreateIfNotFound("sg_outro_infantry06")
+	sg_outro_infantry07 = SGroup_CreateIfNotFound("sg_outro_infantry07")
+	sg_outro_infantry08 = SGroup_CreateIfNotFound("sg_outro_infantry08")
+	
+	-- Set fleeing English soldiers to be Neutral so that villagers leave them alone
+	Player_SetRelationship(player1, player2, R_NEUTRAL)
+	Player_SetRelationship(player2, player1, R_NEUTRAL)
+	
+	-- ... but that makes them white, so...
+	-- Change colour of English raiders to enemy colour
+	Game_SetPlayerSlotColour(player2, 2)              -- England
+    Game_SetPlayerUISlotColour(player2, 2)
+	
+	
+	-- OLD Parade from top-left of shot to TC
+	--[[
+	local units_parade01 = {
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outro_parade_01, sgroup = sg_outro_parade01},
+		{type = "scar_spearman", numSquads = 3, spawn = mkr_outro_parade_02, sgroup = sg_outro_infantry},
+		{type = "scar_manatarms", numSquads = 3, spawn = mkr_outro_parade_03, sgroup = sg_outro_infantry},
+		{type = "scar_scout", numSquads = 2, spawn = mkr_outro_parade_03a, sgroup = sg_outro_parade01},
+	}
+	
+	local parade01_markers = {
+	mkr_outro_parade_03_target,
+	}
+		
+	Util_UnitParade(parade01_markers, units_parade01)
+	Modify_UnitSpeed(sg_outro_parade01, 0.2)
+	Modify_UnitSpeed(sg_outro_infantry, 0.4)
+	--]]
+	
+	
+	-- NEW Parade from top-left of shot to TC
+	
+	local outro_horse_speed = 0.21
+	local outro_man_speed = 0.32
+	local outro_man_speed_slow = 0.3
+	
+	UnitEntry_DeploySquads(player1, sg_outro_parade01, {type = "scar_knight", numSquads = 2}, mkr_outro_parade_03)
+	UnitEntry_DeploySquads(player1, sg_outro_infantry, {type = "scar_spearman", numSquads = 4}, mkr_outro_parade_01)
+	UnitEntry_DeploySquads(player1, sg_outro_infantry02, {type = "scar_manatarms", numSquads = 2}, mkr_outro_parade_02)
+	Cmd_FormationMove(sg_outro_parade01, mkr_outro_parade_03_target)
+	Cmd_FormationMove(sg_outro_infantry, mkr_outro_parade_01_target)
+	Cmd_FormationMove(sg_outro_infantry02, mkr_outro_parade_02_target)
+	Modify_UnitSpeed(sg_outro_parade01, outro_horse_speed)
+	Modify_UnitSpeed(sg_outro_infantry, outro_man_speed)
+	Modify_UnitSpeed(sg_outro_infantry02, outro_man_speed)
+	
+	
+	-- OLD Parade from right of shot to TC
+	--[[
+	local units_parade02 = {
+		{type = "scar_knight", numSquads = 1, spawn = mkr_outro_parade_04, sgroup = sg_outro_parade02},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outro_parade_05, sgroup = sg_outro_parade02},
+		{type = "scar_knight", numSquads = 2, spawn = mkr_outro_parade_06, sgroup = sg_outro_parade02},
+		{type = "scar_manatarms", numSquads = 2, spawn = mkr_outro_parade_07, sgroup = sg_outro_infantry02},
+		{type = "scar_manatarms", numSquads = 2, spawn = mkr_outro_parade_08, sgroup = sg_outro_infantry02},
+		{type = "scar_spearman", numSquads = 3, spawn = mkr_outro_parade_09, sgroup = sg_outro_infantry02},
+		{type = "scar_spearman", numSquads = 3, spawn = mkr_outro_parade_10, sgroup = sg_outro_infantry02},
+		{type = "scar_archer", numSquads = 2, spawn = mkr_outro_parade_11, sgroup = sg_outro_infantry02},
+		{type = "scar_archer", numSquads = 2, spawn = mkr_outro_parade_12, sgroup = sg_outro_infantry02},
+	}
+	
+	local parade02_markers = {
+	mkr_outro_parade_04_target,
+	}
+	
+	Util_UnitParade(parade02_markers, units_parade02)
+	Modify_UnitSpeed(sg_outro_parade02, 0.2)
+	Modify_UnitSpeed(sg_outro_infantry02, 0.3)
+	--]]
+	
+	-- NEW Parade from right of shot to TC
+	
+	UnitEntry_DeploySquads(player1, sg_outro_parade02, {type = "scar_knight", numSquads = 1}, mkr_outro_parade_04)
+	UnitEntry_DeploySquads(player1, sg_outro_parade03, {type = "scar_knight", numSquads = 1}, mkr_outro_parade_05)
+	UnitEntry_DeploySquads(player1, sg_outro_parade04, {type = "scar_knight", numSquads = 1}, mkr_outro_parade_06)
+	UnitEntry_DeploySquads(player1, sg_outro_infantry03, {type = "scar_spearman", numSquads = 2}, mkr_outro_parade_07)
+	UnitEntry_DeploySquads(player1, sg_outro_infantry04, {type = "scar_spearman", numSquads = 2}, mkr_outro_parade_08)
+	UnitEntry_DeploySquads(player1, sg_outro_infantry05, {type = "scar_archer", numSquads = 2}, mkr_outro_parade_09)
+	UnitEntry_DeploySquads(player1, sg_outro_infantry06, {type = "scar_archer", numSquads = 2}, mkr_outro_parade_10)
+	UnitEntry_DeploySquads(player1, sg_outro_infantry07, {type = "scar_manatarms", numSquads = 2}, mkr_outro_parade_11)
+	UnitEntry_DeploySquads(player1, sg_outro_infantry08, {type = "scar_manatarms", numSquads = 2}, mkr_outro_parade_12)
+	Cmd_FormationMove(sg_outro_parade02, mkr_outro_parade_04_target)
+	Cmd_FormationMove(sg_outro_parade03, mkr_outro_parade_05_target)
+	Cmd_FormationMove(sg_outro_parade04, mkr_outro_parade_05_target)
+	Cmd_FormationMove(sg_outro_infantry03, mkr_outro_parade_06_target)
+	Cmd_FormationMove(sg_outro_infantry04, mkr_outro_parade_06_target)
+	Cmd_FormationMove(sg_outro_infantry05, mkr_outro_parade_07_target)
+	Cmd_FormationMove(sg_outro_infantry06, mkr_outro_parade_07_target)
+	Cmd_FormationMove(sg_outro_infantry07, mkr_outro_parade_08_target)
+	Cmd_FormationMove(sg_outro_infantry08, mkr_outro_parade_08_target)
+	Modify_UnitSpeed(sg_outro_parade02, outro_horse_speed)
+	Modify_UnitSpeed(sg_outro_parade03, outro_horse_speed)
+	Modify_UnitSpeed(sg_outro_parade04, outro_horse_speed)
+	Modify_UnitSpeed(sg_outro_infantry03, outro_man_speed_slow)
+	Modify_UnitSpeed(sg_outro_infantry04, outro_man_speed_slow)	
+	Modify_UnitSpeed(sg_outro_infantry05, outro_man_speed_slow)
+	Modify_UnitSpeed(sg_outro_infantry06, outro_man_speed_slow)
+	Modify_UnitSpeed(sg_outro_infantry07, outro_man_speed)
+	Modify_UnitSpeed(sg_outro_infantry08, outro_man_speed)
+	
+	-- Cheering people
+	
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_left, {type = "scar_villager", numSquads = 2}, mkr_outro_cheer_01)
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_left, {type = "scar_villager", numSquads = 2}, mkr_outro_cheer_02)
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_left, {type = "scar_villager", numSquads = 2}, mkr_outro_cheer_03)
+	
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_right, {type = "scar_villager", numSquads = 2}, mkr_outro_cheer_04)
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_right, {type = "scar_villager", numSquads = 2}, mkr_outro_cheer_05)
+	
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_central, {type = "scar_villager", numSquads = 2}, mkr_outro_cheer_11)
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_central, {type = "scar_villager", numSquads = 2}, mkr_outro_cheer_12)
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_central, {type = "scar_villager", numSquads = 5}, mkr_outro_cheer_10)
+	
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_wall, {type = "scar_archer", numSquads = 2}, mkr_outro_cheer_06)
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_wall, {type = "scar_crossbowman", numSquads = 2}, mkr_outro_cheer_07)
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_wall, {type = "scar_archer", numSquads = 2}, mkr_outro_cheer_08)
+	UnitEntry_DeploySquads(player1, sg_outro_cheer_wall, {type = "scar_crossbowman", numSquads = 2}, mkr_outro_cheer_09)
+	
+	-- Fleeing English soldiers
+	
+	UnitEntry_DeploySquads(player2, sg_outro_eng_flee01, {{type = "scar_spearman", numSquads = 2}, {type = "scar_manatarms", numSquads = 2}, {type = "scar_archer", numSquads = 2}}, mkr_outro_eng_flee01)
+	UnitEntry_DeploySquads(player2, sg_outro_eng_flee02, {{type = "scar_spearman", numSquads = 5}, {type = "scar_manatarms", numSquads = 4}}, mkr_outro_eng_flee02)
+	Cmd_FormationMove(sg_outro_eng_flee01, mkr_outro_eng_flee01_target)
+	Cmd_FormationMove(sg_outro_eng_flee02, mkr_outro_eng_flee02_target)
+ 
+end

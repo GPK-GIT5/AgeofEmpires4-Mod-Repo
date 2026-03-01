@@ -1,0 +1,376 @@
+import("training.scar")
+import("cardinal.scar")
+
+__t_trainingLongInterval = 60
+__t_trainingModerateInterval = 30
+__t_trainingShortInterval = 10
+__t_trainingBriefInterval = 1
+__t_trainingLongDistance = 50
+
+g_user_has_started_outpost = 0
+
+
+function UserIsGoingToBuildAnOutpost(goal)
+	return UserIsGoingToBuildBuildingType("outpost")
+end
+
+function UserHasStartedToBuildAnOutpost(goal)
+	return UserHasStartedToBuildABuilding("outpost")
+end
+
+function UserIsBuildingAnOutpost(goalSequence)
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", Game_GetLocalPlayer())
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	SGroup_Filter(sg_currentSelection, villagerBP, FILTER_KEEP)
+	
+	if SGroup_Count(sg_currentSelection) > 0 then
+		local outpostBP = Cardinal_ConvertTypeToEntityBlueprint("outpost", Game_GetLocalPlayer())
+		
+		if UserIsGoingToBuildBuildingType("outpost") then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function NotUserIsBuildingAnOutpost(goalSequence)
+	if not UserIsGoingToBuildBuildingType("outpost") then
+		return true
+	end
+	return false
+end
+
+function TimeHasPassedWithoutBuildingAnOutpost(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingBriefInterval then
+		local localPlayer = Game_GetLocalPlayer()
+		local houseBP = Cardinal_ConvertTypeToEntityBlueprint("outpost", localPlayer)
+		if houseBP ~= nil 
+		and training_currentConstructionBlueprint == nil 
+		and Player_CanConstruct(localPlayer, houseBP) then
+			goalSequence.goals[2].key = houseBP
+			local villager = FindVillagerInSight(goalSequence)
+			if villager ~= nil then
+				goalSequence.goals[1].key = villager
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+function OnConstructionPhaseChange(blueprint, phase, queueCount)
+	if phase == TP_Position or phase == TP_Facing then
+		training_currentConstructionBlueprint = blueprint
+		training_currentConstructionPhase = "PLACING"
+	else 
+		training_currentConstructionBlueprint = nil
+		training_currentConstructionPhase = nil
+	end
+	
+	if phase == TP_Issued then
+		training_previousConstructionBlueprint = blueprint
+		training_currentConstructionPhase = nil
+	end
+end
+
+-- Ovoo
+function UserIsGoingToBuildAnOvoo(goal)
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local ovooBP = BP_GetEntityBlueprint("building_stone_deposit_ovoo_mon")
+	
+	if training_currentConstructionBlueprint == ovooBP then
+		return true
+	end
+	
+	return false
+	
+end
+
+function UserHasStartedToBuildAnOvoo(goal)
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local ovooBP = BP_GetEntityBlueprint("building_stone_deposit_ovoo_mon")
+	
+	if training_previousConstructionBlueprint == ovooBP then
+		return true
+	end
+	
+	return false
+end
+
+function TimeHasPassedWithoutBuildingAnOvoo(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	local pos_camera_target = Camera_GetPivot()
+	
+	local goalOffset = 0
+	if(UI_IsXboxKBMUI()) then
+		goalOffset = 1
+	end
+	
+	if currentTime > __t_trainingShortInterval then
+		local localPlayer = Game_GetLocalPlayer()
+		local ovooBP = BP_GetEntityBlueprint("building_stone_deposit_ovoo_mon")
+		local stoneEntity = nil
+		
+		eg_stone_deposit = EGroup_CreateIfNotFound("eg_stone_deposit")
+		
+		World_GetNeutralEntitiesNearPoint(eg_stone_deposit, pos_camera_target, 150)
+		EGroup_Filter(eg_stone_deposit, BP_GetEntityBlueprintsWithType("stone"), FILTER_KEEP)
+		if not EGroup_IsEmpty(eg_stone_deposit) then
+			stoneEntityID = Entity_GetID(EGroup_GetClosestEntity(eg_stone_deposit, pos_camera_target))
+			stoneEntity = EGroup_GetClosestEntity(eg_stone_deposit, pos_camera_target)
+		end
+		
+		if ovooBP ~= nil 
+		and training_currentConstructionBlueprint == nil 
+		and Player_CanConstruct(localPlayer, ovooBP) 
+		and (stoneEntityID ~= nil and Entity_IsValid(stoneEntityID)) 
+		and (stoneEntity ~= nil and Entity_IsValid(Entity_GetID(stoneEntity)))
+		and Player_CanSeeEntity(localPlayer, stoneEntity) then
+			goalSequence.goals[3 + goalOffset].key = Entity_FromID(stoneEntityID)
+			goalSequence.goals[2 + goalOffset].key = ovooBP
+			
+			local villager = FindVillagerInSight(goalSequence)
+			if villager ~= nil then
+				goalSequence.goals[1].key = villager
+				EGroup_Destroy(eg_stone_deposit)
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+-- Depleted Ovoo
+function OvooHasDepletedAllStone(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	local pos_camera_target = Camera_GetPivot()
+	
+	eg_ovoo = EGroup_CreateIfNotFound("eg_ovoo")
+	
+	eg_ovoo = Player_GetEntitiesFromType(Game_GetLocalPlayer(), "ovoo")
+	if not EGroup_IsEmpty(eg_ovoo) then
+		local ovooEntity = EGroup_GetSpawnedEntityAt(eg_ovoo, 1)
+		local stoneEntity = Entity_GetStateTreeTargeting_EntityTarget(ovooEntity, COMMITTED_RESOURCE_DEPOSIT.target_type, COMMITTED_RESOURCE_DEPOSIT.target_enum)
+		if(stoneEntity ~= nil) then
+			
+			if Entity_GetRemainingResourceDepositAmount(stoneEntity) <= 0 and Misc_IsEntityOnScreen(ovooEntity, 0.5) then
+				goalSequence.goals[1].key = ovooEntity
+				goalSequence.goals[1].ovooEntity = ovooEntity
+				EGroup_Destroy(eg_ovoo)
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function TimeHasPassedSinceLessonStarted(goal)
+	local currentTime = Timer_GetElapsed(goal.timerID)
+
+	if currentTime > __t_trainingModerateInterval or (goal.ovooEntity ~= nil and Entity_IsValid(Entity_GetID(goal.ovooEntity)) == false)then
+		return true
+	end
+
+	return false
+end
+
+-- Khan Death
+function KhanHasDied(goalSequence)
+	
+	local khan = Player_GetStateModelPlayerTarget(Game_GetLocalPlayer(), "khan_mon")
+	local towncenter = Player_GetStateModelEntityTarget(Game_GetLocalPlayer(), "khan_active_spawner_mon")
+
+	if khan == nil and towncenter ~= nil then
+		--goalSequence.goals[1].key = towncenter
+		return true
+	end
+	return false
+end
+
+function KhanHasRespawned(goal)
+	local khan = Player_GetStateModelPlayerTarget(Game_GetLocalPlayer(), "khan_mon")
+	
+	if khan ~= nil then
+		return true
+	end
+	return false
+end
+
+-- Packed Buildings
+function OvooWithoutBuildingsBuilt(goalSequence)
+	local radius = 80
+	eg_ovoo = EGroup_CreateIfNotFound("eg_ovoo")
+	eg_ovoo = Player_GetEntitiesFromType(Game_GetLocalPlayer(), "ovoo")
+	
+	if EGroup_IsEmpty(eg_ovoo) == false then
+		eg_other_buildings = EGroup_CreateIfNotFound("eg_other_buildings")
+		
+		Player_GetAllEntitiesNearMarker(Game_GetLocalPlayer(), eg_other_buildings, Util_GetPosition(eg_ovoo), radius)
+		EGroup_Remove(eg_other_buildings, EGroup_GetSpawnedEntityAt(eg_ovoo, 1))
+		EGroup_FilterUnderConstruction(eg_ovoo, FILTER_REMOVE)
+		
+		if EGroup_IsEmpty(eg_other_buildings) and EGroup_IsEmpty(eg_ovoo) == false then
+			goalSequence.goals[1].key = Entity_GetStateTreeTargeting_EntityTarget(EGroup_GetSpawnedEntityAt(eg_ovoo, 1), COMMITTED_RESOURCE_DEPOSIT.target_type, COMMITTED_RESOURCE_DEPOSIT.target_enum)
+			return true	
+		end
+	end 
+	return false
+end
+
+function OvooHasNearbyBuildings(goal)
+	local radius = 80
+	eg_other_buildings = EGroup_CreateIfNotFound("eg_other_buildings")
+	
+	Player_GetAllEntitiesNearMarker(Game_GetLocalPlayer(), eg_other_buildings, Util_GetPosition(eg_ovoo), radius)
+	EGroup_Remove(eg_other_buildings, EGroup_GetSpawnedEntityAt(eg_ovoo, 1))
+	
+	if not EGroup_IsEmpty(eg_other_buildings) then
+		return true	
+	end
+	
+	return false
+end
+
+function UserHasSelectedKhan(goal)
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_IsOfType(squad, "scar_khan") then
+			return true
+		end
+	end
+	
+	return false
+end
+
+-- Build Ovoo hint ignore
+function UserCannotBuildOvoo(goalSequence)
+	local localPlayer = Game_GetLocalPlayer()
+	local ovooBP = BP_GetEntityBlueprint("building_stone_deposit_ovoo_mon")
+	local stoneEntity = nil
+	local pos_camera_target = Camera_GetPivot()
+
+	-- If player does not have enough resources to build Ovoo
+	if ovooBP ~= nil and not Player_CanConstruct(localPlayer, ovooBP) then
+		return true
+	end
+	
+	-- If player cannot see a Stone Deposit on screen
+	eg_stone_deposit = EGroup_CreateIfNotFound("eg_stone_deposit")
+	
+	World_GetNeutralEntitiesNearPoint(eg_stone_deposit, pos_camera_target, 150)
+	EGroup_Filter(eg_stone_deposit, BP_GetEntityBlueprintsWithType("stone"), FILTER_KEEP)
+	if not EGroup_IsEmpty(eg_stone_deposit) then
+		stoneEntity = EGroup_GetClosestEntity(eg_stone_deposit, pos_camera_target)
+		
+		if Player_CanSeeEntity(localPlayer, stoneEntity) == false then
+			return true
+		end
+	end
+end
+
+-- CONTROLLER VERSIONS OF FUNCTIONS --
+
+-- Set goal keys for controller hints 
+function Controller_TimeHasPassedWithoutBuildingAnOvoo(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	local pos_camera_target = Camera_GetPivot()
+	
+	if currentTime > __t_trainingShortInterval then
+		local localPlayer = Game_GetLocalPlayer()
+		local ovooBP = BP_GetEntityBlueprint("building_stone_deposit_ovoo_mon")
+		local stoneEntity = nil
+		
+		eg_stone_deposit = EGroup_CreateIfNotFound("eg_stone_deposit")
+		
+		World_GetNeutralEntitiesNearPoint(eg_stone_deposit, pos_camera_target, 150)
+		EGroup_Filter(eg_stone_deposit, BP_GetEntityBlueprintsWithType("stone"), FILTER_KEEP)
+		if not EGroup_IsEmpty(eg_stone_deposit) then
+			stoneEntityID = Entity_GetID(EGroup_GetClosestEntity(eg_stone_deposit, pos_camera_target))
+			stoneEntity = EGroup_GetClosestEntity(eg_stone_deposit, pos_camera_target)
+		end
+		
+		if ovooBP ~= nil 
+		and training_currentConstructionBlueprint == nil 
+		and Player_CanConstruct(localPlayer, ovooBP) 
+		and (stoneEntityID ~= nil and Entity_IsValid(stoneEntityID)) 
+		and (stoneEntity ~= nil and Entity_IsValid(Entity_GetID(stoneEntity)))
+		and Player_CanSeeEntity(localPlayer, stoneEntity) then
+			goalSequence.goals[4].key = Entity_FromID(stoneEntityID)
+			goalSequence.goals[3].key = ovooBP
+			
+			local villager = FindVillagerInSight(goalSequence)
+			if villager ~= nil then
+				goalSequence.goals[1].key = villager
+				EGroup_Destroy(eg_stone_deposit)
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+-- Get the first selected villager to be used as a hint anchor (key)
+function MongolTraining_GetSelectedVillager()
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", Game_GetLocalPlayer())
+	
+	SGroup_Clear(sg_currentSelection)
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_GetBlueprint(squad) == villagerBP then
+			return squad
+		end
+	end
+	
+	return nil
+end
+
+-- Refresh hint 2 so it can point at the currently selected unit
+function Controller_UserCannotBuildOvoo(goalSequence)
+	local localPlayer = Game_GetLocalPlayer()
+	local ovooBP = BP_GetEntityBlueprint("building_stone_deposit_ovoo_mon")
+	local stoneEntity = nil
+	local pos_camera_target = Camera_GetPivot()
+	
+	local selectedVillager = MongolTraining_GetSelectedVillager()
+	
+	if goalSequence.currentGoalIndex == 2 then
+
+		local goal = goalSequence.goals[goalSequence.currentGoalIndex]
+		if goal.key ~= selectedVillager then
+			-- next sequence update will recreate the tag if it has been invalidated
+			-- this allow dynamically changing the tag target
+			Training_InvalidateCurrentTag()
+			goal.key = selectedVillager
+		end
+	end
+
+	-- If player does not have enough resources to build Ovoo
+	if ovooBP ~= nil and not Player_CanConstruct(localPlayer, ovooBP) then
+		return true
+	end
+	
+	-- If player cannot see a Stone Deposit on screen
+	eg_stone_deposit = EGroup_CreateIfNotFound("eg_stone_deposit")
+	
+	World_GetNeutralEntitiesNearPoint(eg_stone_deposit, pos_camera_target, 150)
+	EGroup_Filter(eg_stone_deposit, BP_GetEntityBlueprintsWithType("stone"), FILTER_KEEP)
+	if not EGroup_IsEmpty(eg_stone_deposit) then
+		stoneEntity = EGroup_GetClosestEntity(eg_stone_deposit, pos_camera_target)
+		
+		if Player_CanSeeEntity(localPlayer, stoneEntity) == false then
+			return true
+		end
+	end
+end

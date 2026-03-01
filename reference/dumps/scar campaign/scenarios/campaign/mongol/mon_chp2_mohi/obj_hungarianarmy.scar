@@ -1,0 +1,484 @@
+--
+-- Battle of Mohi 1241
+--
+
+function HungarianArmy_InitObjectives()
+	
+	OBJ_DestroyArmy = {
+		
+		Title = "$11176402", -- Destroy the Hungarian army
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.Scout_Bridge,
+		
+		IsFailed = Mohi_IsPlayerEconomyLocked,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_AssaultTheCamp)
+		end,
+		
+		PreComplete = function()
+			SGroup_Clear(sg_temp)
+			Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_hungarian_camp_center)
+			Cmd_Move(sg_temp, mkr_camp_rout)
+		end,
+		
+		OnComplete = function()
+			Rule_RemoveAll()
+			Check_Completion_Time()
+			Mission_Complete()			
+		end,
+	}
+	
+	SOBJ_DriveArmyBack = {
+		
+		Title = "$11176401", -- Pursue the fleeing Hungarian enemies
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyArmy,
+		
+		Intel_Complete = EVENTS.Drive_Back_Complete,
+		
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_DestroyArmy, Marker_GetPosition(mkr_hungarian_camp_center), true, "$11184605", true) -- Hungarian camp
+			hpid_defenseline_L1 = Objective_AddUIElements(SOBJ_DriveArmyBack, mkr_left_defend_line_01, true, "$11183410") --Hungarian forces
+			hpid_defenseline_R1 = Objective_AddUIElements(SOBJ_DriveArmyBack, mkr_right_defend_line_01, true, "$11183410") --Hungarian forces
+			
+			Obj_SetProgressVisible(SOBJ_DriveArmyBack.ID, true)
+			Obj_SetProgress(SOBJ_DriveArmyBack.ID, 0)
+		end,
+		
+		PreStart = function()
+			Util_AutoSave()
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(HungarianArmy_CheckRout, 1, {moduleData = def_L01, fallbackModule = def_L02, old_hpid = hpid_defenseline_L1})
+			Rule_AddInterval(HungarianArmy_CheckRout, 1, {moduleData = def_L02, fallbackModule = camp_melee_1, old_hpid = hpid_defenseline_L2})
+			Rule_AddInterval(HungarianArmy_CheckRout, 1, {moduleData = def_R01, fallbackModule = def_R02, old_hpid = hpid_defenseline_R1})
+			Rule_AddInterval(HungarianArmy_CheckRout, 1, {moduleData = def_R02, fallbackModule = camp_melee_2, old_hpid = hpid_defenseline_R2})
+			
+			Rule_AddGlobalEvent(HungarianArmy_CheckWherePlayerAttacking, GE_SquadKilled)
+			Rule_AddInterval(HungarianArmy_MonitorSquadToStopReinforcements, 1, {module = def_L02, objective = SOBJ_DriveArmyBack})
+			Rule_AddInterval(HungarianArmy_MonitorSquadToStopReinforcements, 1, {module = def_R02, objective = SOBJ_DriveArmyBack})
+			
+			if Game_GetSPDifficulty() >= GD_NORMAL then
+				Rule_AddInterval(HungarianArmy_BotherPlayerIfTheyAreIdleAgain, 120, {interval = 120})
+				--Don't make Story Mode players worry about timing
+			end
+			
+			--Reinforces the defenders if the player doesn't really attack
+			Rule_AddOneShot(HungarianArmy_ReinforceExistingModules, 120, {module = def_L01, opposite_module = def_R01, spawnLocation = mkr_back_left_leftflank, destination = mkr_front_left_leftflank})
+			Rule_AddOneShot(HungarianArmy_ReinforceExistingModules, 120, {module = def_R01, opposite_module = def_L01, spawnLocation = mkr_back_right_leftflank, destination = mkr_front_right_leftflank})
+			
+			Rule_AddOneShot(HungarianArmy_ReinforceExistingModules, 240, {module = def_L02, opposite_module = def_R02, spawnLocation = mkr_camp_melee_1, destination = mkr_back_left_leftflank})
+			Rule_AddOneShot(HungarianArmy_ReinforceExistingModules, 240, {module = def_R02, opposite_module = def_L02, spawnLocation = mkr_camp_melee_2, destination = mkr_back_right_leftflank})
+			
+			Rule_AddOneShot(HungarianArmy_ReinforceExistingModules, 360, {module = def_L01, opposite_module = def_R01, spawnLocation = mkr_back_left_rightflank, destination = mkr_front_left_rightflank})
+			Rule_AddOneShot(HungarianArmy_ReinforceExistingModules, 360, {module = def_R01, opposite_module = def_L01, spawnLocation = mkr_back_right_rightflank, destination = mkr_front_right_rightflank})
+			
+			Rule_AddOneShot(HungarianArmy_ReinforceExistingModules, 480, {module = def_L02, opposite_module = def_R02, spawnLocation = mkr_camp_melee_1, destination = mkr_back_left_rightflank})
+			Rule_AddOneShot(HungarianArmy_ReinforceExistingModules, 480, {module = def_R02, opposite_module = def_L02, spawnLocation = mkr_camp_melee_2, destination = mkr_back_right_rightflank})
+			
+			-- Remove this so it doesn't go on forever
+			Rule_Remove(Mohi_HealAmbushers)
+			
+		end,
+		
+		IsComplete = function()
+			--This doesn't actually complete the function, I'm just using this to update the UI cause I can and it'll stop once the objective completes
+			--If you're looking for code that completes this objective, check the HungarianArmy_CheckRout rule calls in the OnStart function.
+			--Those functions will check if they are below threshold, and if they are the 2nd defense line, will complete the objective after a delay.
+			
+			--Logic that updates the progress bar for this objective
+			--First half
+			local L01_difference = def_L01.highestUnitCount - SGroup_CountSpawned(def_L01.sgroup)
+			local R01_difference = def_R01.highestUnitCount - SGroup_CountSpawned(def_R01.sgroup)
+			
+			local first_line_progress = 0
+			local second_line_progress = 0
+			
+			if def_L01.status == "Dissolved" or def_R01.status == "Dissolved" then
+				first_line_progress = 1
+			else
+				if L01_difference > R01_difference then
+					--The denominator is effectively the death threshold
+					first_line_progress = L01_difference / (def_L01.highestUnitCount - (def_L01.highestUnitCount * def_L01.withdrawThreshold))
+				else
+					first_line_progress = R01_difference / (def_L02.highestUnitCount - (def_L02.highestUnitCount * def_L02.withdrawThreshold))
+				end
+			end
+			
+			if first_line_progress > 1 then first_line_progress = 1 end
+			first_line_progress = first_line_progress * 0.4
+			
+			--Second half
+			local L02_difference = def_L02.highestUnitCount - SGroup_CountSpawned(def_L02.sgroup)
+			local R02_difference = def_R02.highestUnitCount - SGroup_CountSpawned(def_R02.sgroup)
+			
+			if L02_difference > R02_difference then
+				--The denominator is effectively the death threshold
+				second_line_progress = L02_difference / (def_L02.highestUnitCount - (def_L02.highestUnitCount * def_L02.withdrawThreshold))
+			else
+				second_line_progress = R02_difference / (def_R02.highestUnitCount - (def_R02.highestUnitCount * def_R02.withdrawThreshold))
+			end
+			
+			if second_line_progress > 1 then second_line_progress = 1 end
+			second_line_progress = second_line_progress * 0.6
+			
+			--Finally update the progress bar after all these years of hard work
+			--print("first_line_progress = "..first_line_progress..", second_line_progress = "..second_line_progress)
+			Obj_SetProgress(SOBJ_DriveArmyBack.ID, first_line_progress + second_line_progress)
+			
+			--Falsing out since the stuff I wanted is complete
+			return false
+		end,
+		
+		PreComplete = function()
+			HungarianArmy_SpawnCamp()
+			
+			--Play celebration walla on player's units at objective site when it completes
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_left_defend_line_02)
+			local player_units_left = SGroup_CountSpawned(sg_temp)
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_right_defend_line_02)
+			local player_units_right = SGroup_CountSpawned(sg_temp)
+			
+			if player_units_left > 0 then
+				Sound_PlayWallaCelebrateOnSGroup(sg_allsquads)
+			elseif player_units_right > 0 then
+				Sound_PlayWallaCelebrateOnSGroup(sg_allsquads)
+			end	
+			
+			--Hide the progress bar since it's not really relevant anymore
+			Obj_SetProgressVisible(SOBJ_DriveArmyBack.ID, false)
+			
+		end,
+		
+		OnComplete = function()
+			Music_PostCombat_End()
+			Objective_Start(SOBJ_AssaultTheCamp)
+		end,
+	}
+	
+	SOBJ_AssaultTheCamp = {
+		Title = "$11183411", --Force the camp defenders to rout
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyArmy,
+		
+		PreStart = function()
+			HungarianArmy_SpawnCamp()
+			
+			Rule_AddInterval(HungarianArmy_WaitForPlayerToAssaultCamp, 1)
+			Rule_AddInterval(HungarianArmy_MonitorTentsToStopReinforcements, 1, {module = MissionOMatic_FindModule("tent_spawn_1"), egroup = eg_tents_1})
+			Rule_AddInterval(HungarianArmy_MonitorTentsToStopReinforcements, 1, {module = MissionOMatic_FindModule("tent_spawn_2"), egroup = eg_tents_2})
+			Rule_AddInterval(HungarianArmy_MonitorTentsToStopReinforcements, 1, {module = MissionOMatic_FindModule("tent_spawn_3"), egroup = eg_tents_3})
+			Rule_AddInterval(HungarianArmy_MonitorTentsToStopReinforcements, 1, {module = MissionOMatic_FindModule("tent_spawn_4"), egroup = eg_tents_4})
+			Rule_AddInterval(HungarianArmy_MonitorTentsToStopReinforcements, 1, {module = MissionOMatic_FindModule("tent_spawn_5"), egroup = eg_tents_5})
+			Rule_AddInterval(HungarianArmy_MonitorTentsToStopReinforcements, 1, {module = MissionOMatic_FindModule("tent_spawn_6"), egroup = eg_tents_6})
+			Rule_AddInterval(HungarianArmy_MonitorTentsToStopReinforcements, 1, {module = MissionOMatic_FindModule("tent_spawn_7"), egroup = eg_tents_7})
+			
+			Obj_SetProgressVisible(SOBJ_AssaultTheCamp.ID, true)
+			Obj_SetProgress(SOBJ_AssaultTheCamp.ID, 0)
+			
+			SGroup_Clear(sg_temp)
+			Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_hungarian_camp_center, Marker_GetProximityRadiusOrDefault(mkr_hungarian_camp_center, 40))
+			maximum_camp_amount = SGroup_CountSpawned(sg_temp)
+		end,
+		
+		IsComplete = function()
+			SGroup_Clear(sg_temp)
+			Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_hungarian_camp_center)
+			
+			--Set the progress of the objective
+			local current_camp_amount = SGroup_CountSpawned(sg_temp)
+			
+			Obj_SetProgress(SOBJ_AssaultTheCamp.ID, (maximum_camp_amount - current_camp_amount) / (maximum_camp_amount - 20))
+			
+			--Finally check if the objective is complete
+			return Obj_GetProgress(SOBJ_AssaultTheCamp.ID) >= 1
+			
+		end,
+		
+		PreComplete = function()
+			--Play celebration walla on player's units at objective site when it completes
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_hungarian_camp_center)
+			Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+			
+			Sound_SetMinimumMusicCombatIntensity(801, -1)
+			
+			Obj_SetProgressVisible(SOBJ_AssaultTheCamp.ID, false)
+		end,
+	}
+	
+	Objective_Register(OBJ_DestroyArmy)
+	
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			Mission_Complete()
+			Player_GetAll(player2)
+			EGroup_Kill (eg_allentities)
+	       end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+
+end
+
+function HungarianArmy_CheckRout(context, data)
+	--Checks to see if the monitored sgroup has less than the scaled withdraw threshold, and if so, begin the withdrawing process
+	if SGroup_CountSpawned(data.moduleData.sgroup) <= (data.moduleData.highestUnitCount * data.moduleData.withdrawThreshold) then
+		
+		--Play the panic sound and dissolve the survivors into the next module
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_SMALL, data.moduleData.sgroup)
+		DissolveModuleIntoModule(data.moduleData.descriptor, data.fallbackModule.descriptor)
+		
+		--If this completed rule is a first line defender, create a new hintpoint at the new updated location
+		if data.old_hpid ~= nil then
+			if data.old_hpid == hpid_defenseline_L1 then
+				hpid_defenseline_L2 = Objective_AddUIElements(SOBJ_DriveArmyBack, mkr_left_defend_line_02, true, 11183410) --Hungarian forces
+			elseif data.old_hpid == hpid_defenseline_R1 then
+				hpid_defenseline_R2 = Objective_AddUIElements(SOBJ_DriveArmyBack, mkr_right_defend_line_02, true, 11183410) --Hungarian forces
+			end
+			
+			Objective_RemoveUIElements(SOBJ_DriveArmyBack, data.old_hpid)
+		end
+		
+		--Check if this module (that is considered routed) is on the second row
+		if (data.moduleData.descriptor == "def_L02" or data.moduleData.descriptor == "def_R02") and not Objective_IsComplete(SOBJ_DriveArmyBack) then
+			Rule_AddOneShot(HungarianArmy_DelayedComplete, 2)
+		end
+		
+		Rule_RemoveMe()
+	end
+	
+end
+
+function HungarianArmy_DelayedComplete()
+	Objective_Complete(SOBJ_DriveArmyBack)
+end
+
+function HungarianArmy_SpawnCamp()
+	
+	if bIsHungarianCampSpawned ~= true then
+		
+		local king_units = {
+			{ type = "scar_knight",	numSquads = Util_DifVar({10, 10, 15, 20}) }
+		}
+		
+		local melee_units = {
+			{ type = "scar_spearman", numSquads = Util_DifVar({8, 8, 8, 6}) },
+			{ type = "scar_manatarms", numSquads = Util_DifVar({4, 4, 6, 12}) },
+		}
+		
+		local ranged_units = {
+			{ type = "scar_archer",	numSquads = 4 },
+			{ type = "scar_crossbowman", numSquads = Util_DifVar({2, 2, 4, 6}) },
+		}
+		
+		--Populate the defend modules with units from the above templates
+		SpawnUnitsToModule(king_units, "camp_cavalry", mkr_hungarian_camp_center)
+		SpawnUnitsToModule(melee_units, "camp_melee_1", mkr_camp_melee_1)
+		SpawnUnitsToModule(melee_units, "camp_melee_2", mkr_camp_melee_2)
+		SpawnUnitsToModule(melee_units, "camp_melee_3", mkr_camp_melee_3)
+		SpawnUnitsToModule(ranged_units, "camp_ranged_1", mkr_camp_ranged_1)
+		SpawnUnitsToModule(ranged_units, "camp_ranged_2", mkr_camp_ranged_2)
+		SpawnUnitsToModule(ranged_units, "camp_ranged_3", mkr_camp_ranged_3)
+		SpawnUnitsToModule(ranged_units, "camp_ranged_4", mkr_camp_ranged_4)
+		SpawnUnitsToModule(ranged_units, "camp_ranged_5", mkr_camp_ranged_5)
+		SpawnUnitsToModule(ranged_units, "camp_ranged_6", mkr_camp_ranged_6)
+		SpawnUnitsToModule(ranged_units, "camp_ranged_7", mkr_camp_ranged_7)
+		SpawnUnitsToModule(ranged_units, "camp_ranged_8", mkr_camp_ranged_8)
+		SpawnUnitsToModule(ranged_units, "camp_ranged_9", mkr_camp_ranged_9)
+		
+		--Add all of these created squads to a global sgroup for future referencing
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_cavalry").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_melee_1").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_melee_2").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_melee_3").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_ranged_1").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_ranged_2").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_ranged_3").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_ranged_4").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_ranged_5").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_ranged_6").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_ranged_7").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_ranged_8").sgroup)
+		SGroup_AddGroup(sg_hungarian_camp, MissionOMatic_FindModule("camp_ranged_9").sgroup)
+		
+		bIsHungarianCampSpawned = true
+		
+	end
+	
+end
+
+function HungarianArmy_CheckWherePlayerAttacking(context, data)
+	
+	if Squad_IsOfType(context.victim,  "gaia") == false and Squad_GetPlayerOwner(context.victim) == player2 then
+		--print("Squad was owned by player2")
+		local victim = context.victim
+		
+		--Is the dead unit in the left lane?
+		if SGroup_ContainsSquad(sg_dl_1, victim.SquadID, true) or SGroup_ContainsSquad(sg_dl_2, victim.SquadID, true) then
+			
+			batu_laning = {
+				type = "RovingArmy",
+				descriptor = "batu_laning",
+				player = player3,
+				targets = {
+					mkr_right_defend_line_01,
+					mkr_right_defend_line_02
+				},
+				withdrawThreshold = 0.6,
+				fallbacks = { mkr_bridge },
+				addTargetsToFallbacks = true,
+				withdrawThreshold = 0.5,
+				reinforcements = {
+					upperThreshold = 0.6,
+					desiredStrength = 1,
+					unitSources = { "batu_mapedge_reinforce" },
+				},
+			}
+			
+			RovingArmy_Init(batu_laning)
+			DissolveModuleIntoModule("batu_attack", "batu_laning")
+			
+			b_batu_laning_right = true
+			
+			Rule_RemoveMe()
+		elseif SGroup_ContainsSquad(sg_dr_1, victim.SquadID, true) or SGroup_ContainsSquad(sg_dr_2, victim.SquadID, true) then
+			
+			batu_laning = {
+				type = "RovingArmy",
+				descriptor = "batu_laning",
+				player = player3,
+				targets = {
+					mkr_left_defend_line_01,
+					mkr_left_defend_line_02
+				},
+				withdrawThreshold = 0.6,
+				fallbacks = { mkr_bridge },
+				addTargetsToFallbacks = true,
+				withdrawThreshold = 0.5,
+				reinforcements = {
+					upperThreshold = 0.6,
+					desiredStrength = 1,
+					unitSources = { "batu_mapedge_reinforce" },
+				},
+			}
+			
+			RovingArmy_Init(batu_laning)
+			DissolveModuleIntoModule("batu_attack", "batu_laning")
+			
+			b_batu_laning_right = false
+			
+			Rule_RemoveMe()
+		end
+	end
+	
+end
+
+function HungarianArmy_MonitorSquadToStopReinforcements(context, data)
+	
+	if SGroup_IsUnderAttackByPlayer(data.module.sgroup, player1, 1) or Objective_IsComplete(data.objective) then
+		data.module.reinforcements.enabled = false
+		Rule_RemoveMe()
+	end
+	
+end
+
+function HungarianArmy_WaitForPlayerToAssaultCamp(context, data)
+	
+	if SGroup_IsUnderAttackByPlayer(sg_hungarian_camp, player1, 1) or EGroup_IsUnderAttackByPlayer(eg_hungarian_outposts, player1, 1) then
+		RovingArmy_AddTarget(batu_laning, mkr_hungarian_camp_center)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function HungarianArmy_MonitorTentsToStopReinforcements(context, data)
+	
+	if EGroup_CountSpawned(data.egroup) <= 0 then
+		data.module.isStopped = true
+		Rule_RemoveMe()
+	end
+	
+end
+
+function HungarianArmy_BotherPlayerIfTheyAreIdleAgain(context, data)
+	
+	--This function will send attacks to annoy the player every 2 minutes if they don't attack the Hungarians, and a lane has been selected
+	
+	if not Objective_IsComplete(SOBJ_AssaultTheCamp) then
+		Player_GetAll(player2, sg_temp, eg_temp)
+		if not SGroup_IsUnderAttackByPlayer(sg_temp, player1, data.interval) and not EGroup_IsUnderAttackByPlayer(eg_temp, player1, data.interval) then
+			local _targets = {}
+			if b_batu_laning_right then
+				table.insert(_targets, mkr_left_defend_line_02)
+				table.insert(_targets, mkr_left_defend_line_01)
+			else
+				table.insert(_targets, mkr_right_defend_line_02)
+				table.insert(_targets, mkr_right_defend_line_01)
+			end
+			table.insert(_targets, mkr_enemy_attack_zone)
+			
+			local roving_army = {
+				type = "RovingArmy",
+				descriptor = "Hungarian_Camp_Attackers",
+				player = player2,
+				targets = _targets,
+				units = {
+					{ type = "scar_spearman", numSquads = Util_DifVar({5, 6, 8, 12})},
+				},
+				spawnLocation = mkr_hungarian_camp_center,
+				onDeathDissolve = true,
+			}
+			
+			RovingArmy_Init(roving_army)
+		end
+	else
+		Rule_RemoveMe()
+	end
+	
+end
+
+function HungarianArmy_ReinforceExistingModules(context, data)
+	
+	if data.module.status ~= "Dissolved" and data.opposite_module.status ~= "Dissolved" then
+		local _units = {
+			{ type = "scar_manatarms", numSquads = 10, destination = data.destination },
+			{ type = "scar_crossbowman", numSquads = 8, destination = data.destination },
+		}
+		SpawnUnitsToModule(_units, data.module, data.spawnLocation)
+	end
+	
+end
+
+-- Check completion time of mission for challenge
+function Check_Completion_Time()
+	
+	print("CHECKING COMPLETION TIME FOR EVENT CHALLENGE")
+	
+	-- Calculate completion time
+	local completion_time = World_GetGameTime() - mission_start_time
+	
+	-- If mission was completed on the required difficulty (Intermediate) or higher
+	if Game_GetSPDifficulty() >= GD_HARD then
+		
+		print("DIFFICULTY SATISFIED")
+		
+		-- If mission was completed in less than 15 minutes
+		if completion_time <= 900 then
+			-- Send challenge event
+			Game_SendCustomChallengeEvent(player1, CE_MISSIONCOMPLETEDINTIME, 1)
+			print("TIME SATISFIED")
+			print(completion_time)
+		end
+	end
+end

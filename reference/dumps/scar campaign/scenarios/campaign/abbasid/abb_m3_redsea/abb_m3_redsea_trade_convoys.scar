@@ -1,0 +1,165 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+function TradeConvoys_Init()
+	
+	CONVOY_DESTINATIONS = {mkr_tradestop_player1, mkr_tradestop_player4, mkr_tradestop_player5, mkr_tradestop_player6}
+	CONVOY_STARTS = {mkr_tradestop_player4, mkr_tradestop_player5, mkr_tradestop_player6}
+	CONVOY_OWNERS = {player4, player5, player6}
+	t_activeConvoys = {}
+	g_launchIdx = 1
+	g_playerHasDocks = true
+	
+	-- They'll start far apart so there's no need to space them much
+	Rule_AddOneShot(_TradeConvoys_Launch, 2)
+	Rule_AddOneShot(_TradeConvoys_Launch, 4)
+	Rule_AddOneShot(_TradeConvoys_Launch, 6)
+	
+end
+
+--? @shortdesc Cancels convoy movement and sends them all home
+function TradeConvoys_SendHome()
+	-- Stop running convoys
+	Rule_Remove(_TradeConvoys_Manager)
+	-- Batch them all
+	sg_traders_evacuating = SGroup_CreateIfNotFound("sg_traders_evacuating")
+	for idx, convoy in pairs(t_activeConvoys) do
+		SGroup_AddGroup(sg_traders_evacuating, convoy.sgroup)
+	end
+	
+	-- Send them all home
+	local evacPoints = {
+		mkr_raider_finale_1,
+		mkr_raider_finale_2,
+		mkr_raider_finale_3,
+		mkr_raider_finale_4,
+		mkr_raider_finale_5,
+		mkr_raider_finale_6,
+		mkr_raider_finale_7,
+		mkr_raider_finale_8,
+		mkr_raider_finale_9,
+	}
+	
+	local _EvacuateTradeShip = function(gid, idx, sid)
+		local bestEvac = Util_GetClosestMarker(sid, evacPoints)
+		SGroup_Single(sg_temp, sid)
+		SGroup_MoveToAndDestroy(sg_temp, bestEvac, false, 10)
+	end
+	
+	SGroup_ForEach(sg_traders_evacuating, _EvacuateTradeShip)
+	
+end
+
+function _TradeConvoys_Launch()
+	-- Pick the next convoy launch location
+	local launchMarker = CONVOY_STARTS[g_launchIdx]
+	local playerOwner = CONVOY_OWNERS[g_launchIdx]
+	-- Reset the index for next time
+	if g_launchIdx < #CONVOY_STARTS then
+		g_launchIdx = g_launchIdx + 1
+	else
+		g_launchIdx = 1
+	end
+		
+	-- Create the units in a unique SGroup that will be managed
+	local trade_convoy = SGroup_CreateUnique("trade_convoy")
+	Util_CreateSquads(
+			playerOwner,
+			trade_convoy,
+			SBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY,
+			Marker_GetPosition(launchMarker),
+			nil,
+			8)
+	
+	local convoyData = {
+		sgroup = trade_convoy,
+		owner = playerOwner,
+		home = launchMarker,
+		route = _TradeConvoys_PlanRoute(launchMarker),
+		routeIdx = 4,
+	}
+	table.insert(t_activeConvoys, convoyData)
+	
+	if Rule_Exists(_TradeConvoys_Manager) == false then
+		Rule_AddInterval(_TradeConvoys_Manager, 3)
+	end
+	
+end
+
+function _TradeConvoys_PlanRoute(homeMarker)
+	-- We want the convoy to pass through all the other ports before returning home
+	local route = Table_Copy(CONVOY_DESTINATIONS)
+	Table_RemoveFirstItem(route, homeMarker)
+	Table_Shuffle(route)
+	table.insert(route, homeMarker)
+	return route
+end
+
+function _TradeConvoys_Manager(context, data)
+	
+	-- Remove dead convoy data; go backwards while doing so to avoid the indices changing
+	for idx = #t_activeConvoys, 1, -1 do
+		if SGroup_CountSpawned(t_activeConvoys[idx].sgroup) <= 0 then
+			print("Convoy destroyed!")
+			table.remove(t_activeConvoys, idx)
+			-- Launch a new convoy in a bit
+			Rule_AddOneShot(_TradeConvoys_Launch, 15)
+		end
+	end
+	
+	-- For living convoys, see if they've mostly arrived at their destination, and if so move them along and reward with gold
+	for idx, convoy in pairs(t_activeConvoys) do
+		if Prox_AreSquadsNearMarker(convoy.sgroup, convoy.route[convoy.routeIdx], ALL, 45) == true then
+			-- Send the convoy to the next destination
+			convoy.routeIdx = _TradeConvoys_IncrementRouteIndex(convoy.routeIdx, convoy.route)
+			Cmd_FormationMove(convoy.sgroup, convoy.route[convoy.routeIdx], false)
+			-- If we're in the gold gathering phase, add gold!
+			if Objective_IsStarted(SOBJ_GoldCounter) == true then
+				-- Trigger gold accumulation for the owner
+				Player_AddResource(convoy.owner, RT_Gold, TRADE_CONVOY_GOLD)
+				-- Send up a kicker
+				UI_CreatePositionKickerMessage(Util_GetPosition(convoy.sgroup), "$11255478", "icons/resources/resource_gold_icon", "", 5, 0, 5)
+			end
+		end
+	end
+	
+	-- If the player has no docks anymore, adjust convoy behaviour
+	Player_GetAllEntitiesNearMarker(player1, eg_temp, mkr_tradestop_player1, Marker_GetProximityRadius(mkr_tradestop_player1))
+	EGroup_Filter(eg_temp, "naval_production_building", FILTER_KEEP)
+	
+	if g_playerHasDocks == true and EGroup_CountSpawned(eg_temp) <= 0 then
+		g_playerHasDocks = false
+		-- Redirect any ships that are currently en route
+		for idx, convoy in pairs(t_activeConvoys) do
+			if convoy.route[convoy.routeIdx] == mkr_tradestop_player1 then
+				-- Send the convoy to the next destination immediately
+				convoy.routeIdx = _TradeConvoys_IncrementRouteIndex(convoy.routeIdx, convoy.route)
+				Cmd_FormationMove(convoy.sgroup, convoy.route[convoy.routeIdx], false)
+			end
+		end
+		
+	elseif g_playerHasDocks == false and EGroup_CountSpawned(eg_temp) > 0 then
+		g_playerHasDocks = true
+	end
+end
+
+function _TradeConvoys_IncrementRouteIndex(currentIdx, route)
+	-- Safely increment to the next valid index for a destination marker
+	local nextIdx = currentIdx
+	if currentIdx < #route then
+		nextIdx = currentIdx + 1
+	else
+		nextIdx = 1
+	end
+	
+	-- If the player doesn't have docks, skip that stop if it comes up
+	if g_playerHasDocks == false and route[nextIdx] == mkr_tradestop_player1 then
+		if nextIdx < #route then
+			nextIdx = nextIdx + 1
+		else
+			nextIdx = 1
+		end
+	end
+	
+	return nextIdx
+end

@@ -1,0 +1,233 @@
+-----------------------------------------------------------------------
+--
+-- Abbasid Mission 8 - Cyprus
+--
+-- Automated testing script
+--
+-----------------------------------------------------------------------
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+--enumeration for objective status
+statusTable = {
+	NotRun = 0, 
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3
+}
+
+function AutoTest_OnInit()
+    if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+        import("test/common.scar")
+        import("test/standard_test.scar")
+        import("test/test_framework.scar")
+        print("CampaignAutoTest parameter detected")
+        debug_IsCampaignAutoTest = true
+		
+        AutomatedCyprus_RegisterCheckpoints() 
+		
+        Game_AIControlLocalPlayer()
+		
+        AI_Enable(player1, true)
+        
+		print("Assuming Direct Control. Player is now AI Driven: "..tostring(AI_IsEnabled(player1)))
+        
+        if Util_GetCommandLineArgument("NoSwoopy") then
+            Rule_AddInterval(AutoTest_SkipAndStart, 1)
+        else
+            Rule_AddInterval(AutoTest_PlayIntro, 1)
+        end          
+    end
+end
+
+--Compiles the list of checkpoints
+function AutomatedCyprus_RegisterCheckpoints()
+	--"cat_Play_Start", when play is handed over to the player
+	CampaignAutotest_RegisterCheckpoint("cat_Play_Start", 30)
+	CampaignAutotest_SetCheckpointStatus("cat_Play_Start", statusTable.NotRun)
+	
+	--"cat_Limassol_Taken", the player has murdered Limassols' (the first town) defenders and the town control has been transferred to the player
+	CampaignAutotest_RegisterCheckpoint("cat_Limassol_Taken", 180)
+	CampaignAutotest_SetCheckpointStatus("cat_Limassol_Taken", statusTable.NotRun)
+	
+	--"cat_Nicosia_Attacked", the player has arrived at Nicosia and began destroying the structures
+	CampaignAutotest_RegisterCheckpoint("cat_Nicosia_Attacked", 240)
+	CampaignAutotest_SetCheckpointStatus("cat_Nicosia_Attacked", statusTable.NotRun)
+	
+	--"cat_Mission_Complete", Nicosia has been destroyed and the mission has been completed 
+	CampaignAutotest_RegisterCheckpoint("cat_Mission_Complete", 360)
+	CampaignAutotest_SetCheckpointStatus("cat_Mission_Complete", statusTable.NotRun)
+	
+end
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+	if Event_IsAnyRunning() then
+		Rule_RemoveMe()
+		Game_SkipAllEvents(false)
+		AutomatedMission_Start() --Starts the autotest scar sequence
+	end
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+	if b_introStarted == false then
+		if Event_IsAnyRunning() then
+			b_introStarted = true
+		end
+	else
+		if Event_IsAnyRunning() == false then
+			Rule_RemoveMe()
+			AutomatedMission_Start()
+		end
+	end
+end
+
+--Script for kicking off the automated testing flow
+function AutomatedMission_Start()
+	
+	autotest_current_target = mkr_limassol_cap
+	CampaignAutotest_SetCheckpointStatus("cat_Play_Start", statusTable.InProgress)
+	Rule_AddInterval(AutomatedCyprus_Phase1_CheckPlayStart, 1)	-- Delays the start of the player scripted control sequence
+end
+
+--Check if the intro cine has ended successfully and control has turned over to the player.
+function AutomatedCyprus_Phase1_CheckPlayStart() 
+	
+	if b_limassolCaptureStarted then
+		Rule_RemoveMe()
+		
+		CampaignAutotest_SetCheckpointStatus("cat_Play_Start", statusTable.Pass)
+		CampaignAutotest_SetCheckpointStatus("cat_Limassol_Taken", statusTable.InProgress)
+		
+		--cheat a bit
+		Modify_ReceivedDamage(sg_p1_land_units, 0.5)
+		Modify_WeaponDamage(sg_p1_land_units, "hardpoint_01", 2)
+		
+		Modify_ReceivedDamage(sg_p1_warships, 0.5)
+		Modify_WeaponDamage(sg_p1_warships, "hardpoint_01", 2)
+		
+		local sg_autotest_init_siege = SGroup_CreateUnique("sg_autotest_init_siege")
+		SGroup_Filter(sg_p1_land_units, "siege", FILTER_REMOVE, sg_autotest_init_siege)
+		Modify_UnitSpeed(sg_autotest_init_siege, 2)
+		SGroup_AddGroup(sg_p1_land_units, sg_autotest_init_siege)
+		
+		--move starting forces to take limassol
+		Cmd_FormationAttackMove(sg_p1_land_units, autotest_current_target)
+		
+		--attack move with navy
+		Cmd_FormationAttackMove(sg_p1_warships, mkr_trade)
+		Rule_AddOneShot(AutomatedCyprus_AttackFamagustaDock, 120)
+		
+		Rule_AddInterval(AutomatedCyprus_Phase2_LimassolIsComplete, 1)
+	end
+end
+
+--Check if the player has murdered Limassol defenders
+function AutomatedCyprus_Phase2_LimassolIsComplete()
+	if Objective_IsComplete(OBJ_CaptureLimassol) then
+		Rule_RemoveMe()
+		
+		CampaignAutotest_SetCheckpointStatus("cat_Limassol_Taken", statusTable.Pass)
+		CampaignAutotest_SetCheckpointStatus("cat_Nicosia_Attacked", statusTable.InProgress)
+		
+		autotest_current_target = mkr_nicosia_gates
+		Rule_AddInterval(AutomatedCyprus_CheckArmySpawn, 30)
+		
+		Rule_AddInterval(AutomatedCyprus_Phase3_CheckNicosiaIsGettingAttacked, 5)
+		Rule_AddInterval(AutomatedCyprus_CheckVillagers, 5)
+	end
+end
+
+function AutomatedCyprus_CheckVillagers()
+	
+	if SGroup_CountSpawned(sg_p1_villagers) > 0 then
+		
+		Cmd_Construct(sg_p1_villagers, EBP.AYYUBID_CMP.BUILDING_HOUSE_OF_WISDOM_AYY, Util_GetPosition(mkr_autotest_how))
+		Rule_RemoveMe()
+	end
+end
+
+function AutomatedCyprus_CheckArmySpawn()
+	
+	if Player_GetTotalPopulation(player1) < 180 then
+		
+		local unitCount = math.ceil((180 - Player_GetTotalPopulation(player1)) * 0.333)
+		
+		local sg_autotest = SGroup_CreateUnique("sg_autotest")
+		local sg_autotest_siege = SGroup_CreateUnique("sg_autotest_siege")
+		
+		local autotest_units = {
+			{type = "scar_knight", numSquads = unitCount},
+			{type = "scar_manatarms", numSquads = unitCount},
+			{type = "scar_handcannon", numSquads = unitCount}
+		}
+		
+		local autotest_siege_units = {
+			{type = "scar_bombard", numSquads = 3}, 
+			{type = "scar_mangonel", numSquads = 2}
+		}
+		
+		CreateUnits(player1, autotest_units, mkr_autotest_player, sg_autotest)
+		CreateUnits(player1, autotest_siege_units, mkr_autotest_player, sg_autotest_siege)
+		
+		--cheat a bit
+		Modify_ReceivedDamage(sg_autotest, 0.5)
+		Modify_WeaponDamage(sg_autotest, "hardpoint_01", 2)
+		
+		Modify_ReceivedDamage(sg_autotest_siege, 0.5)
+		Modify_WeaponDamage(sg_autotest_siege, "hardpoint_01", 2)
+		Modify_UnitSpeed(sg_autotest_siege, 2)
+		
+		SGroup_AddGroup(sg_p1_land_units, sg_autotest)
+		SGroup_AddGroup(sg_p1_land_units, sg_autotest_siege)
+	end
+	
+	Rule_AddOneShot(AutomatedCyprus_MoveArmy, 1)
+end
+
+function AutomatedCyprus_MoveArmy()
+	
+	Cmd_FormationAttackMove(sg_p1_land_units, autotest_current_target)
+end
+
+function AutomatedCyprus_AttackFamagustaDock()
+	
+	if SGroup_CountSpawned(sg_p1_warships) > 0 then
+		Cmd_FormationAttackMove(sg_p1_warships, mkr_famagusta_dock)
+	end
+end
+
+function AutomatedCyprus_Phase3_CheckNicosiaIsGettingAttacked() 
+	if Player_AreSquadsNearMarker(player1, mkr_nicosia_gates) then
+		Rule_AddInterval(AutomatedCyprus_Phase4_NicosiaDestroyed_TC, 5)
+		CampaignAutotest_SetCheckpointStatus("cat_Nicosia_Attacked", statusTable.Pass)
+		CampaignAutotest_SetCheckpointStatus("cat_Mission_Complete", statusTable.InProgress)
+		
+		autotest_current_target = mkr_nicosia_tc
+		Cmd_FormationAttackMove(sg_p1_land_units, autotest_current_target)
+		
+		Rule_RemoveMe()
+	end
+end
+
+--Check if the TC has been destroyed and move to the keeps
+function AutomatedCyprus_Phase4_NicosiaDestroyed_TC()
+	if Objective_IsComplete(SOBJ_DestroyNicosia_TC) then
+		Rule_AddInterval(AutomatedCyprus_Phase4_NicosiaDestroyed_Keeps, 5)
+		
+		autotest_current_target = mkr_nicosia_keeps
+		Cmd_FormationAttackMove(sg_p1_land_units, autotest_current_target)
+		
+		Rule_RemoveMe()
+	end
+end
+
+function AutomatedCyprus_Phase4_NicosiaDestroyed_Keeps()
+	if Objective_IsComplete(SOBJ_DestroyNicosia_Keeps) then	
+		CampaignAutotest_SetCheckpointStatus("cat_Mission_Complete", statusTable.Pass)
+		Rule_RemoveMe()
+	end
+end
+
+

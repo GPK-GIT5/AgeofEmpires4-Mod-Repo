@@ -1,0 +1,86 @@
+
+function InitObjectives_SaveValognes()
+	OBJ_SaveValognes = {
+		Title = "$11172285", --Optional: Save Valognes
+		Type = ObjectiveType_Optional,
+		Intel_Start = EVENTS.SAVE_VILLAGE_START,
+		Intel_Complete = EVENTS.SAVE_VILLAGE_COMPLETE,
+		SetupUI = function()
+			UI_DeleteMinimapBlip(bliped_valognesTown)
+			hpid_valognes = Objective_AddUIElements(SOBJ_killEnemyValognes, mkr_valogne_hintpoint, true,"$11172288", true, nil, nil, nil) --"Valognes"
+			Objective_SetProgressBar(SOBJ_killEnemyValognes, 0)
+		end,
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_SaveValognes, ALL)
+		end,
+		IsFailed = function()
+			return Objective_AreSubObjectivesFailed(OBJ_SaveValognes, ALL)
+		end,
+		PreStart = function()
+			print("OBJ_SaveValognes PreStart")
+			FOW_PlayerRevealSGroup(player1, sg_valogne_enemy, 20, -1)
+			FOW_RevealMarker(mkr_valogne_reveal, -1)
+		end,
+		PreFail = function()
+			Player_GetAllEntitiesNearMarker(player3, eg_valognes, mkr_valogne)
+			EGroup_SetPlayerOwner(eg_valognes, player2)
+			Rule_AddOneShot(UnRevealValogne, 3)
+		end,
+		PreComplete = function()
+			print("OBJ_SaveValognes PreComplete")
+			SGroup_SetPlayerOwner(sg_valogne_horseman, player1)
+			SGroup_SetPlayerOwner(sg_valogne_archer_1, player1)
+			SGroup_SetPlayerOwner(sg_valogne_archer_2, player1)
+			EGroup_SetPlayerOwner(eg_togiveValognes, player1)
+			village_blacksmith = HintPoint_Add(mkr_town_french_blacksmith, true, "$11163056", LOCATION_LABEL_HEIGHT) --"french blacksmith"
+			village_market = HintPoint_Add(mkr_town_french_market, true, "$11197868", LOCATION_LABEL_HEIGHT) --"french market
+			village_arsenal = HintPoint_Add(mkr_town_french_arsenal, true, "$11197964", LOCATION_LABEL_HEIGHT) --"french arsenal"
+			Player_AddResource(player1, RT_Gold, Util_DifVar({ 2400, 1600, 800, 0 }))
+			Player_AddResource(player1, RT_Food, 1200)
+			Rule_AddOneShot(Tutorials_formigny_SellResources, 120)
+		end,
+		OnComplete = function()
+			
+		end,
+	}
+	
+	SOBJ_killEnemyValognes = {
+		Title = "$11172286", --Defeat the English units attacking Valognes
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_SaveValognes,
+		StartAlongsideParent = true,
+		IsFailed = function()
+			local sg_villagers = VillagerLife_Find("villagerlife_alliedTown").sg_villagers
+			return (SGroup_CountSpawned(sg_valogne) == 0 and SGroup_CountSpawned(sg_villagers) == 0)
+		end,
+		IsComplete = function()
+			local attacker_killed_count = valogne_attacker_count_init - SGroup_CountSpawned(sg_valogne_enemy)
+			Objective_SetProgressBar(SOBJ_killEnemyValognes, (attacker_killed_count / valogne_attacker_count_init))
+			if attacker_killed_count == valogne_attacker_count_init then
+				return true
+			end
+		end,
+	}		
+	Objective_Register(OBJ_SaveValognes)
+	Objective_Register(SOBJ_killEnemyValognes)
+end
+
+--setup and start objective
+function Monitor_ValognesApproach()
+	if Player_CanSeePosition(player1, Marker_GetPosition(mkr_valogne_trigger_1)) or Player_CanSeePosition(player1, Marker_GetPosition(mkr_valogne_trigger_2)) then
+		RovingArmy_SetTargets(valogne_enemy_archer, { mkr_valogne_enemy_target_1, mkr_valogne_enemy_target_2 })
+		RovingArmy_SetTargets(valogne_enemy_horseman, { mkr_valogne_enemy_target_1, mkr_valogne_enemy_target_2 })
+		Rule_AddOneShot(StartValogneObjective, 3)
+		Rule_RemoveMe()
+	end
+end
+
+function StartValogneObjective()
+	Objective_Start(OBJ_SaveValognes)
+end
+
+function UnRevealValogne()
+	FOW_UnRevealMarker(mkr_valogne_reveal)
+	FOW_PlayerUnRevealSGroup(player1, sg_valogne_enemy)
+end
+

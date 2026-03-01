@@ -1,0 +1,145 @@
+import("missionomatic/missionomatic.scar")
+import("cardinal.scar")
+
+--? @shortdesc This is run automatically by the missionOMatic framework.
+--? The leader tent is a special building that is unit to the abbasid campaign.
+--? This is the script that handles it's reviving capabilities.
+--? When a leader dies, it will be revived automatically at the leader tent.
+function LeaderTent_InitSystem()
+	print("initializing LeaderTent system")
+	g_leader_tent_data = {}
+	for i, player_data in pairs(PLAYERS) do 
+		if Player_GetRace(player_data.id) == RACE.AYYUBID_CMP or
+			Player_GetRace(player_data.id) == RACE.FATIMID_CMP or
+			Player_GetRace(player_data.id) == RACE.SELJUK_CMP or
+			Player_GetRace(player_data.id) == RACE.MAMLUK_CMP or
+			Player_GetRace(player_data.id) == RACE.SALADIN_CMP or
+			Player_GetRace(player_data.id) == RACE.TEMPLAR or
+			Player_GetRace(player_data.id) == RACE.LANCASTER then
+			local playerID = Player_GetID(player_data.id)
+			LeaderTent_InitTentForPlayer(playerID)
+		end
+	end
+end
+
+function LeaderTent_InitTentForPlayer(playerID)
+	g_leader_tent_data[playerID] = {}
+	g_leader_tent_data[playerID].eg_tents  = Player_GetEntitiesFromBlueprint(Player_FromId(playerID), EBP.AYYUBID_CMP.BUILDING_LEADER_TENT_AYY)
+
+	if EGroup_CountSpawned(g_leader_tent_data[playerID].eg_tents) > 0 then
+		g_leader_tent_data[playerID].tent = EGroup_GetEntityAt(g_leader_tent_data[playerID].eg_tents, 1)
+		print("LeaderTent initialized for player "..tostring(playerID))
+		g_leader_tent_data[playerID].sg_leaders = Player_GetSquadsFromType(Player_FromId(playerID), "scar_leader") 
+		for i = 1, SGroup_CountSpawned(g_leader_tent_data[playerID].sg_leaders) do
+			local squad = SGroup_GetSquadAt(g_leader_tent_data[playerID].sg_leaders, i)
+			LeaderTent_RegisterLeader(squad)	
+			local entity = Squad_GetFirstEntity(squad)
+		end	
+		Player_SetStateModelEntityTarget(Player_FromId(playerID), "leader_spawn_target", g_leader_tent_data[playerID].tent)
+	end
+end
+
+--? @shortdesc This does not change the ownership of the actual tent, use Entity_SetPlayerOwner for that.
+--? This is used afterwards to update the LeaderTent scar data to understand the conversion
+function LeaderTent_UpdatePlayerOwner(fromPlayer, toPlayer)
+	g_leader_tent_data[Player_GetID(toPlayer)] = g_leader_tent_data[Player_GetID(fromPlayer)]
+	g_leader_tent_data[Player_GetID(fromPlayer)] = nil
+	Player_SetStateModelEntityTarget(toPlayer, "leader_spawn_target", g_leader_tent_data[Player_GetID(toPlayer)].tent)
+end
+
+--? @shortdesc Registers a unit to be revived by the Leader Tent upon death. The unit will be revived every time it dies.
+--? The Leader Tent cannot be destroyed, so the leader is guaranteed to revive
+--? @args Squad leader
+function LeaderTent_RegisterLeader(leader)
+	print("LeaderTent registered leader")
+	Rule_AddSquadEvent(_LeaderTent_OnLeaderDeath, leader, GE_SquadKilled)
+end
+
+function _LeaderTent_OnLeaderDeath(context, data)
+	print("LeaderTent leader has died")
+	
+	-- Get the blueprint for the dead leader now because the squad may no longer exist by the time 
+	-- we try to revive them.
+	local leaderSBP = Squad_GetBlueprint(context.victim) 
+	local playerID = Player_GetID(Squad_GetPlayerOwner(context.victim))
+	
+	local leaderRespawnTime = Player_GetStateModelFloat(Player_FromId(playerID), "leader_respawn_time")
+	local leaderData = _LeaderTent_GetRespawnData(leaderSBP)
+	
+	Rule_AddOneShot(_LeaderTent_ReviveLeader, leaderRespawnTime, {playerID = playerID, sbp = leaderSBP})
+	Rule_AddInterval(_LeaderTent_CountDown, 0.25, {player = Player_FromId(playerID), startTime = World_GetGameTime(), leaderRespawnTime = leaderRespawnTime, leaderData = leaderData})
+end
+
+--Interval rule that updates the Leader's respawn UI progress
+function _LeaderTent_CountDown(context, data)
+	local player = data.player
+	local leaderData = data.leaderData
+	local leaderRespawnTime = data.leaderRespawnTime
+	
+	local timeSinceDeath = World_GetGameTime()-data.startTime
+	local respawnProgress = timeSinceDeath/leaderRespawnTime
+	
+	if respawnProgress >= 1 then
+		Rule_RemoveMe()
+	else
+		Entity_SetStateModelFloat(g_leader_tent_data[Player_GetID(player)].tent, leaderData.enum, respawnProgress)
+	end
+end
+
+--Returns the String name of the leader's respawn progress enum
+function _LeaderTent_GetRespawnData(leaderSBP)
+	if leaderSBP == SBP.AYYUBID_CMP.UNIT_LEADER_SALADIN_MAA_AYY or leaderSBP == SBP.AYYUBID_CMP.UNIT_LEADER_SALADIN_KNIGHT_AYY then
+		return {enum = "leader_respawn_progress_saladin_ayy", stringName = "$11230140"} --Saladin
+	elseif leaderSBP == SBP.AYYUBID_CMP.UNIT_LEADER_SHIRKUH_AYY then
+		return {enum = "leader_respawn_progress_shirkuh_ayy", stringName = "$11230138"} --Shirkuh
+	elseif leaderSBP == SBP.AYYUBID_CMP.UNIT_LEADER_BAIBARS_AYY then
+		return {enum = "leader_respawn_progress_baibars_ayy", stringName = "$11232708"} --Baybars
+	elseif leaderSBP == SBP.AYYUBID_CMP.UNIT_LEADER_SHAJAR_AYY then
+		return {enum = "leader_respawn_progress_shajar_ayy", stringName = "$11230139"} --Shajar al-Durr
+	elseif leaderSBP == SBP.AYYUBID_CMP.UNIT_LEADER_TUGHTEKIN_AYY then
+		return {enum = "leader_respawn_progress_tughtekin_ayy", stringName = "$11232924"} --Tughtekin
+	elseif leaderSBP == SBP.AYYUBID_CMP.UNIT_LEADER_QUTUZ_AYY then
+		return {enum = "leader_respawn_progress_qutuz_ayy", stringName = "$11249516"} --Qutuz
+	elseif leaderSBP == SBP.TEMPLAR.UNIT_ODO_CMP_TEM then
+		return {enum = "leader_respawn_progress_odo_tem", stringName = "$11266044"} --Odo of St. Amand
+	elseif leaderSBP == SBP.TEMPLAR.UNIT_BALDWIN_CMP_TEM then
+		return {enum = "leader_respawn_progress_baldwin_tem", stringName = "$11266150"} --King Baldwin IV
+	elseif leaderSBP == SBP.LANCASTER.UNIT_HENRY_5_CMP_LAN then
+		return {enum = "leader_respawn_progress_henry_v_lan", stringName = "$11268403"} --King Henry V
+	end
+end
+
+function _LeaderTent_ReviveLeader(context, data)
+	print("LeaderTent leader has revived")
+	local playerID = data.playerID
+	local leaderData = _LeaderTent_GetRespawnData(data.sbp)
+	SGroup_Clear(sg_single)
+	
+	local tent_heading = Entity_GetHeading(g_leader_tent_data[playerID].tent)
+	
+	local spawn_position = Building_GetSpawnPosition(g_leader_tent_data[playerID].tent, OFFSET_BACK)
+	
+	CreateUnits(Player_FromId(playerID), {sbp = data.sbp}, spawn_position, sg_single, World_Pos(-tent_heading.x, 0, -tent_heading.z))
+	
+	LeaderTent_RegisterLeader(SGroup_GetSquadAt(sg_single, 1))
+	UI_CreateMinimapBlip(spawn_position, 12, "general")
+	Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+	Sound_Play2D("mus_stinger_campaign_triumph_short")
+	local respawnEvent = Loc_FormatText("$11252749", leaderData.stringName) --%1% has returned to the battle!
+	UI_CreateEventCue(respawnEvent, Loc_Empty(), "high_priority", "", "", ECV_Queue)
+	UI_CreateEventCue(respawnEvent, Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_med_priority_play", ECV_Title, 5)
+	
+	local rally_positions = Entity_GetRallyPointPositions(g_leader_tent_data[playerID].tent)
+	local position_index = 1
+	while true do
+		local position_name = "position"..position_index
+		if rally_positions[position_name] ~= nil then
+			SGroup_Move(sg_single, rally_positions[position_name], true)	
+		else
+			break
+		end
+		position_index = position_index + 1
+	end
+end
+
+

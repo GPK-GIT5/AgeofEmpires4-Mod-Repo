@@ -1,0 +1,1526 @@
+import("missionomatic/missionomatic.scar")
+import("rogue/rogue_misc.scar")
+
+function Rogue_Objectives_Precache()
+	local rogue_player = PLAYERS[1].id
+	local wonder_ebp = Cardinal_ConvertTypeToEntityBlueprint("wonder_imperial_age", rogue_player, false)
+	Scar_PrecachePrematchResource(wonder_ebp)
+	
+	local rogue_player_ally = PLAYERS[3].id
+	local military_college_ebp = Cardinal_ConvertTypeToEntityBlueprint("scar_military_college", rogue_player_ally, false)
+	Scar_PrecachePrematchResource(military_college_ebp)
+	
+	local siege_workshop_ebp = Cardinal_ConvertTypeToEntityBlueprint("scar_siegeworkshop", rogue_player_ally, false)
+	Scar_PrecachePrematchResource(siege_workshop_ebp)
+	
+	local alliedTC = Cardinal_ConvertTypeToEntityBlueprint("scar_town_center", rogue_player_ally)
+	Scar_PrecachePrematchResource(alliedTC)
+	
+	local alliedOutpost = Cardinal_ConvertTypeToEntityBlueprint("scar_outpost", rogue_player_ally)
+	Scar_PrecachePrematchResource(alliedOutpost)
+	
+	local alliedHouse = Cardinal_ConvertTypeToEntityBlueprint("scar_house", rogue_player_ally)
+	Scar_PrecachePrematchResource(alliedHouse)
+end
+
+
+function OnEndlessModeStingerStopped(stingerId)
+	if Game_RogueModeEndlessModeRequested() then
+		-- enter endless mode
+	else
+		Mission_CompleteSkipOutro()
+	end
+end
+
+
+function OnGoldMedalAquired()
+	local kpiInformation = {kpi = states.game.second, side_obj = sideObjectivesCompleted}
+	Game_StoreTableData("rogue", kpiInformation)
+	for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+		Game_SendCustomChallengeEvent(player, CE_ROGUESIDEOBJECTIVECOMPLETE, sideObjectivesCompleted)
+	end
+	-- Endless mode stinger
+	UI_StingerPlay(Loc_GetString(11161277), Loc_Empty(), "", "stinger_game_complete", "RogueModeEndlessModeStinger", OnEndlessModeStingerStopped)	
+end
+
+function Rogue_InitObjectives()
+	if rogue_objectives_initialized == true then
+		return
+	end
+	rogue_objectives_initialized = true
+	
+	----------------------------------------------------------------	
+	------------------------ MAIN OBJECTIVES -----------------------
+	----------------------------------------------------------------	
+
+	eg_player_wonder = EGroup_CreateIfNotFound("eg_player_wonder")
+	local wonder_ebp = Cardinal_ConvertTypeToEntityBlueprint("wonder_imperial_age", ROGUE_HUMAN_PLAYERS[1], false)
+	CreateEntity(ROGUE_HUMAN_PLAYERS[1], wonder_ebp, mkr_wonder, eg_player_wonder, DIRECTION_FRONT, nil , false)
+	Entity_RemoveAbility(EGroup_GetEntityAt(eg_player_wonder, 1), BP_GetAbilityBlueprint("core_building_scuttle"))
+	local tent_ebp
+	if mission_name == "Watch Your Steppe" then
+		tent_ebp = EBP.MONGOL.BUILDING_HOUSE_MON
+	else
+		tent_ebp = BP_GetEntityBlueprint("building_military_tent_a_rogue")
+	end
+	
+	if ROGUE_STRESS_TEST then
+		EGroup_SetInvulnerable(eg_player_wonder, true, -1)
+		SGroup_Clear(sg_temp)
+		for _, offset in ipairs({ {20,0}, {-20,0}, {0,20}, {0,-20} }) do
+			local position = PositionWithOffset(Marker_GetPosition(mkr_wonder), offset[1], offset[2])
+			
+			local unit_table = {{ type = "scar_knight", numSquads = 50 }}
+			CreateUnits(ROGUE_HUMAN_PLAYERS[1], unit_table, position, sg_temp)
+		end
+		SGroup_SetInvulnerable(sg_temp, true, -1)
+	end
+	
+	ALLY_ARMY_SIZE = 25
+	
+	OBJ_PROTECT_WONDER = {
+		Title = "$11268890", --Defend Your Wonder
+		Type = ObjectiveType_Primary,
+		showTitle = true,
+		IsComplete = function(objTable)
+			if Game_RogueModeConquerorEnabled() then
+				if states.game.second >= SURVIVAL_TIME_CONQUEROR and EGroup_CountSpawned(eg_player_wonder) == 0 then
+					Objective_Complete(OBJ_PROTECT_WONDER, false, false)
+				end
+			else
+				if states.game.second >= 1500 and EGroup_CountSpawned(eg_player_wonder) == 0 then
+					Objective_Complete(OBJ_PROTECT_WONDER, false, false)
+				end
+			end
+		end,
+		PreComplete = function(objTable)
+			local kpiInformation = {kpi = states.game.second, side_obj = sideObjectivesCompleted}
+			Game_StoreTableData("rogue", kpiInformation)
+			player_has_been_killed = true
+			for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+				Game_SendCustomChallengeEvent(player, CE_ROGUESIDEOBJECTIVECOMPLETE, sideObjectivesCompleted)
+			end
+			Mission_Complete()
+		end,
+		IsFailed = function(objTable)
+			if Game_RogueModeConquerorEnabled() then
+				if states.game.second < SURVIVAL_TIME_CONQUEROR then
+					return EGroup_CountSpawned(eg_player_wonder) <= 0
+				end
+			else
+				if states.game.second < 1500 then
+					return EGroup_CountSpawned(eg_player_wonder) <= 0
+				end
+			end
+		end,
+		OnFail = function(objTable)
+			local kpiInformation = {kpi = states.game.second, side_obj = sideObjectivesCompleted}
+			Game_StoreTableData("rogue", kpiInformation)
+			for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+				Game_SendCustomChallengeEvent(player, CE_ROGUESIDEOBJECTIVECOMPLETE, sideObjectivesCompleted)
+			end
+			Mission_Fail()
+		end,
+	}
+	SOBJ_CONQUEROR = {
+		Parent = OBJ_PROTECT_WONDER,
+		StartAlongsideParent = true,
+		KPI = SURVIVAL_TIME_CONQUEROR,
+		Title = "$11270504", --Conqueror (45m)
+		showTitle = false,
+		event_queue_string = "$11270505", --Conqueror Medal Awarded
+		event_queue_sound ="sfx_ui_rogue_objective_completed_gold_play", --conqueror sfx?
+		Type = ObjectiveType_Primary,
+		next_objective = nil,
+		PreComplete = OnGoldMedalAquired,
+		PopupDataTemplateOverride = "RogueConquerorMedalTemplate"
+	}	
+	SOBJ_GOLD = {
+		Parent = OBJ_PROTECT_WONDER,
+		StartAlongsideParent = true,
+		KPI = SURVIVAL_TIME_GOLD,
+		Title = "$11268891", --Gold (45m)
+		showTitle = false,
+		event_queue_string = "$11268892", --Gold Medal Awarded
+		event_queue_sound ="sfx_ui_rogue_objective_completed_gold_play",
+		Type = ObjectiveType_Primary,
+		next_objective = nil,
+		PreComplete = OnGoldMedalAquired,
+		PopupDataTemplateOverride = "RogueGoldMedalTemplate"
+	}	
+	SOBJ_SILVER = {
+		Parent = OBJ_PROTECT_WONDER,
+		StartAlongsideParent = true,
+		KPI = SURVIVAL_TIME_SILVER,
+		Title = "$11268894", --Silver (35m)
+		event_queue_string = "$11268895", --Silver Medal Awarded
+		event_queue_sound ="sfx_ui_rogue_objective_completed_silver_play",
+		Type = ObjectiveType_Primary,
+		next_objective = SOBJ_GOLD,
+		PopupDataTemplateOverride = "RogueSivlerMedalTemplate"
+	}	
+	SOBJ_BRONZE = {
+		Parent = OBJ_PROTECT_WONDER,
+		StartAlongsideParent = true,
+		KPI = SURVIVAL_TIME_BRONZE,
+		Title = "$11268896", --Bronze (25m)
+		event_queue_string = "$11268897", --Bronze Medal Awarded
+		event_queue_sound ="sfx_ui_rogue_objective_completed_bronze_play",
+		Type = ObjectiveType_Primary,
+		next_objective = SOBJ_SILVER,
+		PopupDataTemplateOverride = "RogueBronzeMedalTemplate"
+	}
+	
+	for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+		Objective_Register(OBJ_PROTECT_WONDER, player)	
+		
+		if Game_RogueModeConquerorEnabled() then
+			Objective_Register(SOBJ_CONQUEROR, player)
+		else
+			Objective_Register(SOBJ_BRONZE, player)
+			Objective_Register(SOBJ_SILVER, player)
+			Objective_Register(SOBJ_GOLD, player)
+		end
+	end
+	
+	if Game_RogueModeConquerorEnabled() then
+		current_medal_objective = SOBJ_CONQUEROR
+	else
+		current_medal_objective = SOBJ_BRONZE
+	end
+	
+	----------------------------------------------------------------	
+	------------------------ SIDE OBJECTIVES -----------------------
+	----------------------------------------------------------------	
+	
+	OBJ_DESTROY_MERCENARY = {
+		Title = "$11268898", --Optional: Capture the Mercenary Base
+		Type = ObjectiveType_Capture,
+		TelemetryTitle = "destroy_mercenary",
+		short_name = "destroy_mercenary",
+		long_name = "Capture the Mercenary Base",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = true,
+		PreStart = function(objTable)
+			local nook = objTable.nook
+			Nook_CleanArea(nook)
+			CreateEntity(nil, BP_GetEntityBlueprint("rogue_sideobj_merc_01"), nook.position, nil, DIRECTION_FRONT, nil, false)
+			
+			objTable.eg_main = EGroup_CreateUniqueWithPrefix("eg_main_mercenary")
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_NEUTRAL_PLAYER, BP_GetEntityBlueprint("building_rogue_mercenary_house"), "mkr_sideobj_main", objTable.eg_main, nil, false, true)
+			Objective_AddUIElements(objTable, nook.position, true, "$11268899", false, 0) --Capture Mercenary HQ
+										
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_ALLY_PLAYER, "scar_barracks", "mkr_sideobj_barracks")
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_ALLY_PLAYER, "scar_house", "mkr_sideobj_house")
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_ALLY_PLAYER, tent_ebp, "mkr_sideobj_tent")
+
+			local maa_value = GetIntegerInExponentialRange(600, 1250) --Two armies spawn, so use half the scaling value.
+			local archer_value = GetIntegerInExponentialRange(400, 1000) --Two armies spawn, so use half the scaling value.
+			local maa_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_manatarms", maa_value)
+			local archer_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_archer", archer_value)
+			local unit_table = {
+				{ type = "scar_manatarms", numSquads = maa_count },
+				{ type = "scar_archer", numSquads = archer_count },
+			}
+			objTable.army_01 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_01")
+			objTable.army_02 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_02")
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, nook.position, 35)
+		end,
+		IsComplete = function(objTable)
+			return SGroup_CountSpawned(objTable.army_01.sgroup) == 0 and SGroup_CountSpawned(objTable.army_02.sgroup) == 0
+		end,
+		PreComplete = function(objTable)
+			sideObjectivesCompleted = sideObjectivesCompleted + 1
+			EGroup_SetPlayerOwner(objTable.eg_main, ROGUE_HUMAN_PLAYERS[1])
+		end, 
+	}	
+	OBJ_DESTROY_BUILDINGS = {
+		Title = "$11268901", --Optional: Raid Enemy Buildings
+		Type = ObjectiveType_Battle,
+		TelemetryTitle = "destroy_buildings",
+		short_name = "destroy_buildings",
+		long_name = "Destroy the Enemy Buildings",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = false,
+		OnStart = function(objTable)
+			DestroyBuildingsObjective_Start(objTable)
+			
+			Player_GetAll(ROGUE_ENEMY_ALLY_PLAYER)
+			EGroup_Filter(eg_allentities, "resource_pickup", FILTER_REMOVE)
+			EGroup_Filter(eg_allentities, "tent", FILTER_REMOVE)
+			EGroup_Filter(eg_allentities, "keep", FILTER_REMOVE)
+			EGroup_Filter(eg_allentities, "point_of_interest", FILTER_REMOVE)
+			EGroup_RemoveGroup(eg_allentities, eg_destroy_obj_exclude)
+			Modify_OnFireHealthPercentage(eg_allentities, MUT_Multiplication, 3.5)
+			local RaidTargetHealthReduction = GetFloatInExponentialRange(0.15, 0.75)
+			Modify_EntityMaxHealth(eg_allentities, RaidTargetHealthReduction, MUT_Multiplication)
+			
+		end,
+		IsComplete = function(objTable)
+			if objTable.enemy_building_egroups ~= nil and #objTable.enemy_building_egroups > 0 then
+				local allEmpty = true
+				for i = 1, #objTable.enemy_building_egroups do
+					if EGroup_CountSpawned(objTable.enemy_building_egroups[i]) > 0 then
+						allEmpty = false
+					end
+				end
+				return allEmpty
+			end
+		end,
+		PreComplete = function(objTable)
+			--Removed the Perk Point bonus for this mission specific objective
+			--sideObjectivesCompleted = sideObjectivesCompleted + 1
+		end, 
+	}
+	OBJ_SAVE_ALLY = {
+		Title = "$11268903", --Optional: Save the Ally Landmark
+		Type = ObjectiveType_Capture,
+		TelemetryTitle = "save_ally",
+		short_name = "save_ally",
+		long_name = "Save the Ally Landmark",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = true,
+		PreStart = function(objTable)
+			local nook = objTable.nook
+			Nook_CleanArea(nook)
+			CreateEntity(nil, BP_GetEntityBlueprint("rogue_sideobj_rescue_01"), nook.position, nil, DIRECTION_FRONT, nil, false)
+			
+			objTable.eg_main = EGroup_CreateIfNotFound("eg_main_rescue")
+			eg_main_rescue = EGroup_CreateIfNotFound("eg_main_rescue")
+			local alliedRogueObjectiveSBP = Cardinal_ConvertTypeToEntityBlueprint("rogue_objective", ROGUE_ALLY_PLAYER)
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_NEUTRAL_PLAYER, alliedRogueObjectiveSBP, "mkr_sideobj_main", objTable.eg_main)
+			Modify_EntityMaxHealth(objTable.eg_main, 20, MUT_Multiplication)
+			EGroup_SetTargetingType(objTable.eg_main, Targeting_Manual)				
+			Objective_AddUIElements(objTable, nook.position, true, "$11268904", false, 0) --Rescue the Allied Landmark
+			
+			eg_dead_allied_buildings = EGroup_CreateIfNotFound("eg_dead_allied_buildings")
+			
+			local alliedTC = Cardinal_ConvertTypeToEntityBlueprint("scar_town_center", ROGUE_ALLY_PLAYER)
+			local alliedOutpost = Cardinal_ConvertTypeToEntityBlueprint("scar_outpost", ROGUE_ALLY_PLAYER)
+			local alliedHouse = Cardinal_ConvertTypeToEntityBlueprint("scar_house", ROGUE_ALLY_PLAYER)
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_NEUTRAL_PLAYER, alliedTC, "mkr_sideobj_town_center", eg_dead_allied_buildings, nil, false, false)
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_NEUTRAL_PLAYER, alliedOutpost, "mkr_sideobj_outpost", eg_dead_allied_buildings, nil, false, false)
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_NEUTRAL_PLAYER, alliedHouse, "mkr_sideobj_house", eg_dead_allied_buildings, nil, false, false)
+			
+			local _SetAlliedBuildingsDead = function(gid, index, eid)
+				if Entity_IsOfType(eid, "scar_town_center") or Entity_IsOfType(eid, "scar_outpost") then
+					Entity_SetHealth(eid, 0.0001)
+				else
+					Entity_SetHealth(eid, World_GetRand(1, 15)/100)
+				end
+				Entity_SetTargetingType(eid, Targeting_None)
+			end			
+			
+			EGroup_ForEach(eg_dead_allied_buildings, _SetAlliedBuildingsDead)
+			
+			local maa_value = GetIntegerInExponentialRange(1000, 1500)
+			local maa_numSquads = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_manatarms", maa_value)
+			local unit_table = {{ type = "scar_manatarms", numSquads = maa_numSquads }}
+			objTable.torchSgroup = SGroup_CreateUnique("sg_torchers")
+			objTable.inner_army = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_01")
+			SGroup_AddGroup(objTable.torchSgroup, objTable.inner_army.sgroup)
+			
+			_monitorTorchers = function(context, data)
+				local markerCheckRadius = 33.4
+				local objTable = data.objTable
+				local objectiveDestroyed = EGroup_CountSpawned(objTable.eg_main) == 0
+				
+				local _attackHumanPlayer = function()
+					if SGroup_ContainsSGroup(objTable.inner_army.sgroup, objTable.torchSgroup, ALL) == false then
+						Army_AddSGroup(objTable.inner_army, objTable.torchSgroup)
+					end
+				end
+				
+				local _attackObjective = function()
+					if SGroup_ContainsSGroup(objTable.inner_army.sgroup, objTable.torchSgroup, ANY) == true then
+						Army_RemoveSGroup(objTable.inner_army, objTable.torchSgroup)
+					end
+					
+					if SGroup_CountSpawned(objTable.torchSgroup) > 0 then
+						SGroup_AttackEntity(objTable.torchSgroup, EGroup_GetEntityAt(objTable.eg_main, 1))
+					end
+				end
+					 
+				if objectiveDestroyed then
+					_attackHumanPlayer()
+				end
+				
+				-- Objective is no longer in progress
+				if Objective_IsComplete(objTable) or Objective_IsFailed(objTable) then
+					Rule_RemoveMe()
+					return
+				end
+				
+				if objectiveDestroyed then
+					return
+				end
+				
+				-- Check if any player squads have come close
+				local torchGroupMarker = objTable.inner_army.targets[1].position
+				SGroup_Clear(sg_temp)
+				Players_GetAllSquadsNearMarker(ROGUE_HUMAN_PLAYERS, sg_temp, torchGroupMarker, markerCheckRadius)
+				
+				if SGroup_CountSpawned(sg_temp) > 0 then
+					_attackHumanPlayer()
+					return
+				end
+				
+				-- Check if any player buildings have been created nearby (including training dummies)
+				EGroup_Clear(eg_temp)
+				Players_GetAllEntitiesNearMarker(ROGUE_HUMAN_PLAYERS, eg_temp, torchGroupMarker, markerCheckRadius)
+				local entityCount = EGroup_CountSpawned(eg_temp)
+				
+				for i = 1, entityCount do
+					local entity = EGroup_GetEntityAt(eg_temp, i)
+					local distance = Util_GetDistance(entity, torchGroupMarker)
+					
+					--[[
+						Players_GetAllEntitiesNearMarker uses proper collision checking to determine which entities are
+						within a cylinder of the specified radius. The army uses distance checking to determine if it
+						should engage a target. Because of this, it's possible for a unit's collider to be within the
+						cylinder, but its centre point to be outside. This is especially true for buildings.
+						
+						This additional check ensures that the entity is actually close enough that the army will engage it.
+					]]--
+					if distance <= markerCheckRadius then
+						_attackHumanPlayer()
+						return
+					end
+				end
+				
+				-- No player units, target the objective
+				_attackObjective()
+			end
+						
+			local knight_value = GetIntegerInExponentialRange(320, 1500)
+			local knight_numSquads = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_knight", knight_value)
+			unit_table = {{ type = "scar_knight", numSquads = knight_numSquads }}
+			objTable.outer_army = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_02", TARGET_ORDER_LOOP, nil, nil, true)
+			
+			objTable.sgroup = SGroup_CreateUniqueWithPrefix("sg_rescue_enemies")
+			SGroup_AddGroup(objTable.sgroup, objTable.inner_army.sgroup)
+			SGroup_AddGroup(objTable.sgroup, objTable.outer_army.sgroup)
+			
+			objTable.max_health = EGroup_GetTotalHealth(objTable.eg_main)
+			Objective_SetProgressBar(objTable, 1)
+			
+			Rule_AddInterval(_monitorTorchers, 1, {objTable = objTable})
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, nook.position, 35)
+		end,
+		IsComplete = function(objTable)
+			if SGroup_CountSpawned(objTable.sgroup) == 0 then
+				return true
+			end
+			if SGroup_CountSpawned(objTable.inner_army.sgroup) == 0 and 
+				SGroup_CountSpawned(objTable.torchSgroup) == 0 and
+				objTable.outer_army.has_been_reassigned ~= true then
+					Army_AddSGroup(objTable.inner_army, objTable.outer_army.sgroup)
+					Army_RemoveSGroup(objTable.outer_army, objTable.outer_army.sgroup)
+					SGroup_AddGroup(objTable.torchSgroup, objTable.inner_army.sgroup)
+					objTable.outer_army.has_been_reassigned = true
+			end
+		end,
+		PreComplete = function(objTable)
+			sideObjectivesCompleted = sideObjectivesCompleted + 1
+			SaveAlly_PreComplete(objTable)
+			EGroup_SetTargetingType(objTable.eg_main, Targeting_None)
+			EGroup_SetAvgHealth(objTable.eg_main, 1)
+			for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+				Game_SendCustomChallengeEvent(player, CE_ROGUEPEOPLESCHAMPIONCOMPLETED, 1)
+			end
+		end, 
+		IsFailed = function(objTable)
+			Objective_SetProgressBar(objTable, EGroup_GetTotalHealth(objTable.eg_main)/objTable.max_health)
+			if EGroup_GetAvgHealth(objTable.eg_main) <= 0 then
+				return true
+			end
+		end,
+	}
+	OBJ_HARVEST_METEORITE = {
+		Title = "$11268907", --Optional: Harvest the Meteorite
+		Type = ObjectiveType_Build,
+		TelemetryTitle = "harvest_meteorite",
+		short_name = "harvest_meteorite",
+		long_name = "Harvest the Meteorite",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = true,
+		PreStart = function(objTable)
+			local nook = objTable.nook
+			Nook_CleanArea(nook)
+			CreateEntity(nil, BP_GetEntityBlueprint("rogue_sideobj_meteor_01"), nook.position, nil, DIRECTION_FRONT, nil, false)
+			
+			objTable.eg_main = EGroup_CreateIfNotFound("eg_main_meteorite")
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_WAVE_PLAYER, "resource_meteorite_rogue", "mkr_sideobj_main", objTable.eg_main, false, false, false)
+			Objective_AddUIElements(objTable, nook.position, true, "$11268908", false, 0) --Harvest the Meteorite
+			if Game_RogueModeConquerorEnabled() then
+				local meteorEID = EGroup_GetEntityAt(objTable.eg_main, 1)
+				Entity_SetRemainingResourceDepositAmount(meteorEID, Entity_GetRemainingResourceDepositAmount(meteorEID) * 0.5)
+			end
+			
+			local value = GetIntegerInExponentialRange(1250, 3000)
+			local numSquads = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_manatarms", value)
+			local unit_table = {{type = "scar_manatarms", numSquads = numSquads}}
+			Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_01", TARGET_ORDER_RANDOM, nil, 8)
+			
+			value = GetIntegerInExponentialRange(500, 1000)
+			numSquads = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_knight", value)
+			unit_table = {{ type = "scar_knight", numSquads = numSquads }}
+			Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_02", TARGET_ORDER_LOOP, nil, nil)
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, nook.position, 35)
+		end,
+		IsComplete = function(objTable)
+			if EGroup_CountSpawned(objTable.eg_main) > 0 then
+				local meteorite = EGroup_GetEntityAt(objTable.eg_main, 1)
+				return Entity_GetRemainingResourceDepositAmount(meteorite) == 0
+			else
+				return true
+			end
+		end,
+		PreComplete = function(objTable)
+			sideObjectivesCompleted = sideObjectivesCompleted + 1
+			Players_UnRevealArea(ROGUE_HUMAN_PLAYERS, objTable.nook.position)
+		end, 
+	}
+	OBJ_BUILD_BONFIRE = {
+		Title = "$11268910", --Optional: Rebuild the Bonfire
+		Type = ObjectiveType_Build,
+		TelemetryTitle = "build_bonfire",
+		short_name = "build_bonfire",
+		long_name = "Build the Bonfire",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = true,
+		PreStart = function(objTable)
+			local nook = objTable.nook
+			Nook_CleanArea(nook)
+			CreateEntity(nil, BP_GetEntityBlueprint("rogue_sideobj_bonfire_01"), nook.position, nil, DIRECTION_FRONT, nil, false)
+			
+			objTable.eg_main = EGroup_CreateIfNotFound("eg_main_bonfire")	
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_HUMAN_PLAYERS[1], BP_GetEntityBlueprint("building_rogue_bonfire"), "mkr_sideobj_main", objTable.eg_main, 0, false, true)
+			Entity_SetHealth(EGroup_GetEntityAt(objTable.eg_main, 1),0.001)
+			Objective_AddUIElements(objTable, nook.position, true, "$11268911", false, 0) --Rebuild the Bonfire
+			
+			if mission_name == "Watch Your Steppe" then
+				Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_ALLY_PLAYER, tent_ebp, "mkr_sideobj_tent", nil, 0, false, false)
+			else
+				Nook_CreateEntitiesAtMarkers(nook, ROGUE_HUMAN_PLAYERS[1], tent_ebp, "mkr_sideobj_tent", nil, 0, false, true)
+			end
+					
+			local value = GetIntegerInExponentialRange(250, 1000)
+			local numSquads = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_manatarms", value)
+			local unit_table = {{type = "scar_manatarms", numSquads = numSquads}}
+			Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_01", TARGET_ORDER_RANDOM, nil, 8)
+			
+			value = GetIntegerInExponentialRange(750, 1500)
+			numSquads = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_horseman", value)
+			unit_table = {{ type = "scar_horseman", numSquads = numSquads }}
+			Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_02", TARGET_ORDER_LOOP, nil, nil)
+			
+			Objective_SetProgressBar(objTable, 0)
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, nook.position, 35)
+			
+			Rule_Add(MonitorBonfire, { objTable = objTable })
+		end,
+		PreComplete = function(objTable)	
+			local nook = objTable.nook
+			for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+				Game_SendCustomChallengeEvent(player, CE_ROGUEPEOPLESCHAMPIONCOMPLETED, 1)
+			end
+			EventCues_CallToAction("$11268912", CTA_CELEBRATE, nil, nil, objTable.eg_main, 30, "icons/cta/illustrations/player_reinforcement_arrived") --BONFIRE LIT
+			sideObjectivesCompleted = sideObjectivesCompleted + 1
+			EGroup_SetAnimatorState(objTable.eg_main, "bonfire_lit", "on")
+			LocalCommand_EntityAbility(ROGUE_HUMAN_PLAYERS[1], objTable.eg_main, BP_GetAbilityBlueprint("bonfire_festival_food_rogue"), true, false)
+		end, 
+	}
+	OBJ_TRAIN_UNITS = {
+		Title = "$11268916", --Optional: Train Units at the Military College
+		Type = ObjectiveType_Capture,
+		TelemetryTitle = "train_units",
+		short_name = "train_units",
+		long_name = "Train Units at the Military College",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = true,
+		PreStart = function(objTable)
+			local nook = objTable.nook
+			Nook_CleanArea(nook)
+			CreateEntity(nil, BP_GetEntityBlueprint("rogue_sideobj_train_01"), nook.position, nil, DIRECTION_FRONT, nil, false)
+			
+			objTable.eg_main = EGroup_CreateIfNotFound("eg_main_train")	
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ALLY_PLAYER, "scar_military_college", "mkr_sideobj_main", objTable.eg_main)
+			objTable.UI_element = Objective_AddUIElements(objTable, nook.position, true, "$11268918", false, 0) --Capture to Train Units
+			EGroup_SetTargetingType(objTable.eg_main, Targeting_None)
+			EGroup_SetInvulnerable(objTable.eg_main, true, -1)
+			
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ALLY_PLAYER, "scar_barracks", "mkr_sideobj_barracks", nil, nil, false, true)
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ALLY_PLAYER, "scar_stable", "mkr_sideobj_stable", nil, nil, false, true)
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ALLY_PLAYER, "scar_archeryrange", "mkr_sideobj_archery", nil, nil, false, true)
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ALLY_PLAYER, "scar_house", "mkr_sideobj_house", nil, nil, false, true)
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ALLY_PLAYER, "scar_siegeworkshop", "mkr_sideobj_siege", nil, nil, false, true)
+
+			local value = GetIntegerInExponentialRange(1320, 3000)
+			local numSquads = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_manatarms", value)
+			local unit_table = {{type = "scar_manatarms", numSquads = numSquads}}
+			objTable.army = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_01")
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, nook.position, 35)
+		end,
+		IsComplete = function(objTable)
+			return SGroup_CountSpawned(objTable.army.sgroup) == 0
+		end,
+		PreComplete = function(objTable)
+			sideObjectivesCompleted = sideObjectivesCompleted + 1
+			College_Init(objTable)
+			for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+				Game_SendCustomChallengeEvent(player, CE_ROGUEACADEMIACOMPLETED, 1)
+			end
+			EventCues_CallToAction("$11270320", CTA_CELEBRATE, nil, nil, objTable.eg_main, 30, "icons/cta/illustrations/02_celebration") --COLLEGE LIBERATED
+		end, 
+	}
+	OBJ_CAPTURE_SIEGECAMP = {
+		Title = "$11268919", --Optional: Capture the Siege Camp
+		Type = ObjectiveType_Capture,
+		TelemetryTitle = "siege_camp",
+		short_name = "siege_camp",
+		long_name = "Capture the Siege Camp",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = true,
+		PreStart = function(objTable)
+			local nook = objTable.nook
+			Nook_CleanArea(nook)
+			CreateEntity(nil, BP_GetEntityBlueprint("rogue_sideobj_siege_01"), nook.position, nil, DIRECTION_FRONT, nil, false)
+			
+			objTable.eg_main = EGroup_CreateUniqueWithPrefix("eg_main_siege")
+			
+			
+			siegeCampEBP = nil
+			local_civ = Player_GetRaceName(ROGUE_ENEMY_ALLY_PLAYER)
+			if Table_Contains({ "english", "french", "french_ha_01", "hre", "hre_ha_01", "rus" }, local_civ) then	
+				siegeCampEBP = BP_GetEntityBlueprint("building_rogue_siegetrebuchets_west")
+			elseif Table_Contains({ "chinese", "chinese_ha_01", "japanese", "japanese_ha_sen", "mongol", "mongol_ha_gol", "sultanate", "sultanate_ha_tug" }, local_civ) then
+				siegeCampEBP = BP_GetEntityBlueprint("building_rogue_siegetrebuchets_east")	
+			elseif Table_Contains({ "abbasid", "abbasid_ha_01", "byzantine", "byzantine_ha_mac", "ottoman", "malian" }, local_civ) then
+				siegeCampEBP = BP_GetEntityBlueprint("building_rogue_siegetrebuchets_middle_east")	
+			else
+				siegeCampEBP = BP_GetEntityBlueprint("building_rogue_siegetrebuchets")
+			end
+					
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_ALLY_PLAYER, siegeCampEBP, "mkr_sideobj_main", objTable.eg_main)
+			Objective_AddUIElements(objTable, nook.position, true, "$11268920", false, 0) --Capture the Siege Camp
+			EGroup_SetAnimatorState(objTable.eg_main, "deploy_splat", "on")
+			EGroup_SetAnimatorState(objTable.eg_main, "projectile_vis_state", "on")
+			EGroup_SetTargetingType(objTable.eg_main, Targeting_None)
+			EGroup_SetInvulnerable(objTable.eg_main, true, -1)
+
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_ALLY_PLAYER, tent_ebp, "mkr_sideobj_tent")
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_WAVE_PLAYER, "resource_pickup_stone_rogue", "mkr_sideobj_pickup")	
+			
+			local maa_value = GetIntegerInExponentialRange(880, 2000)
+			local archer_value = GetIntegerInExponentialRange(880, 2000)
+			local knight_value = GetIntegerInExponentialRange(880, 2000)
+			
+			local maa_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_manatarms", maa_value)
+			local archer_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_archer", archer_value)
+			local knight_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_knight", knight_value)
+			
+			local maa_table = {{ type = "scar_manatarms", numSquads = maa_count }}
+			objTable.inner_army_1 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, maa_table, "mkr_sideobj_army_01")
+						
+			local archer_table = {{ type = "scar_archer", numSquads = archer_count }}
+			objTable.inner_army_2 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, archer_table, "mkr_sideobj_army_02")
+			
+			local knight_table = {{ type = "scar_knight", numSquads = knight_count }}
+			objTable.outer_army = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, knight_table, "mkr_sideobj_army_03", TARGET_ORDER_LOOP, nil, nil, true)
+			
+			objTable.sgroup = SGroup_CreateUniqueWithPrefix("sg_rescue_enemies")
+			SGroup_AddGroup(objTable.sgroup, objTable.inner_army_1.sgroup)
+			SGroup_AddGroup(objTable.sgroup, objTable.inner_army_2.sgroup)
+			SGroup_AddGroup(objTable.sgroup, objTable.outer_army.sgroup)
+			
+			objTable.total_defenders = SGroup_CountSpawned(objTable.sgroup)
+			Objective_SetProgressBar(objTable, 0)
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, nook.position, 35)
+		end,
+		IsComplete = function(objTable)
+			
+			local currentDefenders = SGroup_CountSpawned(objTable.sgroup)
+			Objective_SetProgressBar(objTable, 1-(currentDefenders/objTable.total_defenders))
+			
+			if currentDefenders == 0 then
+				return true
+			end
+			if SGroup_CountSpawned(objTable.inner_army_1.sgroup) == 0 and 
+				SGroup_CountSpawned(objTable.inner_army_1.sgroup) == 0 and 
+				objTable.outer_army.has_been_reassigned ~= true then
+					local target = { position = objTable.nook.position, attackBuildings = BUILDINGS_ALL }
+					Army_SetTarget(objTable.outer_army, target)
+					objTable.outer_army.has_been_reassigned = true
+			end			
+		end,
+		PreComplete = function(objTable)
+			sideObjectivesCompleted = sideObjectivesCompleted + 1
+			EGroup_SetPlayerOwner(objTable.eg_main, ROGUE_HUMAN_PLAYERS[1])
+			for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+				Game_SendCustomChallengeEvent(player, CE_ROGUEACADEMIACOMPLETED, 1)
+			end
+			EventCues_CallToAction("$11268921", CTA_CELEBRATE, nil, nil, objTable.eg_main, 30, "icons/cta/illustrations/10_mongol_trebuchet") --SIEGE CAMP CAPTURED
+		end
+	}
+	OBJ_DEFEAT_CHAMPION = {
+		Title = "$11269709",--Optional: Defeat the Enemy Hero
+		Type = ObjectiveType_Capture,
+		TelemetryTitle = "defeat_champion",
+		short_name = "defeat_champion",
+		long_name = "Defeat the Champion",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = true,
+		PreStart = function(objTable)
+			local nook = objTable.nook
+			Nook_CleanArea(nook)
+			CreateEntity(nil, BP_GetEntityBlueprint("rogue_sideobj_champ_01"), nook.position, nil, DIRECTION_FRONT, nil, false)
+			
+			Objective_AddUIElements(objTable, nook.position, true, "$11269710", false, 0) --Defeat the Enemy Hero
+										
+			local maa_value = GetIntegerInExponentialRange(120, 1000)
+			local archer_value = GetIntegerInExponentialRange(200, 1000)
+			local maa_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_manatarms", maa_value)
+			local archer_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_archer", archer_value)
+			local unit_table = {
+				{ type = "scar_manatarms", numSquads = maa_count },
+				{ type = "scar_archer", numSquads = archer_count },
+			}
+			objTable.army_01 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, {sbp = SBP.ROGUE.UNIT_GRENADIER_HERO_ROGUE, numSquads = 1 }, "mkr_sideobj_army_01")
+			objTable.army_02 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_02")
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, nook.position, 35)
+		end,
+		IsComplete = function(objTable)
+			return SGroup_CountSpawned(objTable.army_01.sgroup) == 0 and SGroup_CountSpawned(objTable.army_02.sgroup) == 0
+		end,
+		PreComplete = function(objTable)
+			Players_UnRevealArea(ROGUE_HUMAN_PLAYERS, objTable.nook.position)
+			sideObjectivesCompleted = sideObjectivesCompleted + 1
+			CreateUnits(ROGUE_HUMAN_PLAYERS[1], {sbp = SBP.ROGUE.UNIT_GRENADIER_HERO_ROGUE, numSquads = 1 }, objTable.nook.position, SGroup_CreateIfNotFound("sg_grenadier"), nil, nil)
+			Player_SetStateModelEntityTarget(ROGUE_HUMAN_PLAYERS[1], "grenadier_hero_rogue", Squad_GetFirstEntity(SGroup_GetSpawnedSquadAt("sg_grenadier",1)))
+			Player_CompleteUpgrade(ROGUE_HUMAN_PLAYERS[1], BP_GetUpgradeBlueprint("grenadier_hero_obtained_rogue"))
+			EventCues_CallToAction("$11270316", CTA_CELEBRATE, nil, nil, objTable.eg_main, 30, "icons/cta/illustrations/player_leader_has_arrived") --HERO JOINS FORCES
+		end, 
+	}	
+	OBJ_RELIC_CART = {
+		Title = "$11270318", --Optional: Claim the Relic Cart
+		Type = ObjectiveType_Capture,
+		TelemetryTitle = "relic_cart",
+		short_name = "relic_cart",
+		long_name = "Claim the Relic Cart",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = true,
+		PreStart = function(objTable)
+			local nook = objTable.nook
+			Nook_CleanArea(nook)
+			CreateEntity(nil, BP_GetEntityBlueprint("rogue_sideobj_cart_01"), nook.position, nil, DIRECTION_FRONT, nil, false)
+			
+			objTable.sg_main = SGroup_CreateIfNotFound("sg_main_cart")	
+			CreateUnits(ROGUE_NEUTRAL_PLAYER, {sbp = SBP.ROGUE.UNIT_RELIC_CART_ROGUE, numSquads =  1}, nook.marker, objTable.sg_main)
+			Objective_AddUIElements(objTable, nook.position, true, "$11270319", false, 0) --Relic Cart
+				
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_ALLY_PLAYER, "building_military_tent_a_rogue", "mkr_sideobj_tent", objTable.eg_dressing_tents, 0, false, false)
+					
+			local value = GetIntegerInExponentialRange(250, 1000)
+			local numSquads = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_manatarms", value)
+			local unit_table = {{type = "scar_manatarms", numSquads = numSquads}}
+			objTable.innerArmy = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_01", TARGET_ORDER_PATROL, nil, 8)
+			
+			value = GetIntegerInExponentialRange(750, 1500)
+			numSquads = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_horseman", value)
+			unit_table = {{ type = "scar_horseman", numSquads = numSquads }}
+			objTable.outerArmy = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, unit_table, "mkr_sideobj_army_02", TARGET_ORDER_LOOP, nil, nil)
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, nook.position, 35)
+		end,
+		IsComplete = function(objTable)
+			if SGroup_CountSpawned(objTable.innerArmy.sgroup) <= 0 and 
+				SGroup_CountSpawned(objTable.outerArmy.sgroup) <= 0 then 
+				return true
+			end
+		end,
+		PreComplete = function(objTable)	
+			sideObjectivesCompleted = sideObjectivesCompleted + 1
+			SGroup_SetPlayerOwner(objTable.sg_main, ROGUE_HUMAN_PLAYERS[1])
+			EventCues_CallToAction("$11270317", CTA_CELEBRATE, nil, nil, objTable.eg_main, 30, "icons/cta/illustrations/02_celebration") --RELIC CART CLAIMED
+		end, 
+	}
+	OBJ_ENEMY_TREBUCHETS = {
+		Title = "$11271457", --THREAT: LONG RANGE TREBUCHET
+		Type = ObjectiveType_Battle,
+		TelemetryTitle = "enemy_trebs",
+		short_name = "enemy_trebs",
+		long_name = "Enemy Long Range Trebuchet",
+		showTitle = true,
+		IsSecret = false,
+		claimNook = true,
+		PreStart = function(objTable)
+			local nook = objTable.nook
+			Nook_CleanArea(nook)
+			CreateEntity(nil, BP_GetEntityBlueprint("rogue_sideobj_lrt_threat_01"), nook.position, nil, DIRECTION_FRONT, nil, false)
+			
+			objTable.sg_main = SGroup_CreateUniqueWithPrefix("sg_main_siege")
+			objTable.eg_tents = EGroup_CreateUniqueWithPrefix("eg_tents")
+			objTable.sg_repairvills = SGroup_CreateUniqueWithPrefix("sg_repairvills")
+			
+			enemyTrebuchetEBP = SBP.ROGUE.UNIT_SIEGE_TREBUCHET_THREAT_ROGUE
+			local_civ = Player_GetRaceName(ROGUE_ENEMY_ALLY_PLAYER)
+			
+			CreateUnits(ROGUE_ENEMY_ALLY_PLAYER, {sbp = enemyTrebuchetEBP, numSquads = 1}, nook.position, objTable.sg_main)
+			Objective_AddUIElements(objTable, objTable.sg_main, true, "$11271459", false, 5) --Destroy Trebuchet to Stop Bombardment
+
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_ALLY_PLAYER, tent_ebp, "mkr_sideobj_tent", objTable.eg_tents)
+			Nook_CreateEntitiesAtMarkers(nook, ROGUE_ENEMY_WAVE_PLAYER, "resource_pickup_stone_rogue", "mkr_sideobj_pickup")	
+			
+			local maa_value = GetIntegerInExponentialRange(220, 500) --880, 2000 / 4
+			local archer_value = GetIntegerInExponentialRange(220, 500) --Two of these armies get spawned
+			local knight_value = GetIntegerInExponentialRange(440, 1000)
+			
+			local maa_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_manatarms", maa_value)
+			local archer_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_archer", archer_value)
+			local knight_count = GetNumSquadsFromValue(ROGUE_ENEMY_ALLY_PLAYER, "scar_knight", knight_value)
+			
+			local archer_table = {{ type = "scar_archer", numSquads = archer_count }}
+			objTable.inner_army_1 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, archer_table, "mkr_sideobj_army_01")
+			
+			local archer_table = {{ type = "scar_archer", numSquads = archer_count }}
+			objTable.inner_army_2 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, archer_table, "mkr_sideobj_army_02")
+			
+			local maa_table = {{ type = "scar_manatarms", numSquads = maa_count }}
+			objTable.inner_army_3 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, maa_table, "mkr_sideobj_army_03")
+			objTable.inner_army_5 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, maa_table, "mkr_sideobj_army_05")
+			objTable.inner_army_6 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, maa_table, "mkr_sideobj_army_06")
+			objTable.inner_army_7 = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, maa_table, "mkr_sideobj_army_07")
+
+			local knight_table = {{ type = "scar_knight", numSquads = knight_count }}
+			objTable.outer_army = Nook_SpawnArmy(nook, ROGUE_ENEMY_ALLY_PLAYER, knight_table, "mkr_sideobj_army_04", TARGET_ORDER_LOOP, nil, nil, true)
+			
+			objTable.sgroup = SGroup_CreateUniqueWithPrefix("sg_rescue_enemies")
+			SGroup_AddGroup(objTable.sgroup, objTable.inner_army_1.sgroup)
+			SGroup_AddGroup(objTable.sgroup, objTable.inner_army_2.sgroup)
+			SGroup_AddGroup(objTable.sgroup, objTable.outer_army.sgroup)
+			
+			objTable.total_defenders = SGroup_CountSpawned(objTable.sgroup)
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, nook.position, 35)
+			
+			AI_LockSquads(ROGUE_ENEMY_ALLY_PLAYER, objTable.sg_main)
+			Rule_AddOneShot(_Rogue_SetTrebFacing, 3, {objTable = objTable})
+			Rule_AddOneShot(Rogue_MonitorTrebuchetAttacks, Rogue_GetTrebNextShotDelay(), {objTable = objTable})
+			Rule_Add(Rogue_MonitorTrebAttackTimer, {objTable = objTable})
+			Rule_AddInterval(Rogue_MonitorEnemyTrebHealth, 3, {objTable = objTable})
+			
+		end,
+		IsComplete = function(objTable)
+			return SGroup_CountSpawned(objTable.sg_main) <= 0	
+		end,
+		PreComplete = function(objTable)
+			EventCues_CallToAction("$11271458", CTA_CELEBRATE, nil, nil, objTable.nook.position, 30, "icons/cta/illustrations/10_mongol_trebuchet") --LONG RANGE TREBUCHET DESTROYED
+		end
+	}
+		
+	t_RogueSideObjectives = {
+		OBJ_DESTROY_MERCENARY,  
+		OBJ_SAVE_ALLY,
+		OBJ_TRAIN_UNITS,
+		OBJ_CAPTURE_SIEGECAMP,
+		OBJ_HARVEST_METEORITE, 
+		OBJ_BUILD_BONFIRE, 
+		OBJ_DEFEAT_CHAMPION,
+		OBJ_RELIC_CART
+	}
+	
+	if STAMP_TESTMAP then
+		SIDE_OBJECTIVE_COUNT = 6
+		t_RogueSideObjectives = {
+			OBJ_DESTROY_MERCENARY, 
+			OBJ_SAVE_ALLY,
+			OBJ_TRAIN_UNITS,
+			OBJ_CAPTURE_SIEGECAMP,
+			OBJ_HARVEST_METEORITE, 
+			OBJ_BUILD_BONFIRE, 
+			OBJ_DEFEAT_CHAMPION,
+			OBJ_RELIC_CART
+		}	
+	end
+
+	Rogue_ApplyForcedObjectives()
+	Rogue_ChooseObjectives()
+end
+
+function Rogue_ApplyForcedObjectives()
+	forced_objective_names = {}
+	for _, command_line_option in ipairs({ "objective_1", "objective_2" }) do
+		if Misc_IsCommandLineOptionSet(command_line_option) then
+			local objective_name = Misc_GetCommandLineString(command_line_option)
+			table.insert(forced_objective_names, objective_name)
+		end
+	end
+end
+
+function Rogue_ChooseObjectives()
+	chosen_objectives = {}
+	started_objectives = {}
+	side_objective_markers = AllMarkers_FromName("mkr_side_objective", "")
+	for i = 1, SIDE_OBJECTIVE_COUNT do
+		
+		if #t_RogueSideObjectives > 0 then
+			local objective
+			if #forced_objective_names > 0 then
+				local forced_objective_name = forced_objective_names[1]
+				objective = Rogue_GetObjectiveWithName(forced_objective_name)
+				objective.forced = true
+				table.remove(forced_objective_names, 1)
+			else
+				local index = World_GetRand(1, #t_RogueSideObjectives)
+				objective = t_RogueSideObjectives[index]
+			end
+			Table_RemoveFirstItem(t_RogueSideObjectives, objective)
+			if objective.forced then
+				print("Objective - "..objective.long_name.." (forced)")
+			else
+				print("Objective - "..objective.long_name)
+			end
+			
+			if side_objective_markers ~= nil and #side_objective_markers > 0 then
+				if objective.claimNook == true then
+					local index = World_GetRand(1, #side_objective_markers)
+					local objective_marker = side_objective_markers[index]
+					table.remove(side_objective_markers, index)
+					
+					objective.nook = Nook_Init(objective_marker)
+				end
+				for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+					Objective_Register(objective, player)
+				end
+				table.insert(chosen_objectives, objective)
+			end
+		end
+	end
+	if Game_RogueModeConquerorEnabled() then
+		if side_objective_markers ~= nil and #side_objective_markers > 0 then
+			if OBJ_ENEMY_TREBUCHETS.claimNook == true then
+				local index = World_GetRand(1, #side_objective_markers)
+				local objective_marker = side_objective_markers[index]
+				table.remove(side_objective_markers, index)
+				
+				OBJ_ENEMY_TREBUCHETS.nook = Nook_Init(objective_marker)
+			end
+				for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+					Objective_Register(OBJ_ENEMY_TREBUCHETS, player)
+				end
+			table.insert(chosen_objectives, OBJ_ENEMY_TREBUCHETS)
+		end
+	end
+end
+
+function Rogue_StartObjectives()
+	Objective_Start(OBJ_DUMMY)
+	Objective_Start(OBJ_PROTECT_WONDER, true)
+	Objective_StartTimer(OBJ_PROTECT_WONDER, COUNT_UP, 0)
+	print("Main Objective Started")
+	
+	Rule_AddOneShot(Rogue_StartSideObjective, 6)
+	Rule_Add(Rogue_MonitorWaveWarningUI)
+end
+
+function Rogue_MonitorWaveWarningUI()
+	if wave_warning_timer_element then
+		Objective_RemoveUIElements(OBJ_DUMMY, wave_warning_timer_element)
+		wave_warning_timer_element = nil
+	end
+	if wave_warning_minimap_element == nil then
+		wave_warning_minimap_element = Objective_AddUIElements(OBJ_DUMMY, wave_warning_position, true, nil, false, 0)
+	end
+	local first_round_spawn_time = rounds[1].spawn_at
+	local remaining_time = first_round_spawn_time - World_GetGameTime()
+	if remaining_time <= 0  then
+		Objective_RemoveUIElements(OBJ_DUMMY, wave_warning_minimap_element)
+		Rule_RemoveMe()
+		return
+	end
+	--local time_string = FormatSeconds(math.ceil(remaining_time))
+	wave_warning_timer_element = Objective_AddUIElements(OBJ_DUMMY, wave_warning_position, false, Loc_FormatText("$11268922", Loc_FormatTime_M_S(math.ceil(remaining_time), true)), true, 0) --"Waves Starting in "
+end
+
+function Rogue_StartSideObjective()
+	if #chosen_objectives > 0 then
+		local objective = chosen_objectives[1]
+		table.insert(started_objectives, chosen_objectives[1])
+		table.remove(chosen_objectives, 1)
+		
+		Objective_Start(objective, false)
+		print("Side Objective Started - "..objective.long_name)
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		
+		if #chosen_objectives > 0 then
+			Rule_AddOneShot(Rogue_StartSideObjective, 0.75)
+		end
+	end
+end
+	
+function Rogue_GetObjectiveWithName(name)
+	for _, objective in ipairs(t_RogueSideObjectives) do
+		if objective.short_name == name then
+			return objective
+		end
+	end
+	fatal("could not find objective with name "..name)
+end
+
+-------------------------------------------------------------------
+----------------------------- Nook --------------------------------
+-------------------------------------------------------------------
+
+function Nook_Init(marker)
+	local nook = {}
+	nook.marker = marker
+	nook.position = Marker_GetPosition(marker)
+	nook.radius = Marker_GetProximityRadius(marker)
+	return nook
+end
+
+function Nook_CreateEntitiesAtMarkers(nook, player, ebp, marker_name, egroup, delay, is_ghost, set_invulnerable)
+	local use_custom_facing = false
+	if scartype(ebp) == ST_STRING then
+		if EBP_Exists(ebp) then
+			if ebp == "building_military_tent_a_rogue" then
+				use_custom_facing = true
+			end
+			ebp = BP_GetEntityBlueprint(ebp)
+		else
+			ebp = Cardinal_ConvertTypeToEntityBlueprint(ebp, player)
+		end
+	end
+	assert(scartype(ebp) == ST_PBG, "Could not figure out unit type")
+	local markers = Nook_GetMarkersWithName(nook, marker_name)
+	assert(#markers > 0, "Nook could not find any markers with name: "..marker_name)
+	for _, marker in ipairs(markers) do
+		local data = { 
+			player = player, 
+			ebp = ebp, 
+			egroup = egroup, 
+			position = Marker_GetPosition(marker), 
+			direction = Marker_GetDirection(marker),
+			set_invulnerable = set_invulnerable,
+			use_custom_facing = use_custom_facing,
+		}
+		if is_ghost then
+			if delay ~= nil and delay > 0 then
+				Rule_AddOneShot(Nook_CreateGhost, delay, data)
+			else
+				Nook_CreateGhost(nil, data)
+			end
+		else
+			if scartype(delay) == ST_NUMBER and delay > 0 then
+				Rule_AddOneShot(Nook_CreateEntity, delay, data)
+			else
+				Nook_CreateEntity(nil, data)
+			end
+		end
+	end
+end
+
+function Nook_CleanArea(nook)
+	for _, player in ipairs({ ROGUE_ENEMY_WAVE_PLAYER, ROGUE_ENEMY_ALLY_PLAYER }) do
+		EGroup_Clear(eg_temp)
+		Player_GetAllEntitiesNearMarker(player, eg_temp, nook.marker)
+		EGroup_DestroyAllEntities(eg_temp)
+		
+		SGroup_Clear(sg_temp)
+		Player_GetAllSquadsNearMarker(player, sg_temp, nook.marker)
+		SGroup_DestroyAllSquads(sg_temp)
+	end
+end
+
+function Nook_CreateGhost(context, data)
+	EGroup_Clear(eg_temp)
+	local facing 
+	if data.use_custom_facing then
+		facing = PositionWithOffset(data.position, -data.direction.x, -data.direction.z)
+	else
+		facing = Util_GetOffsetPosition(data.position, OFFSET_FRONT, 10)
+	end
+	LocalCommand_PlayerPlaceAndConstructEntitiesPlanned(data.player, data.ebp, data.position, facing, true, false)
+	Player_GetAllEntitiesNearMarker(data.player, eg_temp, data.position, 10)
+	EGroup_FilterUnderConstruction(eg_temp, FILTER_KEEP)
+	if data.egroup ~= nil then
+		EGroup_AddEGroup(data.egroup, eg_temp)
+	end
+	if data.set_invulnerable then
+		EGroup_SetInvulnerable(eg_temp, true, -1)
+		EGroup_SetTargetingType(eg_temp, Targeting_None)
+	end
+end
+
+function Nook_CreateEntity(context, data)
+	local facing
+	if data.use_custom_facing then
+		facing = PositionWithOffset(data.position, -data.direction.x, -data.direction.z)
+	else
+		facing = Util_GetOffsetPosition(data.position, OFFSET_FRONT, 10)
+	end
+	EGroup_Clear(eg_temp)
+	CreateEntity(data.player, data.ebp, data.position, eg_temp, nil, facing, false)
+	if data.set_invulnerable then
+		EGroup_SetInvulnerable(eg_temp, true, -1)
+		EGroup_SetTargetingType(eg_temp, Targeting_None)
+	end
+	if data.egroup then
+		EGroup_AddEGroup(data.egroup, eg_temp)
+	end
+end
+
+function Nook_GetMarkersWithName(nook, marker_name)
+	local results = {}
+	if Marker_Exists(marker_name, "") then
+		local markers = AllMarkers_FromName(marker_name, "")
+		for _, marker in ipairs(markers) do
+			if World_DistanceSquaredPointToPoint(Marker_GetPosition(marker), nook.position) <= (nook.radius ^ 2) then
+				table.insert(results, marker)
+			end
+		end
+	end
+	return results
+end
+
+function Nook_SpawnArmy(nook, player, unit_table, marker_name, target_order, sgroup, idleTime, ignore_buildings, onComplete)
+	local army_target_index = 1
+	local targets = {}
+	while true do
+		local index_string = tostring(army_target_index)
+		if army_target_index < 10 then
+			index_string = "0"..index_string
+		end
+		army_target_index = army_target_index + 1
+		local full_marker_name = marker_name.."_"..index_string
+		local markers = Nook_GetMarkersWithName(nook, full_marker_name)
+		assert(#markers < 2, "Nook found multiple markers with name: "..full_marker_name)
+		if #markers > 0 then
+			local marker = markers[1]
+			local target = { position = Marker_GetPosition(marker), direction = Marker_GetDirection(marker) }
+			table.insert(targets, target)
+		else
+			break
+		end
+	end
+	local params = {
+		player = player,
+		--spawn = targets[1],
+		targets = targets,
+		targetOrder = target_order,
+		onDeathDissolve = true,
+		onCompleteFunction = onComplete,
+		units = unit_table,
+		idleTime = idleTime,
+	}
+	if ignore_buildings then
+		params.attackBuildings = BUILDINGS_NONE
+	end
+	if #targets == 1 then
+		params.useCustomDirection = true
+	end
+	
+	local army = Army_Init(params)
+	return army
+end
+
+-------------------------------------------------------------------
+--------------------------- College -------------------------------
+-------------------------------------------------------------------
+
+function College_Init(objTable)
+	college = {}
+	college.egroup = objTable.eg_main
+	college.units_in_training = {}
+	EGroup_SetPlayerOwner(college.egroup, ROGUE_HUMAN_PLAYERS[1])
+	local entity = EGroup_GetSpawnedEntityAt(college.egroup, 1)
+	objTable.training_time = Entity_GetStateModelFloat(entity, "train_unit_obj_duration_rogue")
+	Rule_AddEntityEvent(_College_OnAbilityUsed, entity, GE_AbilityExecuted, {objTable = objTable, entity =  entity})
+	
+	College_ReminderNeeded =  true
+	Rule_AddOneShot(College_ObjectiveUI_Reminder, 5, {college = college, objTable = objTable})
+end
+
+function College_ObjectiveUI_Reminder(context, data)
+	if College_ReminderNeeded then
+		local college = data.college 
+		local objTable = data.objTable 
+		college.UI_element = Objective_AddUIElements(objTable, college.egroup, false, "$11268923", true, 0) --Activate to begin training
+	end
+end
+
+function _College_OnAbilityUsed(context, data)
+	Rule_RemoveEntityEvent(_College_OnAbilityUsed, data.entity)
+	College_ReminderNeeded = false
+	local objTable = data.objTable
+	objTable.training_start_time = World_GetGameTime()
+	Rule_Add(College_Countdown, {objTable = objTable})
+end
+
+function College_Countdown(context, data)
+	local objTable = data.objTable
+	local countdownTime = objTable.training_time - (World_GetGameTime() - objTable.training_start_time)
+	Objective_SetProgressBar(objTable, 1 - (countdownTime / objTable.training_time))
+	if college.UI_element ~= nil then
+		Objective_RemoveUIElements(data.objTable, college.UI_element)
+	end
+	college.UI_element = Objective_AddUIElements(data.objTable, college.egroup, false, "$11268924", true, 0) --Training Progress
+	
+	if countdownTime == 0 then
+		Rule_RemoveMe()
+		if college.UI_element ~= nil then
+			Objective_RemoveUIElements(data.objTable, college.UI_element)
+		end
+	end	
+end
+
+function College_AddUnit(squad)
+	local unit_in_training = {}
+	unit_in_training.entered_at = World_GetGameTime()
+	unit_in_training.sbp = Squad_GetBlueprint(squad)
+	unit_in_training.squad_id = Squad_GetID(squad)
+	unit_in_training.position = Squad_GetPosition(squad)
+	college.units_in_training[Squad_GetID(squad)] = unit_in_training
+end
+
+function College_ReleaseUnit(unit_in_training)
+	SGroup_Clear(sg_temp)
+	SGroup_Add(sg_temp, Squad_FromID(unit_in_training.squad_id))
+	Cmd_UngarrisonSquad(sg_temp, nil, false)
+	Modify_EntityMaxHealth(sg_temp, 2, MUT_Multiplication)
+	college.units_in_training[unit_in_training.squad_id] = nil
+end
+
+function DestroyBuildingsObjective_Start(objTable)
+	objTable.enemy_building_egroups = {}
+	objTable.building_kill_target = 20
+	objTable.building_kill_count = 0
+	REWARD_PER_BUILDING_DESTROYED = Rogue_DifVar({25, 25, 25, 20, 20, 15, 15, 10})
+	
+	raid_rewards = {
+		{icon = "icons/resources/resource_wood_icon", resource = RT_Wood},
+		{icon = "icons/resources/resource_food_icon", resource = RT_Food},
+		{icon = "icons/resources/resource_gold_icon", resource = RT_Gold},
+		{icon = "icons/resources/resource_stone_icon", resource = RT_Stone},
+		
+	}
+	
+	for _, player in ipairs({ ROGUE_ENEMY_WAVE_PLAYER, ROGUE_ENEMY_ALLY_PLAYER, ROGUE_ENEMY_RAIDER_PLAYER }) do
+		local egroup = EGroup_CreateUniqueWithPrefix("objective_enemy_buildings")
+		Player_GetAll(player, egroup)
+		EGroup_Filter(egroup, { "wall", "stone_wall_tower" }, FILTER_REMOVE)
+		EGroup_Filter(egroup, "resource_pickup", FILTER_REMOVE)
+		EGroup_Filter(egroup, "point_of_interest", FILTER_REMOVE)
+		if eg_destroy_obj_exclude ~= nil then
+			EGroup_RemoveGroup(egroup, eg_destroy_obj_exclude)
+		end
+		if #started_objectives > 0 then
+			for i = 1, #started_objectives do
+				if started_objectives[i].eg_main ~= nil and 
+					EGroup_CountSpawned(started_objectives[i].eg_main) then
+						EGroup_RemoveGroup(egroup, started_objectives[i].eg_main)
+				end
+			end
+		end
+		table.insert(objTable.enemy_building_egroups, egroup)
+		Rule_AddEGroupEvent(DestroyBuildingsObjective_OnKill, egroup, GE_EntityKilled, { objTable = objTable })
+	end
+
+end
+
+function DestroyBuildingsObjective_OnKill(context, data)
+	local objTable = data.objTable
+	local entity = context.victim
+	local position = Entity_GetPosition(entity)
+		
+	local thisRaidReward = REWARD_PER_BUILDING_DESTROYED
+	
+	if Entity_IsOfType(context.victim, "landmark") then
+		thisRaidReward = thisRaidReward * 10
+	elseif Entity_IsOfType(context.victim, "castle") then
+		thisRaidReward = thisRaidReward * 5
+	elseif Entity_IsOfType(context.victim, "house") then
+		thisRaidReward = thisRaidReward * 2
+	elseif Entity_IsOfType(context.victim, "tent") or Entity_IsOfType(context.victim, "farm") then
+		thisRaidReward = thisRaidReward
+	else
+		thisRaidReward = thisRaidReward * 3
+	end
+	
+	local RandomRaidReward = Table_GetRandomItem(raid_rewards)
+	
+	UI_CreatePositionKickerMessage(position, Loc_FormatInteger(thisRaidReward), RandomRaidReward.icon, "", 5, 0, 5)
+	UI_CreateEventCue(Loc_FormatText("$11270162", thisRaidReward), Loc_Empty(), "high_priority", RandomRaidReward.icon, "sfx_campaign_resource_pickup_gold", ECV_Queue)
+	Player_AddResource(ROGUE_HUMAN_PLAYERS[1], RandomRaidReward.resource, thisRaidReward)
+	--Sound_Play2D()
+	--objTable.building_kill_count = objTable.building_kill_count + 1
+	--if objTable.building_kill_count > objTable.building_kill_target then
+		--objTable.building_kill_count = objTable.building_kill_target
+	--end
+	--Objective_SetCounter(objTable, objTable.building_kill_count, objTable.building_kill_target)
+	--if objTable.building_kill_count == objTable.building_kill_target then
+		--Objective_Complete(objTable, true, true)
+		--for _, egroup in ipairs(objTable.enemy_building_egroups) do
+			--Rule_RemoveEGroupEvent(DestroyBuildingsObjective_OnKill, egroup)
+		--end
+	--end
+end
+
+function SaveAlly_PreComplete(objTable)
+	SAVE_ALLY_DELAY = 4 * 60
+	SAVE_ALLY_WAIT = 30	
+	ally_destination = ally_lane.ally_block_targets[#(ally_lane.ally_block_targets)].marker
+	local params = {
+		player = ROGUE_ALLY_PLAYER,
+		spawn = mkr_ally_spawn,
+		targets = ally_lane.ally_block_targets,
+		targetOrder = TARGET_ORDER_LINEAR,
+		onDeathDissolve = false,
+		units = { type = "scar_manatarms", numSquads = ALLY_ARMY_SIZE }
+	}
+	ally_army = Army_Init(params)
+	EventCues_CallToAction("$11268905", CTA_CELEBRATE, nil, nil, ally_army.sgroup, 30, "icons/cta/illustrations/player_reinforcement_arrived") --ALLIES ARRIVED
+	Rule_AddInterval(SaveAlly_Monitor, 1)
+	ally_check_at = World_GetGameTime() + SAVE_ALLY_DELAY
+end
+
+function SaveAlly_Monitor(context, data)
+	if ally_reinforcements == nil then
+		local missing_unit_count = ALLY_ARMY_SIZE - SGroup_CountSpawned(ally_army.sgroup)
+		if World_GetGameTime() >= ally_check_at and ally_reinforce_at == nil then
+			if missing_unit_count > 0 then
+				ally_reinforce_at = World_GetGameTime() + SAVE_ALLY_WAIT
+			end
+		end
+		if ally_reinforce_at and World_GetGameTime() >= ally_reinforce_at then
+			local component_linear = math.min(missing_unit_count, 5)
+			local component_root 
+			if missing_unit_count >= 5 then
+				component_root = (missing_unit_count - 5) ^ 0.65
+			else
+				component_root = 0
+			end
+			local numSquads = component_linear + component_root
+			
+			local params = {
+				player = ROGUE_ALLY_PLAYER,
+				spawn = mkr_ally_spawn,
+				targets = ally_lane.ally_block_targets,
+				targetOrder = TARGET_ORDER_LINEAR,
+				combatRange = 50,
+				onDeathDissolve = true,
+				units = { type = "scar_manatarms", numSquads = numSquads }
+			}
+			ally_reinforcements = Army_Init(params)
+			ally_check_at = World_GetGameTime() + SAVE_ALLY_DELAY
+			ally_reinforce_at = nil
+		end
+	end
+		
+	if ally_reinforcements ~= nil then
+		if ally_reinforcements.sgroup and SGroup_CountSpawned(ally_reinforcements.sgroup) > 0 then
+			if Util_GetDistanceSquared(ally_reinforcements.sgroup, ally_destination) < 100 then
+				TransferArmyIntoArmy(ally_reinforcements, ally_army)
+				Rule_AddOneShot(SaveAlly_Reform, 2)
+				ally_reinforcements = nil
+			end
+		else
+			ally_reinforcements = nil
+		end
+	end
+end
+
+function SaveAlly_Reform()
+	SGroup_AttackMove(ally_army.sgroup, ally_destination)
+	SGroup_MoveAndFace(ally_army.sgroup, ally_destination, nil, nil, true)
+end
+
+function MonitorBonfire(context, data)
+	local objTable = data.objTable
+	if EGroup_CountSpawned(objTable.eg_main) > 0 then
+		local bonfireHealth = EGroup_GetAvgHealth(objTable.eg_main)
+		Objective_SetProgressBar(objTable, bonfireHealth) 
+		if bonfireHealth >= 1 then
+			Objective_Complete(objTable, true, true)
+			Rule_RemoveMe()
+		end
+	else
+		assert(true, "BONFIRE is missing! It may have died. This should never happen. Please report.")
+	end
+end
+
+function Rogue_MonitorTrebuchetAttacks(context, data)
+	local objTable = data.objTable
+	rogueTrebuchetAttacksCounter = rogueTrebuchetAttacksCounter or 1
+	if SGroup_CountSpawned(objTable.sg_main) > 0 then
+		
+		eg_rogue_trebtarget = EGroup_CreateIfNotFound("eg_rogue_trebtarget")
+		eg_playerentities_unfiltered = EGroup_CreateIfNotFound("eg_playerentities_unfiltered")
+		EGroup_Clear(eg_rogue_trebtarget)
+
+		Player_GetAll(ROGUE_HUMAN_PLAYERS[1])		
+		
+		EGroup_Filter(eg_allentities, {"landmark", "wonder"}, FILTER_REMOVE)
+		EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+					
+		local _RemoveUntargetables = function(gid, index, eid)
+			if Entity_GetTargetingType(eid) == Targeting_None then
+				EGroup_Remove(gid, eid)
+			end
+			if Entity_GetHealthPercentage(eid) <= 0.2 then
+				EGroup_Remove(gid, eid)
+			end
+		end
+		EGroup_ForEach(eg_allentities, _RemoveUntargetables)
+	
+		EGroup_Duplicate(eg_allentities, eg_playerentities_unfiltered)
+		local chosenTarget = nil
+
+		if eg_allentities ~= nil and EGroup_CountSpawned(eg_allentities) > 0 then
+			--Attack 1 is always a house
+			if rogueTrebuchetAttacksCounter <= 1 then 
+				EGroup_Filter(eg_allentities, {"house", "economy_building"}, FILTER_KEEP)
+				if EGroup_CountSpawned(eg_allentities) > 0 then
+					chosenTarget = EGroup_GetRandomSpawnedEntity(eg_allentities)
+					if chosenTarget ~= nil then
+						EGroup_Add(eg_rogue_trebtarget, chosenTarget)
+					end
+				end
+			else
+				EGroup_Filter(eg_allentities, {"house", "economy_building", "outpost", "castle"}, FILTER_REMOVE)
+				if EGroup_CountSpawned(eg_allentities) > 0 then
+					chosenTarget = EGroup_GetRandomSpawnedEntity(eg_allentities)
+					if chosenTarget ~= nil then
+						EGroup_Add(eg_rogue_trebtarget, chosenTarget)
+					end
+				end
+			end
+		end
+		
+		--If a valid target is selected attack.
+		--Else if Wonder is final valid target, choose it.
+		local distanceToTarget = 0
+		local targetPos = nil
+		local trebPos = Util_GetPosition(objTable.sg_main)
+		if EGroup_CountSpawned(eg_rogue_trebtarget) < 1 then
+			targetPos = Util_GetPosition(mkr_wonder)
+		else
+			targetPos = Util_GetPosition(eg_rogue_trebtarget)
+		end
+		Cmd_Attack(objTable.sg_main, targetPos, false)	
+		distanceToTarget = Util_GetDistance(objTable.sg_main, targetPos)
+		
+		Rule_AddOneShot(Rogue_StopEnemyTrebFiring, 10, {objTable = objTable})
+		rogueTrebuchetAttacksCounter = rogueTrebuchetAttacksCounter + 1
+		
+		for i = 1, distanceToTarget/5 do
+			local nextSpot = World_GetOffsetPositionRelativeToFacingTarget(trebPos, targetPos, i*5)
+			FOW_PlayerRevealArea(ROGUE_HUMAN_PLAYERS[1], nextSpot, 5, 0.125)
+		end
+		
+		if Objective_IsComplete(objTable) == false then
+			Rule_AddOneShot(Rogue_MonitorTrebuchetAttacks, Rogue_GetTrebNextShotDelay(), {objTable = objTable})
+			Rule_Add(Rogue_MonitorTrebAttackTimer, {objTable = objTable})
+		end
+	end
+end
+
+function _Rogue_SetTrebFacing(context, data)
+	objTable = data.objTable
+	nook = objTable.nook
+	
+	local wonderFacing = Util_GetFacingFromDirection(nook.position, Util_GetDirectionFromAtoB(nook.position, mkr_wonder))
+	
+	--Cmd_Ability(objTable.inner_army_3.sgroup, BP_GetAbilityBlueprint("core_formation_spread"), nil, nil, true, true)
+	--Cmd_FormationMove(objTable.inner_army_3.sgroup, nook.position, true, false, wonderFacing)
+	SGroup_MoveAndFace(objTable.sg_main, nook.position, nil, wonderFacing, true)
+	
+end
+
+function Rogue_StopEnemyTrebFiring(context, data)
+	Cmd_Stop(data.objTable.sg_main)
+end
+
+function Rogue_MonitorTrebAttackTimer(context, data)
+	objTable = data.objTable
+	
+	rogueTrebTimerID = rogueTrebTimerID or nil
+	rogueTrebTimerStart = rogueTrebTimerStart or 0
+	rogueTrebNextShotTime = rogueTrebNextShotTime or 0
+	local remaining_time = 0
+	
+	if rogueTrebTimerID == nil then		
+		rogueTrebTimerStart = World_GetGameTime()
+		rogueTrebNextShotTime = rogueTrebTimerStart + Rogue_GetTrebNextShotDelay()
+		remaining_time = rogueTrebNextShotTime - World_GetGameTime()
+	else
+		Objective_RemoveUIElements(objTable, rogueTrebTimerID)
+		remaining_time = rogueTrebNextShotTime - World_GetGameTime()
+	end
+	
+	if remaining_time <= 0 or Objective_IsComplete(objTable) then
+		Rule_RemoveMe()
+		rogueTrebTimerID = nil
+	else
+		rogueTrebTimerID = Objective_AddUIElements(objTable, objTable.nook.position, false, Loc_FormatText("$11271501", Loc_FormatTime_M_S(math.ceil(remaining_time), true)), true, 8) --"Firing in "
+	end
+	
+end
+
+function Rogue_GetTrebNextShotDelay()
+	local rogueTrebMaxShotTime = Rogue_DifVar({3600, 3600, 3600, 3600, 120, 100, 80, 60})
+	local rogueTrebMinShotTime = Rogue_DifVar({3600, 3600, 3600, 3600, 60, 50, 40, 30})
+	local TREB_MAX_SPEED_AT = 35 * 60
+	local currentGameTime = World_GetGameTime()
+	local gameTimeProgress = currentGameTime/TREB_MAX_SPEED_AT
+	local rogueTrebAcceleratedTime = gameTimeProgress * (rogueTrebMaxShotTime - rogueTrebMinShotTime)
+	local nextTrebShotTime = rogueTrebMaxShotTime
+	if gameTimeProgress > 1 then
+		nextTrebShotTime = rogueTrebMinShotTime
+	else 
+		nextTrebShotTime = rogueTrebMaxShotTime - rogueTrebAcceleratedTime
+	end
+	return nextTrebShotTime
+end
+
+function Rogue_MonitorEnemyTrebHealth(context, data)
+	objTable = data.objTable
+	
+	if Objective_IsComplete(objTable) or SGroup_CountSpawned(objTable.sg_main) < 1 or EGroup_CountSpawned(objTable.eg_tents) < 1 then
+		Rule_RemoveMe()
+	else
+		if SGroup_GetAvgHealth(objTable.sg_main) < 1 and SGroup_CountSpawned(objTable.sg_repairvills) < 1 then
+			
+			local _SpawnVillPerTent = function(gid, index, eid)
+				SGroup_Clear(sg_single)
+				CreateUnits(ROGUE_ENEMY_ALLY_PLAYER, {type = "scar_villager", numSquads = 1}, Util_GetPosition(eid), sg_single)
+				SGroup_AddGroup(objTable.sg_repairvills, sg_single)
+			end
+			EGroup_ForEach(objTable.eg_tents, _SpawnVillPerTent)
+			
+			Player_AddResource(ROGUE_ENEMY_ALLY_PLAYER, RT_Wood, 50000)
+			Cmd_Ability(objTable.sg_repairvills, BP_GetAbilityBlueprint("villager_repair"), objTable.sg_main)
+			
+		elseif SGroup_GetAvgHealth(objTable.sg_main) >= 1 and SGroup_CountSpawned(objTable.sg_repairvills) > 0 and SGroup_IsIdle(objTable.sg_repairvills, ANY) then
+			local _DespawnVillPerTent = function(gid, index, sid)
+				SGroup_Clear(sg_single)
+				SGroup_Add(sg_single, sid)
+				Cmd_Move(sg_single, EGroup_GetRandomSpawnedEntity(objTable.eg_tents), false, true)
+			end
+			SGroup_ForEach(objTable.sg_repairvills, _DespawnVillPerTent)
+		elseif SGroup_GetAvgHealth(objTable.sg_main) < 1 and SGroup_CountSpawned(objTable.sg_repairvills) > 0 and SGroup_IsIdle(objTable.sg_repairvills, ANY) then
+			Player_AddResource(ROGUE_ENEMY_ALLY_PLAYER, RT_Wood, 50000)
+			Cmd_Ability(objTable.sg_repairvills, BP_GetAbilityBlueprint("villager_repair"), objTable.sg_main)
+		end
+	end
+end
+
+

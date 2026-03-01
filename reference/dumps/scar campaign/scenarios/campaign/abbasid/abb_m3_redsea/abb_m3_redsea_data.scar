@@ -1,0 +1,369 @@
+import("MissionOMatic/MissionOMatic.scar")
+import("cardinal.scar")
+
+function RedSea_InitData()
+	
+	--
+	-- GENERAL
+	--
+	t_difficulty =
+	{
+		victoryGoldThreshold = Util_DifVar({30000, 30000, 35000, 35000}),
+		
+		productionSpeedBonus = Util_DifVar({2.0, 1.8, 1.25, 1.0}),
+		
+		unrestStartValue = Util_DifVar({0.05, 0.05, 0.1, 0.15}),
+		
+		extraGuidance = Util_DifVar({true, true, false, false}),
+		
+		raiderWaveInterval = Util_DifVar({6, 5, 4, 3}) * 60,
+		raiderWaveCleanupTime = Util_DifVar({8, 7, 6, 5}) * 60,
+		
+		raiderCampSpearmen = Util_DifVar({6, 6, 8, 10}),
+		raiderCampArchers = Util_DifVar({4, 4, 6, 8}),
+		
+		raiderFleetGalleys = Util_DifVar({2, 2, 6, 8}),
+		raiderFleetHulks = Util_DifVar({2, 3, 8, 10}),
+		raiderFleetSiegeGalleys = Util_DifVar({2, 3, 4, 6}),
+		raiderDemolishers = Util_DifVar({2, 3, 8, 12}),
+		
+		raiderFleetMixedGalleys = Util_DifVar({1, 2, 4, 6}),
+		raiderFleetMixedHulks = Util_DifVar({2, 3, 6, 8}),
+		
+		raiderNetGalleys = Util_DifVar({2, 2, 5, 7}),
+		raiderNetHulks = Util_DifVar({2, 3, 5, 7}),
+		raiderNetSiegeGalleys = Util_DifVar({1, 2, 3, 4}),
+		
+		raiderMarinesCount = Util_DifVar({8, 14, 32, 48}),
+		raiderMarinesSiege = Util_DifVar({
+			SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU,
+			SBP.CRUSADER_CMP.UNIT_SPRINGALD_CRU,
+			SBP.CRUSADER_CMP.UNIT_RAM_CRU,
+			SBP.CRUSADER_CMP.UNIT_MANGONEL_CRU,
+		}),
+		
+		raiderReynaldHulks = Util_DifVar({2, 2, 4, 5}),
+		raiderReynaldGalleys = Util_DifVar({3, 3, 6, 8}),
+		
+		raiderFinaleGalleys = Util_DifVar({2, 4, 7, 9}),
+		raiderFinaleHulks = Util_DifVar({2, 4, 7, 9}),
+		raiderFinaleSiegeGalleys = Util_DifVar({1, 3, 5, 8}),
+		
+		raiderFinalePrepTime = Util_DifVar({300, 240, 120, 60}),
+		raiderFinaleNetMultiplier = Util_DifVar({1.0, 1.25, 1.5, 2.0}),
+		
+		pirateRespawnDelay = Util_DifVar({90, 60, 30, 15}),
+		
+		pirateHunterHulks = Util_DifVar({1, 2, 0, 0}),
+		pirateHunterBattleships = Util_DifVar({0, 0, 2, 3}),
+		piratePatrolGalleys = Util_DifVar({1, 0, 0, 1}),
+		piratePatrolHulks = Util_DifVar({0, 1, 1, 1}),
+		
+		pirateLandUnits1 = Util_DifVar({8, 10, 12, 16}),
+		pirateLandUnits2 = Util_DifVar({2, 3, 4, 5}),
+		pirateLandUnits3 = Util_DifVar({2, 2, 4, 4}),
+		pirateLandUnitsSiege = Util_DifVar({0, 1, 2, 3}),
+		
+		pirateOutpostWeapons = Util_DifVar({
+			UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS,
+			UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS,
+			UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD,
+			UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD,
+		}),
+	}
+	
+	t_tutorial =
+	{
+		countFishingShips = 3,
+		countTradeShips = 5,
+		countBaghlahs = 3,
+	}
+	
+	t_civilUnrest = {
+		current = t_difficulty.unrestStartValue,
+		
+		stage25 = 0.25,
+		stage50 = 0.50,
+		stage75 = 0.75,
+		warningThreshold = 0.8,
+		
+		tickTraderDeath = 0.01,
+		tickRaiderDeath = -0.001,
+		tickPerSecond = 0.0,
+	}
+	
+	g_batchedUnrest = 0
+	g_goldAtObjStart = 0
+	TRADE_CONVOY_GOLD = 500
+	
+	team_players = { player1, player4, player5, player6 }
+	ally_players = { player4, player5, player6 }
+	
+	GUIDANCE_WARSHIP_COUNT = 40
+	
+	--
+	-- CRUSADER RAIDS
+	--
+	raider_armies = {}
+
+	RAID_LOCKOUT_GOLD_RATIO = 0.80
+	
+	RAIDER_SPAWN_POINTS = {
+		mkr_raider_spawn_1,
+		mkr_raider_spawn_2,
+		mkr_raider_spawn_3,
+		mkr_raider_spawn_4,
+		mkr_raider_spawn_5,
+	}
+	
+	-- On Story/Easy, we don't want the enemies too far from the player, since that requires more map awareness to manage successfully
+	if Game_GetSPDifficulty() <= GD_EASY then
+		RAIDER_ROUTES = {
+			{ id = 1, targets = { mkr_raider_route_3a, mkr_raider_route_3b } },
+			{ id = 2, targets = { mkr_raider_route_4a, mkr_raider_route_4b } },
+			{ id = 3, targets = { mkr_raider_route_5a, mkr_raider_route_5b } },
+			{ id = 4, targets = { mkr_raider_route_6a, mkr_raider_route_6b } },
+		}
+	else
+		RAIDER_ROUTES = {
+			{ id = 1, targets = { mkr_raider_route_1a, mkr_raider_route_1b } },
+			{ id = 2, targets = { mkr_raider_route_2a, mkr_raider_route_2b } },
+			{ id = 3, targets = { mkr_raider_route_3a, mkr_raider_route_3b } },
+			{ id = 4, targets = { mkr_raider_route_4a, mkr_raider_route_4b } },
+			{ id = 5, targets = { mkr_raider_route_5a, mkr_raider_route_5b } },
+			{ id = 6, targets = { mkr_raider_route_6a, mkr_raider_route_6b } },
+		}
+	end
+	
+	-- For the starter camp on the coast between the player and their ally
+	RAIDER_UNITS_CAMP = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_SPEARMAN_1_CRU, numSquads = t_difficulty.raiderCampSpearmen },
+		{sbp = SBP.CRUSADER_CMP.UNIT_ARCHER_2_CRU, numSquads = t_difficulty.raiderCampArchers },
+	}
+	
+	-- These are for fleet spawns
+	RAIDER_UNITS_GALLEY = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_GALLEY_CRU, numSquads = t_difficulty.raiderFleetGalleys }
+	}
+	RAIDER_UNITS_HULK = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_HULK_CRU, numSquads = t_difficulty.raiderFleetHulks }
+	}
+	RAIDER_UNITS_RAID_GALLEY = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_RAID_GALLEY_CRU, numSquads = t_difficulty.raiderFleetSiegeGalleys }
+	}
+	RAIDER_UNITS_MIXED = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_GALLEY_CRU, numSquads = t_difficulty.raiderFleetMixedGalleys },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_HULK_CRU, numSquads = t_difficulty.raiderFleetMixedHulks },
+	}
+	-- We'll start with just galleys and add the others later
+	raider_unit_groups = {
+		RAIDER_UNITS_GALLEY,
+	}
+	
+	-- Net spawns are their own thing
+	RAIDER_UNITS_NET_FLEET = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_GALLEY_CRU, numSquads = t_difficulty.raiderNetGalleys },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_HULK_CRU, numSquads = t_difficulty.raiderNetHulks },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_RAID_GALLEY_CRU, numSquads = t_difficulty.raiderNetSiegeGalleys },
+	}
+	RAIDER_NET_STAGES = {"outer", "mid", "inner", "final"}
+	
+	-- Demolition spawns are straightforward
+	RAIDER_UNITS_DEMOLITION = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_DEMOLITION_SHIP_CRU, numSquads = t_difficulty.raiderDemolishers },
+	}
+	DEMO_RAID_INTERVAL = 300
+	DEMO_RAID_SAFETY_THRESHOLD = 5
+	
+	-- A bit more elaborate approach is needed for marines
+	-- We want to know the total number of units first so we can spawn the right number of transports
+	RAIDER_MARINES_UNITS_NO_SIEGE = {
+		{ sbp = SBP.CRUSADER_CMP.UNIT_SPEARMAN_3_CRU, numSquads = math.ceil(t_difficulty.raiderMarinesCount * 0.6) },
+		{ sbp = SBP.CRUSADER_CMP.UNIT_ARCHER_3_CRU, numSquads = math.ceil(t_difficulty.raiderMarinesCount * 0.4) },
+	}
+	RAIDER_MARINES_UNITS = {
+		{ sbp = SBP.CRUSADER_CMP.UNIT_SPEARMAN_3_CRU, numSquads = math.ceil(t_difficulty.raiderMarinesCount * 0.6) },
+		{ sbp = SBP.CRUSADER_CMP.UNIT_ARCHER_3_CRU, numSquads = math.ceil(t_difficulty.raiderMarinesCount * 0.3) },
+		{ sbp = t_difficulty.raiderMarinesSiege, numSquads = math.ceil(t_difficulty.raiderMarinesCount * 0.1) },
+	}
+	RAIDER_MARINES_TRANSPORT_COUNT = math.ceil(UnitTable_CountUnits(RAIDER_MARINES_UNITS) / 16)
+	
+	-- Reynald's fleet is its own thing
+	RAIDER_UNITS_ESCORT_FLEET = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_HULK_CRU, numSquads = t_difficulty.raiderReynaldHulks },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_GALLEY_CRU, numSquads = t_difficulty.raiderReynaldGalleys },
+	}
+	
+	-- A wave of Crusaders could have any of these forms
+	-- Should NOT contain more total parts than there are spawn points in RAIDER_SPAWN_POINTS
+	g_raiderWaveIdx = 1
+	RAIDER_WAVES = {
+		{ fleets = 3, net = 0, marines = 0, demoShips = 0, },
+		{ fleets = 3, net = 0, marines = 0, demoShips = 0, },
+		{ fleets = 3, net = 1, marines = 0, demoShips = 0, },
+		{ fleets = 5, net = 0, marines = 0, demoShips = 1, },
+		{ fleets = 4, net = 1, marines = 0, demoShips = 0, },
+		{ fleets = 4, net = 1, marines = 0, demoShips = 1, },
+	}
+	
+	--
+	-- RAIDER FINALE DATA
+	--
+	
+	RAIDER_FINALE_TARGETS = {
+		mkr_raider_finale_1,
+		mkr_raider_finale_2,
+		mkr_raider_finale_3,
+		mkr_raider_finale_4,
+		mkr_raider_finale_5,
+		mkr_raider_finale_6,
+		mkr_raider_finale_7,
+		mkr_raider_finale_8,
+		mkr_raider_finale_9,
+	}
+	
+	RAIDER_UNITS_FINALE_BOMBARDMENT_FLEET = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_GALLEY_CRU, numSquads = t_difficulty.raiderFinaleGalleys },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_HULK_CRU, numSquads = t_difficulty.raiderFinaleHulks },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_RAID_GALLEY_CRU, numSquads = t_difficulty.raiderFinaleSiegeGalleys },
+	}
+	
+	RAIDER_UNITS_FINALE_NET_FLEET_WEST = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_GALLEY_CRU, numSquads = t_difficulty.raiderNetGalleys * t_difficulty.raiderFinaleNetMultiplier },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_HULK_CRU, numSquads = t_difficulty.raiderNetHulks * t_difficulty.raiderFinaleNetMultiplier },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_RAID_GALLEY_CRU, numSquads = t_difficulty.raiderNetSiegeGalleys * t_difficulty.raiderFinaleNetMultiplier },
+	}
+	RAIDER_UNITS_FINALE_NET_FLEET_MID = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_LEADER_NAVAL_REYNALD_CRU, numSquads = 1},
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_GALLEY_CRU, numSquads = t_difficulty.raiderNetGalleys * t_difficulty.raiderFinaleNetMultiplier },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_HULK_CRU, numSquads = t_difficulty.raiderNetHulks * t_difficulty.raiderFinaleNetMultiplier },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_RAID_GALLEY_CRU, numSquads = t_difficulty.raiderNetSiegeGalleys * t_difficulty.raiderFinaleNetMultiplier },
+	}
+	RAIDER_UNITS_FINALE_NET_FLEET_EAST = {
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_GALLEY_CRU, numSquads = t_difficulty.raiderNetGalleys * t_difficulty.raiderFinaleNetMultiplier },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_HULK_CRU, numSquads = t_difficulty.raiderNetHulks * t_difficulty.raiderFinaleNetMultiplier },
+		{sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_RAID_GALLEY_CRU, numSquads = t_difficulty.raiderNetSiegeGalleys * t_difficulty.raiderFinaleNetMultiplier },
+	}
+	--
+	-- PIRATES
+	--
+	
+	NAVAL_LOOT_TABLE = {
+		"resource_pickup_naval_gold_xp3",
+		"resource_pickup_naval_wood_xp3",
+		"resource_pickup_naval_gold_xp3",
+		"resource_pickup_naval_wood_xp3",
+		"resource_pickup_naval_gold_xp3",
+		"resource_pickup_naval_wood_xp3",
+		"resource_pickup_naval_gold_xp3",
+		"resource_pickup_naval_wood_xp3",
+	}
+	Table_Shuffle(NAVAL_LOOT_TABLE)
+	g_bootyIndex = 1
+	g_pirateBootyCap = 20
+
+end
+
+--
+-- HELPER FUNCTIONS
+--
+function GetBundle(id)
+	local eligible_target_bundles = Clone(RAIDER_TARGET_BUNDLES)
+	for i, bundle in ipairs(eligible_target_bundles) do
+		if bundle.id == id then
+			print("bundle "..bundle.id)
+			return bundle
+		end
+	end
+	fatal("bundle not found")
+end
+
+function GetLandingPartyIndex()
+	landing_party_index = landing_party_index or 0
+	landing_party_index = landing_party_index + 1
+	return landing_party_index
+end
+
+function GetRaiderIndex()
+	raider_index = raider_index or 0
+	raider_index = raider_index + 1
+	return raider_index
+end
+
+function GetRaiderUnits()
+	raider_units_index = raider_units_index or 0
+	raider_units_index = raider_units_index + 1
+	if raider_units_index > #raider_unit_groups then
+		raider_units_index = 1
+	end
+	return raider_unit_groups[raider_units_index]
+end
+
+function GetRaiderTargets()
+	raider_target_index = raider_target_index or 0
+	raider_target_index = raider_target_index + 1
+	if raider_target_index > #RAIDER_TARGETS then
+		raider_target_index = 1
+	end
+	return Clone(RAIDER_TARGETS[raider_target_index])
+end
+
+function GetRecipe()
+	local recipe = {		
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,
+		-- Presentation things for the start or end of a mission
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_saladin",
+				title = "$11234485", -- Red Sea
+				date = "$11252168", -- 1183
+			},
+		},
+		modules = {
+			{
+				type = "Army",
+				name = "pirate_army_1",
+				targets = { mkr_pirate_army_1_1 },
+				targetOrder = TARGET_ORDER_LINEAR,
+				player = player3,
+				units = {
+					{ sbp = SBP.AYYUBID_CMP.UNIT_PIRATE_AYY, numSquads = t_difficulty.pirateLandUnits1 },
+				},
+			},
+			{
+				type = "Army",
+				name = "pirate_army_2",
+				targets = { mkr_pirate_army_2_1, mkr_pirate_army_2_2 },
+				targetOrder = TARGET_ORDER_PATROL,
+				player = player3,
+				idleTime = 5,
+				units = {
+					{ sbp = SBP.AYYUBID_CMP.UNIT_PIRATE_ARCHER_AYY, numSquads = t_difficulty.pirateLandUnits2 },
+				},
+			},
+			{
+				type = "Army",
+				name = "pirate_army_3",
+				targets = { mkr_pirate_army_3_1, mkr_pirate_army_3_2, mkr_pirate_army_3_3 },
+				targetOrder = TARGET_ORDER_PATROL,
+				player = player3,
+				idleTime = 2,
+				units = {
+					{ sbp = SBP.AYYUBID_CMP.UNIT_PIRATE_ARCHER_AYY, numSquads = t_difficulty.pirateLandUnits3 },
+				},
+			},
+			{
+				type = "Army",
+				name = "pirate_army_4",
+				targets = { mkr_pirate_army_4_1, mkr_pirate_army_4_2 },
+				targetOrder = TARGET_ORDER_PATROL,
+				player = player3,
+				units = {
+					{ sbp = SBP.AYYUBID_CMP.UNIT_SPRINGALD_AYY, numSquads = t_difficulty.pirateLandUnitsSiege },
+				},
+			},
+		},
+	}
+	return recipe
+end

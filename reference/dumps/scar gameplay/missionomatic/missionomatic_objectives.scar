@@ -1,0 +1,425 @@
+--
+-- Mission-o-Matic - Player-facing Objectives
+--
+-- Parse, manage, and monitor the player's objectives for the mission 
+--
+--
+-- See: Mission-o-Matic: Player Objectives
+--      http://relicwiki/display/CARD/Mission-o-Matic%3A+Player+Objectives	(in the EE, you can Control-click on this link to go there)
+--
+-- See also: 
+--      Conditions and Actions - http://relicwiki/display/CARD/Mission-o-Matic%3A+Conditions+and+Actions	
+--
+
+function MissionOMatic_InitializeObjective(objective)
+
+	-- create the objective in the format the Objective System requires...
+	
+	local OBJ = {
+	
+		Title = objective.title,
+		Description = objective.description,
+		Type = objective.type or OT_Primary,
+		Icon = objective.icon,
+		
+		IsSecret = objective.isSecret or false,
+		
+		showTitle = objective.showTitle,
+		playIntel = objective.playIntel,
+		
+		Recipe = objective,	-- not strictly an objective system thing, but putting the original data in here makes it easily referencable
+		
+	}
+	
+	-- hook up a parent, using its descriptor if necessary
+	if objective.parent ~= nil then
+		OBJ.Type = OT_Secondary
+		for index, obj in pairs(g_missionObjectives) do 
+			if obj.Recipe.descriptor == parent then 
+				OBJ.Parent = obj
+			end
+		end		
+	end
+
+	-- hook up START items
+	if scartype(objective.start) == ST_TABLE then
+		if scartype(objective.start.preactions) == ST_TABLE then 
+			OBJ.PreStart = MissionOMatic_ObjectiveCallback_PreStart
+		end
+		if scartype(objective.start.actions) == ST_TABLE then 
+			OBJ.OnStart = MissionOMatic_ObjectiveCallback_OnStart
+		end
+		if scartype(objective.start.intelEvent) ~= nil then 
+			OBJ.Intel_Start = objective.start.intelEvent
+		end
+	end
+
+	-- hook up COMPLETE items
+	if scartype(objective.complete) == ST_TABLE then
+		if scartype(objective.complete.conditions) == ST_TABLE then 
+			OBJ.IsComplete = MissionOMatic_ObjectiveCallback_CheckForComplete
+		end
+		if scartype(objective.complete.preactions) == ST_TABLE then 
+			OBJ.PreComplete = MissionOMatic_ObjectiveCallback_PreComplete
+		end
+		if scartype(objective.complete.actions) == ST_TABLE then 
+			OBJ.OnComplete = MissionOMatic_ObjectiveCallback_OnComplete
+		end
+		if scartype(objective.complete.intelEvent) ~= nil then 
+			OBJ.Intel_Complete = objective.complete.intelEvent
+		end
+	end
+	
+	-- hook up FAIL items
+	if scartype(objective.fail) == ST_TABLE then
+		if scartype(objective.fail.conditions) == ST_TABLE then 
+			OBJ.IsFailed = MissionOMatic_ObjectiveCallback_CheckForFail
+		end
+		if scartype(objective.fail.preactions) == ST_TABLE then 
+			OBJ.PreFail = MissionOMatic_ObjectiveCallback_PreFail
+		end
+		if scartype(objective.fail.actions) == ST_TABLE then 
+			OBJ.OnFail = MissionOMatic_ObjectiveCallback_OnFail
+		end
+		if scartype(objective.fail.intelEvent) ~= nil then
+			OBJ.Intel_Fail = objective.fail.intelEvent
+		end
+	end
+	
+	-- hook up a SCRIPT
+	if scartype(objective.playbill) == ST_TABLE then 
+		OBJ.OnStart = MissionOMatic_ObjectiveCallback_OnStart
+		OBJ.OnComplete = MissionOMatic_ObjectiveCallback_OnComplete
+		OBJ.OnFail = MissionOMatic_ObjectiveCallback_OnFail		
+	end
+	
+	-- hook up a COUNTDOWN or a COUNTER
+	if scartype(objective.countDown) == ST_NUMBER or scartype(objective.counterGoal) == ST_NUMBER then
+		OBJ.OnStart = MissionOMatic_ObjectiveCallback_OnStart
+	end
+
+	-- hook up SETUPUI items
+	if scartype(objective.hintpoints) == ST_TABLE then
+		OBJ.SetupUI = MissionOMatic_ObjectiveCallback_SetupUI
+	end
+	
+	-- register it!
+	Objective_Register(OBJ)
+	table.insert(g_missionObjectives, OBJ)
+
+	objective.objective = OBJ
+	
+end
+
+function MissionOMatic_TriggerStartingObjectives()
+	
+	for index, objective in ipairs(g_missionObjectives) do	
+	
+		if objective.Recipe.isStartingObjective == true then 
+			
+			for i, subobjective in ipairs(g_missionObjectives) do 
+				if subobjective.Recipe.parent == objective.Recipe.descriptor and subobjective.Recipe.startAlongsideParent == true then 
+					Objective_Start(subobjective, false, false)
+				end
+			end
+			
+			Objective_Start(objective)
+			
+		end
+		
+	end
+	
+end
+
+function MissionOMatic_FindObjective(id)
+
+	for index, objective in pairs(__t_Objectives) do
+		
+		-- SCAR objective table
+		if scartype(id) == ST_TABLE and id == objective then
+			return objective
+			
+		-- internal objective id
+		elseif scartype(id) == ST_NUMBER and id == objective.ID then
+			return objective
+			
+		-- string identifier from the recipe
+		elseif scartype(id) == ST_STRING and scartype(objective.Recipe) == ST_TABLE and id == objective.Recipe.descriptor then
+			return objective
+
+		end
+		
+	end
+	
+end
+
+function Recipe_AddObjectives(recipe, objectives)
+
+	if objectives == nil then
+		return
+	end
+
+	if objectives[1] == nil then
+		objectives = {objectives}
+	end
+	
+	if recipe.objectives == nil then
+		recipe.objectives = {}
+	end
+
+	for index, objective in ipairs(objectives) do 
+		table.insert(recipe.objectives, objective)
+	end
+
+end
+
+--
+-- Callbacks from the objective system
+--
+
+
+function MissionOMatic_ObjectiveCallback_PreStart(objective)				-- called when an objective starts (only hooked up if the objective has a playbill, or includes start.actions)
+
+	local recipe = objective.Recipe
+	
+	-- play any PreStart actions
+	if recipe.start ~= nil and recipe.start.preactions ~= nil then
+		ActionList_PlayActions(recipe.start.preactions, {objective = objective})
+	end
+	
+end
+
+function MissionOMatic_ObjectiveCallback_OnStart(objective)				-- called when an objective starts (only hooked up if the objective has a playbill, or includes start.actions)
+
+	local recipe = objective.Recipe
+	
+	-- play any OnStart actions
+	if recipe.start ~= nil and recipe.start.actions ~= nil then
+		ActionList_PlayActions(recipe.start.actions, {objective = objective})
+	end
+
+	-- kick off any Playbill
+	if recipe.playbill ~= nil then
+		recipe.playbillID = Playbill_Start(recipe.playbill, {objective = objective})
+	end
+	
+	-- Start a countdown, if applicable
+	if scartype(recipe.countDown) == ST_NUMBER then
+		Objective_StartTimer(objective, COUNT_DOWN, recipe.countDown, recipe.countDown / 5)
+	end
+	
+	-- Start a counter, if applicable
+	local counterStart = recipe.counterStart or 0
+	if scartype(recipe.counterGoal) == ST_NUMBER then
+		Objective_SetCounter(objective, counterStart, recipe.counterGoal)
+	end
+		
+end
+
+function MissionOMatic_ObjectiveCallback_CheckForComplete(objective)	-- called every second to check completion conditions (only hooked up if the objective has complete.conditions set)
+
+	if b_missionIsTriggering == true then	-- metamap mission trigger cycle - this has game save functions in it!
+		return false
+	end
+	
+	local conditions = objective.Recipe.complete.conditions
+
+	return ConditionList_CheckList(conditions, {objective = objective})
+	
+end
+
+
+function MissionOMatic_ObjectiveCallback_PreComplete(objective)			-- called when an objective is completed (only hooked up if the objective has a playbill, or if complete.actions are included)
+
+	local recipe = objective.Recipe
+	
+	-- play any PreComplete actions
+	if recipe.complete ~= nil and recipe.complete.preactions ~= nil then
+		ActionList_PlayActions(recipe.complete.preactions, {objective = objective})
+	end
+	
+end
+
+
+function MissionOMatic_ObjectiveCallback_OnComplete(objective)			-- called when an objective is completed (only hooked up if the objective has a playbill, or if complete.actions are included)
+
+	local recipe = objective.Recipe
+	
+	-- play any OnComplete actions
+	if recipe.complete ~= nil and recipe.complete.actions ~= nil then
+		ActionList_PlayActions(recipe.complete.actions, {objective = objective})
+	end
+
+	-- stop any running playbills for this objective
+	if recipe.playbillID ~= nil then 
+		Playbill_Stop(recipe.playbillID)
+		recipe.playbillID = nil
+	end
+	
+end
+
+function MissionOMatic_ObjectiveCallback_CheckForFail(objective)		-- called every second to check failure conditions (only hooked up if the objective has fail.conditions set)
+
+	if b_missionIsTriggering == true then	-- metamap mission trigger cycle - this has game save functions in it!
+		return false
+	end
+	
+	local conditions = objective.Recipe.fail.conditions
+
+	return ConditionList_CheckList(conditions, {objective = objective})
+	
+end
+
+
+function MissionOMatic_ObjectiveCallback_PreFail(objective)				-- called when an objective is failed (only hooked up if the objective has a playbill, or if fail.actions are included)
+
+	local recipe = objective.Recipe
+	
+	-- play any PreFail actions
+	if recipe.fail ~= nil and recipe.fail.preactions ~= nil then
+		ActionList_PlayActions(recipe.fail.preactions, {objective = objective})
+	end
+
+end
+
+function MissionOMatic_ObjectiveCallback_OnFail(objective)				-- called when an objective is failed (only hooked up if the objective has a playbill, or if fail.actions are included)
+
+	local recipe = objective.Recipe
+	
+	-- play any OnFail actions
+	if recipe.fail ~= nil and recipe.fail.actions ~= nil then
+		ActionList_PlayActions(recipe.fail.actions, {objective = objective})
+	end
+
+	-- stop any running playbills for this objective
+	if recipe.playbillID ~= nil then 
+		Playbill_Stop(recipe.playbillID)
+		recipe.playbillID = nil
+	end
+
+end
+
+function MissionOMatic_ObjectiveCallback_SetupUI(objective)
+
+	local recipe = objective.Recipe
+
+	if scartype(recipe.hintpoints) == ST_TABLE then 
+
+		if scartype(recipe.hintpoints[1]) ~= ST_TABLE then 
+			recipe.hintpoints = {recipe.hintpoints}
+		end
+
+		MissionOMatic_Objective_SetupHintpoints(objective, recipe.hintpoints)
+		
+	end
+	
+end
+
+function MissionOMatic_Objective_SetupHintpoints(objTable, hintpointTable)
+
+	if scartype(hintpointTable) == ST_TABLE then 
+
+		for index, item in pairs(hintpointTable) do 
+			
+			local where 
+			
+			if item.marker ~= nil then 
+				where = item.marker
+			elseif item.sgroup ~= nil then
+				where = item.sgroup
+			elseif item.egroup ~= nil then
+				where = item.egroup
+			elseif item.location ~= nil then 
+				where = Location_GetPosition(LOCATION(item.location))
+			elseif item.module ~= nil then 
+				where = Prefab_DoAction(MissionOMatic_FindModule(item.module), "GetPosition")	
+			end
+			
+			if item.worldArrow == nil then item.worldArrow = true end 
+			
+			Objective_AddUIElements(objTable, where, item.blip or false, item.text or 0, item.worldArrow, item.heightOffset)
+			
+			if item.reticule ~= nil then 
+				
+				local size = nil 
+				if scartype(item.reticule) == ST_NUMBER then 
+					size = item.reticule
+				end
+				
+				Objective_AddGroundReticule(objTable, where, size, item.reticuleStyle)
+				
+			end
+			
+		end
+		
+	end
+	
+end
+
+
+--? @shortdesc Plays some number of speech lines, functions, or CTAs in defined order with waits, and then starts a new objective
+--? @extdesc Table voList should contain a series of voiced strings "$000000000", existing function names, or data tables for CTAs {text, cta_type, onTriggerIntel, onClickFunction, pos, duration, customImage, customStinger}
+--? @args LuaTable objTable[, LuaTable voList]
+--? @result Void
+--? 
+function Objective_TransitionTo(objTable, voList)
+		
+	local narrator = narrator or ACTOR.NARR
+	
+	if EVENTS == nil then
+		EVENTS = {}
+	end
+	
+	EVENTS.temp = function() -- Construct a new event from the voList entries and objective
+		
+		if voList == nil then -- Minimum pause between objectives, if there's no vo
+			CTRL.Event_Delay(5)
+			CTRL.WAIT()
+			
+		else
+			for j,vo in ipairs(voList) do
+				
+				if scartype(vo) == ST_FUNCTION then -- If the vo entry is a function, run
+					vo()
+				else
+					if scartype(vo) ~= ST_TABLE then  -- Otherwise, wrap the vo line in a table for ease of iteration
+						vo = { vo }
+					end
+					
+					if vo.text ~= nil then -- If the line is a table with CTA data, grab the parameters and call that CTA.
+						
+						local text = vo.text
+						local cta_type = vo.cta_type or nil
+						local onTriggerIntel = vo.onTriggerIntel or nil
+						local onClickFunction = vo.onClickFunction or nil
+						local pos = vo.pos or nil
+						local duration = vo.duration or nil
+						local customImage = vo.customImage or nil
+						local customStinger = vo.customStinger or nil
+						
+						EventCues_CallToAction(text, cta_type, onTriggerIntel, onClickFunction, pos, duration, customImage, customStinger)
+						
+						CTRL.WAIT()
+						CTRL.Event_Delay(2.75)
+						CTRL.WAIT()
+					else -- If the entry is just a vo string, run a PlaySpeech on it with defined narrator
+						local line = vo[1]		
+						local delay = vo.delay or 0.5	
+						
+						CTRL.Event_Delay(delay)
+						CTRL.WAIT()
+						
+						CTRL.Actor_PlaySpeech(narrator, line)
+						CTRL.WAIT()  
+					end
+				end
+				
+			end
+		end
+		
+		Objective_Start(objTable) -- Finally, start the new objective
+	end
+	
+	Util_StartIntel(EVENTS.temp) -- Execute the above newly constructed Event
+	
+end

@@ -1,0 +1,445 @@
+-- 
+-- Mission-O-Matic Module - Siege
+--
+-- Covers besieging a fortified position in a flagrant, performantive way (i.e. standing back while artillery attacks the walls)
+-- 
+--
+-- See: Behaviour Module - Siege
+--      http://relicwiki/pages/viewpage.action?pageId=538083411 	(in the EE, you can Control-click on this link to go there)
+--
+
+function Siege_Init(data)
+
+	local newSiegeModule = Prefab_GetInstance(data)
+	newSiegeModule.prefabName = "Siege"
+	
+	table.insert(t_siegeModules, newSiegeModule)
+	table.insert(t_allModules, newSiegeModule)
+	
+	-- Convert the player to a whole player from the string
+	newSiegeModule.player = PARTICIPANT(newSiegeModule.player)
+	
+	newSiegeModule.canRequestAid = newSiegeModule.canRequestAid or true
+	newSiegeModule.canRenderAid = newSiegeModule.canRenderAid or true
+	
+	-- spawn location
+	if scartype(newSiegeModule.spawnLocation) == ST_TABLE then
+		Util_PrintTable(newSiegeModule.spawnLocation)
+		newSiegeModule.spawnLocation = ResolveSpawnLocation(newSiegeModule.spawnLocation)
+		print("---AFTER---")
+		Util_PrintTable(newSiegeModule.spawnLocation)
+	end
+	
+	-- Figure out where to send stuff
+	if scartype(newSiegeModule.siegeTarget) == ST_TABLE and scartype(newSiegeModule.siegeTarget.markerName) == ST_STRING and scartype(newSiegeModule.siegeTarget.direction) == ST_NUMBER then
+		newSiegeModule.siegeTarget.marker = GetMarkerWithDirection(newSiegeModule.siegeTarget.markerName, newSiegeModule.siegeTarget.direction)
+	else
+		fatal("SIEGE MODULE: Invalid siege location")
+	end
+	
+	-- This is for the siege engines only
+	if scartype(newSiegeModule.sgroupEngines) == ST_STRING then
+		newSiegeModule.sgroupEngines = SGroup_FromName(newSiegeModule.sgroupEngines)
+		print("SIEGE: Creating new SGroupEngines from string")
+	elseif scartype(newSiegeModule.sgroupEngines) == ST_NIL then
+		newSiegeModule.sgroupEngines = SGroup_CreateUnique(newSiegeModule.descriptor.." Engine SGroup")
+		print("SIEGE: Creating new SGroupEngines from nothing")
+	else
+		print("SIEGE: Bad engine scartype: "..tostring(Debug_ScartypeToString(scartype(newSiegeModule.sgroupEngines))))
+	end
+	
+	-- This will be for the non-siege-engine units
+	if scartype(newSiegeModule.sgroupCrew) == ST_STRING then
+		newSiegeModule.sgroupCrew = SGroup_FromName(newSiegeModule.sgroupCrew)
+		print("SIEGE: Creating new SGroupCrew from string")
+	elseif scartype(newSiegeModule.sgroupCrew) == ST_NIL then
+		newSiegeModule.sgroupCrew = SGroup_CreateUnique(newSiegeModule.descriptor.." Crew SGroup")
+		print("SIEGE: Creating new SGroupCrew from nothing")
+	else
+		print("SIEGE: Bad crew scartype: "..tostring(Debug_ScartypeToString(scartype(newSiegeModule.sgroupCrew))))
+	end
+	
+	-- Start with the siege engines
+	if scartype(newSiegeModule.siegeEngines) == ST_TABLE then
+ 		UnitEntry_DeploySquads(newSiegeModule.player.id, newSiegeModule.sgroupEngines, newSiegeModule.siegeEngines, newSiegeModule.spawnLocation)
+	end
+	
+	-- Then the crew
+	if scartype(newSiegeModule.siegeCrew) == ST_TABLE then
+ 		UnitEntry_DeploySquads(newSiegeModule.player.id, newSiegeModule.sgroupCrew, newSiegeModule.siegeCrew, newSiegeModule.spawnLocation)
+	end
+	
+	newSiegeModule.data = {
+		isUnderAttack = false,
+		underAttackCountdown = 2,
+		attackOverCountdown = 10,		
+	}
+	
+	-- Try to create an encounter - only works if we have units in the SGroup already
+	Siege_CreateEncounters(newSiegeModule)
+	
+	-- Make sure the monitor function gets added
+	newSiegeModule.data.monitorRuleID = Rule_AddInterval(Siege_Monitor, 5, newSiegeModule)
+	
+	return newSiegeModule
+end
+
+function Siege_CreateEncounters(moduleData)
+
+	local siegeModule = Prefab_GetInstance(moduleData)
+	
+	-- We'll be creating two encounters - one for the siege engines, one for the crew
+	
+	-- Don't try to create an encounter if we don't have any units!
+	if siegeModule.sgroupEngines ~= nil and SGroup_CountSpawned(siegeModule.sgroupEngines) >= 1 then
+
+		-- If there already was an encounter, clear its goal
+		if siegeModule.data.attackEncounter ~= nil then
+			siegeModule.data.attackEncounter:ClearGoal()
+		end
+		-- Maybe make this conditional?
+		siegeModule.data.attackEncounter = Encounter:ConvertSGroup(siegeModule.sgroupEngines)	
+			
+		local goalData = {
+			name = GOAL_FORMATION_ATTACK,
+			target = Util_GetPosition(siegeModule.siegeTarget.marker),
+			range = Marker_GetProximityRadiusOrDefault(siegeModule.siegeTarget.marker, 0) + 10,
+			leashRange = Marker_GetProximityRadiusOrDefault(siegeModule.siegeTarget.marker, 0) + 5,
+		}
+		
+		siegeModule.data.attackEncounter:SetGoal(goalData, true)
+		
+		local setupFunc = function(sgroupid, itemindex, squadID)
+			Cmd_InstantSetupTeamWeapon(sgroupid)
+		end
+		
+		SGroup_ForEach(siegeModule.sgroupEngines, setupFunc)
+		
+	end
+	
+	-- The crew should be more defensive
+	if siegeModule.sgroupCrew ~= nil and SGroup_CountSpawned(siegeModule.sgroupCrew) >= 1 then
+
+		-- If there already was an encounter, clear its goal
+		if siegeModule.data.defendEncounter ~= nil then
+			siegeModule.data.defendEncounter:ClearGoal()
+		end
+		-- Maybe make this conditional?
+		siegeModule.data.defendEncounter = Encounter:ConvertSGroup(siegeModule.sgroupCrew)	
+			
+		local goalData = {
+			name = GOAL_FORMATION_DEFEND,
+			target = Util_GetPosition(siegeModule.siegeTarget.marker),
+			range = Marker_GetProximityRadiusOrDefault(siegeModule.siegeTarget.marker, 0) + 10,
+			leashRange = Marker_GetProximityRadiusOrDefault(siegeModule.siegeTarget.marker, 0) + 5,
+		}
+		
+		siegeModule.data.defendEncounter:SetGoal(goalData, true)
+		
+	end
+
+end
+
+function Siege_Monitor(context, moduleData)
+
+	local siegeModule = Prefab_GetInstance(moduleData)
+	
+	-- Stub function
+	
+	-- The main thing will be to set up the catapults
+	
+end
+
+function Siege_Stop(moduleData)
+
+	local siegeModule = Prefab_GetInstance(moduleData)
+	
+	if siegeModule.data.monitorRuleID ~= nil then
+		Rule_RemoveWithID(siegeModule.data.monitorRuleID)
+		siegeModule.data.monitorRuleID = nil 
+	end
+		
+	if siegeModule.data.attackEncounter ~= nil then
+		-- Purge all squads from the group, setting them free
+		if siegeModule.data.attackEncounter.goal.internalAIEncounterPtr ~= nil then
+			AIEncounter_ResourceGuidance_ClearSquads(siegeModule.data.attackEncounter.goal.internalAIEncounterPtr)
+		end
+		siegeModule.data.attackEncounter:Disable()
+		siegeModule.data.attackEncounter = nil
+	end
+	
+	if siegeModule.data.defendEncounter ~= nil then
+		-- Purge all squads from the group, setting them free
+		if siegeModule.data.defendEncounter.goal.internalAIEncounterPtr ~= nil then
+			AIEncounter_ResourceGuidance_ClearSquads(siegeModule.data.defendEncounter.goal.internalAIEncounterPtr)
+		end
+		siegeModule.data.defendEncounter:Disable()
+		siegeModule.data.defendEncounter = nil
+	end
+		
+end
+
+--? @shortdesc Stops the Siege module entirely and returns the units it contained
+--? @result SGROUP of units still in the module
+function Siege_Disband(moduleData)
+
+	local siegeModule = Prefab_GetInstance(moduleData)
+
+	--Return the complete SGroup if possible
+	local result = SGroup_Create(siegeModule.descriptor.." Survivors")
+	-- The engines
+	if siegeModule.sgroupEngines ~= nil then
+		siegeModule.data.attackEncounter:RemoveUnitsBySGroup(siegeModule.sgroupEngines)
+		if siegeModule.data.attackEncounter.goal.internalAIEncounterPtr ~= nil then
+			AIEncounter_ResourceGuidance_ClearSquads(siegeModule.data.attackEncounter.goal.internalAIEncounterPtr)
+		end
+		siegeModule.data.attackEncounter:ClearGoal()
+		SGroup_AddGroup(result, siegeModule.sgroupEngines)
+	end
+	-- And the crew
+	if siegeModule.sgroupCrew ~= nil then
+		siegeModule.data.defendEncounter:RemoveUnitsBySGroup(siegeModule.sgroupCrew)
+		if siegeModule.data.defendEncounter.goal.internalAIEncounterPtr ~= nil then
+			AIEncounter_ResourceGuidance_ClearSquads(siegeModule.data.defendEncounter.goal.internalAIEncounterPtr)
+		end
+		siegeModule.data.defendEncounter:ClearGoal()
+		SGroup_AddGroup(result, siegeModule.sgroupCrew)
+	end
+	
+	-- Stop all activity
+	Siege_Stop(siegeModule)
+	
+	-- Remove it from the master list
+	for index,module in pairs(t_allSiegePrefabs) do
+		if module == siegeModule then
+			table.remove(t_allSiegePrefabs, index)
+			break
+		end
+	end
+	
+	-- Return that SGroup
+	return result
+	
+end
+
+--? @shortdesc Returns the siege CREW only! We need this for interface reasons, but it doesn't play nicely with how Siege modules work
+function Siege_GetSGroup(data)
+
+	local instance = Prefab_GetInstance(data)	
+
+	return instance.sgroupCrew
+	
+end
+
+function Siege_GetPosition(data)
+
+	local instance = Prefab_GetInstance(data)	
+
+	if SGroup_CountSpawned(instance.sgroupCrew) >= 1 then 
+	
+		return SGroup_GetPosition(instance.sgroupCrew)
+
+	elseif scartype(instance.spawnLocation) == ST_TABLE and scartype(instance.spawnLocation.marker) == ST_MARKER then
+	
+		return instance.spawnLocation.marker
+	
+	end
+	
+	
+end
+
+
+--? @shortdesc Attempts to acquire a group of units matching the given scar types; Siege modules do not yield their siege engines
+function Siege_RequestReinforcements(moduleData, unitTypes, requestSize)
+	
+	local siegeModule = Prefab_GetInstance(moduleData)
+	local resultSGroup = SGroup_CreateUnique("Reinforcements from "..tostring(siegeModule.descriptor))
+	
+	-- If we're not willing to give anything up, drop the request size
+	if Siege_UnderAttackTest(siegeModule) == true then
+		requestSize = 0
+	end
+	
+	-- If we actually have a request, fulfill it
+	if requestSize > 0 then
+		SGroup_Filter(siegeModule.sgroupCrew, unitTypes, FILTER_REMOVE, resultSGroup)
+		-- Split the excess units back into the core sgroupCrew
+		SGroup_FilterCount(resultSGroup, requestSize, siegeModule.sgroupCrew)
+		
+		-- We need to remove these units from the encounters, or else we'll get fatal AI errors :(
+		if siegeModule.data.defendEncounter ~= nil then
+			-- Remove them from the encounter
+			-- This looks a bit cumbersome, but it seems to be the only way to avoid a fatal AI error
+			-- Otherwise, the next encounter tries to incorporate units still assigned to this encounter
+			-- AI_UnlockSquads, SGroup_DisableCombatPlans, Cmd_Stop, and Cmd_StopSquadsExcept are all ineffective.
+			if siegeModule.data.defendEncounter.goal.internalAIEncounterPtr ~= nil then
+				--Basically, purge all squads from the goal, then add back in the ones we didn't want to remove
+				AIEncounter_ResourceGuidance_ClearSquads(siegeModule.data.defendEncounter.goal.internalAIEncounterPtr)
+				AIEncounter_ResourceGuidance_SquadGroup(siegeModule.data.defendEncounter.goal.internalAIEncounterPtr, siegeModule.sgroupCrew)
+			end
+		end
+	end
+	
+	return resultSGroup
+	
+end
+
+--? @shortdesc Pings all nearby modules to see if they can come help - stops when it finds one that can
+function Siege_RequestAid(moduleData)
+
+	local siegeModule = Prefab_GetInstance(moduleData)
+	
+	for index,module in pairs(t_allModules) do
+		
+		if module.descriptor ~= siegeModule.descriptor then
+			local funcName = module.type.."_CanAid"
+			local canAidFunc = _G[funcName]
+			if scartype(canAidFunc) == ST_FUNCTION then
+				if canAidFunc(module) then
+					local attackerSGroup = SGroup_Create("")
+					local tempSGroup = SGroup_Create("")
+					
+					SGroup_GetLastAttacker(siegeModule.sgroupCrew, attackerSGroup, 10)
+					SGroup_GetLastAttacker(siegeModule.sgroupEngines, tempSGroup, 10)
+					SGroup_AddGroup(attackerSGroup, tempSGroup)
+					
+					funcName = module.type.."_RenderAid"
+					local doAidFunc = _G[funcName]
+					if scartype(canAidFunc) == ST_FUNCTION then
+						doAidFunc(module, attackerSGroup)
+					end
+				end
+			end
+		end
+		
+	end
+	
+end
+
+--? @shortdesc Can this module currently render military aid?
+function Siege_CanAid(moduleData)
+	
+	local siegeModule = Prefab_GetInstance(moduleData)
+	local result = (SGroup_IsUnderAttack(siegeModule.sgroupCrew, ANY, 5) or SGroup_IsUnderAttack(siegeModule.sgroupEngines, ANY, 10)) == false
+	result = result == true and siegeModule.canRenderAid == true
+	return result
+	
+end
+
+--? @shortdesc Renders military aid against the target position or SGroup
+function Siege_RenderAid(moduleData, target)
+	
+	local siegeModule = Prefab_GetInstance(moduleData)
+	
+	if scartype(target) == ST_SGROUP then
+		--print(tostring(siegeModule.descriptor).." rendering aid against SGroup")
+	elseif scartype(target) == ST_MARKER then
+		--print(tostring(siegeModule.descriptor).." rendering aid against Marker")
+	else
+		--print(tostring(siegeModule.descriptor).." trying to render aid against "..tostring(Debug_ScartypeToString(target)))
+	end
+	
+end
+
+--? @shortdesc Adds units to the internal SGroups - siege weapons go into the engines group, everything else goes into crew
+function Siege_AddSGroup(moduleData, sgroup)
+
+	local siegeModule = Prefab_GetInstance(moduleData)	
+
+	local villagerTypes = {
+		"scar_villager",
+		"scar_armed_villager",
+	}
+	
+	local siegeTypes = {
+		"scar_ram",
+		"scar_siege_tower",
+		"scar_trebuchet_cw",
+		"scar_trebuchet_traction",
+		"scar_mangonel",
+		"scar_springald",
+		"scar_ribauldequin",
+		"scar_bombard",
+	}
+	
+	local newEngines = SGroup_CreateUnique("")
+	-- Remove villagers entirely
+	SGroup_Filter(sgroup, villagerTypes, FILTER_REMOVE)
+	SGroup_Filter(sgroup, siegeTypes, FILTER_KEEP, newEngines)
+	-- Add these to the modules SGroups
+	SGroup_AddGroup(siegeModule.sgroupCrew, sgroup)
+	SGroup_AddGroup(siegeModule.sgroupEngines, newEngines)
+	
+	-- Only proceed if we have any units in the new group
+	if not SGroup_IsEmpty(sgroup) or not SGroup_IsEmpty(newEngines) then
+		
+		-- If we've made new units, update the encounter. We've already added the units to the SGroup
+		Siege_CreateEncounters(siegeModule)
+
+	end
+	
+	-- Now that those units are in the module and encounter SGroups, we don't need them anymore
+	SGroup_Destroy(newEngines)
+	
+end
+
+function Siege_UnderAttackTest(moduleData)
+
+	local siegeModule = Prefab_GetInstance(moduleData)	
+	
+	local crewUnderAttack = false
+	if siegeModule.sgroupCrew ~= nil then
+		crewUnderAttack = SGroup_IsUnderAttack(siegeModule.sgroupCrew, ANY, 5)
+	end
+	
+	local enginesUnderAttack = false
+	if siegeModule.sgroupEngines ~= nil then
+		enginesUnderAttack = SGroup_IsUnderAttack(siegeModule.sgroupEngines, ANY, 5)
+	end
+	
+	local result = crewUnderAttack or enginesUnderAttack
+	
+	return result
+	
+end
+
+function Siege_TriggerUnderAttack(moduleData)
+
+	local siegeModule = Prefab_GetInstance(moduleData)
+
+	if siegeModule.data.attackEncounter ~= nil and siegeModule.data.attackEncounter:HasGoalTriggered() == false then
+		siegeModule.data.attackEncounter:TriggerGoal()
+	end
+	
+	if siegeModule.data.defendEncounter ~= nil and siegeModule.data.defendEncounter:HasGoalTriggered() == false then
+		siegeModule.data.defendEncounter:TriggerGoal()
+	end
+	
+	print(siegeModule.descriptor.." under attack")
+	
+end
+
+function Siege_TriggerAttackOver(moduleData)
+
+	local siegeModule = Prefab_GetInstance(moduleData)
+
+	if siegeModule.data.attackEncounter ~= nil and siegeModule.data.attackEncounter:HasGoalTriggered() == true then
+		siegeModule.data.attackEncounter:RestartGoal()
+	end
+	
+	if siegeModule.data.defendEncounter ~= nil and siegeModule.data.defendEncounter:HasGoalTriggered() == true then
+		siegeModule.data.defendEncounter:RestartGoal()
+	end
+	
+	print(siegeModule.descriptor.." attack over")
+	
+end
+
+--? @shortdesc Returns true if all the Siege module's units are dead
+function Siege_IsDefeated(moduleData)
+
+	local siegeModule = Prefab_GetInstance(moduleData)
+	
+	return SGroup_CountSpawned(siegeModule.sgroupCrew) <= 0 and SGroup_CountSpawned(siegeModule.sgroupEngines) <= 0
+	
+end

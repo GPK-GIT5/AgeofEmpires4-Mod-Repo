@@ -1,0 +1,128 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+function AbbBonus_SetObjectiveConstants()
+	docks_destroyed = 0
+end
+
+function AbbBonus_RegisterObjectives()
+	
+	OBJ_DestroyLandmarks = {
+		Title = "Destroy Rival Crusader Landmarks",
+		Type = ObjectiveType_Primary,
+		PreStart = function()
+			Objective_SetCounter(OBJ_DestroyLandmarks, 0, 2)
+		end,
+		IsComplete = function()
+
+			local landmarks_remaining = EGroup_CountSpawned(eg_p2_landmarks)
+			
+			local _CheckLandmark = function(eg, hpid)
+				
+				if EGroup_CountSpawned(eg) > 0 then
+					
+					local entity = EGroup_GetEntityAt(eg, 1)
+					
+					if Entity_GetHealth(entity) <= 1 then
+						landmarks_remaining = landmarks_remaining - 1
+						if not hpid == nil then
+							Objective_RemoveUIElements(OBJ_DestroyLandmarks, hpid)
+							hpid = nil
+						end
+					end
+				else
+					if not hpid == nil then
+						Objective_RemoveUIElements(OBJ_DestroyLandmarks, hpid)
+						hpid = nil
+					end
+				end
+			end
+			
+			_CheckLandmark(eg_p2_landmark1, hpid_landmark1)
+			_CheckLandmark(eg_p2_landmark2, hpid_landmark2)
+			
+			if landmarks_remaining < 2 then
+				Objective_SetCounter(OBJ_DestroyLandmarks, 2 - landmarks_remaining, 2)
+			end
+			
+			return landmarks_remaining == 0
+			
+		end,
+		OnComplete = function()
+			AbbBonus_StopAttackersP2()
+			AbbBonus_StopRaidersP2()
+			
+			if Objective_IsComplete(OBJ_SubdueHolyOrders) then
+				Mission_Complete()
+			end
+		end,
+		SetupUI = function()
+			hpid_landmark1 = Objective_AddUIElements(OBJ_DestroyLandmarks, mkr_p2_landmark1, true, "Landmark", false, 5)
+			hpid_landmark2 = Objective_AddUIElements(OBJ_DestroyLandmarks, mkr_p2_landmark2, true, "Landmark", false, 5)
+		end,
+	}
+	
+	OBJ_DestroyDocks = {
+		Title = "Destroy the Byzantine Docks",
+		Type = ObjectiveType_Optional,
+		OnStart = function()
+			Rule_AddInterval(AbbBonus_CheckDocks, 2)
+		end,
+		SetupUI = function()
+			Objective_SetCounter(OBJ_DestroyDocks, 0, 3)
+			hpid_docks = Objective_AddUIElements(OBJ_DestroyDocks, mkr_p5_docks_ui, true, "Byzantine Docks", false, 5)
+		end,
+	}
+	
+	OBJ_EstablishTrade = {
+		Title = "Establish Trade with Allies",
+		Type = ObjectiveType_Optional,
+		OnStart = function()
+			
+		end,
+		IsComplete = function()
+			
+			local sg_trade_check = SGroup_CreateIfNotFound("sg_trade_check")
+			Player_GetAllSquadsNearMarker(player1, sg_trade_check, mkr_p4_trade_trigger, 60)
+			SGroup_Filter(sg_trade_check, {"scar_trade_ship", "scar_trade_cart"}, FILTER_KEEP)
+			return SGroup_CountSpawned(sg_trade_check) > 0
+		end,
+		OnComplete = function()
+			ReinforcementPanel_Enable(player1)
+		end,
+		SetupUI = function()
+			hpid_trade = Objective_AddUIElements(OBJ_EstablishTrade, mkr_p4_trade_trigger, true, "Allies", false, 5)
+		end,
+	}
+	
+	Objective_Register(OBJ_DestroyLandmarks)
+	
+	Objective_Register(OBJ_DestroyDocks)
+	Objective_Register(OBJ_EstablishTrade)
+	
+end
+
+
+function AbbBonus_StartDocksObjective()
+	Objective_Start(OBJ_DestroyDocks, true, true)
+end
+
+
+function AbbBonus_CheckDocks()
+	
+	local docks_remaining = EGroup_CountSpawned(eg_p5_docks)
+	local docks_destroyed_tmp = 3 - docks_remaining
+	
+	if docks_destroyed < docks_destroyed_tmp then
+		docks_destroyed = docks_destroyed_tmp
+		
+		Objective_SetCounter(OBJ_DestroyDocks, docks_destroyed, 3)
+		
+		if docks_destroyed == 3 then
+			Objective_Complete(OBJ_DestroyDocks, true, true)
+			Rule_Remove(AbbBonus_CheckDocks)
+		end
+	end
+end
+
+

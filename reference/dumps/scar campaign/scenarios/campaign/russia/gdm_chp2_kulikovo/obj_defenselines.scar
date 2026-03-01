@@ -1,0 +1,591 @@
+--
+-- Battle of Kulikovo 1380 - Mongol Waves
+--
+
+import("gdm_chp2_kulikovo.scar")
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--														OBJECTIVE INITIALIZATION
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function DefenseLines_InitObjectives()
+	
+	--
+	-- Repel the Mongol attackers
+	--
+	OBJ_RepelMongols = {
+		Title = "$11176411", -- Repel the Mongol Horde
+		Type = ObjectiveType_Battle,
+		
+		PreStart = function()
+			Objective_Start(SOBJ_HoldFords, true)
+		end,
+		
+		PreComplete = function()
+			--Music_LockIntensity(MUSIC_TENSE_RARE)
+		end,
+		
+		OnComplete = function()
+			Music_StopMedium()
+			Mission_Complete()
+		end,
+	}
+	
+	--Smolka river ford defense line
+	SOBJ_HoldFords = {
+		Title = "$11176412", -- Support your allies at the Smolka River fords
+		Type = ObjectiveType_Battle,
+		--StartAlongsideParent = true,
+		Parent = OBJ_RepelMongols,
+		showTitle = true,
+		
+		OnStart = function()
+			--Reveal the fords for the Mongol player so they stop ignoring the player
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_ford_left), Marker_GetProximityRadiusOrDefault(mkr_ford_left, 0), -1)
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_ford_center), Marker_GetProximityRadiusOrDefault(mkr_ford_center, 0), -1)
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_ford_right), Marker_GetProximityRadiusOrDefault(mkr_ford_right, 0), -1)
+			
+			Objective_Start(SOBJ_Wave1)
+		end,
+		
+		PreComplete = function()
+			holdStatus[LOCATION_FORDS] = false
+			holdStatus[LOCATION_MAINLINE] = false
+			holdStatus[LOCATION_LASTLINE] = false
+		end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Wave3_Good)
+			Objective_Start(SOBJ_HoldMainline)
+		end,
+		
+		IsFailed = function()
+			local left_count = Kulikovo_CountMarker(player1, mkr_ford_left) + Kulikovo_CountMarker(player3, mkr_ford_left)
+			local center_count = Kulikovo_CountMarker(player1, mkr_ford_center) + Kulikovo_CountMarker(player3, mkr_ford_center)
+			local right_count = Kulikovo_CountMarker(player1, mkr_ford_right) + Kulikovo_CountMarker(player3, mkr_ford_right)
+			local minimum = math.min(left_count, center_count, right_count)
+			Obj_SetProgress(SOBJ_HoldFords.ID, minimum / 30)
+			return Objective_IsFailed(OBJ_FordStrength_L) or Objective_IsFailed(OBJ_FordStrength_C) or Objective_IsFailed(OBJ_FordStrength_R)
+		end,
+		
+		PreFail = function()
+			holdStatus[LOCATION_FORDS] = false
+			holdStatus[LOCATION_MAINLINE] = false
+			holdStatus[LOCATION_LASTLINE] = false
+			
+			Prefab_DoAction(MissionOMatic_FindModule("MongolLeftArmy"), "UpdateTargetLocation", mkr_mainline_mainarmy_left, attackMoveStyle_normal)
+			Prefab_DoAction(MissionOMatic_FindModule("MongolCenterArmy"), "UpdateTargetLocation", mkr_mainline_mainarmy_center, attackMoveStyle_normal)
+			Prefab_DoAction(MissionOMatic_FindModule("MongolRightArmy"), "UpdateTargetLocation", mkr_mainline_mainarmy_right, attackMoveStyle_normal)
+			
+			DefenseLines_ReplenishModule(ally_left, sg_ally_left, mkr_ally_left_spawn)
+			DefenseLines_ReplenishModule(ally_center, sg_ally_center, mkr_ally_center_spawn)
+			DefenseLines_ReplenishModule(ally_right, sg_ally_right, mkr_ally_right_spawn)
+			
+			RovingArmy_SetTarget(ally_left, mkr_mainline_left)
+			RovingArmy_SetTarget(ally_center, mkr_mainline_center)
+			RovingArmy_SetTarget(ally_right, mkr_mainline_right)
+			
+			Objective_Fail(OBJ_FordStrength_L, false, false)
+			Objective_Fail(OBJ_FordStrength_C, false, false)
+			Objective_Fail(OBJ_FordStrength_R, false, false)
+		end,
+		
+		OnFail = function()
+			Util_StartIntel(EVENTS.Wave3_Bad)
+			Objective_Start(SOBJ_HoldMainline)
+		end,
+	}
+	
+	-- Main line of defense
+	SOBJ_HoldMainline = {
+		Title = "$11176773", -- Support your allies holding the central hill
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_RepelMongols,
+		showTitle = true,
+		
+		
+		SetupUI = function()
+			Objective_Show(SOBJ_HoldFords, false)
+			Objective_AddUIElements(SOBJ_HoldMainline, Marker_GetPosition(mkr_mainline_area), true, "$11180218") -- Hill
+			--Obj_SetProgressVisible(SOBJ_HoldMainline.ID, true)
+		end,
+		
+		PreStart = function()
+		end,
+		
+		OnStart = function()
+		--Moved the below to here from the PreComplete of HoldFords in order for elements to appear in the correct way
+			Support_SpawnMainlineReinforcements()
+			
+			Prefab_DoAction(MissionOMatic_FindModule("MongolLeftArmy"), "UpdateTargetLocation", mkr_mainline_mainarmy_left, attackMoveStyle_normal)
+			Prefab_DoAction(MissionOMatic_FindModule("MongolCenterArmy"), "UpdateTargetLocation", mkr_mainline_mainarmy_center, attackMoveStyle_normal)
+			Prefab_DoAction(MissionOMatic_FindModule("MongolRightArmy"), "UpdateTargetLocation", mkr_mainline_mainarmy_right, attackMoveStyle_normal)
+			
+			DefenseLines_ReplenishModule(ally_left, sg_ally_left, mkr_ally_left_spawn)
+			DefenseLines_ReplenishModule(ally_center, sg_ally_center, mkr_ally_center_spawn)
+			DefenseLines_ReplenishModule(ally_right, sg_ally_right, mkr_ally_right_spawn)
+			
+			RovingArmy_SetTarget(ally_left, mkr_mainline_left)
+			RovingArmy_SetTarget(ally_center, mkr_mainline_center)
+			RovingArmy_SetTarget(ally_right, mkr_mainline_right)
+			
+			Objective_Complete(OBJ_FordStrength_L, false, false)
+			Objective_Complete(OBJ_FordStrength_C, false, false)
+			Objective_Complete(OBJ_FordStrength_R, false, false)
+			
+			EventCues_CallToAction("$11193040", CTA_CELEBRATE, EVENTS.Reinforcements_Hill, nil, sg_mainline_reinforcements, 20) -- "Reinforcements have arrived!"
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			Sound_Play2D("mus_stinger_campaign_triumph_short")
+			
+			--Reveal the hill to the enemy so the AI actually attacks
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_mainline_left), Marker_GetProximityRadiusOrDefault(mkr_mainline_left, 0), -1)
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_mainline_center), Marker_GetProximityRadiusOrDefault(mkr_mainline_center, 0), -1)
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_mainline_right), Marker_GetProximityRadiusOrDefault(mkr_mainline_right, 0), -1)
+			
+			fallbackTimeouts[LOCATION_MAINLINE] = false
+			Rule_AddOneShot(DefenseLines_ReinforceTimedBypass, 64, {status = LOCATION_MAINLINE})
+			Rule_AddInterval(DefenseLines_UpdateHoldStatus, 1, {status = LOCATION_MAINLINE, objective = SOBJ_HoldMainline}) --Update holdStatus when the progress bar has completely filled
+		end,
+		
+		PreComplete = function()
+			holdStatus[LOCATION_FORDS] = false
+			holdStatus[LOCATION_MAINLINE] = false
+			holdStatus[LOCATION_LASTLINE] = false
+		end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Wave7_Good)
+			Objective_Start(SOBJ_HoldLast)
+		end,
+		
+		IsFailed = function()
+			return DefenseLines_IsMarkerLost(SOBJ_HoldMainline, mkr_mainline_area, 150) --Updates the progress bar and fails if abandoned sector is occupied
+		end,
+		
+		PreFail = function()
+			holdStatus[LOCATION_FORDS] = false
+			holdStatus[LOCATION_MAINLINE] = false
+			holdStatus[LOCATION_LASTLINE] = false
+			
+			Prefab_DoAction(MissionOMatic_FindModule("MongolLeftArmy"), "UpdateTargetLocation", mkr_final_mainarmy_left, attackMoveStyle_normal)
+			Prefab_DoAction(MissionOMatic_FindModule("MongolCenterArmy"), "UpdateTargetLocation", mkr_final_mainarmy_center, attackMoveStyle_normal)
+			Prefab_DoAction(MissionOMatic_FindModule("MongolRightArmy"), "UpdateTargetLocation", mkr_final_mainarmy_right, attackMoveStyle_normal)
+			
+			DefenseLines_ReplenishModule(ally_left, sg_ally_left, mkr_ally_left_spawn)
+			DefenseLines_ReplenishModule(ally_center, sg_ally_center, mkr_ally_center_spawn)
+			DefenseLines_ReplenishModule(ally_right, sg_ally_right, mkr_ally_right_spawn)
+			
+			RovingArmy_SetTarget(ally_left, mkr_last_stand_left)
+			RovingArmy_SetTarget(ally_center, mkr_last_stand_center)
+			RovingArmy_SetTarget(ally_right, mkr_last_stand_right)
+		end,
+		
+		OnFail = function()
+			Util_StartIntel(EVENTS.Wave7_Bad)
+			Objective_Start(SOBJ_HoldLast)
+		end,
+	}
+	
+	-- Last line of defense
+	SOBJ_HoldLast = {
+		Title = "$11176776", --Hold the Don river crossing with your allies
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_RepelMongols,
+		showTitle = true,
+		
+		SetupUI = function()
+			Objective_Show(SOBJ_HoldMainline, false)
+			Objective_AddUIElements(SOBJ_HoldLast, Marker_GetPosition(mkr_last_stand_center), true, "$11180220") -- Don river
+			--Obj_SetProgressVisible(SOBJ_HoldLast.ID, true)
+		end,
+		
+		PreStart = function()
+			holdStatus[LOCATION_FORDS] = false
+			holdStatus[LOCATION_MAINLINE] = false
+			holdStatus[LOCATION_LASTLINE] = false
+			
+			Player_GetAll(player1)
+			locationThresholds.lastline = (SGroup_CountSpawned(sg_allsquads) / 2)
+		end,
+		
+		OnStart = function()
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_last_stand_left), Marker_GetProximityRadiusOrDefault(mkr_last_stand_left, 0), -1)
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_last_stand_center), Marker_GetProximityRadiusOrDefault(mkr_last_stand_center, 0), -1)
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_last_stand_right), Marker_GetProximityRadiusOrDefault(mkr_last_stand_right, 0), -1)
+			
+			fallbackTimeouts[LOCATION_LASTLINE] = false
+			Rule_AddOneShot(DefenseLines_ReinforceTimedBypass, 45, {status = LOCATION_LASTLINE})
+			Rule_AddInterval(DefenseLines_UpdateHoldStatus, 1, {status = LOCATION_LASTLINE, objective = SOBJ_HoldLast}) --Update holdStatus when the progress bar has completely filled
+			
+			--Moved everything below from PreComplete of Hold Mainline to here, to get things to happen in the right order
+			Support_SpawnLastlineReinforcements()
+			
+			EventCues_CallToAction("$11193040", CTA_CELEBRATE, EVENTS.Reinforcements_Don, nil, sg_lastline_reinforcements, 20) -- "Reinforcements have arrived!"
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			Sound_Play2D("mus_stinger_campaign_triumph_short")
+			
+			Prefab_DoAction(MissionOMatic_FindModule("MongolLeftArmy"), "UpdateTargetLocation", mkr_final_mainarmy_left, attackMoveStyle_normal)
+			Prefab_DoAction(MissionOMatic_FindModule("MongolCenterArmy"), "UpdateTargetLocation", mkr_final_mainarmy_center, attackMoveStyle_normal)
+			Prefab_DoAction(MissionOMatic_FindModule("MongolRightArmy"), "UpdateTargetLocation", mkr_final_mainarmy_right, attackMoveStyle_normal)
+			
+			DefenseLines_ReplenishModule(ally_left, sg_ally_left, mkr_ally_left_spawn)
+			DefenseLines_ReplenishModule(ally_center, sg_ally_center, mkr_ally_center_spawn)
+			DefenseLines_ReplenishModule(ally_right, sg_ally_right, mkr_ally_right_spawn)
+			
+			RovingArmy_SetTarget(ally_left, mkr_last_stand_left)
+			RovingArmy_SetTarget(ally_center, mkr_last_stand_center)
+			RovingArmy_SetTarget(ally_right, mkr_last_stand_right)
+			
+			--Obj_SetProgressVisible(SOBJ_HoldMainline.ID, false)
+		end,
+		
+		IsFailed = function()
+			return DefenseLines_IsMarkerLost(SOBJ_HoldLast, mkr_last_stand_area, 150)
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	-- Do not lose the Don River
+	OBJ_HoldDon = {
+		Title = "$11176777", -- Mongols must not cross the Don River
+		Type = ObjectiveType_Information,
+	}
+	
+	--Hidden informational objectives
+	OBJ_FordStrength_L = {
+		Title = "$11180214", -- Left ford strength
+		Type = ObjectiveType_Battle,
+		IsSecret = true,
+		showTitle = false,
+		
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_FordStrength_L, Marker_GetPosition(mkr_ford_left), false, "$11180217") -- Smolka river ford
+			Obj_SetProgressVisible(OBJ_FordStrength_L.ID, true)
+		end,
+		
+		IsFailed = function()
+			return DefenseLines_IsMarkerLost(OBJ_FordStrength_L, mkr_ford_left)
+		end,
+	}
+	OBJ_FordStrength_C = {
+		Title = "$11180215", -- Left ford strength
+		Type = ObjectiveType_Battle,
+		IsSecret = true,
+		showTitle = false,
+		
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_FordStrength_C, Marker_GetPosition(mkr_ford_center), false, "$11180217") -- Smolka river ford
+			Obj_SetProgressVisible(OBJ_FordStrength_C.ID, true)
+		end,
+		
+		IsFailed = function()
+			return DefenseLines_IsMarkerLost(OBJ_FordStrength_C, mkr_ford_center)
+		end,
+	}
+	OBJ_FordStrength_R = {
+		Title = "$11180219", -- Left ford strength
+		Type = ObjectiveType_Battle,
+		IsSecret = true,
+		showTitle = false,
+		
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_FordStrength_R, Marker_GetPosition(mkr_ford_right), false, "$11180217") -- Smolka river ford
+			Obj_SetProgressVisible(OBJ_FordStrength_R.ID, true)
+		end,
+		
+		IsFailed = function()
+			return DefenseLines_IsMarkerLost(OBJ_FordStrength_R, mkr_ford_right)
+		end,
+	}
+	
+	--
+	--Register objectives
+	--
+	Objective_Register(OBJ_HoldDon)
+	
+	Objective_Register(OBJ_RepelMongols)
+	
+	--Register waves here
+	MongolWaves_InitObjectives()
+	
+	--Continue registering objectives
+	Objective_Register(SOBJ_HoldFords)
+	Objective_Register(SOBJ_LeftFordStatus)
+	Objective_Register(SOBJ_CenterFordStatus)
+	Objective_Register(SOBJ_RightFordStatus)
+	Objective_Register(SOBJ_HoldMainline)
+	Objective_Register(SOBJ_HoldLast)
+	
+	Objective_Register(OBJ_FordStrength_L)
+	Objective_Register(OBJ_FordStrength_C)
+	Objective_Register(OBJ_FordStrength_R)
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Player_GetAll(player2)
+			SGroup_DestroyAllSquads(sg_allsquads)
+			Mission_Complete()
+	       end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+	
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--														LOCATION HOLDING LOGIC
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function DefenseLines_IsMarkerLost(objective, marker, ratio)
+	--Returns true if only Mongols are here
+	local player_count = Kulikovo_CountMarker(player1, marker)
+	local mongol_count = Kulikovo_CountMarker(player2, marker)
+	local rus_count = Kulikovo_CountMarker(player3, marker) 
+	local ratio = ratio or 30
+	
+	Obj_SetProgress(objective.ID, (player_count + rus_count) / ratio)
+	
+	--Check to see if the mongols have taken control of this area
+	return (player_count == 0 and rus_count == 0 and mongol_count > 0)
+end
+
+function DefenseLines_ReinforceTimedBypass(context, data)
+	-- Checks if the reinforcements have taken too long to arrive and adds a timed bypass
+	fallbackTimeouts[data.status] = true
+end
+
+function DefenseLines_UpdateHoldStatus(context, data)
+	--Checks to see if the Rus faction has "captured" this area with enough units
+	if holdStatus[data.status] == false and (Obj_GetProgress(data.objective.ID) >= 1 or fallbackTimeouts[data.status]) then
+		print("Player has fallen back. Updating hold status and any surviving modules.")
+		--Update the holdStatus
+		holdStatus[data.status] = true
+		
+		--Update the targets for any existing enemy modules
+		MongolWaves_UpdateModuleTargets()
+		
+		Rule_RemoveMe()
+	end
+end
+
+--Old Stuff I'd like to remove
+--? @shortdesc Returns true if marker has units above the prescribed minimum amount
+function DefenseLines_CheckMarkerForUnits(marker, minimum, threshold, offset)
+	local _minimum = minimum or 1
+	
+	if DefenseLines_CompareUnitCount(marker, threshold, offset) >= _minimum then
+		return true
+	else
+		return false
+	end
+end --DefenseLines_CheckMarkerForUnits()
+
+function _DefenseLines_IsLineSecured(data)
+	for i in pairs(data.markers) do
+		if not DefenseLines_CheckMarkerForUnits(data.markers[i], data.threshold, data.threshold, data.offset) then
+			return false
+		end
+	end
+	
+	return true
+end --_DefenseLines_IsLineSecured()
+
+function _DefenseLines_CanStillHold(context, data)
+	--print("Checking to see if marker is overrun")
+	for i in pairs(data.markers) do
+		if not DefenseLines_CheckMarkerForUnits(data.markers[i], nil, data.threshold, data.offset) then
+			--print("Objective is not able to be held. Cancelling out.")
+			local failable = data.canFail or false
+			if failable then
+				Objective_Fail(data.objective)
+			else
+				
+				--Fail the objective early if the player doesn't hold the line before defenses are ready
+				if data.objective == SOBJ_HoldFords then
+					if mainline_built == mainline_desired then
+						Objective_Complete(data.objective)
+					else
+						Objective_Fail(data.objective)
+					end
+				elseif data.objective == SOBJ_HoldMainline then
+					if lastline_built == lastline_desired then
+						Objective_Complete(data.objective)
+					else
+						Objective_Fail(data.objective)
+					end
+				end
+				
+			end
+			Rule_RemoveMe()
+			break
+		end
+	end
+end --_DefenseLines_CanStillHold()
+
+function DefenseLines_UpdateStrengthUI(context, data) -- Checks the provided marker and updates the objective's UI to match
+	local _objective = data.objective
+	local _parent = data.parentObjective or _objective
+	if Objective_IsVisible(_parent) then
+		local unitCount = DefenseLines_CompareUnitCount(data.marker, data.threshold, data.offset)
+		Obj_SetProgress(_objective.ID, (unitCount / data.threshold))
+		--Objective_SetCounter(_objective, unitCount, data.threshold)
+	else
+		Rule_RemoveMe()
+	end
+end --DefenseLines_UpdateStrengthUI()
+
+function DefenseLines_UpdateSmolkaFordsUI() --Evaluates the strength of all three fords
+	if not Objective_IsComplete(SOBJ_HoldFords) then
+		local unitCount = DefenseLines_CompareUnitCount(mkr_ford_left, locationThresholds.fords, locationOffsets, fords)
+		unitCount = unitCount + DefenseLines_CompareUnitCount(mkr_ford_center, locationThresholds.fords, locationOffsets, fords)
+		unitCount = unitCount + DefenseLines_CompareUnitCount(mkr_ford_right, locationThresholds.fords, locationOffsets, fords)
+		
+		Obj_SetProgress(SOBJ_HoldFords, (unitCount / (locationThresholds.fords * 3)))
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function DefenseLines_CompareUnitCount(marker, threshold, offset)
+	local _offset = offset or 0
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, marker)
+	local playerCount = math.min(SGroup_CountSpawned(sg_temp), threshold)
+	
+	Player_GetAllSquadsNearMarker(player2, sg_temp, marker)
+	local mongolCount = SGroup_CountSpawned(sg_temp) + _offset
+	if mongolCount < 0 then 
+		print("mongolCount was "..mongolCount.." but is now 0")
+		mongolCount = 0 
+	end
+	
+	return playerCount
+end --DefenseLines_CompareUnitCount()
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--														VILLAGER DEFENSE SETUP
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function DefenseLines_MainlineForts()
+	FOW_PlayerRevealArea(player3, Marker_GetPosition(mkr_outpost_mainline_1), 10, 2)
+	FOW_PlayerRevealArea(player3, Marker_GetPosition(mkr_outpost_mainline_2), 10, 2)
+	
+	UnitEntry_DeploySquads(player3, sg_mainline_villagers_1, {type = "scar_villager", numSquads = 3}, mkr_village_03)
+	UnitEntry_DeploySquads(player3, sg_mainline_villagers_2, {type = "scar_villager", numSquads = 3}, mkr_village_05)
+	
+	--Util_StartIntel(EVENTS.AI_DefensesHint)
+	Rule_AddOneShot(DefenseLines_MainlineCTA, 56)
+	
+	Rule_AddOneShot(DefenseLines_DelayedMainlineSpawn, 1)
+end
+
+function DefenseLines_LastlineForts()
+	FOW_PlayerRevealArea(player3, Marker_GetPosition(mkr_outpost_last_1), 10, 2)
+	FOW_PlayerRevealArea(player3, Marker_GetPosition(mkr_outpost_last_2), 10, 2)
+	FOW_PlayerRevealArea(player3, Marker_GetPosition(mkr_outpost_last_3), 10, 2)
+	
+	UnitEntry_DeploySquads(player3, sg_lastline_villagers_1, {type = "scar_villager", numSquads = 3}, mkr_village_04)
+	UnitEntry_DeploySquads(player3, sg_lastline_villagers_2, {type = "scar_villager", numSquads = 3}, mkr_village_04)
+	UnitEntry_DeploySquads(player3, sg_lastline_villagers_3, {type = "scar_villager", numSquads = 3}, mkr_village_04)
+	
+	--Util_StartIntel(EVENTS.AIDefenses_Don)
+	Rule_AddOneShot(DefenseLines_LastLineCTA, 62)
+	
+	Rule_AddOneShot(DefenseLines_DelayedLastlineSpawn, 1)
+end
+
+function DefenseLines_DelayedMainlineSpawn()
+	Cmd_Construct(sg_mainline_villagers_1, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, mkr_outpost_mainline_1, nil, false)
+	Cmd_Construct(sg_mainline_villagers_2, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, mkr_outpost_mainline_2, nil, false)
+	
+	local _title = "$11176778" -- Fall back from the Smolka fords when ready
+	
+	Rule_AddInterval(DefenseLines_CheckConstructionComplete, 1, {sgroup = sg_mainline_villagers_1, marker = mkr_outpost_mainline_1, objective = SOBJ_HoldFords, title = _title})
+	Rule_AddInterval(DefenseLines_CheckConstructionComplete, 1, {sgroup = sg_mainline_villagers_2, marker = mkr_outpost_mainline_2, objective = SOBJ_HoldFords, title = _title})
+end
+
+function DefenseLines_DelayedLastlineSpawn()
+	Cmd_Construct(sg_lastline_villagers_1, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, mkr_outpost_last_1, nil, false)
+	Cmd_Construct(sg_lastline_villagers_2, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, mkr_outpost_last_2, nil, false)
+	Cmd_Construct(sg_lastline_villagers_3, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, mkr_outpost_last_3, nil, false)
+	
+	local _title = "$11176779" -- Fall back from the hill when ready
+	
+	Rule_AddInterval(DefenseLines_CheckConstructionComplete, 1, {sgroup = sg_lastline_villagers_1, marker = mkr_outpost_last_1, objective = SOBJ_HoldMainline, title = _title})
+	Rule_AddInterval(DefenseLines_CheckConstructionComplete, 1, {sgroup = sg_lastline_villagers_2, marker = mkr_outpost_last_2, objective = SOBJ_HoldMainline, title = _title})
+	Rule_AddInterval(DefenseLines_CheckConstructionComplete, 1, {sgroup = sg_lastline_villagers_3, marker = mkr_outpost_last_3, objective = SOBJ_HoldMainline, title = _title})
+end
+
+function DefenseLines_MainlineCTA()
+	EventCues_CallToAction("$11191733", CTA_CELEBRATE, EVENTS.AI_DefensesHint, nil, sg_mainline_villagers_1, 20, nil, MUS_STING_TRIUMPHANT)
+	Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+	--Sound_Play2D("mus_stinger_campaign_alert")
+end
+
+function DefenseLines_LastLineCTA()
+	EventCues_CallToAction("$11191733", CTA_CELEBRATE, EVENTS.AIDefenses_Don, nil, mkr_last_stand_area, 20, nil, MUS_STING_TRIUMPHANT)
+	Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+	--Sound_Play2D("mus_stinger_campaign_alert")
+end
+
+function DefenseLines_CheckConstructionComplete(context, data)
+	if SGroup_CountSpawned(data.sgroup) > 0 then
+		debugprint("Checking to see if "..Marker_GetName(data.marker).." is complete")
+		
+		if DefenseLines_CountBuiltStructures(data.marker) > 0 then
+			debugprint("Garrisoning "..SGroup_GetName(data.sgroup).." at "..Marker_GetName(data.marker).." and ending this status check.")
+			Cmd_Garrison(data.sgroup, eg_temp, nil, true, false)
+			
+			--Check to see if it's okay to update the objective text now
+			if data.objective == SOBJ_HoldFords then
+				mainline_built = mainline_built + 1
+				
+				--Check if all of the required structures has been built
+				if mainline_built == mainline_desired then
+					-- Check if the player has already fallen back, they won't need to be notified if they have
+					if not Objective_IsFailed(SOBJ_HoldFords) then
+						Util_StartIntel(EVENTS.AIDefenses_Hill)
+					end
+				end
+			elseif data.objective == SOBJ_HoldMainline then
+				lastline_built = lastline_built + 1
+				if lastline_built == lastline_desired then
+					-- Construction complete
+				end
+			end
+			
+			Rule_RemoveMe()
+		end
+	else
+		debugprint("SGroup "..SGroup_GetName(data.sgroup).." is dead. Aborting construction status check.")
+		Rule_RemoveMe()
+	end
+end
+
+function DefenseLines_CountBuiltStructures(marker)
+	Player_GetAllEntitiesNearMarker(player3, eg_temp, marker)
+	EGroup_Filter(eg_temp, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_temp, FILTER_REMOVE)
+	return EGroup_CountSpawned(eg_temp)
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--															ALLY MODULE STUFF
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function DefenseLines_ReplenishModule(module, sgroup, marker)
+	local units_to_reinforce = Clone(laning_starting_group)
+	local current_units = UnitTable_GenerateFromSGroup(sgroup)
+	UnitTable_RemoveUnits(units_to_reinforce, current_units)
+	
+	if #units_to_reinforce > 0 then
+		SpawnUnitsToModule(units_to_reinforce, module, marker)
+	end
+end

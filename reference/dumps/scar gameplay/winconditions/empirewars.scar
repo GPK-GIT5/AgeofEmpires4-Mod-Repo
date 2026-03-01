@@ -1,0 +1,1080 @@
+-- Setting up the Empire Wars scenario on top of the standard mode conditions
+
+import("cardinal.scar")
+import("gathering_utility.scar")
+import("gamemodes/standard_mode.scar")
+import("missionomatic/missionomatic_utility.scar")
+
+
+
+-- data table for some variables to reference later
+_ew = 
+{
+	module = "EmpireWars",
+	options = {},
+	
+	prelate_per_res = 1, -- HRE prelates per resource
+	scholar_count = 2, -- Delhi scholars garrisoned at start
+	io_per_res = 1, -- Imperial officers per assignment
+	sheep_count = 6, -- Sheep per player at start
+	
+	-- resource variables to be able to do behavior assignments,
+	eg_allWoodResources,
+	eg_allStoneResources,
+	eg_allGoldResources,
+	eg_allForageBushes,
+	eg_allSheep,
+	eg_allDeer,
+	eg_allShoreFish,
+	eg_allCattle,
+}
+
+Core_RegisterModule(_ew.module)
+
+function EmpireWars_OnGameSetup()
+	Setup_GetWinConditionOptions(_ew.options) -- no special options right now, empty array
+	
+	-- Challenge tracking normally starts between _OnGameSetup and _PreInit delegates and some
+	-- entities/squads are spawned before _PreInit. Pause tracking here to prevent the spawned
+	-- units from counting towards challenge progress.
+	Game_PauseChallengeTracking()
+end
+
+
+function EmpireWars_PreInit()
+	for i, player in pairs(PLAYERS) do
+		EmpireWars_FindBuildings(player)
+		EmpireWars_SetUpStartingArea(player)
+		EmpireWars_SpawnSheep(player)
+		EmpireWars_SetPastureRallyPoints(player)
+		EmpireWars_GrantVizierExp(player)
+	end
+end
+
+function EmpireWars_OnInit()
+	--initialize where we'll keep all resources
+	_ew.eg_allWoodResources = EGroup_CreateIfNotFound("eg_allWoodResources")
+	_ew.eg_allStoneResources = EGroup_CreateIfNotFound("eg_allStoneResources")
+	_ew.eg_allGoldResources = EGroup_CreateIfNotFound("eg_allGoldResources")
+	_ew.eg_allForageBushes = EGroup_CreateIfNotFound("eg_allForageBushes")
+	_ew.eg_allSheep = EGroup_CreateIfNotFound("eg_allSheep")
+	_ew.eg_allDeer = EGroup_CreateIfNotFound("eg_allDeer")
+	_ew.eg_allShoreFish = EGroup_CreateIfNotFound("eg_allShoreFish")
+	_ew.eg_allDeepFish = EGroup_CreateIfNotFound("eg_allDeepFish")
+	_ew.eg_allCattle = EGroup_CreateIfNotFound("eg_allCattle")
+	
+	-- this has to be after we spawn sheep and any other gaia/neutral entities in preinit
+	Gathering_FindAllResources(
+		_ew.eg_allWoodResources,
+		_ew.eg_allStoneResources,
+		_ew.eg_allGoldResources,
+		_ew.eg_allForageBushes,
+		_ew.eg_allSheep,
+		_ew.eg_allDeer,
+		_ew.eg_allShoreFish,
+		_ew.eg_allCattle,
+		_ew.eg_allDeepFish
+	)
+	
+	for i, player in pairs(PLAYERS) do
+		EmpireWars_MaliMineSwitch(player)
+		EmpireWars_SpawnVillagers(player)
+		EmpireWars_SpawnPrelates(player)
+		EmpireWars_SpawnScholars(player)
+		EmpireWars_SpawnJoan(player)
+	end
+end
+
+
+
+function EmpireWars_Start()
+	for i, player in pairs(PLAYERS) do
+		EmpireWars_SpawnImperialOfficers(player)		
+		EmpireWars_QueueVillagers(player)
+		EmpireWars_QueueUpgrades(player)
+		EmpireWars_GrantUpgrades(player)
+	end
+	
+	-- Resume challenge tracking after entities/squads have spawned but before player gains control.
+	Game_ResumeChallengeTracking()
+end
+
+
+-- Called when Core_SetPlayerDefeated() is invoked. Signals that a player has been eliminated from play due to defeat. Reserving in case we want different messaging/different end screen
+function EmpireWars_OnPlayerDefeated(player,reason)
+	
+end
+
+-- When a victory condition is met, a module must call Core_OnGameOver() in order to invoke this delegate and notify all modules that the match is about to end. Generally used for clean up (removal of rules, objectives, and UI elements specific to the module).
+function EmpireWars_OnGameOver()
+	
+end
+
+
+---------------------------------------------------------------------------------------------
+--Helpers - Find buildings
+---------------------------------------------------------------------------------------------
+
+-- Calls the right functions for the player based on player civ, to find the building entities and store them in the player array for later access in spawning and set up functions.
+function EmpireWars_FindBuildings(player)
+	
+	EmpireWars_FindTownCenter(player)
+
+	local player_civ = Player_GetRaceName(player.id)
+	
+	if player_civ == "mongol" then
+		EmpireWars_FindGers(player)
+	elseif player_civ == "mongol_ha_gol" then
+		EmpireWars_FindGers(player)
+		EmpireWars_FindFoodMill(player)
+	else
+		EmpireWars_FindFarmhouse(player)
+		EmpireWars_FindMosque(player)
+		EmpireWars_FindStoneMine(player)
+		EmpireWars_FindFoodMill(player)
+		EmpireWars_FindLumberMill(player)
+		EmpireWars_FindMiningCamp(player)
+	end
+end
+
+-- Finds the town center entity, eid, and position and stores them in the player array for the player.
+-- Fallback for a town center that failed to spawn would be nil entity, nil eid, and starting position as the position of "town center"
+-- If the player does not have any entities found, function just ends.
+function EmpireWars_FindTownCenter(player)
+	local town_center_entity_id = EmpireWars_FindMatchingBuildings(player.id, nil, nil, "town_center")
+	
+	if TableCount(town_center_entity_id) > 0 then
+		local town_center_entity = Entity_FromID(town_center_entity_id[1])
+		local town_center_position = Entity_GetPosition(town_center_entity)
+		player.town_center = {
+			entity = town_center_entity,
+			entity_id = town_center_entity_id[1],
+			position = town_center_position,
+		}
+	else
+		player.town_center = {
+			entity = nil,
+			entity_id = nil,
+			position = Player_GetStartingPosition(player.id),
+		}
+	end
+end
+
+-- Finds the food mill entity, eid, and position and stores them in the player array for the player.
+-- Fallback for a food mill that failed to spawn would be nil entity, nil eid, and starting position as the position of "food mill"
+-- If the player does not have any entities found, function just ends.
+function EmpireWars_FindFoodMill(player)
+	local food_mill_entity_id = EmpireWars_FindMatchingBuildings(player.id, nil, nil, "mill_food")
+	
+	if TableCount(food_mill_entity_id) > 0 then 
+		local food_mill_entity = Entity_FromID(food_mill_entity_id[1])
+		local food_mill_position = Entity_GetPosition(food_mill_entity)
+		player.food_mill = {
+			entity = food_mill_entity,
+			entity_id = food_mill_entity_id[1],
+			position = food_mill_position,
+		}
+	else
+		player.food_mill = {
+			entity = nil,
+			entity_id = nil,
+			position = Player_GetStartingPosition(player.id),
+		}
+	end
+end
+
+-- Finds the lumber camp entity, eid, and position and stores them in the player array for the player.
+-- Fallback for a lumber camp that failed to spawn would be nil entity, nil eid, and starting position as the position of "lumber camp"
+-- If the player does not have any entities found, function just ends.
+function EmpireWars_FindLumberMill(player)
+	local lumber_entity_id = EmpireWars_FindMatchingBuildings(player.id, nil, nil, "lumber_mill")
+	
+	if TableCount(lumber_entity_id) > 0 then 
+		local lumber_entity = Entity_FromID(lumber_entity_id[1])
+		local lumber_position = Entity_GetPosition(lumber_entity)
+		player.lumber_camp = {
+			entity = lumber_entity,
+			entity_id = lumber_entity_id[1],
+			position = lumber_position,
+		}
+	else
+		player.lumber_camp = {
+			entity = nil,
+			entity_id = nil,
+			position = Player_GetStartingPosition(player.id),
+		}
+	end
+end
+
+-- Finds the gold mining camp entity, eid, and position and stores them in the player array for the player.
+-- Fallback for a mining camp that failed to spawn would be nil entity, nil eid, and starting position as the position of "mining camp"
+-- If the player does not have any entities found, function just ends.
+function EmpireWars_FindMiningCamp(player)
+	local mine_entity_id = EmpireWars_FindMatchingBuildings(player.id, nil, nil, "mine_gold")
+	
+	if TableCount(mine_entity_id) > 0 then 
+		local mine_entity = Entity_FromID(mine_entity_id[1])
+		local mine_position = Entity_GetPosition(mine_entity)
+		player.gold_mine = {
+			entity = mine_entity,
+			entity_id = mine_entity_id[1],
+			position = mine_position,
+		}
+	else
+		player.gold_mine = {
+			entity = nil,
+			entity_id = nil,
+			position = Player_GetStartingPosition(player.id),
+		}
+	end
+end
+
+-- Finds the ger entities, eid, and position and stores them in the player array for the player.
+-- Fallback for a ger that failed to spawn would be just the player spawn as the position for both, and nil for the entity and entityID.
+-- Just Gold Ger for now. 
+function EmpireWars_FindGers(player)
+	
+	-- Find the ger adjacent to gold
+	local gold_ger_entity_id = EmpireWars_FindMatchingBuildings(player.id, nil, "ger_gold_set", "ger_gold")
+	
+	if TableCount(gold_ger_entity_id) > 0 then
+		local gold_ger_entity = Entity_FromID(gold_ger_entity_id[1])
+		local gold_ger_position = Entity_GetPosition(gold_ger_entity)
+		player.gold_ger = {
+			entity = gold_ger_entity,
+			entity_id  = gold_ger_entity_id[1],
+			position = gold_ger_position,
+		}
+	else
+		player.gold_ger = {
+			entity = nil,
+			entity_id  = nil,
+			position = Player_GetStartingPosition(player.id),
+		}
+	end
+		
+end
+
+-- Finds the mosque entity, eid, and position and stores them in the player array for the player.
+-- Fallback for a mosque that failed to spawn would be nil entity, nil eid, and starting position as the position of "mosque"
+-- If the player does not have any entities found, function just ends.
+function EmpireWars_FindMosque(player)
+	
+	local mosque_entity_id = EmpireWars_FindMatchingBuildings(player.id, nil, nil, "mosque")
+	
+	if TableCount(mosque_entity_id) > 0 then
+		local mosque_entity = Entity_FromID(mosque_entity_id[1])
+		local mosque_entity_position = Entity_GetPosition(mosque_entity)
+		player.mosque = {
+			entity = mosque_entity,
+			entity_id = mosque_entity_id[1],
+			position = mosque_entity_position,
+		}
+	else
+		player.mosque = {
+			entity = nil,
+			entity_id = nil,
+			position = Player_GetStartingPosition(player.id),
+		}	
+	end
+end
+
+-- Finds the stone mining camp entity, eid, and position and stores them in the player array for the player.
+-- Fallback for a stone_mine that failed to spawn would be nil entity, nil eid, and starting position as the position of "stone_mine"
+-- If the player does not have any entities found, function just ends.
+function EmpireWars_FindStoneMine(player)
+	
+	local stone_mine_id = EmpireWars_FindMatchingBuildings(player.id, nil, nil, "mine_stone")
+	
+	if TableCount(stone_mine_id) > 0 then
+		local stone_mine_entity = Entity_FromID(stone_mine_id[1])
+		local stone_mine_entity_position = Entity_GetPosition(stone_mine_entity)
+		player.stone_mine = {
+			entity = stone_mine_entity,
+			entity_id = stone_mine_id[1],
+			position = stone_mine_entity_position,
+		}
+	else
+		player.stone_mine = {
+			entity = nil,
+			entity_id = nil,
+			position = Player_GetStartingPosition(player.id),
+		}	
+	end
+end
+
+-- Japanese civ has unique buildings for combined house and farm/food_mill functions, using a separate function to find the first instance of that for the player.
+-- We use this for food/production upgrade queueing at the moment. 
+-- Fallback for a farmhouse that did not spawn would be nil entity, nil eid, and starting position as the position of "farmhouse"
+function EmpireWars_FindFarmhouse(player)
+	
+	local farmhouse_id = EmpireWars_FindMatchingBuildings(player.id, nil, nil, "farmhouse_0")
+	
+	if TableCount(farmhouse_id) > 0 then
+		local farmhouse_entity = Entity_FromID(farmhouse_id[1])
+		local farmhouse_entity_position = Entity_GetPosition(farmhouse_entity)
+		player.farmhouse = {
+			entity = farmhouse_entity,
+			entity_id = farmhouse_id[1],
+			position = farmhouse_entity_position,
+		}
+	else
+		player.farmhouse = {
+			entity = nil,
+			entity_id = nil,
+			position = Player_GetStartingPosition(player.id),
+		}	
+	end
+end
+
+----------------------------------------
+--Villager spawn and task functions
+----------------------------------------
+
+-- Gets the right blueprint to pass to task helpers, and sets up the right number of villagers assigned to each task based on civilization for a player. 
+-- Then calls the villager spawn and task assignment helpers for the player.
+function EmpireWars_SpawnVillagers(player)
+	local player_civ = Player_GetRaceName(player.id)
+	local vil_bp = BP_GetSquadArchetypeBlueprintForPlayer(player.id, BA_VILLAGER)
+	
+	local vil_assignments = {}
+	---------------------------------------
+	-- define villager counts for tasks
+	---------------------------------------
+	if player_civ == "english" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 3
+		vil_assignments.farm_villager_ct = 8
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+
+	elseif player_civ == "french" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 6
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 12
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+
+	elseif player_civ == "rus" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 11
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+
+	elseif player_civ == "hre" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 4
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 10
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+
+	elseif player_civ == "mongol" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 4
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 12
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+		
+	elseif player_civ == "chinese" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 4
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 10
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+
+	elseif player_civ == "abbasid" then	
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 4
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 7
+		vil_assignments.cow_villager_ct = 0
+		
+	elseif player_civ == "sultanate" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 4
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 7
+		vil_assignments.cow_villager_ct = 0
+					
+	elseif player_civ == "ottoman" then	
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 11
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+		
+	elseif player_civ == "malian" then	
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 0
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 11
+		
+	elseif player_civ == "japanese" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 4
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 1
+		vil_assignments.sheep_villager_ct = 11
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+	
+	elseif player_civ == "byzantine" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 4
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 11
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+	
+	elseif player_civ == "chinese_ha_01" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 4
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 10
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+
+	elseif player_civ == "french_ha_01" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 11
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+		
+	elseif player_civ == "hre_ha_01" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 3
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 10
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+
+	elseif player_civ == "abbasid_ha_01" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 4
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 7
+		vil_assignments.cow_villager_ct = 0
+		
+	elseif player_civ == "templar" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 6
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 11
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+		
+	elseif player_civ == "lancaster" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 2
+		vil_assignments.sheep_villager_ct = 9
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+		
+	elseif player_civ == "japanese_ha_sen" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 4
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 1
+		vil_assignments.sheep_villager_ct = 11
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+	
+	elseif player_civ == "byzantine_ha_mac" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 4
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 1
+		vil_assignments.sheep_villager_ct = 11
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+		
+	elseif player_civ == "mongol_ha_gol" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 4
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 4
+		vil_assignments.farm_villager_ct = 8
+		vil_assignments.berry_villager_ct = 0
+		vil_assignments.cow_villager_ct = 0
+		
+	elseif player_civ == "sultanate_ha_tug" then
+		vil_assignments.idle_villager_ct = 0
+		vil_assignments.wood_villager_ct = 5
+		vil_assignments.gold_villager_ct = 4
+		vil_assignments.stone_villager_ct = 0
+		vil_assignments.sheep_villager_ct = 4
+		vil_assignments.farm_villager_ct = 0
+		vil_assignments.berry_villager_ct = 7
+		vil_assignments.cow_villager_ct = 0
+		
+	else
+		print("civ wasn't found - villagers")
+	end
+	
+	EmpireWars_IdleHelper(player, vil_assignments.idle_villager_ct, vil_bp)
+	EmpireWars_BerryTaskHelper(player, vil_assignments.berry_villager_ct, vil_bp)
+	EmpireWars_FarmTaskHelper(player, vil_assignments.farm_villager_ct, vil_bp)
+	EmpireWars_SheepTaskHelper(player, vil_assignments.sheep_villager_ct, vil_bp)
+	EmpireWars_CattleTaskHelper(player, vil_assignments.cow_villager_ct, vil_bp)
+	EmpireWars_WoodTaskHelper(player, vil_assignments.wood_villager_ct, vil_bp)
+	EmpireWars_GoldTaskHelper(player, vil_assignments.gold_villager_ct, vil_bp)
+	EmpireWars_StoneTaskHelper(player, vil_assignments.stone_villager_ct, vil_bp)
+end
+
+--	Spawns villagers to idle. Uses a town center to determine spawn location. 
+function EmpireWars_IdleHelper(player, villager_count, villager_bp)
+	if villager_count == 0 then
+		print("no idle villagers needed")
+	else
+		local spawn_position = Util_GetOffsetPosition(player.town_center.position, 8, 8)
+		local sgroup_name = "sg_player_idle_villagers_" .. tostring(player.id)
+		local sg_player_villagers_idle = SGroup_CreateIfNotFound(sgroup_name)
+		
+		UnitEntry_DeploySquads(player.id, sg_player_villagers_idle, {{sbp = villager_bp, numSquads = villager_count}}, spawn_position)
+		
+		SGroup_Destroy(sg_player_villagers_idle)
+	end
+end
+
+--	Spawns and then assigns villagers to harvest berries. Uses a mill entity to offset spawn position, or in the case of Mongols, the ger.
+function EmpireWars_BerryTaskHelper(player, villager_count, villager_bp)
+	if villager_count == 0 then
+		print("no berry villagers needed")
+	else
+		local spawn_position
+		if Player_GetRaceName(player.id) == "mongol" and player.berry_ger ~= nil then --will be nil for 7.0
+			spawn_position = Util_GetOffsetPosition(player.berry_ger.position, 5, 5)	
+		else
+			spawn_position = Util_GetOffsetPosition(player.food_mill.position, 5, 5)
+		end
+		
+		local sgroup_name = "sg_player_berry_villagers_" .. tostring(player.id)
+		local sg_player_villagers_berry = SGroup_CreateIfNotFound(sgroup_name)
+		UnitEntry_DeploySquads(player.id, sg_player_villagers_berry, {{sbp = villager_bp, numSquads = villager_count}}, spawn_position)
+		Gathering_AssignVillagersToBerries(sg_player_villagers_berry, _ew.eg_allForageBushes, true, false)
+	
+		SGroup_Destroy(sg_player_villagers_berry)
+	end
+
+end
+
+--	Spawns and then assigns villagers to harvest sheep. Uses a town center entity to offset spawn position, or in the case of Chinese, the mill.
+function EmpireWars_SheepTaskHelper(player, villager_count, villager_bp)
+	if villager_count == 0 then	
+		print("no sheep villagers needed")
+	else
+		local spawn_position
+		if Player_GetRaceName(player.id) == "chinese" or Player_GetRaceName(player.id) == "chinese_ha_01" then
+			spawn_position = Util_GetOffsetPosition(player.food_mill.position, 5, 5)
+		else
+			spawn_position = Util_GetOffsetPosition(player.town_center.position, 5, 5)
+		end
+		local sgroup_name = "sg_player_sheep_villagers_" .. tostring(player.id)
+		local sg_player_villagers_sheep = SGroup_CreateIfNotFound(sgroup_name)
+		UnitEntry_DeploySquads(player.id, sg_player_villagers_sheep, {{sbp = villager_bp, numSquads = villager_count}}, spawn_position)
+		Gathering_AssignVillagersToSheep(sg_player_villagers_sheep, _ew.eg_allSheep, true, false)
+		
+		SGroup_Destroy(sg_player_villagers_sheep)
+	end
+end
+
+--	Spawns and then assigns villagers to harvest cattle. Uses a town center entity to offset spawn position. This action is only possible for Mali so the function makes that assumption. 
+function EmpireWars_CattleTaskHelper(player, villager_count, villager_bp)
+	if villager_count == 0 then
+		print("no cattle villagers needed")
+	else
+		local spawn_position = Util_GetOffsetPosition(player.town_center.position, 5, 5)
+		local sgroup_name = "sg_player_cattle_villagers_" .. tostring(player.id)
+		local sg_player_villagers_cattle = SGroup_CreateIfNotFound(sgroup_name)
+		UnitEntry_DeploySquads(player.id, sg_player_villagers_cattle, {{sbp = villager_bp, numSquads = villager_count}}, spawn_position)
+		
+		Gathering_AssignVillagersToCattle(sg_player_villagers_cattle, _ew.eg_allCattle, true, false)
+		
+		SGroup_Destroy(sg_player_villagers_cattle)
+	end
+end
+
+--	Spawns and then assigns villagers to work on farms. Uses a mill entity to offset spawn position. Mongols won't ever have farms at start, so there's no check for that. 
+function EmpireWars_FarmTaskHelper(player, villager_count, villager_bp)
+	if villager_count == 0 then
+		print("no farm villagers needed")	
+	else
+		local spawn_position = Util_GetOffsetPosition(player.food_mill.position, 5, 5)
+		local sgroup_name = "sg_player_farm_villagers_" .. tostring(player.id)
+		local sg_player_villagers_farm = SGroup_CreateIfNotFound(sgroup_name)
+		
+		UnitEntry_DeploySquads(player.id, sg_player_villagers_farm, {{sbp = villager_bp, numSquads = villager_count}}, spawn_position)
+		
+		local eg_farms = Gathering_FindAllFarms(player.id)
+		
+		Gathering_AssignVillagersToFarms(sg_player_villagers_farm, eg_farms, true, false)
+		
+		EGroup_Destroy(eg_farms)
+		SGroup_Destroy(sg_player_villagers_farm)
+	end
+end
+
+--	Spawns and then assigns villagers to collect wood. Uses a lumber camp entity, or town center in the case of Mongols as the location to offset spawn.
+function EmpireWars_WoodTaskHelper(player, villager_count, villager_bp)
+	if villager_count == 0 then
+		print("no wood villagers needed")
+	else
+		local spawn_position
+		if Player_GetRaceName(player.id) == "mongol" or Player_GetRaceName(player.id) == "mongol_ha_gol" then
+			spawn_position = Util_GetOffsetPosition(player.town_center.position, 5, 5)
+		else
+			spawn_position = Util_GetOffsetPosition(player.lumber_camp.position, 5, 5)
+		end
+
+		local sgroup_name = "sg_player_wood_villagers_" .. tostring(player.id)
+		local sg_player_villagers_wood = SGroup_CreateIfNotFound(sgroup_name)
+		
+		UnitEntry_DeploySquads(player.id, sg_player_villagers_wood, {{sbp = villager_bp, numSquads = villager_count}}, spawn_position)
+		
+		Gathering_AssignVillagersToWood(sg_player_villagers_wood, _ew.eg_allWoodResources, true, true)
+		
+		SGroup_Destroy(sg_player_villagers_wood)
+	end
+end
+
+--	Spawns and then assigns villagers to collect gold. Uses a gold mine entity, or ger in the case of Mongols as the location to offset spawn.
+function EmpireWars_GoldTaskHelper(player, villager_count, villager_bp)
+	if villager_count == 0 then
+		print("no gold villagers needed")
+	else
+		local spawn_position
+		if Player_GetRaceName(player.id) == "mongol" or Player_GetRaceName(player.id) == "mongol_ha_gol" then
+			spawn_position = Util_GetOffsetPosition(player.gold_ger.position, 5, 5)	
+		else
+			spawn_position = Util_GetOffsetPosition(player.gold_mine.position, 5, 5)
+		end
+		
+		local sgroup_name = "sg_player_gold_villagers_" .. tostring(player.id)
+		local sg_player_villagers_gold = SGroup_CreateIfNotFound(sgroup_name)
+		UnitEntry_DeploySquads(player.id, sg_player_villagers_gold, {{sbp = villager_bp, numSquads = villager_count}}, spawn_position)
+		Gathering_AssignVillagersToGold(sg_player_villagers_gold, _ew.eg_allGoldResources, true, false)
+		
+		SGroup_Destroy(sg_player_villagers_gold)
+	end
+end
+
+--	Spawns and then assigns villagers to collect stone. Uses Town Center as the location to offset spawn.
+--	Note: There won't ever be stone villagers for Mongol civ, no need for a conditional for mine. 
+function EmpireWars_StoneTaskHelper(player, villager_count, villager_bp)
+	if villager_count == 0 then
+		print("no stone villagers needed")
+	else
+		local spawn_position = Util_GetOffsetPosition(player.stone_mine.position, 5,5) --will spawn next to the stone mine if exists, near the player starting position if the entity doesn't exist. 
+		local sgroup_name = "sg_player_stone_villagers_" .. tostring(player.id)
+		local sg_player_villagers_stone = SGroup_CreateIfNotFound(sgroup_name)
+		UnitEntry_DeploySquads(player.id, sg_player_villagers_stone, {{sbp = villager_bp, numSquads = villager_count}}, spawn_position)
+		Gathering_AssignVillagersToStone(sg_player_villagers_stone, _ew.eg_allStoneResources, true, false)
+		
+		SGroup_Destroy(sg_player_villagers_stone)
+	end
+end
+
+----------------------------------------
+--Spawn helpers for other units
+----------------------------------------
+
+-- Spawns sheep near the TC or food mill (for Chinese civ) for the player
+function EmpireWars_SpawnSheep(player)
+	player_civ = Player_GetRaceName(player.id)
+
+	local sheep_bp = BP_GetSquadBlueprint("gaia_herdable_sheep")
+	local spawn_position
+	
+	if player_civ == "chinese" or player_civ == "chinese_ha_01" then
+		spawn_position = Util_GetOffsetPosition(player.food_mill.position, 5, 5)
+	else
+		spawn_position = Util_GetOffsetPosition(player.town_center.position, 5, 10)
+	end
+	
+	for i=1, _ew.sheep_count do 
+		local offset = Util_GetOffsetPosition(spawn_position, i, .5)
+		Squad_CreateAndSpawnToward(sheep_bp, player.id, 0, offset, player.town_center.position)
+	end
+end
+
+-- Spawns prelates close to the food, lumber and gold collection units for the HRE civ
+function EmpireWars_SpawnPrelates(player)
+	local player_civ = Player_GetRaceName(player.id)
+	if player_civ == "hre" then
+		local bp_prelate = BP_GetSquadBlueprint("unit_monk_1_hre")
+		
+		--food prelates
+		local spawn_position_food = Util_GetOffsetPosition(player.town_center.position, 5, 10)
+		local sgroup_name_food = "sg_player_food_prelates" .. tostring(player.id)
+		local sg_player_food_prelates = SGroup_CreateIfNotFound(sgroup_name_food)			
+		
+		UnitEntry_DeploySquads(player.id, sg_player_food_prelates, {{sbp = bp_prelate, numSquads = _ew.prelate_per_res}}, spawn_position_food)
+		
+		--gold prelates
+		local spawn_position_gold = Util_GetOffsetPosition(player.gold_mine.position, 5, 5)						
+		local sgroup_name_gold = "sg_player_gold_prelates" .. tostring(player.id)
+		local sg_player_gold_prelates = SGroup_CreateIfNotFound(sgroup_name_gold)
+		
+		UnitEntry_DeploySquads(player.id, sg_player_gold_prelates, {{sbp = bp_prelate, numSquads = _ew.prelate_per_res}}, spawn_position_gold)
+		
+		SGroup_Destroy(sg_player_gold_prelates)
+		SGroup_Destroy(sg_player_food_prelates)
+	else
+		print("no prelates needed")
+	end
+end
+
+
+
+-- Spawns Imperial Officers for the Chinese civ, supervising the food mill and the lumber camp. AI doesn't have the supervise command knowledge, 
+-- so to avoid stuck units only assigns IOs for supervision for Human players.
+function EmpireWars_SpawnImperialOfficers(player)
+	local player_civ = Player_GetRaceName(player.id)
+	local bp_official
+	
+	if player_civ == "chinese" or player_civ == "chinese_ha_01" then
+		if player_civ == "chinese" then
+			bp_official = BP_GetSquadBlueprint("unit_official_1_chi")
+		else
+			bp_official = BP_GetSquadBlueprint("unit_official_1_chi_ha_01")
+		end
+		
+		
+		--mill official
+		local spawn_position_food = Util_GetOffsetPosition(player.food_mill.position, 5, 5)
+		local sgroup_name_food = "sg_player_food_officials" .. tostring(player.id)
+		local sg_player_food_officials = SGroup_CreateIfNotFound(sgroup_name_food)			
+		local ability_bp = BP_GetAbilityBlueprint("official_supervise_building_target_chi")
+		
+		UnitEntry_DeploySquads(player.id, sg_player_food_officials, {{sbp = bp_official, numSquads = _ew.io_per_res}}, spawn_position_food)
+		
+		local eg_single_mill = EGroup_CreateIfNotFound("eg_single_mill")
+		if player.food_mill.entity ~= nil and Player_IsHuman(player.id) then
+			EGroup_Single(eg_single_mill, player.food_mill.entity)
+			LocalCommand_SquadEntityAbility(player.id, sg_player_food_officials, eg_single_mill, ability_bp, false, true)
+		end
+		
+		--lumber official
+		local spawn_position_lumber = Util_GetOffsetPosition(player.lumber_camp.position, 5, 5)						
+		local sgroup_name_lumber = "sg_player_lumber_officials" .. tostring(player.id)
+		local sg_player_lumber_officials = SGroup_CreateIfNotFound(sgroup_name_lumber)
+		
+		UnitEntry_DeploySquads(player.id, sg_player_lumber_officials, {{sbp = bp_official, numSquads = _ew.io_per_res}}, spawn_position_lumber)
+		
+		if player.lumber_camp.entity ~= nil and Player_IsHuman(player.id) then
+			local eg_single_lumber_camp = EGroup_CreateIfNotFound("eg_single_lumber_camp")
+			EGroup_Single(eg_single_lumber_camp, player.lumber_camp.entity)
+			LocalCommand_SquadEntityAbility(player.id, sg_player_lumber_officials, eg_single_lumber_camp, ability_bp, false, true)
+		end
+		
+		SGroup_Destroy(sg_player_food_officials)
+		SGroup_Destroy(sg_player_lumber_officials)	
+	else
+		print("no imperial officers needed")
+	end
+end
+
+-- Spawns 3 scholars and garrisons them in the town-gen mosque for Delhi civilization
+function EmpireWars_SpawnScholars(player)
+	local player_civ = Player_GetRaceName(player.id)
+	if player_civ == "sultanate" then
+		local bp_scholar = BP_GetSquadBlueprint("unit_monk_2_sul")
+		if player.mosque.entity ~= nil then
+			EmpireWars_Temp_CreateUnitsInsideEntity(player.id, {{sbp = bp_scholar, numSquads = _ew.scholar_count}}, player.mosque.entity, nil)
+		else
+			local spawn_position_mosque = Util_GetOffsetPosition(player.mosque.position, 5, 5)
+			local sgroup_name_scholars = "sg_player_mosque_scholars" .. tostring(player.id)
+			local sg_player_scholars = SGroup_CreateIfNotFound(sgroup_name_scholars)
+			UnitEntry_DeploySquads(player.id, sg_player_scholars, {{sbp = bp_scholar, numSquads = _ew.scholar_count}}, spawn_position_mosque)
+			SGroup_Destroy(sg_player_scholars)
+		end
+	else
+		print("no scholars needed")
+	end
+end
+
+function EmpireWars_SpawnJoan(player)
+	local player_civ = Player_GetRaceName(player.id)
+	if player_civ == "french_ha_01" then
+		local bp_joan = BP_GetSquadBlueprint("unit_jeanne_d_arc_1_fre_ha_01")
+		local spawn_position = Util_GetOffsetPosition(player.town_center.position, 5, 5)
+		
+		-- Use Squad_CreateAndSpawnToward instead of UnitEntry_DeploySquads because UnitEntry_DeploySquads doesn't trigger
+		-- on spawn events, which are needed for the custom Fre HA ui to work.
+		Squad_CreateAndSpawnToward(bp_joan, player.id, 1, spawn_position, player.town_center.position)
+		
+		--grant her enough experience to reach tier 2
+		local exp_tier2 = Player_GetStateModelFloat(player.id, "jeanne_starting_experience_ew")
+		Player_SetStateModelFloat(player.id, "jeanne_d_arc_total_experience", exp_tier2)
+		
+	end
+end
+
+----------------------------------------
+-- Behavioral helpers
+----------------------------------------
+
+-- Queues count of villagers for production at player's town center. 2 for Historic HRE, 4 for everyone else 
+function EmpireWars_QueueVillagers(player)
+	local vil_bp =  BP_GetSquadArchetypeBlueprintForPlayer(player.id, BA_VILLAGER)
+	local tc_entity = player.town_center.entity
+	local vil_queue
+	
+	if Player_GetRaceName(player.id) == "hre_ha_01" then
+		vil_queue = 2
+	else
+		vil_queue = 4
+	end
+	
+	if tc_entity ~= nil then
+		for i=1, vil_queue do
+			local success = Entity_QueueProductionItemByPBG(tc_entity, PITEM_Spawn, vil_bp)		
+		end
+	end
+ end
+
+-- Grants 30 Vizier Experience to all Ottoman civ players at the start.
+function EmpireWars_GrantVizierExp(player)
+	local player_civ = Player_GetRaceName(player.id)
+	if player_civ == "ottoman" then
+		
+		local exp_float = Player_GetStateModelFloat(player.id, "imperial_council_exp_ott")
+		exp_float = exp_float + 30
+		Player_SetStateModelFloat(player.id, "imperial_council_exp_ott", exp_float)
+	end
+end
+
+-- Sets the pasture rally point close to the town center location for the Mongol civ
+function EmpireWars_SetPastureRallyPoints(player)
+	local player_civ = Player_GetRaceName(player.id)
+	if player_civ == "mongol" then
+		
+		local eid_array_pasture = EmpireWars_FindMatchingBuildings(player.id, "mon_town", "pasture_set", "pasture")	
+		
+		local egroup_name = "pasture_egroup"
+		local pasture_egroup = EGroup_CreateIfNotFound(egroup_name)
+		local sheep_corral_position = Util_GetOffsetPosition(player.town_center.position, 5, 10)
+		
+		if eid_array_pasture ~= nil then
+			for i, eid in pairs(eid_array_pasture) do
+				local pasture_entity = Entity_FromID(eid)
+				EGroup_Add(pasture_egroup, pasture_entity)
+			end
+			EGroup_SetRallyPoint(pasture_egroup, sheep_corral_position)			
+		end
+		EGroup_Destroy(pasture_egroup)
+	end
+end
+
+function EmpireWars_GrantUpgrades(player)
+	local player_civ = Player_GetRaceName(player.id)
+	--Decided not to grant this upgrade to Japanese civ for the next version 7/7/23. Still up for discussion though, so leaving code here. 
+	--if player_civ == "japanese" then
+		--local town_center = player.town_center.entity
+		--local daimyo_pbg = BP_GetUpgradeBlueprint("upgrade_capital_tier_1_jpn")
+		--Entity_CompleteUpgrade(town_center, daimyo_pbg)
+	--end
+	if player_civ == "japanese" or player_civ == "japanese_ha_sen" then
+		local farmhouse = player.farmhouse.entity
+		local towara_pbg = BP_GetUpgradeBlueprint("upgrade_unit_town_center_wheelbarrow_1_jpn")
+		
+		if farmhouse ~= nil then
+			Modify_UpgradeCost(player.id, towara_pbg, RT_Food, 0, MUT_Set, true)
+			Modify_UpgradeCost(player.id, towara_pbg, RT_Gold, 0, MUT_Set, true)
+			Entity_CompleteUpgrade(farmhouse, towara_pbg)
+		end
+	end
+end
+
+
+-- Queues various upgrades(currently: Wheelbarrow, Forestry, Enhanced Production) for Delhi civilization players
+function EmpireWars_QueueUpgrades(player)
+	local player_civ = Player_GetRaceName(player.id)
+	if player_civ == "sultanate" then
+		local mill_entity = player.food_mill.entity
+		local lumber_entity = player.lumber_camp.entity
+		local mosque_entity = player.mosque.entity
+		
+		if mill_entity ~= nil then
+			local wheelbarrow_pbg = BP_GetUpgradeBlueprint("upgrade_unit_town_center_wheelbarrow_1_sul")
+			local success_mill = Entity_QueueProductionItemByPBG(mill_entity, PITEM_Upgrade, wheelbarrow_pbg)
+		end
+		if lumber_entity ~= nil then
+			local forestry_pbg = BP_GetUpgradeBlueprint("upgrade_econ_resource_wood_fell_rate_1_sul")
+			local success_lumber = Entity_QueueProductionItemByPBG(lumber_entity, PITEM_Upgrade, forestry_pbg)
+		end
+		if mosque_entity ~= nil then
+			local eproduction_pbg = BP_GetUpgradeBlueprint("upgrade_age2_scholar_military_production_sul")
+			local success_mosque = Entity_QueueProductionItemByPBG(mosque_entity, PITEM_Upgrade, eproduction_pbg)
+		end
+	end
+end
+	
+-- Sets up the starting area Fog of War reveal for the player
+function EmpireWars_SetUpStartingArea(player)
+	FOW_PlayerRevealArea(player.id, player.town_center.position, 60, 120)
+	
+end
+
+-- Placeholder while we have don't have a better solution. Checks if the vein the pit mine spawned by town-gen is on a large vein vs. a large one, 
+-- swaps out the small pit mine with a large pit mine entity.
+function EmpireWars_MaliMineSwitch(player)
+	local player_civ = Player_GetRaceName(player.id)
+	if player_civ == "malian" then
+		local pit_mine_eid = EmpireWars_FindMatchingBuildings(player.id, nil, nil, "pit_mine")
+		if TableCount(pit_mine_eid) > 0 then
+			local pit_mine_entity = Entity_FromID(pit_mine_eid[1])
+			local mine_pos = Entity_GetPosition(pit_mine_entity)
+			local gold_resource_entity = EGroup_GetClosestEntity(_ew.eg_allGoldResources, mine_pos)
+			local gold_bp_name = BP_GetName(Entity_GetBlueprint(gold_resource_entity))
+			
+			-- Check if it's a large gold deposit, small one has "_small" appended
+			if gold_bp_name == "resource_gold_deposit" then 
+				
+				--Destroy the town-gen pit mine that doesn't match this resource
+				Entity_Destroy(pit_mine_entity)
+				
+				--Build the large pit-mine that matches resource size
+				local pit_mine_entity_large = Entity_Create(BP_GetEntityBlueprint("building_open_pit_mine_mal"), player.id, mine_pos, true)
+				Entity_Spawn(pit_mine_entity_large)
+				Entity_ForceConstruct(pit_mine_entity_large)
+			end
+		end
+	end
+end
+
+
+--? @shortdesc Returns the count of the units in a unitTable. Temporary waiting integrations.
+--? @args Table UnitTable
+--? @result  Integer
+function EmpireWars_Temp_CountUnits(unitTable)
+	local count = 0
+	for index, unitRow in pairs(unitTable) do
+		count = count + (unitRow.numSquads or 1)
+	end
+	return count
+end
+
+--? @shortdesc Units will be spawned inside entity_hold. Use Entity_GetHoldSlotsAvailable to check if entity_hold has space. Temporary waiting integrations.
+--? @extdesc If sgroup is provided, spawned units will be added to it. If sgroup is a string, a new sgroup will be created with that name.
+--? @result sgroup
+function EmpireWars_Temp_CreateUnitsInsideEntity(player, units, entity_hold, sgroup)
+	local open_slots = Entity_GetHoldSlotsAvailable(entity_hold)
+	assert(EmpireWars_Temp_CountUnits(units) <= open_slots, "Not enough room in hold, use Entity_GetHoldSlotsAvailable to check for space")
+	
+	if scartype(sgroup) == ST_STRING then
+		sgroup = SGroup_CreateUniqueWithPrefix(sgroup)
+	end
+	local sg_spawned_units = SGroup_CreateUnique("sg_spawned_units")
+	eg_createUnitsInsideEntity = EGroup_CreateIfNotFound("eg_createUnitsInsideEntity")
+	EGroup_Single(eg_createUnitsInsideEntity, entity_hold)
+	UnitEntry_DeploySquads(player, sg_spawned_units, units, eg_createUnitsInsideEntity)
+	if sgroup then
+		SGroup_AddGroup(sgroup, sg_spawned_units)
+	end
+	SGroup_Destroy(sg_spawned_units) --destroy group for units
+	return sgroup	
+end
+
+
+--? @shortdesc Returns an array of all building entityIDs spawned by town generation that match the given filters.
+--? @extdesc Since this returns entityIDs, you will need to use Entity_FromID to get at the entity. Note that the entity could come back as 
+--? nil if it has been destroyed since town generation ran.
+--? @args 
+--? Player player: cannot be nil. Will only match entities from towns owned by this player
+--? String townID: can be nil. Will only match entities that were spawned as part of a town with this id. 
+--? 	See the AE bag for map_gen_town to set the id. If nil, any town will match.
+--? String spawnSetID: can be nil. Will only match entities that were spawned as part of a spawn set with this id. 
+--? 	See the AE bag for map_gen_town to set the id. If nil, any spawn set will match.
+--? String structureGroupID: can be nil. Will only match entities that were spawned as part of a structureGroupID with this id. 
+--? 	See the AE bag for map_gen_town to set the id. If nil, any structure group will match.
+--? @result Table that is an array of entities that matched the filters. Can be empty if there are no matches or could have multiple entities
+--? if there were multiple matches structure groups or the matched structure group has multiple entities in it.
+--? 
+--? Example Usage: 
+--? EmpireWars_FindMatchingBuildings(player, nil, nil, "house") to find any buildings labeled "house" in any town and any spawn set owned by player
+--? EmpireWars_FindMatchingBuildings(player, "test_town_abb", "house_of_wisdom", "house_of_wisdom") to find any buildings labeled "house" in 
+--? a town named "test_town_abb" that were ion a structure group called "house_of_wisdom" that was in a spawn_set called "house_of_wisdom"
+--? EmpireWars_FindMatchingBuildings(player, nil, nil, nil) would give you every building spawned for a given player as part of town gen.
+function EmpireWars_FindMatchingBuildings(player, townID, spawnSetID, structureGroupID)
+	local result = {}
+	
+	if (_townGen == nil) then
+		print("Global table _townGen wasn't found.")
+		return result
+	end
+	
+	local playerID = Player_GetID(player)
+	
+	for _, town in pairs(_townGen.towns) do
+		if ((playerID == town.playerID) and ((townID == nil) or (townID == town.id))) then
+			for _, spawnSet in pairs(town.spawnSets) do
+				if ((spawnSetID == nil) or (spawnSetID == spawnSet.id)) then
+					for _, structureGroup in pairs(spawnSet.structureGroups) do
+						if ((structureGroupID == nil) or (structureGroupID == structureGroup.id)) then
+							for _, entityID in pairs(structureGroup.entityIDs) do
+								table.insert(result, entityID)
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	return result
+end

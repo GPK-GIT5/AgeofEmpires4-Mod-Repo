@@ -1,0 +1,252 @@
+import("MissionOMatic/MissionOMatic.scar")
+import('abb_m2_egypt_armycontrol.scar')
+
+function Quadrant_GetNewID()
+	quadrant_index = quadrant_index or 0
+	quadrant_index = quadrant_index + 1
+	return quadrant_index
+end
+
+function Quadrant_Init(controlPoint)
+    local quadrant = {
+		quadrantID = Quadrant_GetNewID(),
+		controlPoint = controlPoint,
+        marker = controlPoint.villLifeMarker,
+        occupancy_table = {},
+		distancefromhome = 0,
+		heatvalue = 0,
+		time_lastassignment = 0,
+		assignedArmyCount = 0,
+    }
+		
+	if quadrant.marker ~= mkr_enemy_base then
+		quadrant.distancefromhome = Util_GetDistance(mkr_enemy_base, quadrant.marker)
+	else
+		quadrant.heatvalue = -10000
+		quadrant.distancefromhome = 0
+	end
+	
+    for layer = 1, 4 do
+        quadrant.occupancy_table[layer] = {}
+        for j, offset in ipairs (OFFSETS_ALL) do
+            quadrant.occupancy_table[layer][offset] = false
+        end
+    end
+	
+	table.insert(t_AllQuadrants, quadrant)
+	
+	return quadrant
+end
+
+function _Monitor_ControlPointAttackValues(context, data)
+	local intCurrentEvaluation = data.intCurrentEvaluation 
+	local currentQuadrant = t_AllQuadrants[intCurrentEvaluation]
+	local currentLocation = currentQuadrant.marker
+	local currentControlPoint = controlPoints[intCurrentEvaluation]
+	local playerTeamCount = -1
+	local aiTeamCount = -1
+	local HOSTILECHECK_RADIUS = t_difficulty.enemyMods.HOSTILECHECK_RADIUS
+	local RANGE_PRIORITY_MULTIPLIER = t_difficulty.enemyMods.RANGE_PRIORITY_MULTIPLIER
+	local AVOID_HOSTILE_COUNT_MULITPLIER = t_difficulty.enemyMods.AVOID_HOSTILE_COUNT_MULITPLIER
+	local AI_AGGRESSION_EMPTYLOCATION = t_difficulty.enemyMods.AI_AGGRESSION_EMPTYLOCATION
+	local AI_AGGRESSION_WEAKLOCATION = t_difficulty.enemyMods.AI_AGGRESSION_WEAKLOCATION
+	local AI_AGGRESSION_FORTIFIEDLOCATION = t_difficulty.enemyMods.AI_AGGRESSION_FORTIFIEDLOCATION
+	local AI_AGGRESSION_LOSINGMULTIPLIER = t_difficulty.enemyMods.AI_AGGRESSION_LOSINGMULTIPLIER
+	local ATTACK_GROUP_SIZE = t_difficulty.enemyMods.attack_group_size
+	
+	local rangePriority = currentQuadrant.distancefromhome * RANGE_PRIORITY_MULTIPLIER
+		
+	--Player unit count
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, currentLocation, HOSTILECHECK_RADIUS)
+	playerTeamCount = SGroup_CountSpawned(sg_temp)
+	
+	--Player allied garrison count
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player3, sg_temp, currentLocation, HOSTILECHECK_RADIUS)
+	playerTeamCount = playerTeamCount+SGroup_CountSpawned(sg_temp)
+	
+	--Enemy unit count
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player2, sg_temp, currentLocation, HOSTILECHECK_RADIUS)
+	aiTeamCount = SGroup_CountSpawned(sg_temp)
+	
+	--Enemy allied garrison count
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player4, sg_temp, currentLocation, HOSTILECHECK_RADIUS)
+	aiTeamCount = aiTeamCount-SGroup_CountSpawned(sg_temp)
+	
+	--AI Agression
+	local aiAgressionFactor = 0
+	if currentControlPoint.currentowner == player1 then
+		if playerTeamCount == 0 then
+			aiAgressionFactor = AI_AGGRESSION_EMPTYLOCATION
+		elseif playerTeamCount <= t_difficulty.enemyMods.attack_group_size then
+			aiAgressionFactor = AI_AGGRESSION_WEAKLOCATION
+		else
+			aiAgressionFactor = AI_AGGRESSION_FORTIFIEDLOCATION
+		end
+	end	
+		
+	if currentControlPoint.currentowner ~= player1 and currentControlPoint.currentowner ~= player2 then
+		aiAgressionFactor = UNNOCUPIED_HEATBUFFER
+	end
+	
+	if Egypt_GetHeldPoints(player2) < 5 then
+		aiAgressionFactor = aiAgressionFactor*AI_AGGRESSION_LOSINGMULTIPLIER
+	end
+	
+	--Hostile Count Multiplier	
+	local hostileCountFactor = 0
+	local playerTeamCountModified = AVOID_HOSTILE_COUNT_MULITPLIER*playerTeamCount
+	if currentControlPoint.currentowner == player1 then
+		hostileCountFactor = -playerTeamCountModified
+	end
+	
+	if currentControlPoint.currentowner == player2 then
+		if playerTeamCount - aiTeamCount <= ATTACK_GROUP_SIZE * 2 then
+			hostileCountFactor = playerTeamCountModified
+		else
+			hostileCountFactor = -playerTeamCountModified
+		end
+	end
+	
+	--Range Priority
+	--local rangeFactor = -rangePriority
+	
+	--Assigned Armies
+	--local assignedArmiesFactor = currentQuadrant.assignedArmyCount * -50
+	
+	--Heat Value Sum
+	currentQuadrant.heatvalue = aiAgressionFactor + hostileCountFactor
+	
+	--DEBUG--
+	
+	if currentQuadrant.debugHeatHint ~= nil then
+		HintPoint_Remove(currentQuadrant.debugHeatHint)
+	end
+	
+	if DEBUG_DISPLAYHEAT == true then
+		local hintPos = Marker_GetPosition(currentLocation)
+		currentQuadrant.debugHeatHint = HintPoint_Add(World_Pos(hintPos.x, hintPos.y, hintPos.z+4), true, 
+			"AI Agression: "..math.floor(aiAgressionFactor)..
+			"\nHostile Count Factor: "..math.floor(hostileCountFactor)..
+			"\nHeat: "..math.floor(currentQuadrant.heatvalue), 6, nil, nil, nil, true)
+
+		--print("Control Point "..intCurrentEvaluation.." has a heat value of "..t_AllQuadrants[intCurrentEvaluation].heatvalue)
+		-------
+	end
+	
+	intCurrentEvaluation = intCurrentEvaluation+1
+	if intCurrentEvaluation == CRUSADERHOME_QUADRANT.quadrantID then
+		intCurrentEvaluation = intCurrentEvaluation+1
+	end
+	
+	if intCurrentEvaluation > #t_AllQuadrants then
+		intCurrentEvaluation = 1
+	end
+	Rule_AddOneShot(_Monitor_ControlPointAttackValues, 0.125, {intCurrentEvaluation = intCurrentEvaluation})
+	
+end
+
+function Get_BestControlPointTarget_ForArmy(army)
+	if SGroup_CountSpawned(army.sgroup) ~= 0 then 
+		local RANGE_PRIORITY_MULTIPLIER = t_difficulty.enemyMods.RANGE_PRIORITY_MULTIPLIER
+		local RANGE_DETRIMENT_MULITPLIER = -0.001
+		local highestHeatValue = -10000
+		local rangeFactorDebug = 0
+		local assignedArmiesFactorDebug = 0
+		local currentQuadHeatValueDebug = 0
+		local bestQuadrantTarget = nil
+		
+		for i, currentQuadrant in ipairs(t_AllQuadrants) do
+			
+			local thisQuadHeatValue = 0
+			local rangeFactor = Util_GetDistanceSquared(army.sgroup, currentQuadrant.marker) * RANGE_DETRIMENT_MULITPLIER
+			
+			--Assigned Armies
+			local assignedArmiesFactor = 0
+			if army.quadrant == currentQuadrant then
+				assignedArmiesFactor = (currentQuadrant.assignedArmyCount - 1) * -200
+			else
+				assignedArmiesFactor = currentQuadrant.assignedArmyCount * -200
+			end
+			
+			--Heat Value Sum
+			thisQuadHeatValue = currentQuadrant.heatvalue + rangeFactor + assignedArmiesFactor
+			
+			if thisQuadHeatValue >= highestHeatValue or bestQuadrantTarget == nil then
+				highestHeatValue = thisQuadHeatValue
+				bestQuadrantTarget = currentQuadrant
+				rangeFactorDebug = rangeFactor
+				assignedArmiesFactorDebug = assignedArmiesFactor
+				currentQuadHeatValueDebug = currentQuadrant.heatvalue
+			end
+			
+		end
+		
+		if army.debugHeatHint ~= nil then
+			HintPoint_Remove(army.debugHeatHint)
+		end
+		
+		if DEBUG_DISPLAYHEAT == true then
+			army.debugHeatHint = HintPoint_Add(army.sgroup, true, "QuadHeatValue: "..currentQuadHeatValueDebug..
+				"\nRangeFactor: "..math.floor(rangeFactorDebug)..
+				"\nAssignedArmyFactor: "..math.floor(assignedArmiesFactorDebug)..
+				"\nCurrent Target Heat: "..math.floor(highestHeatValue), 10, nil, nil, nil, true)
+		end
+		
+		return	bestQuadrantTarget
+	end
+end
+
+function Quadrant_GetSlot(quadrant)
+    for layer = 1, 4 do
+        for j, offset in ipairs (OFFSETS_ALL) do
+            if quadrant.occupancy_table[layer][offset] == false then
+                quadrant.occupancy_table[layer][offset] = true
+                return layer, offset
+            end
+        end
+    end
+end
+
+function Quadrant_ReleaseSlot(quadrant, layer, offset)
+    quadrant.occupancy_table[layer][offset] = false
+end
+
+function Quadrant_GetPositionFromLayerAndSlot(quadrant, layer, offset)
+	local direction = Util_GetDirection(quadrant.marker)
+	local startPosition = Util_GetPosition(quadrant.marker)
+	if layer > 1 then
+		layer = ((layer-1)*0.5)+1
+	end
+	local modifiedPos = World_GetOffsetPosition(startPosition, direction, offset, layer*LAYER_SIZES)
+	return modifiedPos
+end
+
+function Quadrants_Init()
+	t_AllQuadrants = {}
+	for i, controlPoint in ipairs(controlPoints) do
+		Quadrant_Init(controlPoint)
+	end	
+
+	CRUSADERHOME_QUADRANT = {
+		quadrantID = Quadrant_GetNewID(),
+		controlPoint = nil,
+        marker = mkr_enemy_base,
+        occupancy_table = {},
+		distancefromhome = 0,
+		heatvalue = -10000,
+		time_lastassignment = 0,
+		assignedArmyCount = 0,
+    }
+	
+	for layer = 1, 4 do
+        CRUSADERHOME_QUADRANT.occupancy_table[layer] = {}
+        for j, offset in ipairs (OFFSETS_ALL) do
+            CRUSADERHOME_QUADRANT.occupancy_table[layer][offset] = false
+        end
+    end
+	
+end

@@ -1,0 +1,457 @@
+-- 
+-- Mission-O-Matic Module - Attack
+--
+-- Covers combat specifically related to attacking a town (i.e. using walls, etc) 
+-- 
+--
+-- See: Behaviour Module - Attack
+--      http://relicwiki/pages/viewpage.action?pageId=538083411 	(in the EE, you can Control-click on this link to go there)
+--
+
+function Attack_Init(data)
+
+	local attackModule = Prefab_GetInstance(data)
+	attackModule.prefabName = "Attack"
+
+	table.insert(t_attackModules, attackModule)
+	table.insert(t_allModules, attackModule)
+	
+	if attackModule.sgroup == nil then
+		attackModule.sgroup = SGroup_CreateUnique("Attack")
+	end
+	
+	
+	attackModule.status = "active"
+	
+	if scartype(attackModule.target) == ST_MARKER then		-- target is a marker
+		
+		--print(tostring(attackModule.descriptor).." has marker target "..Marker_GetName(attackModule.target))
+
+		if attackModule.range == nil then
+			attackModule.range = Marker_GetProximityRadiusOrDefault(attackModule.target, 0)
+		end
+		
+	elseif scartype(attackModule.target) == ST_STRING then	-- target is a location
+		
+		attackModule.target = LOCATION(attackModule.target)
+		
+		if attackModule.target ~= nil then
+			--print(tostring(attackModule.descriptor).." has location target "..tostring(attackModule.target))
+			Location_AddModule(attackModule.target, attackModule)
+		end
+		
+	end
+	
+	-- spawn location
+	if scartype(attackModule.spawnLocation) == ST_TABLE then 
+		attackModule.spawnLocation = ResolveSpawnLocation(attackModule.spawnLocation)
+	end
+	-- spawn starter units
+	if scartype(attackModule.units) == ST_TABLE then
+		
+		-- Send in the marker as well as the player and unit info
+ 		UnitEntry_DeploySquads(attackModule.player, attackModule.sgroup, attackModule.units, attackModule.spawnLocation)
+		
+		-- Also go through and gather the types for later use in reinforcements
+		attackModule.unitTypes = attackModule.unitTypes or {}
+		for index, unit in pairs(attackModule.units) do
+			local thisType = unit.type
+			if Table_Contains(attackModule.unitTypes, thisType) == false then 
+				table.insert(attackModule.unitTypes, thisType)
+			end
+		end
+		
+	end
+	
+	-- set the module's ideal composition now that starting units have been spawned
+	Reinforcement_UpdateIdealComposition(attackModule)
+
+	
+	attackModule.targetCount = SGroup_Count(attackModule.sgroup)
+	local groupCount = attackModule.targetCount / 2
+	attackModule.minimumCount = attackModule.minimumCount or (groupCount > 0 and groupCount or 4)
+	
+	attackModule.data = {
+		isUnderAttack = false,
+		underAttackCountdown = 2,
+		attackOverCountdown = 10,		
+	}
+	
+	-- Try to create an encounter
+	local encounterTarget = attackModule.target
+	local encounterRange = attackModule.range
+	if scartype(attackModule.target) == ST_TABLE then
+		encounterTarget = attackModule.target.position
+		encounterRange = attackModule.target.range
+	end
+
+	
+	local newGoalData = {
+		plan = "Attack",
+		target = encounterTarget,
+		range = encounterRange,
+		attackMove = attackModule.attackMove,
+		leash = attackModule.leashRange,
+		cavalryCanBuildRams = attackModule.cavalryCanBuildRams,
+		shouldHoldWhileWaiting = attackModule.shouldHoldWhileWaiting,
+		callbacks = {
+			success = Attack_OnSuccess,
+			fail = Attack_OnFailure,
+		},
+	}
+	attackModule.data.encounterID = Encounter_Create(attackModule.player, attackModule.sgroup, newGoalData, "AttackModule "..module.descriptor)
+		
+	-- Make sure the monitor function gets added
+	attackModule.data.monitorRuleID = Rule_AddInterval(Attack_Monitor, 5, attackModule)
+	
+	-- Store however many units this module started with
+	attackModule.highestUnitCount = SGroup_Count(attackModule.sgroup)
+	
+	-- Fill in the support modules
+	attackModule.supportModules = attackModule.supportModules or {}
+	Rule_AddOneShot(Attack_ConnectSupportModules, 3, attackModule)
+	
+	return attackModule
+end
+
+--? @shortdesc Support modules may not exist yet, so let's delay this until we've initialized everything
+function Attack_ConnectSupportModules(context, data)
+	
+	-- Fill in the support modules
+	local attackModule = Prefab_GetInstance(data)
+	for index,support in pairs(attackModule.supportModules) do
+		support.module = MissionOMatic_FindModule(support.moduleName)
+	end
+	
+end
+
+--? @shortdesc Callback function that signals to a module that its current encounter is completed
+function Attack_OnSuccess(encounter)
+	
+	--print("Attack_OnSuccess")
+	local attackModule = Attack_FindModuleByEncounterID(encounter)
+	attackModule.status = "success"
+	
+	if scartype(encounter.dissolveModuleName) == ST_STRING then
+		
+		print("Dissolving attackers into module "..tostring(encounter.dissolveModuleName))
+		DissolveModuleIntoModule(attackModule.descriptor, encounter.dissolveModuleName)
+		
+	end
+	
+end
+
+function Attack_OnFailure(encounter)
+	local attackModule = Attack_FindModuleByEncounterID(encounter)
+	if attackModule ~= nil then
+		attackModule.status = "failed"
+	end
+	
+	--print("Attack_OnFailure")
+	
+end
+
+function Attack_OnTransition(encounter)
+	
+	--print("Attack_OnTransition")
+	
+end
+
+function Attack_Monitor(context, moduleData)
+
+	local attackModule = Prefab_GetInstance(moduleData)
+	
+
+	
+	--
+	-- REINFORCING
+	--
+
+	-- check to see if we need units
+	if Reinforcement_AreReinforcementsNeeded(attackModule) then 
+		
+		-- make the request
+		local requestData = {
+			units = Reinforcement_GenerateReplacementUnitList(attackModule, attackModule.idealComposition),
+		}
+		
+		if SGroup_IsUnderAttack(attackModule.sgroup, ANY, 5) then 	-- mark this request as high priority if the attack is still happening
+			requestData.priority = "high"
+		end
+		
+		local result = MissionOMatic_RequestUnits(attackModule, requestData, attackModule.reinforcements.unitSources)
+		
+		-- check to see if something replied that it would build the units
+		if result ~= nil then 
+			Reinforcement_RequestHasBeenTriggered(attackModule, result)		-- this updates tracking in the module, adjusts thresholds, etc
+		end
+		
+	end		
+		
+			
+	
+end
+
+
+function Attack_GetPosition(moduleData)
+
+	local attackModule = Prefab_GetInstance(moduleData)
+
+	if SGroup_Count(attackModule.sgroup) >= 1 then 
+	
+		return SGroup_GetPosition(attackModule.sgroup)
+		
+	elseif scartype(attackModule.spawnLocation) == ST_TABLE then 
+		
+		return ResolveSpawnLocation(attackModule.spawnLocation)
+		
+	end
+
+end
+
+
+function Attack_Stop(data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	if instance.data.monitorRuleID ~= nil then
+		Rule_RemoveWithID(instance.data.monitorRuleID)
+		instance.data.monitorRuleID = nil 
+	end
+		
+	if instance.data.encounterID ~= nil then
+		Encounter_Stop(instance.data.encounterID, true)
+	end
+		
+end
+
+--? @shortdesc Stops the Attack module entirely and returns the units it contained
+--? @args Table moduleData[, SGroup returned_sgroup]
+function Attack_Disband(moduleData, returned_sgroup)
+
+	local attackModule = Prefab_GetInstance(moduleData)
+
+	--Return the complete SGroup if possible
+	local result = attackModule.sgroup
+	Encounter_Stop(attackModule.data.encounterID, true)
+
+	-- Stop all activity
+	Attack_Stop(attackModule)
+	
+	if returned_sgroup ~= nil then
+		SGroup_AddGroup(returned_sgroup, attackModule.sgroup)	
+	end
+	
+	SGroup_Clear(attackModule.sgroup)
+	
+	-- Remove it from the master list
+	for index,module in pairs(t_attackModules) do
+		if module == attackModule then
+			table.remove(t_attackModules, index)
+			break
+		end
+	end
+	
+	-- Remove it from the master list
+	for index,module in pairs(t_allModules) do
+		if module == attackModule then
+			table.remove(t_allModules, index)
+			break
+		end
+	end
+end
+
+--? @shortdesc Gets the SGroup of units involved in this Attack module
+function Attack_GetSGroup(data)
+
+	local instance = Prefab_GetInstance(data)	
+
+	return instance.sgroup
+	
+end
+
+
+
+function Attack_AddSGroup(moduleData, sgroup, updateComposition)		-- take an sgroup and extract any useful units from it and add them to the prefab
+
+	local attackModule = Prefab_GetInstance(moduleData)	
+	if updateComposition == nil then updateComposition = true end
+	
+	-- Add this to the module SGroup
+	SGroup_AddGroup(attackModule.sgroup, sgroup)
+
+	-- and to the encounter
+	Encounter_AddSGroup(attackModule.data.encounterID, sgroup, true)
+	
+	-- Potentially update the maxUnits value
+	attackModule.highestUnitCount = math.max(attackModule.highestUnitCount, SGroup_Count(attackModule.sgroup))
+	
+	if updateComposition == true then
+		Reinforcement_UpdateIdealComposition(attackModule)
+	else
+		SGroup_AddGroup(sg_ignoreForUnitComposition, sgroup)
+	end
+	
+end
+
+
+function Attack_RemoveSGroup(moduleData, sgroupToRemove, updateComposition)
+	
+	local attackModule = Prefab_GetInstance(moduleData)
+	if updateComposition == nil then updateComposition = true end
+	
+	if attackModule.data.encounterID ~= nil then 
+		Encounter_RemoveSGroup(attackModule.data.encounterID, sgroupToRemove)
+	end
+	
+	SGroup_RemoveGroup(attackModule.sgroup, sgroupToRemove)	
+	
+	if updateComposition == true then
+		Reinforcement_SubtractSGroupFromIdealComposition(attackModule, sgroupToRemove)	
+	end
+	
+	SGroup_RemoveGroup(sg_ignoreForUnitComposition, sgroupToRemove)
+	
+end
+
+
+--? @shortdesc Returns true if all the Attack module's units are dead
+function Attack_IsDefeated(moduleData)
+
+	local attackModule = Prefab_GetInstance(moduleData)
+	
+	return SGroup_CountSpawned(attackModule.sgroup) <= 0
+	
+end
+
+
+--? @shortdesc Updates the target of an Attack module. 
+--? @extdesc newTarget can be a Location (either as a String or a LocationTable), or a MarkerID or Position
+--? @args Table attackModule, String/MarkerID/Position newTarget[, Boolean attackMove]
+function Attack_UpdateTargetLocation(moduleData, newTarget, attackMove)
+	
+	local attackModule = Prefab_GetInstance(moduleData)
+
+	-- update target reference 
+	if scartype(newTarget) == ST_TABLE or scartype(identifier) == ST_STRING then
+		
+		local location = LOCATION(newTarget)
+		if location == nil then	
+			return		-- early exit 
+		else
+			attackModule.target = location
+			newTarget = Util_GetPosition(location.marker)
+		end
+			
+	else
+		
+		attackModule.target = newTarget
+		
+	end
+
+	
+	-- update goal	
+	if attackModule.data.encounterID ~= nil then 				
+			
+		local goalData = Encounter_GetGoalData(attackModule.data.encounterID)
+			
+		goalData.target = newTarget
+		if attackMove ~= nil then
+			goalData.attackMove = attackMove
+		end
+		
+		Encounter_SetGoalData(attackModule.data.encounterID, goalData)
+		
+	end
+	
+end
+
+--? @shortdesc Finds what Attack module is currently using a given encounter
+function Attack_FindModuleByEncounterID(encounter)
+	
+	for index, module in pairs(t_attackModules) do 
+
+		if scartype(module.data) == ST_TABLE and module.data.encounterID == encounter then 
+			return module 
+		end 
+		
+	end
+	
+end
+
+--? @shortdesc Returns how many units this module started with
+function Attack_GetHighestUnitCount(moduleData)
+
+	local attackModule = Prefab_GetInstance(moduleData)
+	return attackModule.highestUnitCount
+	
+end
+
+--? @shortdesc Returns the units currently in the module as a percentage of the unit count the module started with
+function Attack_GetRemainingUnitRatio(moduleData)
+
+	local attackModule = Prefab_GetInstance(moduleData)
+	local ratio = SGroup_Count(attackModule.sgroup) / attackModule.highestUnitCount
+	return ratio
+	
+end
+
+--? @shortdesc Returns the difference between the current amound of units and the starting unit count
+function Attack_GetUnitChangeFromStart(moduleData)
+
+	local attackModule = Prefab_GetInstance(moduleData)
+	return SGroup_Count(attackModule.sgroup) - attackModule.highestUnitCount
+	
+end
+
+
+
+
+--
+-- Reinforcement - Unit Provider (providing units to other modules)
+--
+
+
+-- get a time estimate for how long the units will take to produce
+function Attack_UnitRequest_ProvideEstimate(module, requestData)
+
+	local attackModule = Prefab_GetInstance(module)
+
+	if UnitProvider_CanModuleProvideUnits(attackModule, requestData) == true then 
+			
+		return 0
+		
+	end
+			
+end
+
+
+-- start processing a unit request
+function Attack_UnitRequest_Start(module, requestData)
+	
+	local attackModule = Prefab_GetInstance(module)
+	
+	local returnSGroup = SGroup_CreateUnique()
+	
+	UnitProvider_SelectUnitsFromModule(attackModule, requestData, returnSGroup)
+
+	Attack_RemoveSGroup(attackModule, returnSGroup)						-- now remove all of these units from their current owner module
+	
+	MissionOMatic_RequestComplete(requestData, returnSGroup)			-- and return them to the request manager
+	
+
+	-- now turn around and request the same units at a normal priority to back-fill the units from a TownLife module
+	local replacementsRequestData = {
+		units = UnitTable_GenerateFromSGroup(returnSGroup),
+	}
+	
+	local result = MissionOMatic_RequestUnits(attackModule, replacementsRequestData, attackModule.reinforcements.unitSources)
+		
+	if result ~= nil then 
+		Reinforcement_RequestHasBeenTriggered(attackModule, result, true)	-- update tracking, but skip adjustments (as this request is just a back-fill)
+	end	
+
+	SGroup_Destroy(returnSGroup)	-- clean up the temp group
+	
+end 
+

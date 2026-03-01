@@ -1,0 +1,232 @@
+--
+-- Moscow 1238 - Expand Moscow objective
+--
+
+
+
+
+function ExpandMoscow_InitObjectives()
+
+	OBJ_ExpandMoscow = {
+		
+		Title = "$11194871", -- Expand Moscow
+		Type = ObjectiveType_Build,
+		
+		Intel_Start = EVENTS.BuildLandmark_ObjectiveStart,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_ExpandMoscow, ALL)
+		end,
+
+	}	
+
+	SOBJ_BuildLandmark = {
+		
+		Title = "$11182204", -- Build the Kremlin
+		Type = ObjectiveType_Build,
+		Parent = OBJ_ExpandMoscow,
+		StartAlongsideParent = true,
+		
+		SetupUI = BuildLandmark_SetupUI, -- this kicks off the creation of the ghost buildings and the tracking, too
+		
+	}
+
+	SOBJ_BuildMarket = {
+		
+		Title = "$11182205", -- Build the Market
+		Type = ObjectiveType_Build,
+		Parent = OBJ_ExpandMoscow,
+
+		SetupUI = BuildMarket_SetupUI, -- this kicks off the creation of the ghost buildings and the tracking, too
+		
+	}
+
+	SOBJ_BuildArchery = {
+		
+		Title = "$11194872", -- Build the Archery Range
+		Type = ObjectiveType_Build,
+		Parent = OBJ_ExpandMoscow,
+
+		SetupUI = BuildArchery_SetupUI, -- this kicks off the creation of the ghost buildings and the tracking, too
+		
+	}
+
+
+	
+	Objective_Register(OBJ_ExpandMoscow)
+	Objective_Register(SOBJ_BuildLandmark)
+	Objective_Register(SOBJ_BuildMarket)
+	Objective_Register(SOBJ_BuildArchery)
+	
+	
+	-- note the type and position of every building in the rebuild group, and the remove them
+	t_buildingsToConstruct_Landmark = BuildStructures_RememberPositionsOfBuildings(eg_constructLandmark)
+	t_buildingsToConstruct_Market = BuildStructures_RememberPositionsOfBuildings(eg_constructMarket)
+	t_buildingsToConstruct_Archery = BuildStructures_RememberPositionsOfBuildings(eg_constructArchery)
+	
+	
+	EGroup_DestroyAllEntities(eg_constructLandmark)	
+	EGroup_DestroyAllEntities(eg_constructMarket)	
+	EGroup_DestroyAllEntities(eg_constructArchery)	
+	
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_LANDMARK_AGE1_NOVGOROD_KREMLIN_CONTROL_RUS, ITEM_LOCKED)
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_LANDMARK_AGE1_GOLDEN_GATE_VLADIMIR_CONTROL_RUS, ITEM_LOCKED)
+
+end
+
+function ExpandMoscow_TriggerObjective()
+
+	BuildStructures_FilterManifest(t_buildingsToConstruct_Landmark)
+	BuildStructures_FilterManifest(t_buildingsToConstruct_Market)
+	BuildStructures_FilterManifest(t_buildingsToConstruct_Archery)
+	
+	Objective_Start(OBJ_ExpandMoscow)
+	
+end
+
+
+
+
+
+--
+-- Build Structures
+--
+
+function BuildLandmark_SetupUI(context, data)
+
+	i_BuildLandmark_numBuildingsToBuild = #t_buildingsToConstruct_Landmark
+	i_BuildLandmark_numBuildingsBuilt = 0
+
+	if i_BuildLandmark_numBuildingsToBuild >= 2 then 
+		Objective_SetCounter(SOBJ_BuildLandmark, i_BuildLandmark_numBuildingsBuilt, i_BuildLandmark_numBuildingsToBuild)			
+	end
+	
+	-- remove the invisible entities that reserve the spots
+	EGroup_DestroyAllEntities(eg_constructLandmark_blockers)
+		
+	Rule_AddOneShot(BuildLandmark_PartB, 0.125, data)	-- delayed a tick so the blockers are cleared before the new building is placed
+	
+end
+function BuildLandmark_PartB(context, data)
+
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_LANDMARK_AGE1_NOVGOROD_KREMLIN_CONTROL_RUS, ITEM_DEFAULT)
+	
+	-- build the landmark
+	for index, entry in pairs(t_buildingsToConstruct_Landmark) do 
+
+		LocalCommand_PlayerPlaceAndConstructEntitiesPlanned(player1, entry.ebp, entry.position, Util_GetOffsetPosition(entry.position, OFFSET_FRONT, 10), true, true)
+		
+	end
+	
+	local constructionList = BuildStructures_MonitorConstructionProgress(t_buildingsToConstruct_Landmark, {objective = SOBJ_BuildLandmark})		
+	
+	Rule_AddInterval(BuildLandmark_CheckBuildingFinished, 1, {manifestToCheck = constructionList})
+		
+end
+function BuildLandmark_CheckBuildingFinished(context, data)
+
+	if BuildStructures_IsManifestComplete(data.manifestToCheck) then 
+		
+		Rule_RemoveMe()
+		
+		Objective_Complete(SOBJ_BuildLandmark)
+		Objective_Start(SOBJ_BuildMarket, false, false)
+		Objective_Start(SOBJ_BuildArchery, false, false)
+
+		if Objective_IsStarted(OBJ_FindVillagers) == false then 
+			Objective_Start(OBJ_FindVillagers)
+		end
+		
+		Util_AutoSave()
+		
+		Rule_AddOneShot(BuildDefences_TriggerObjective, 20)
+		
+	end
+	
+end
+
+
+
+
+
+function BuildMarket_SetupUI(context, data)
+
+	-- remove the invisible entities that reserve the spots
+	EGroup_DestroyAllEntities(eg_constructMarket_blockers)
+
+	Rule_AddOneShot(BuildMarket_PartB, 0.125, data)	-- delayed a tick so the blockers are cleared before the new building is placed
+	
+end
+function BuildMarket_PartB(context, data)
+			
+	-- build the age 2 buildings
+	for index, entry in pairs(t_buildingsToConstruct_Market) do 
+
+		LocalCommand_PlayerPlaceAndConstructEntitiesPlanned(player1, entry.ebp, entry.position, Util_GetOffsetPosition(entry.position, OFFSET_FRONT, 10), true, true)
+		
+	end
+	
+	local constructionList = BuildStructures_MonitorConstructionProgress(t_buildingsToConstruct_Market, {objective = SOBJ_BuildMarket})		
+	
+	Rule_AddInterval(BuildMarket_CheckBuildingFinished, 1, {manifestToCheck = constructionList})
+
+end
+
+
+function BuildMarket_CheckBuildingFinished(context, data)
+
+	if BuildStructures_IsManifestComplete(data.manifestToCheck) then 
+		
+		Rule_RemoveMe()
+		
+		Objective_Complete(SOBJ_BuildMarket)
+		
+	end
+	
+end
+
+
+
+
+
+function BuildArchery_SetupUI(context, data)
+
+	-- remove the invisible entities that reserve the spots
+	EGroup_DestroyAllEntities(eg_constructArchery_blockers)
+
+	Rule_AddOneShot(BuildArchery_PartB, 0.125, data)	-- delayed a tick so the blockers are cleared before the new building is placed
+	
+end
+function BuildArchery_PartB(context, data)
+			
+	-- build the age 2 buildings
+	for index, entry in pairs(t_buildingsToConstruct_Archery) do 
+
+		LocalCommand_PlayerPlaceAndConstructEntitiesPlanned(player1, entry.ebp, entry.position, Util_GetOffsetPosition(entry.position, OFFSET_FRONT, 10), true, true)
+		
+	end
+	
+	local constructionList = BuildStructures_MonitorConstructionProgress(t_buildingsToConstruct_Archery, {objective = SOBJ_BuildArchery})		
+	
+	Rule_AddInterval(BuildArchery_CheckBuildingFinished, 1, {manifestToCheck = constructionList})
+
+end
+
+
+function BuildArchery_CheckBuildingFinished(context, data)
+
+	if BuildStructures_IsManifestComplete(data.manifestToCheck) then 
+		
+		Rule_RemoveMe()
+		
+		Objective_Complete(SOBJ_BuildArchery)
+		
+	end
+	
+end
+
+
+
+
+
+

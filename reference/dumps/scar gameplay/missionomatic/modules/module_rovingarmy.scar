@@ -1,0 +1,1554 @@
+-- 
+-- Mission-O-Matic Module - RovingArmy
+--
+-- Provides a structure for the mission recipe to specify the mission-level actions of a group of units not strictly bound to a location
+--
+-- See: Behaviour Module - Roving Army
+--      http://relicwiki/display/CARD/Behaviour+Module+-+Roving+Army (in the EE, you can Control-click on this link to go there)
+--
+
+ARMY_TARGETING_DISCARD = "Discard"
+ARMY_TARGETING_CYCLE = "Cycle"
+ARMY_TARGETING_REVERSE = "Reverse"
+ARMY_TARGETING_PROX = "Proximity"
+ARMY_TARGETING_RANDOM = "Random"
+ARMY_TARGETING_RANDOM_MEANDERING = "RandomMeandering"
+
+--status
+ARMY_STATUS_EMPTY = "Empty"
+ARMY_STATUS_ATTACKING = "Attacking"
+ARMY_STATUS_DISSOLVED = "Dissolved" --same as disbanded
+ARMY_STATUS_DEFENDING = "Defending"
+ARMY_STATUS_DISSOLVING_INTO_MODULE = "Dissolving into module"
+
+--defendType
+ARMY_DEFEND_TYPE_SPAWN = "Spawn"
+ARMY_DEFEND_TYPE_FALLBACK = "Fallback"
+ARMY_DEFEND_TYPE_TARGET = "Target"
+ARMY_DEFEND_TYPE_CURRENT_POSITION = "Current Position"
+
+--? @shortdesc Initializes a new RovingArmy module.  
+--? @args Table moduleData
+function RovingArmy_Init(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	assert(rovingArmy.descriptor ~= nil, "rovingArmy needs a descriptor")
+	assert(rovingArmy.player ~= nil, "rovingArmy needs a player")
+	assert(rovingArmy.withdrawThreshold == nil or rovingArmy.withdrawThreshold <= 1, "rovingArmy.withdrawThreshold cannot be greater than 1")
+	assert(rovingArmy.units == nil or rovingArmy.spawnLocation ~= nil, "rovingArmy needs a spawnLocation if starting units are provided")
+	assert(rovingArmy.targets == nil or rovingArmy.target == nil, "rovingArmy cannot be initialized with both a target and targets")
+	
+	if rovingArmy.range ~= nil then
+		rovingArmy.combatRange = rovingArmy.range
+		rovingArmy.range = nil
+		Assert(false, "rovingArmy range has been deprecated in favor of combatRange")
+	end
+	
+	assert(rovingArmy.combatRange == nil or (scartype(rovingArmy.combatRange) == ST_NUMBER and rovingArmy.combatRange > 0), "rovingArmy has invalid combatRange")
+	assert(rovingArmy.leashRange == nil or (scartype(rovingArmy.leashRange) == ST_NUMBER and rovingArmy.leashRange > 0), "rovingArmy has invalid leashRange")
+	
+	table.insert(t_rovingArmyModules, rovingArmy)
+	table.insert(t_allModules, rovingArmy)
+	
+	rovingArmy.prefabName = "RovingArmy"
+		
+	--catch the case where both types of attackMoveStyle are used
+	if rovingArmy.attackMove ~= nil and rovingArmy.attackMoveEnRoute ~= nil then
+		assert(false, rovingArmy.descriptor.." cannot have both attackMove and attackMoveEnRoute")		
+	end
+	if rovingArmy.attackMove ~= nil and rovingArmy.attackMoveAtTarget~= nil then
+		assert(false, rovingArmy.descriptor.." cannot have both attackMove and attackMoveAtTarget")		
+	end
+	--apply defaults if neither type is used
+	if rovingArmy.attackMove == nil and rovingArmy.attackMoveEnRoute == nil then
+		rovingArmy.attackMoveEnRoute = attackMoveStyle_attackEverything
+	end
+	if rovingArmy.attackMove == nil and rovingArmy.attackMoveAtTarget == nil then
+		rovingArmy.attackMoveAtTarget = attackMoveStyle_attackEverything
+	end
+	
+	if rovingArmy.onlyAtTargetForFinal == nil  then rovingArmy.onlyAtTargetForFinal = false end
+	
+	if rovingArmy.sgroup == nil                	then rovingArmy.sgroup = SGroup_CreateUnique("Roving Army")	end
+	if rovingArmy.units == nil                 	then rovingArmy.units = {} end
+	if rovingArmy.withdrawThreshold == nil     	then rovingArmy.withdrawThreshold = 0 end
+	if rovingArmy.targetingType == nil         	then rovingArmy.targetingType = ARMY_TARGETING_DISCARD end
+	if rovingArmy.addTargetsToFallbacks == nil 	then rovingArmy.addTargetsToFallbacks = false end
+	
+	if rovingArmy.preVictoryFunction == nil	   	then rovingArmy.preVictoryFunction = nil end
+	if rovingArmy.preCompleteFunction == nil   	then rovingArmy.preCompleteFunction = nil end
+	if rovingArmy.preDeathFunction == nil	   	then rovingArmy.preDeathFunction = nil end
+	if rovingArmy.preWithdrawFunction == nil   	then rovingArmy.preWithdrawFunction = nil end
+	
+	if rovingArmy.onVictoryFunction == nil     	then rovingArmy.onVictoryFunction = nil end  --called when a target is defeated
+	if rovingArmy.onCompleteFunction == nil    	then rovingArmy.onCompleteFunction = nil end --called when all targets have been defeated
+	if rovingArmy.onDeathFunction == nil       	then rovingArmy.onDeathFunction = nil end    --called when the module dies
+	if rovingArmy.onFailFunction == nil        	then rovingArmy.onFailFunction = nil end  --called when the module withdraws or dies
+	if rovingArmy.onWithdrawFunction == nil    	then rovingArmy.onWithdrawFunction = nil end --called when the module withdraws
+	if rovingArmy.onBlockedFunction == nil     	then rovingArmy.onBlockedFunction = nil end --called when a module cannot reach it's destination
+	
+	if rovingArmy.onDeathReset == nil          	then rovingArmy.onDeathReset = false end
+	if rovingArmy.onDeathDissolve == nil       	then rovingArmy.onDeathDissolve = false end
+	if rovingArmy.onCompleteDissolve == nil    	then rovingArmy.onCompleteDissolve = false end
+	if rovingArmy.onCompleteModule == nil      	then rovingArmy.onCompleteModule = nil end
+	if rovingArmy.idleTime == nil              	then rovingArmy.idleTime = 0 end
+	if rovingArmy.scanRangeEnRoute == nil	   	then rovingArmy.scanRangeEnRoute = nil end --this overrides the attackMoveStyle scanRange if set
+	
+	if rovingArmy.paused == nil				   	then rovingArmy.paused = false end
+	if rovingArmy.useCustomDirection == nil    	then rovingArmy.useCustomDirection = false end
+	if rovingArmy.cavalryCanBuildRams == nil   	then rovingArmy.cavalryCanBuildRams = true end
+	if rovingArmy.shouldHoldWhileWaiting == nil then rovingArmy.shouldHoldWhileWaiting = false end
+	
+	if rovingArmy.ramCount == nil				then rovingArmy.ramCount = nil end
+	if rovingArmy.ramPassengerCount == nil		then rovingArmy.ramPassengerCount = nil end
+	if rovingArmy.siegeTowerPassengerCount==nil	then rovingArmy.siegeTowerPassengerCount = nil end
+	if rovingArmy.openPathThreshold == nil 		then rovingArmy.openPathThreshold = nil end
+	if rovingArmy.brokenWallThreshold == nil 	then rovingArmy.brokenWallThreshold = nil end
+	
+	if scartype(rovingArmy.spawnLocation) == ST_TABLE or scartype(rovingArmy.spawnLocation) == ST_STRING then
+		rovingArmy.spawnLocation = ResolveSpawnLocation(rovingArmy.spawnLocation)
+	end
+	
+	if scartype(rovingArmy.homeLocation) == ST_NIL then
+		rovingArmy.homeLocation = rovingArmy.spawnLocation -- used for the Proximity target selection behaviour
+	end
+	
+	rovingArmy.ignoreWithdrawThreshold = false
+	rovingArmy.previousTarget = nil
+	
+	rovingArmy.idealComposition = {}
+	
+	if #rovingArmy.units > 0 then
+		if rovingArmy.withdrawThreshold > 0 then
+			assert(rovingArmy.spawnLocation, "rovingArmy needs a spawnLocation if starting units are provided, and withdrawThreshold is set")
+		end
+		UnitEntry_DeploySquads(rovingArmy.player, rovingArmy.sgroup, rovingArmy.units, rovingArmy.spawnLocation)
+		rovingArmy.highestUnitCount = SGroup_CountSpawned(rovingArmy.sgroup)
+		rovingArmy.lastKnownPosition = Util_GetPosition(rovingArmy.spawnLocation)
+		Reinforcement_UpdateIdealComposition(rovingArmy)
+	else
+		rovingArmy.highestUnitCount = 0
+	end
+	
+	_RovingArmy_InitializeTargets(rovingArmy)
+	_RovingArmy_InitializeFallbacks(rovingArmy)
+	
+	
+	rovingArmy.data = { encounterID = Encounter_Create(rovingArmy.player, rovingArmy.sgroup, "DoNothing", "RovingArmy "..rovingArmy.descriptor)} -- Create a blank encounter for now - the target cycling system will add in proper goals later
+	
+	rovingArmy.isWithdrawn = false
+	rovingArmy.isComplete = false
+	rovingArmy.isBlocked = false
+	
+	if _RovingArmy_HasValidTarget(rovingArmy) == false then
+		rovingArmy.isComplete = true
+	end
+	if _RovingArmy_IsBelowThreshold(rovingArmy) == true then
+		rovingArmy.isWithdrawn = true
+	end
+	
+	if SGroup_CountSpawned(rovingArmy.sgroup) > 0 then
+		if _RovingArmy_HasDefendReason(rovingArmy) then
+			_RovingArmy_DefendSpawnLocation(rovingArmy)
+		else
+			_RovingArmy_AttackTarget(rovingArmy)
+		end
+	else
+		rovingArmy.status = ARMY_STATUS_EMPTY
+	end
+	
+	
+	rovingArmy.data.monitorRuleID = Rule_AddInterval(_RovingArmy_Monitor, 1, {instance = rovingArmy})
+	
+	return rovingArmy
+end
+
+--? @shortdesc Ensure that all targets are set properly
+--? @args Table moduleData
+function _RovingArmy_InitializeTargets(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	--convert target to targets format
+	if rovingArmy.target ~= nil then
+		rovingArmy.targets = { rovingArmy.target }
+		rovingArmy.target = nil
+	end
+	
+	if rovingArmy.targets == nil then 
+		rovingArmy.targets = {}
+	end
+	rovingArmy.targetIndex = 1
+	rovingArmy.targetShift = 1
+	
+	if #rovingArmy.targets > 0 then
+		-- Randomize the target index if necessary
+		if rovingArmy.targetingType == ARMY_TARGETING_RANDOM then
+			rovingArmy.targetIndex = 0 -- make sure there isn't a current index, since we don't want to exclude any from the first go
+			rovingArmy.targetIndex = _RovingArmy_GetRandomTargetIndex(rovingArmy)
+		elseif rovingArmy.targetingType == ARMY_TARGETING_RANDOM_MEANDERING then
+			rovingArmy.targetIndex = 0 -- make sure there isn't a current index, since we don't want to exclude any from the first go
+			rovingArmy.targetIndex = _RovingArmy_GetMeanderingTargetIndex(rovingArmy)
+		end		
+
+		--convert targets to proper format
+		for i, t in pairs(rovingArmy.targets) do
+			rovingArmy.targets[i] = AI_Module_ResolveCombatArea(rovingArmy, t)
+		end	
+	end
+end
+
+
+--? @shortdesc Resets a module to start at the begining of its target list
+--? @args Table moduleData
+function RovingArmy_Reset(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	rovingArmy.isComplete = false
+	rovingArmy.targetIndex = 1
+end
+
+--? @shortdesc Ensures that all fallbacks are set properly
+--? @args Table moduleData
+function _RovingArmy_InitializeFallbacks(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.fallbacks = NormalizeTable(rovingArmy.fallbacks)
+	
+	--convert fallbacks to proper format
+	for i, fb in pairs(rovingArmy.fallbacks) do
+		local fallback = AI_Module_ResolveCombatArea(rovingArmy, fb)
+		if scartype(fb.onFallbackModule) == ST_STRING then
+			fallback.onFallbackModule = fb.onFallbackModule
+		end
+		rovingArmy.fallbacks[i] = fallback
+	end
+end
+
+--? @shortdesc Disbands the RovingArmy module entirely, optionally returning the module's units in the passed SGroup (which is NOT cleared)
+--? @args Table moduleData[, SGroup returned_sgroup]
+function RovingArmy_Disband(moduleData, returned_sgroup)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.status = ARMY_STATUS_DISSOLVED
+	rovingArmy.data.state = "Stopped"  --This tells the reinforcement system that this module will never need reinforcements again
+	--Return the SGroup if possible
+	if rovingArmy.sgroup ~= nil then
+		if rovingArmy.data.encounterID ~= nil then	
+			Encounter_Stop(rovingArmy.data.encounterID, true)
+			Encounter_RemoveAllSquads(rovingArmy.data.encounterID)
+		end
+	end
+
+	if rovingArmy.data.monitorRuleID ~= nil then
+		Rule_RemoveWithID(rovingArmy.data.monitorRuleID)
+		rovingArmy.data.monitorRuleID = nil 
+	end
+	
+	if rovingArmy.data.encounterID then
+		Encounter_Stop(rovingArmy.data.encounterID, true)
+	end
+	
+	if returned_sgroup ~= nil then
+		SGroup_AddGroup(returned_sgroup, rovingArmy.sgroup)	
+	end
+	
+	-- Clear the sgroup - it should be empty now anyway
+	SGroup_Clear(rovingArmy.sgroup)
+	
+	-- Remove it from the master lists
+	for i, module in pairs(t_rovingArmyModules) do
+		if module == rovingArmy then
+			table.remove(t_rovingArmyModules, i)
+		end
+	end
+	for i, module in pairs(t_allModules) do
+		if module == rovingArmy then
+			table.remove(t_allModules, i)
+		end
+	end
+end
+
+--? @shortdesc Adds an SGroup to the RovingArmy's high-level SGroup 
+--? @args Module moduleData, SGroup sgroup[, Boolean updateComposition]
+function RovingArmy_AddSGroup(moduleData, sgroup, updateComposition)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+
+	if updateComposition == nil then updateComposition = true end
+	
+	_RovingArmy_UpdateEmptyStatus(rovingArmy)
+	
+	if SGroup_CountSpawned(sgroup) > 0 then
+		SGroup_AddGroup(rovingArmy.sgroup, sgroup)
+		
+		rovingArmy.lastKnownPosition = SGroup_GetPosition(rovingArmy.sgroup)
+
+		if rovingArmy.data and rovingArmy.data.encounterID then 
+			Encounter_AddSGroup(rovingArmy.data.encounterID, sgroup, true)
+		end
+		
+		if SGroup_CountSpawned(rovingArmy.sgroup) > rovingArmy.highestUnitCount then
+			rovingArmy.highestUnitCount = SGroup_CountSpawned(rovingArmy.sgroup)
+		end
+	
+		if rovingArmy.status == ARMY_STATUS_EMPTY then
+			if rovingArmy.paused or rovingArmy.isWithdrawn or rovingArmy.isBlocked then
+				_RovingArmy_UpdateFallback(rovingArmy)
+				_RovingArmy_DefendFallbackOrSpawn(rovingArmy)	
+			elseif rovingArmy.isComplete == true then
+				_RovingArmy_DefendPreviousTarget(moduleData)
+			else
+				_RovingArmy_AttackTarget(rovingArmy)
+			end
+		end
+		
+		if updateComposition == true then
+			Reinforcement_UpdateIdealComposition(rovingArmy)		
+		else
+			SGroup_AddGroup(sg_ignoreForUnitComposition, sgroup)
+		end
+	end
+end
+
+--? @shortdesc Removes an SGroup from the module
+--? @args Table moduleData, SGroup sgroup[, Boolean updateComposition]
+function RovingArmy_RemoveSGroup(rovingArmy, sgroup, updateComposition)
+	local rovingArmy = Prefab_GetInstance(rovingArmy)
+
+	if updateComposition == nil then updateComposition = true end
+	
+	_RovingArmy_UpdateEmptyStatus(rovingArmy)
+	
+	Encounter_RemoveSGroup(rovingArmy.data.encounterID, sgroup)
+	SGroup_RemoveGroup(rovingArmy.sgroup, sgroup)
+	
+	if updateComposition == true then	
+		Reinforcement_SubtractSGroupFromIdealComposition(rovingArmy, sgroup)	
+	end
+	
+	SGroup_RemoveGroup(sg_ignoreForUnitComposition, sgroup)
+end
+
+--? @shortdesc Gets the rovingArmy's SGroup
+--? @args Table moduleData
+function RovingArmy_GetSGroup(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)	
+
+	return rovingArmy.sgroup 
+end
+
+--? @shortdesc Sets the modules target, removing any previous targets in the process. Skip transition means it wont start attacking the new target, and should usually be false.
+--? @args Module moduleData, Marker/String target[, Real combatRange, Real leashRange, Bool skipTransition]
+function RovingArmy_SetTarget(moduleData, target, combatRange, leashRange, skipTransition)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	assert(scartype(target) == ST_MARKER or scartype(target) == ST_STRING or scartype(target) == ST_TABLE or scartype(target) == ST_SGROUP or scartype(target) == ST_SCARPOS, "invalid target")
+	assert(scartype(combatRange) == ST_NUMBER or combatRange == nil, "combatRange must be a number or nil")
+	assert(scartype(leashRange) == ST_NUMBER or leashRange == nil, "combatRange must be a number or nil")
+	
+	_RovingArmy_UpdateEmptyStatus(rovingArmy)
+	
+	rovingArmy.targets = {}
+	rovingArmy.targetIndex = 1 
+	
+	local newTarget = AI_Module_ResolveCombatArea(rovingArmy, target, combatRange, leashRange)
+	if scartype(newTarget) ~= ST_TABLE then
+		print("newTarget must be a table, but is "..scartype_tostring(newTarget))
+	end
+	table.insert(rovingArmy.targets, newTarget)
+	
+	rovingArmy.isComplete = false
+	rovingArmy.isBlocked = false
+	
+	if skipTransition ~= true then
+		RovingArmy_SetTargetTransition(rovingArmy)
+	end
+end
+
+
+function RovingArmy_SetTargetTransition(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	if rovingArmy.status == ARMY_STATUS_DEFENDING and _RovingArmy_HasDefendReason(rovingArmy) == false then
+		_RovingArmy_StopDefending(rovingArmy)
+		_RovingArmy_AttackTarget(rovingArmy)
+	elseif rovingArmy.status == ARMY_STATUS_ATTACKING then
+		if _RovingArmy_HasDefendReason(rovingArmy) == true then
+			_RovingArmy_StopAttacking(rovingArmy)
+			_RovingArmy_UpdateFallback(rovingArmy)
+			_RovingArmy_DefendFallbackOrSpawn(rovingArmy)
+		else
+			_RovingArmy_StopAttacking(rovingArmy)	
+			_RovingArmy_AttackTarget(rovingArmy)
+		end
+	end
+end
+
+--? @shortdesc Adds a target to the target list. Skip transition means it wont start attacking the new target, and should usually be false.
+--? @args Module moduleData, Marker/String target[, Real combatRange, Real leashRange, Bool skipTransition]
+function RovingArmy_AddTarget(moduleData, target, combatRange, leashRange, skipTransition)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	assert(scartype(target) == ST_MARKER or scartype(target) == ST_STRING or scartype(target) == ST_TABLE or scartype(target) == ST_SGROUP or scartype(target) == ST_SCARPOS, "invalid target")
+	assert(scartype(combatRange) == ST_NUMBER or combatRange == nil, "targetRange must be a number or nil")
+	
+	_RovingArmy_UpdateEmptyStatus(rovingArmy)
+	
+	local newTarget = AI_Module_ResolveCombatArea(rovingArmy, target, combatRange, leashRange)
+	if scartype(newTarget) ~= ST_TABLE then
+		print("newTarget must be a table, but is "..scartype_tostring(newTarget))
+	end
+	table.insert(rovingArmy.targets, newTarget)
+	
+	-- We also need to account for the fact that we may be adding a target to a module that had no targets at all previously!
+	-- If that's the case, we will have invalidated the targetIndex in _RovingArmy_UpdateTarget, so check for an invalid index
+	-- And we'll need to give it a correct index, otherwise the army may enter _RovingArmy_AttackTarget without a valid index
+	-- Which will cause an error
+	if rovingArmy.targetIndex == nil or rovingArmy.targetIndex < 1 then
+		rovingArmy.targetIndex = 1
+	end
+
+	rovingArmy.isComplete = false
+	rovingArmy.isBlocked = false
+
+	-- Log that a target was "added"
+	AIEncounter_LogDebug(rovingArmy.player, rovingArmy.data.encounterID.encounterID, "RovingArmy AddTarget")
+	
+	if skipTransition ~= true then
+		if rovingArmy.status == ARMY_STATUS_DEFENDING and _RovingArmy_HasDefendReason(rovingArmy) == false then
+			_RovingArmy_StopDefending(rovingArmy)
+			_RovingArmy_AttackTarget(rovingArmy)
+		elseif rovingArmy.status == ARMY_STATUS_ATTACKING and _RovingArmy_HasDefendReason(rovingArmy) == true then
+			_RovingArmy_StopAttacking(rovingArmy)
+			_RovingArmy_UpdateFallback(rovingArmy)
+			_RovingArmy_DefendFallbackOrSpawn(rovingArmy)
+		end
+	end
+end
+
+
+--? @shortdesc Adds the targets to the target list
+--? @args Module moduleData, Table targets
+function RovingArmy_AddTargets(moduleData, targets)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	assert(scartype(targets) == ST_TABLE, "targets must be a table")
+	
+	for i, target in ipairs(targets) do
+		RovingArmy_AddTarget(moduleData, target)
+	end
+end
+
+
+--? @shortdesc Clears any previous targets away, and sets new ones
+--? @args Module moduleData, Table targets
+function RovingArmy_SetTargets(moduleData, targets)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	assert(scartype(targets) == ST_TABLE, "targets must be a table")
+	
+	if rovingArmy.descriptor == "intro_assault_2" then
+		local a  = 2
+	end
+	
+	if targets[1] ~= nil then
+		RovingArmy_SetTarget(rovingArmy, targets[1], nil, nil, true)
+	end
+	
+	if #targets > 1 then
+		for i=2, #targets, 1 do
+			RovingArmy_AddTarget(rovingArmy, targets[i], nil, nil, true)
+		end
+	end
+	RovingArmy_SetTargetTransition(rovingArmy)
+end
+
+
+--? @shortdesc Gets the current target, if there is one
+--? @args Module moduleData
+function RovingArmy_GetTarget(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	if _RovingArmy_HasValidTarget(rovingArmy) then
+		return rovingArmy.targets[rovingArmy.targetIndex]
+	else
+		return nil
+	end
+end
+
+
+--? @shortdesc Gets the target tables of the given Roving Army
+--? @args Module moduleData
+function RovingArmy_GetTargets(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	return rovingArmy.targets or {}
+end
+
+
+--? @shortdesc Clears current targets completely
+--? @args Table moduleData
+function RovingArmy_ClearTargets(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.targets = {}
+	rovingArmy.targetIndex = 1
+
+	if rovingArmy.status == ARMY_STATUS_ATTACKING then
+		_RovingArmy_StopAttacking(moduleData)
+	elseif rovingArmy.status == ARMY_STATUS_DEFENDING then
+		_RovingArmy_StopDefending(moduleData)
+	end
+end
+
+--? @shortdesc Gets the current target, if there is one
+--? @args Module moduleData
+function _RovingArmy_GetFallback(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	if _RovingArmy_HasValidFallback(rovingArmy) then
+		return rovingArmy.fallbacks[rovingArmy.fallbackIndex]
+	else
+		return nil
+	end
+end
+
+
+function RovingArmy_Pause(moduleData, pause)
+	
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	if pause == true and rovingArmy.paused == false then
+		
+		rovingArmy.paused = true 
+		
+	elseif pause == false and rovingArmy.paused == true then
+		
+		rovingArmy.paused = false 
+		
+		if rovingArmy.isPausedAtTarget == true then 		-- we should only update the target if the encounter got to a waypoint and paused there (rather than was still finishing up it's current waypoint)
+			
+			rovingArmy.isPausedAtTarget = nil
+			
+			_RovingArmy_UpdateTarget(rovingArmy)
+			
+			-- Creating a new Attack encounter will clear the old goal out
+			if _RovingArmy_HasValidTarget(rovingArmy) then
+				_RovingArmy_AttackTarget(rovingArmy)
+			else
+				_RovingArmy_Complete(rovingArmy)
+			end
+			
+		end
+		
+	end
+	
+end
+
+
+--? @shortdesc Calls BelowThreshold and AboveThreshold when needed. Calls for reinforcements when needed.
+--? @args Context context, Module moduleData
+function _RovingArmy_Monitor(context, moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	_RovingArmy_UpdateEmptyStatus(rovingArmy)
+	
+	if SGroup_CountSpawned(rovingArmy.sgroup) > 0 then
+		rovingArmy.lastKnownPosition = SGroup_GetPosition(rovingArmy.sgroup)
+	end
+	
+	--update isWithdrawn flag
+	if rovingArmy.isWithdrawn == false and _RovingArmy_IsBelowThreshold(rovingArmy) then
+		rovingArmy.isWithdrawn = true
+	elseif rovingArmy.isWithdrawn == true and _RovingArmy_IsAboveThreshold(rovingArmy) then
+		rovingArmy.isWithdrawn = false
+	end
+	
+	--check if the rovingArmy has recently gone above or below threshold. This doesn't do anything if the RA is empty	
+	if rovingArmy.status == ARMY_STATUS_ATTACKING and rovingArmy.isWithdrawn == true then
+		_RovingArmy_BelowThreshold(rovingArmy)
+	elseif rovingArmy.status == ARMY_STATUS_DEFENDING and rovingArmy.isWithdrawn == false then
+		_RovingArmy_AboveThreshold(rovingArmy)
+	end
+
+	if Reinforcement_AreReinforcementsNeeded(rovingArmy) then 
+		-- make the request
+		local requestData = {
+			units = Reinforcement_GenerateReplacementUnitList(rovingArmy, rovingArmy.idealComposition),
+			onFulfill = rovingArmy.reinforcements.onFulfill,
+		}
+		
+		if SGroup_IsUnderAttack(rovingArmy.sgroup, ANY, 5) or rovingArmy.reinforcements.alwaysMakeHighPriorityRequests then 	-- mark this request as high priority if the attack is still happening
+			requestData.priority = "high"
+		end
+		
+		local result = MissionOMatic_RequestUnits(rovingArmy, requestData, rovingArmy.reinforcements.unitSources)
+		
+		-- check to see if something replied that it would build the units
+		if result ~= nil then 
+			Reinforcement_RequestHasBeenTriggered(rovingArmy, result)		-- this updates tracking in the module, adjusts thresholds, etc
+		end	
+	end					
+end
+
+--? @shortdesc This checks to see if the RA has died, and calls the appropriate callbacks if it has
+function _RovingArmy_UpdateEmptyStatus(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	if rovingArmy == nil then
+		return
+	end
+	
+	if rovingArmy.status ~= ARMY_STATUS_EMPTY and SGroup_CountSpawned(rovingArmy.sgroup) == 0 then
+		if rovingArmy.status == ARMY_STATUS_ATTACKING then 
+			_RovingArmy_Fail(rovingArmy)
+		end
+		_RovingArmy_Death(rovingArmy, false)
+	end
+end
+
+--? @shortdesc Creates a new attack encounter for this army to attack its next target
+--? @args Module moduleData
+function _RovingArmy_CreateAttackEncounter(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_CreateAttackEncounter")
+	assert((#rovingArmy.targets > 0), "RovingArmy "..rovingArmy.descriptor.." must have targets before encounter can be created")
+	assert(SGroup_CountSpawned(rovingArmy.sgroup) > 0, "RovingArmy "..rovingArmy.descriptor.." must have units before Attack encounter can be created")
+
+	local target = rovingArmy.targets[rovingArmy.targetIndex]
+	if scartype(target) ~= ST_TABLE then
+		print(string.format("ROVING ARMY: Invalid target at index %s for CreateAttackEncouter, printing object: %s", rovingArmy.targetIndex, scartype_tostring(target)))
+		Util_PrintObject(target)
+		print(string.format("ROVING ARMY: Full list of %s targets:", #rovingArmy.targets))
+		Util_PrintTable(rovingArmy.targets)
+	end
+	
+	assert(scartype(target) == ST_TABLE, string.format("%s target needs to be a table, is %s", rovingArmy.descriptor, scartype_tostring(target)))
+	assert(scartype(target.position) == ST_SCARPOS, rovingArmy.descriptor.." target needs a valid position")
+	assert(scartype(target.combatRange) == ST_NUMBER and target.combatRange > 0, rovingArmy.descriptor.." target needs a valid combatRange")
+	assert(scartype(target.leashRange) == ST_NUMBER and target.leashRange > 0, rovingArmy.descriptor.." target needs a valid leashRange")
+
+	local goalTarget = target.position
+	if target.sgroup ~= nil then
+		goalTarget = target.sgroup
+	end
+	
+	if rovingArmy.descriptor == "intro_assault_2" then
+		local a  = 2
+	end
+	
+	local _attackMoveAtTarget = nil
+	if rovingArmy.attackMoveEnRoute ~= nil and rovingArmy.attackMoveAtTarget ~= nil and rovingArmy.onlyAtTargetForFinal and _RovingArmy_TargetIsNotFinal(rovingArmy) then
+		_attackMoveAtTarget = rovingArmy.attackMoveEnRoute
+	else
+		_attackMoveAtTarget = rovingArmy.attackMoveAtTarget
+	end
+	 
+	local goalData = {
+		plan = "Attack",
+		target = goalTarget,
+		direction = target.direction,
+		useCustomDirection = target.useCustomDirection or false,
+		idlePosition = target.idlePosition,
+		combatRange = target.combatRange,
+		leashRange = target.leashRange,
+		scanRangeEnRoute = rovingArmy.scanRangeEnRoute,
+		attackMove = rovingArmy.attackMove,
+		attackMoveEnRoute = rovingArmy.attackMoveEnRoute,
+		attackMoveAtTarget = _attackMoveAtTarget,
+		cavalryCanBuildRams = rovingArmy.cavalryCanBuildRams,
+		ramCount = rovingArmy.ramCount,
+		ramPassengerCount = rovingArmy.ramPassengerCount,
+		siegeTowerPassengerCount = rovingArmy.siegeTowerPassengerCount,
+		openPathThreshold = rovingArmy.openPathThreshold,
+		brokenWallThreshold = rovingArmy.brokenWallThreshold,
+		shouldHoldWhileWaiting = rovingArmy.shouldHoldWhileWaiting,
+		maxIdleTime = rovingArmy.idleTime,
+		callbacks = {
+			success = _RovingArmy_OnEncounterSuccessAttack,
+			blocked = _RovingArmy_OnEncounterBlocked,
+		},
+	}
+	Encounter_SetGoalData(rovingArmy.data.encounterID, goalData)
+end
+
+--? @shortdesc Used to determine if target should be handled with enRoute behavior. May need more logic to handle non-linear targetting types
+function _RovingArmy_TargetIsNotFinal(rovingArmy)
+	return rovingArmy.targetIndex < #rovingArmy.targets
+end
+
+--? @shortdesc Orders the modules to defend an area. This can be when the module starts, when it falls back, or when it completes
+--? @args Module moduleData, Marker/String target
+function _RovingArmy_CreateDefendEncounter(moduleData, target)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_CreateDefendEncounter")
+	assert(SGroup_CountSpawned(rovingArmy.sgroup) > 0, rovingArmy.descriptor.." must have units before Defend encounter can be created")
+	assert(scartype(target) == ST_TABLE, rovingArmy.descriptor.." target needs to be a table")
+	assert(scartype(target.position) == ST_SCARPOS, rovingArmy.descriptor.." target needs a valid position")
+	assert(scartype(target.combatRange) == ST_NUMBER and target.combatRange > 0, rovingArmy.descriptor.." target needs a valid combatRange")
+	assert(scartype(target.leashRange) == ST_NUMBER and target.leashRange > 0, rovingArmy.descriptor.." target needs a valid leashRange")
+	
+	-- Setup the goal data
+	local goalData = {
+		plan = "Defend",
+		target = target.position,
+		direction = target.direction,
+		useCustomDirection = target.useCustomDirection or false,
+		idlePosition = target.idlePosition,
+		combatRange = target.combatRange,
+		leashRange = target.leashRange,
+		attackMove = rovingArmy.attackMove,
+		attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+		attackMoveAtTarget = rovingArmy.attackMoveAtTarget,
+		cavalryCanBuildRams = rovingArmy.cavalryCanBuildRams,
+		ramCount = rovingArmy.ramCount,
+		ramPassengerCount = rovingArmy.ramPassengerCount,
+		siegeTowerPassengerCount = rovingArmy.siegeTowerPassengerCount,
+		openPathThreshold = rovingArmy.openPathThreshold,
+		brokenWallThreshold = rovingArmy.brokenWallThreshold,
+		shouldHoldWhileWaiting = rovingArmy.shouldHoldWhileWaiting,
+		
+		--attackMove = false,
+		maxTime = 1,
+		maxIdleTime = 1,
+		callbacks = {
+			blocked = _RovingArmy_OnEncounterBlocked,
+		},
+	}
+	Encounter_SetGoalData(rovingArmy.data.encounterID, goalData)
+end
+
+function _RovingArmy_MoveToDissolvePoint(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_CreateAttackEncounter")
+	
+	local fallback = _RovingArmy_GetFallback(rovingArmy)	
+	assert(fallback, "RovingArmy cannot move to dissolve point unless it has a valid fallback")
+	assert(fallback.onFallbackModule, "RovingArmy cannot move to dissolve point unless it has an onFallbackModule")
+	assert(scartype(fallback.position) == ST_SCARPOS, "fallback needs a valid position")
+	assert(scartype(fallback.combatRange) == ST_NUMBER and fallback.combatRange > 0, "fallback needs a valid combatRange")
+	assert(scartype(fallback.leashRange) == ST_NUMBER and fallback.leashRange > 0, "fallback needs a valid leashRange")
+	
+	local goalData = {
+		plan = "Attack",
+		target = fallback.position,
+		direction = fallback.direction,
+		useCustomDirection = false,
+		idlePosition = fallback.idlePosition,
+		combatRange = fallback.combatRange,
+		leashRange = fallback.leashRange,
+		scanRangeEnRoute = 0,
+		attackMove = attackMoveStyle_ignoreEverything,
+		maxIdleTime = 0,
+		cavalryCanBuildRams = rovingArmy.cavalryCanBuildRams,
+		shouldHoldWhileWaiting = rovingArmy.shouldHoldWhileWaiting,
+		ramCount = rovingArmy.ramCount,
+		ramPassengerCount = rovingArmy.ramPassengerCount,
+		siegeTowerPassengerCount = rovingArmy.siegeTowerPassengerCount,
+		openPathThreshold = rovingArmy.openPathThreshold,
+		brokenWallThreshold = rovingArmy.brokenWallThreshold,
+		callbacks = {
+			success = _RovingArmy_DissolveAtFallback,
+			fail = _RovingArmy_DissolveBeforeFallback,
+		},
+	}
+	Encounter_SetGoalData(rovingArmy.data.encounterID, goalData)
+end
+
+function _RovingArmy_DissolveAtFallback(encounter)
+	local rovingArmy = _RovingArmy_FindModuleByEncounterID(encounter)
+	
+	DissolveModuleIntoModule(rovingArmy.descriptor, _RovingArmy_GetFallback(rovingArmy).onFallbackModule)
+end
+
+function _RovingArmy_DissolveBeforeFallback(encounter)
+	local rovingArmy = _RovingArmy_FindModuleByEncounterID(encounter)
+	
+	_RovingArmy_Death(rovingArmy, true)
+end
+
+
+--? @shortdesc Called when a target has been cleared successfuly
+function _RovingArmy_OnEncounterSuccessAttack(encounter)
+	local rovingArmy = _RovingArmy_FindModuleByEncounterID(encounter)
+
+	_RovingArmy_UpdateEmptyStatus(rovingArmy)
+	
+	if rovingArmy ~= nil and rovingArmy.status ~= ARMY_STATUS_EMPTY and rovingArmy.status ~= ARMY_STATUS_DISSOLVED then
+		-- We want to remove anything that might have become invalid, like SGroups that have emptied
+		for index = #rovingArmy.targets, 1, -1 do
+			local target = rovingArmy.targets[index]
+			if scartype(target.sgroup) == ST_SGROUP and SGroup_CountSpawned(target.sgroup) <= 0 then
+				table.remove(rovingArmy.targets, index)
+			end
+		end
+		
+		if rovingArmy.preVictoryFunction then
+			rovingArmy.preVictoryFunction(rovingArmy)
+		end
+		
+		if rovingArmy.paused == false then 
+			
+			_RovingArmy_UpdateTarget(rovingArmy)
+			
+			-- Creating a new Attack encounter will clear the old goal out
+			if _RovingArmy_HasValidTarget(rovingArmy) then
+				_RovingArmy_AttackTarget(rovingArmy)
+			else
+				_RovingArmy_Complete(rovingArmy)
+			end
+			
+		else
+			
+			rovingArmy.isPausedAtTarget = true
+			-- paused, so just hole up at a defend location at the current target
+			_RovingArmy_StopAttacking(rovingArmy)
+			_RovingArmy_DefendCurrentTarget(rovingArmy)
+			
+		end
+		
+		if rovingArmy.onVictoryFunction then
+			rovingArmy.onVictoryFunction(rovingArmy)
+		end
+	end
+end
+
+function _RovingArmy_OnEncounterBlocked(encounter)
+	local rovingArmy = _RovingArmy_FindModuleByEncounterID(encounter)
+	_RovingArmy_UpdateEmptyStatus(rovingArmy)
+	print(rovingArmy.descriptor.." is blocked!")
+	if rovingArmy ~= nil and rovingArmy.status ~= ARMY_STATUS_EMPTY and rovingArmy.status ~= ARMY_STATUS_DISSOLVED then
+		rovingArmy.targets = {}
+		rovingArmy.targetIndex = 1
+		rovingArmy.targetShift = 1
+		rovingArmy.isBlocked = true
+		_RovingArmy_DefendCurrentPosition(rovingArmy)	
+	end
+	if rovingArmy.onBlockedFunction then
+		rovingArmy.onBlockedFunction(rovingArmy)
+	end
+end
+
+
+--? @shortdesc Called when all units in the module have died
+function _RovingArmy_Death(moduleData, forceDissolve)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_Death")
+	
+	if rovingArmy.preDeathFunction then
+		rovingArmy.preDeathFunction()
+	end
+	
+	rovingArmy.status = ARMY_STATUS_EMPTY
+	
+	if rovingArmy.onDeathPause then
+		rovingArmy.paused = true
+	end
+	
+	if rovingArmy.onDeathReset then
+		RovingArmy_Reset(rovingArmy)
+	end
+	
+	if rovingArmy.onDeathDissolve or forceDissolve then
+		RovingArmy_Disband(rovingArmy)
+	end
+	
+	if rovingArmy.onDeathFunction then
+		rovingArmy.onDeathFunction(rovingArmy)
+	end
+end
+
+
+--? @shortdesc Called if the module died or fell below threshold while attacking
+function _RovingArmy_Fail(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_Fail")
+	
+	if rovingArmy.onFailFunction then
+		rovingArmy.onFailFunction(rovingArmy)
+	end
+end
+
+
+--? @shortdesc Called when the module completes its last target and there are none left
+function _RovingArmy_Complete(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_Complete")
+	
+	rovingArmy.isComplete = true
+	
+	if rovingArmy.preCompleteFunction then
+		rovingArmy.preCompleteFunction()	
+	end
+	
+	if rovingArmy.onCompleteDissolve then
+		RovingArmy_Disband(rovingArmy)
+	else
+		if rovingArmy.onCompleteModule then
+			DissolveModuleIntoModule(rovingArmy.descriptor, rovingArmy.onCompleteModule)
+		else
+			_RovingArmy_StopAttacking(rovingArmy)
+			_RovingArmy_DefendPreviousTarget(rovingArmy)
+		end	
+	end
+	
+	if rovingArmy.onCompleteFunction then
+		rovingArmy.onCompleteFunction(rovingArmy)	
+	end
+end
+
+
+--? @shortdesc Orders the module to attack it's next target, and disables withdraw behaviour 
+function RovingArmy_ForceStart(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.ignoreWithdrawThreshold = true
+	RovingArmy_Start(rovingArmy)
+end
+
+
+--? @shortdesc Orders the module to attack it's next target. Call this if the modules was previously given a pause command. Calling this on a module that has withdrawn will only result in it withdrawing again. Call RovingArmy_ForceStart if you want to override withdraw behaviour.
+function RovingArmy_Start(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.paused = false
+	if rovingArmy.status == ARMY_STATUS_DEFENDING and _RovingArmy_HasDefendReason(rovingArmy) == false then
+		_RovingArmy_StopDefending(rovingArmy)
+		_RovingArmy_AttackTarget(rovingArmy)
+	end
+end
+
+	
+--? @shortdesc instructs the module to begin attacking it's next target.
+function _RovingArmy_AttackTarget(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_AttackTarget")
+	
+	rovingArmy.status = ARMY_STATUS_ATTACKING
+	_RovingArmy_CreateAttackEncounter(rovingArmy)
+end
+
+		
+--? @shortdesc Stops the RovingArmy from attacking its target
+function _RovingArmy_StopAttacking(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_StopAttacking")
+	if rovingArmy.status ~= ARMY_STATUS_ATTACKING then
+		print("BUG: Mohi FSE")
+	end
+	--assert(rovingArmy.status == ARMY_STATUS_ATTACKING, string.format("StopAttacking called by %s when not attacking (status was %s)", rovingArmy.descriptor, rovingArmy.status))
+	if(rovingArmy.status ~= ARMY_STATUS_ATTACKING) then
+		cardinal_encounter_fatal( string.format("StopAttacking called by %s when not attacking (status was %s)", rovingArmy.descriptor, rovingArmy.status))
+	end
+	Encounter_Stop(rovingArmy.data.encounterID, true)
+end
+
+
+--? @shortdesc orders the RovingArmy to defend its spawnLocation
+function _RovingArmy_DefendSpawnLocation(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.status = ARMY_STATUS_DEFENDING
+	
+	if rovingArmy.spawnLocation ~= nil then
+		rovingArmy.defendType = ARMY_DEFEND_TYPE_SPAWN
+		local spawnLocationFormatted = AI_Module_ResolveCombatArea(rovingArmy, rovingArmy.spawnLocation)
+		_RovingArmy_CreateDefendEncounter(rovingArmy, spawnLocationFormatted)
+	else
+		assert(rovingArmy.spawnLocation ~= nil, string.format("rovingArmy.spawnLocation for %s was nil - skipping", rovingArmy.descriptor))
+	end
+end
+
+
+--? @shortdesc Called on complete. Orders the rovingArmy to defend the last completed target.
+function _RovingArmy_DefendPreviousTarget(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.status = ARMY_STATUS_DEFENDING
+	rovingArmy.defendType = ARMY_DEFEND_TYPE_TARGET
+	-- Generally, the "previous" target will be the place the army was last going, i.e. where they are now, when they're done
+	if rovingArmy.previousTarget ~= nil then
+		_RovingArmy_CreateDefendEncounter(rovingArmy, rovingArmy.previousTarget)
+		
+	-- Sometimes, though, a RovingArmy's previous target was an SGroup, which by necessity will no longer exist or be a valid target, since it has been destroyed
+	-- In such cases, defending one's own position is a reasonable fallback behaviour that mimics what happens in the case of static targets
+	else
+		print(string.format("rovingArmy.previousTarget for %s was nil, index was %s, has %s targets; defending own position", rovingArmy.descriptor, rovingArmy.targetIndex, #rovingArmy.targets))
+		Util_PrintTable(rovingArmy.targets)
+		_RovingArmy_CreateDefendEncounter(rovingArmy, { position = SGroup_GetPosition(rovingArmy.sgroup), combatRange = 30, leashRange = 45, })
+	end
+end
+
+
+
+--? @shortdesc Orders the rovingArmy to defend the current target.
+function _RovingArmy_DefendCurrentTarget(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.status = ARMY_STATUS_DEFENDING
+	local currentTarget = rovingArmy.targets[rovingArmy.targetIndex]
+	
+	if currentTarget ~= nil then
+		rovingArmy.defendType = ARMY_DEFEND_TYPE_TARGET
+		_RovingArmy_CreateDefendEncounter(rovingArmy, currentTarget)
+		
+	
+	-- Sometimes, though, a RovingArmy's previous target was an SGroup, which by necessity will no longer exist or be a valid target, since it has been destroyed
+	-- In such cases, defending one's own position is a reasonable fallback behaviour that mimics what happens in the case of static targets
+	else
+		print(string.format("Current target for %s was nil, index was %s, has %s targets; defending own position", rovingArmy.descriptor, rovingArmy.targetIndex, #rovingArmy.targets))
+		Util_PrintTable(rovingArmy.targets)
+		rovingArmy.defendType = ARMY_DEFEND_TYPE_TARGET
+		_RovingArmy_CreateDefendEncounter(rovingArmy, { position = SGroup_GetPosition(rovingArmy.sgroup), combatRange = 30, leashRange = 45, })
+		
+	end
+end
+
+--? @shortdesc Orders the rovingArmy to defend it's current average position
+function _RovingArmy_DefendCurrentPosition(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.status = ARMY_STATUS_DEFENDING
+	
+	rovingArmy.defendType = ARMY_DEFEND_TYPE_CURRENT_POSITION
+	local currentPos = SGroup_GetPosition(rovingArmy.sgroup)
+	local combatArea = AI_Module_ResolveCombatArea(rovingArmy, currentPos)
+	_RovingArmy_CreateDefendEncounter(rovingArmy, combatArea)
+end
+
+--? @shortdesc Instructs the RA to defend the nearest fallback if there is one, or the spawnLocation if there isn't one
+function _RovingArmy_DefendFallbackOrSpawn(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	rovingArmy.status = ARMY_STATUS_DEFENDING
+	
+	if _RovingArmy_HasValidFallback(rovingArmy) then
+		rovingArmy.defendType = ARMY_DEFEND_TYPE_FALLBACK
+		_RovingArmy_CreateDefendEncounter(rovingArmy, _RovingArmy_GetFallback(rovingArmy))
+		
+	elseif rovingArmy.spawnLocation ~= nil then
+		rovingArmy.defendType = ARMY_DEFEND_TYPE_SPAWN
+		local spawnLocationFormatted = AI_Module_ResolveCombatArea(rovingArmy, rovingArmy.spawnLocation)
+		_RovingArmy_CreateDefendEncounter(rovingArmy, spawnLocationFormatted)
+		
+	else
+		assert(false, "rovingArmy "..rovingArmy.descriptor.." cannot fallback if there are no fallbacks or spawnLocation")
+	end
+end
+
+
+--? @shortdesc Stops the RovingArmy from defending
+function _RovingArmy_StopDefending(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_StopDefending")
+	
+	assert(rovingArmy.status == ARMY_STATUS_DEFENDING, "StopDefending called when not defending") 
+	rovingArmy.defendType = nil
+	Encounter_Stop(rovingArmy.data.encounterID, true)
+end
+
+		
+--? @shortdesc returns true if the module has any living units 
+function RovingArmy_HasUnits(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	return SGroup_CountSpawned(rovingArmy.sgroup) > 0 
+end
+
+		
+--? @shortdesc returns true if rovingArmy.targets[rovingArmy.targetIndex] is a valid target.
+function _RovingArmy_HasValidTarget(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	return (#rovingArmy.targets > 0 and rovingArmy.targetIndex ~= nil and rovingArmy.targetIndex <= #rovingArmy.targets)
+end
+
+
+--? @shortdesc returns true if rovingArmy.fallback[rovingArmy.fallbackIndex] is a valid fallback.
+function _RovingArmy_HasValidFallback(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	return (#rovingArmy.fallbacks > 0 and rovingArmy.fallbackIndex ~= nil and rovingArmy.fallbackIndex <= #rovingArmy.fallbacks)
+end
+
+
+--? @shortdesc Returns true if all the RovingArmy module's units are dead
+function RovingArmy_IsDefeated(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	return rovingArmy == nil or rovingArmy.status == ARMY_STATUS_DISSOLVED
+end
+
+
+
+
+
+--? @shortdesc Called when the module falls below its withdraw threshold while attacking
+function _RovingArmy_BelowThreshold(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_BelowThreshold")
+	assert(SGroup_CountSpawned(rovingArmy.sgroup) > 0, "Below threshold called instead of death when module has 0 units")
+	
+	if rovingArmy.preWithdrawFunction ~= nil then
+		rovingArmy.preWithdrawFunction()
+	end
+	
+	_RovingArmy_StopAttacking(rovingArmy)
+	_RovingArmy_Fail(rovingArmy)
+	
+	_RovingArmy_UpdateFallback(rovingArmy)  
+	
+	assert(_RovingArmy_HasValidFallback(rovingArmy) or rovingArmy.spawnLocation, "BelowThreshold was unable to find a valid fallback or spawnLocation")
+
+	if _RovingArmy_HasValidFallback(rovingArmy) and scartype(_RovingArmy_GetFallback(rovingArmy).onFallbackModule) == ST_STRING then
+		rovingArmy.status = ARMY_STATUS_DISSOLVING_INTO_MODULE
+		_RovingArmy_MoveToDissolvePoint(rovingArmy)
+	else
+		--withdraw via defend module -> wait for reinforcements (defend is used because it never ends, it will wait as long as necessary)
+		_RovingArmy_DefendFallbackOrSpawn(rovingArmy)
+	end
+	
+	if rovingArmy.onWithdrawFunction ~= nil then
+		rovingArmy.onWithdrawFunction(rovingArmy)
+	end
+end
+
+
+--? @shortdesc Called when the module goes above its threshold while defending 
+function _RovingArmy_AboveThreshold(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	--print("_RovingArmy_AboveThreshold")
+	assert(rovingArmy.status == ARMY_STATUS_DEFENDING, "AboveThreshold called when not defending")
+	
+	if _RovingArmy_HasDefendReason(rovingArmy) == false then
+		_RovingArmy_StopDefending(rovingArmy)  
+		_RovingArmy_AttackTarget(rovingArmy)	
+	end
+end
+
+--? @shortdesc Returns true if the rovingArmy is above the withdraw threshold, or if ignoreWithdrawThreshold was set to true
+function _RovingArmy_IsAboveThreshold(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)	
+	
+	return (SGroup_CountSpawned(rovingArmy.sgroup) >= (rovingArmy.withdrawThreshold * rovingArmy.highestUnitCount) or rovingArmy.ignoreWithdrawThreshold)
+end
+
+--? @shortdesc Returns true if the rovingArmy is below the withdraw threshold, and ignoreWithdrawThreshold is false
+function _RovingArmy_IsBelowThreshold(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)	
+	
+	return (SGroup_CountSpawned(rovingArmy.sgroup) < (rovingArmy.withdrawThreshold * rovingArmy.highestUnitCount) and not rovingArmy.ignoreWithdrawThreshold)
+end
+
+
+
+--? @shortdesc Finds what Roving Army module is currently using a given encounter
+function _RovingArmy_FindModuleByEncounterID(encounter)
+	for index, module in pairs(t_rovingArmyModules) do	
+		if scartype(module.data) == ST_TABLE and module.data.encounterID == encounter then
+			return module 
+		end
+	end
+	
+end
+
+
+--? @shortdesc Updates targets, targetIndex and targetShift according to the targetingType. After running this, call _RovingArmy_HasValidTarget to find out if a new target was established.
+function _RovingArmy_UpdateTarget(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	if #rovingArmy.targets == 0 then
+		rovingArmy.targetIndex = nil
+	else
+		-- Flag the previous (technically current) target as visited
+		if rovingArmy.targets[rovingArmy.targetIndex] ~= nil then
+			rovingArmy.targets[rovingArmy.targetIndex].visited = true
+		end
+		
+		-- The rest depends on specific target type
+		if rovingArmy.targetingType == ARMY_TARGETING_DISCARD then
+			if rovingArmy.addTargetsToFallbacks then
+				table.insert(rovingArmy.fallbacks, { 
+					position = rovingArmy.targets[rovingArmy.targetIndex].position,
+					combatRange = rovingArmy.targets[rovingArmy.targetIndex].combatRange,
+					leashRange = rovingArmy.targets[rovingArmy.targetIndex].leashRange,
+				})
+			end
+			rovingArmy.previousTarget = rovingArmy.targets[rovingArmy.targetIndex]
+			rovingArmy.targetIndex = rovingArmy.targetIndex + 1 
+			
+		elseif rovingArmy.targetingType == ARMY_TARGETING_CYCLE then
+			rovingArmy.previousTarget = rovingArmy.targets[rovingArmy.targetIndex]
+			rovingArmy.targetIndex = rovingArmy.targetIndex + rovingArmy.targetShift
+			-- Don't go out of range, just cycle back up to the top
+			if rovingArmy.targetIndex > #rovingArmy.targets then
+				rovingArmy.targetIndex = 1
+			elseif rovingArmy.targetIndex < 1 then
+				rovingArmy.targetIndex = #rovingArmy.targets
+			end
+	
+		elseif rovingArmy.targetingType == ARMY_TARGETING_REVERSE then
+			rovingArmy.previousTarget = rovingArmy.targets[rovingArmy.targetIndex]
+			rovingArmy.targetIndex = rovingArmy.targetIndex + rovingArmy.targetShift
+			-- If we break bounds, reverse the shift and bump us back inward one
+			if rovingArmy.targetIndex > #rovingArmy.targets then
+                rovingArmy.targetIndex = math.max(#rovingArmy.targets - 1, 1)
+                rovingArmy.targetShift = rovingArmy.targetShift * -1
+            elseif rovingArmy.targetIndex < 1 then
+                rovingArmy.targetIndex = math.min(2, #rovingArmy.targets)
+                rovingArmy.targetShift = rovingArmy.targetShift * -1
+            end
+			
+		elseif rovingArmy.targetingType == ARMY_TARGETING_PROX then
+			rovingArmy.previousTarget = rovingArmy.targets[rovingArmy.targetIndex]
+			rovingArmy.targetIndex = _RovingArmy_GetProximityTargetIndex(rovingArmy)
+			
+		elseif rovingArmy.targetingType == ARMY_TARGETING_RANDOM then
+			rovingArmy.previousTarget = rovingArmy.targets[rovingArmy.targetIndex]
+			rovingArmy.targetIndex = _RovingArmy_GetRandomTargetIndex(rovingArmy)
+	
+		elseif rovingArmy.targetingType == ARMY_TARGETING_RANDOM_MEANDERING then
+			rovingArmy.previousTarget = rovingArmy.targets[rovingArmy.targetIndex]
+			rovingArmy.targetIndex = _RovingArmy_GetMeanderingTargetIndex(rovingArmy)	
+			
+		else
+			assert(rovingArmy.targetingType, "RovingArmy "..tostring(rovingArmy.descriptor).."has no targeting type") 
+		end	
+	end
+end
+
+
+--? @shortdesc Updates fallback and fallbackIndex
+function _RovingArmy_UpdateFallback(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	local position = nil
+	if SGroup_CountSpawned(rovingArmy.sgroup) > 0 then
+		position =  SGroup_GetPosition(rovingArmy.sgroup)
+	else
+		position = RovingArmy_GetTarget(rovingArmy)
+	end
+	
+	local shortestDistance = 9999999
+	local closestFallbackIndex = nil
+	for index,fallback in pairs(rovingArmy.fallbacks) do
+
+		local distance =  Util_GetDistance(position, fallback.position)
+		local isRazedLocation = scartype(fallback.location) ~= ST_NIL and Location_HasBeenRazed(LOCATION(fallback.location))
+		local isDefeatedModule = scartype(fallback.onFallbackModule) ~= ST_NIL and Condition_ModuleDefeated_Check({ moduleName = fallback.onFallbackModule})
+		
+		if isRazedLocation == false and isDefeatedModule == false and distance < shortestDistance then
+			closestFallbackIndex = index
+			shortestDistance = distance
+		end
+		
+	end
+
+	rovingArmy.fallbackIndex = closestFallbackIndex
+end
+
+
+--? @shortdesc returns a random index to a target other than the current one. Returns nil if no valid targets exist
+function _RovingArmy_GetRandomTargetIndex(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	-- Get the full range of indices and remove the current one
+	local validTargetIndexes = {}
+	for index, target in pairs(rovingArmy.targets) do
+		if index ~= rovingArmy.targetIndex then
+			table.insert(validTargetIndexes, index)
+		end
+	end
+	
+	if #validTargetIndexes > 0 then
+		local i = World_GetRand(1, #validTargetIndexes)
+		return validTargetIndexes[i]	
+	else
+		return nil
+	end
+end
+
+--? @shortdesc sets withdrawThreshold
+function RovingArmy_SetWithdrawThreshold(moduleData, newThreshold)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	rovingArmy.withdrawThreshold = newThreshold	
+end
+
+--? @shortdesc Counts how many targets have NOT been visited yet
+function RovingArmy_CountUnvisitedTargets(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	local unvisitedCount = 0
+	for index, target in pairs(rovingArmy.targets) do
+		if target.visited ~= true then
+			unvisitedCount = unvisitedCount + 1
+		end
+	end
+	
+	return unvisitedCount
+end
+
+
+--? @shortdesc Returns the target index for the nearest target to the homeLocation. Returns nil if there are no targets
+function _RovingArmy_GetProximityTargetIndex(moduleData)
+	
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	local closestDist = nil
+	local closestIndex = nil
+	
+	-- Find the index of the closest target to the home location
+	if scartype(rovingArmy.homeLocation) ~= ST_NIL then
+		--print("ARMY "..tostring(rovingArmy.descriptor)..": Home is "..tostring(rovingArmy.homeLocation)..", targets left: "..tostring(#rovingArmy.targets))
+		for index, target in pairs(rovingArmy.targets) do
+			if target.visited ~= true then
+				local targetPos = target.position
+				if scartype(targetPos) == ST_NIL and scartype(target.sgroup) == ST_SGROUP then
+					targetPos = SGroup_GetPosition(target.sgroup)
+				end
+				
+				local thisDist = Util_GetDistanceSquared(targetPos, rovingArmy.homeLocation)
+				if closestDist == nil or thisDist < closestDist then
+					closestDist = thisDist
+					closestIndex = index
+				end
+			end
+		end
+	end
+	-- We never want to return nil, so if we found nothing valid, return an index above the target count
+	return closestIndex	or (#rovingArmy.targets + 1)
+end
+
+
+--? @shortdesc Selects a random target index from the three closest targets
+function _RovingArmy_GetMeanderingTargetIndex(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	local completedPosition = nil
+	
+	if rovingArmy.targetIndex == 0 then 
+		completedPosition = SGroup_GetPosition(rovingArmy.sgroup)
+	else
+		completedPosition = rovingArmy.targets[rovingArmy.targetIndex].position
+	end
+	
+	local nextMoves = {}	
+	for index, target in pairs(rovingArmy.targets) do
+		if index ~= rovingArmy.targetIndex then					-- We want to get a new index that isn't the current one
+			if scartype(target) == ST_TABLE then 
+				local entry = {
+					index = index,			
+					distance = Util_GetDistanceSquared(completedPosition, target.position),
+				}
+				table.insert(nextMoves, entry)
+			else
+				local entry = {
+					index = index,			
+					distance = Util_GetDistanceSquared(completedPosition, target),
+				}
+				table.insert(nextMoves, entry)
+			end
+		end
+	end
+	
+	table.sort(nextMoves, function(a,b) return a.distance < b.distance end)
+	
+	if #nextMoves > 0 then
+		local newIndex = World_GetRand(1, math.min(3, #nextMoves))
+		return nextMoves[newIndex].index
+	else
+		return nil
+	end
+end
+
+
+--? @shortdesc Returns the units currently in the module as a percentage of the unit count the module started with
+function RovingArmy_GetRemainingUnitRatio(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	local ratio = SGroup_CountSpawned(rovingArmy.sgroup) / rovingArmy.highestUnitCount
+	return ratio
+end
+
+--? @shortdesc Returns the difference between the current amound of units and the starting unit count
+function RovingArmy_GetUnitChangeFromStart(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	return SGroup_CountSpawned(rovingArmy.sgroup) - rovingArmy.highestUnitCount
+end
+
+
+-- get a time estimate for how long the units will take to produce
+function RovingArmy_UnitRequest_ProvideEstimate(moduleData, requestData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+
+	if UnitProvider_CanModuleProvideUnits(rovingArmy, requestData) == true then 		
+		return 0	
+	end		
+end
+
+--? @shortdesc Tells the modules to give up some of its units for reinforcements. 
+--? @args Module moduleData, Request requestData
+function RovingArmy_UnitRequest_Start(moduleData, requestData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	local returnSGroup = SGroup_CreateUnique()
+	
+	UnitProvider_SelectUnitsFromModule(rovingArmy, requestData, returnSGroup)
+
+	RovingArmy_RemoveSGroup(rovingArmy, returnSGroup)					-- now remove all of these units from their current owner module
+	
+	MissionOMatic_RequestComplete(requestData, returnSGroup)			-- and return them to the request manager
+
+	
+	-- now turn around and request the same units at a normal priority to back-fill the units from a TownLife module
+	local replacementsRequestData = {
+		units = UnitTable_GenerateFromSGroup(returnSGroup),
+		onFulfill = rovingArmy.reinforcements.onFulfill,
+	}
+	
+	if rovingArmy.reinforcements then
+		local result = MissionOMatic_RequestUnits(rovingArmy, replacementsRequestData, rovingArmy.reinforcements.unitSources)
+	end
+			
+	if result ~= nil then 
+		Reinforcement_RequestHasBeenTriggered(rovingArmy, result, true)	-- update tracking, but skip adjustments (as this request is just a back-fill)
+	end	
+	
+	SGroup_Destroy(returnSGroup)	-- clean up the temp group
+end 
+
+
+--? @shortdesc Returns the nearest seen squad or entity from a group to a Roving Army
+--? @args RovingArmy moduleData, SGroup/EGroup huntedGroup
+--? @result Nearest Squad(from SGroup) or Entity(from Egroup)
+function RovingArmy_GetNearestSeen(moduleData, huntedGroup)
+	
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	local hunter = rovingArmy.player
+	local hunted = Util_GetPlayerOwner(huntedGroup)
+	local closestDist = -1
+	local closestTarget = nil
+	
+	if scartype(huntedGroup) == ST_SGROUP then
+		if SGroup_CountSpawned(huntedGroup) > 0 then
+			if Player_CanSeeSGroup(hunter, huntedGroup, ANY) == true then
+				for index = SGroup_CountSpawned(huntedGroup), 1, -1 do
+					local thisSquad = SGroup_GetSquadAt(huntedGroup, index)
+					if Player_CanSeeSquad(hunter, thisSquad, ANY) then
+						local thisSquadPos = Squad_GetPosition(thisSquad)
+						local hunterPos = SGroup_GetPosition(rovingArmy.sgroup)
+						local thisDist = Util_GetDistanceSquared(thisSquadPos, hunterPos)
+						
+						if closestDist == -1 or thisDist < closestDist then
+							closestDist = thisDist
+							closestTarget = thisSquad
+						end
+					end
+				end
+			end
+		end
+	elseif scartype(huntedGroup) == ST_EGROUP then
+		if EGroup_Count(huntedGroup) > 0 then
+			if Player_CanSeeEGroup(hunter, huntedGroup, ANY) == true then
+				for index = EGroup_Count(huntedGroup), 1, -1 do
+					local thisEntity = EGroup_GetSquadAt(huntedGroup, index)
+					if Player_CanSeeEntity(hunter, thisEntity, ANY) then
+						local thisEntityPos = Entity_GetPosition(thisEntity)
+						local hunterPos = SGroup_GetPosition(rovingArmy.sgroup)
+						local thisDist = Util_GetDistanceSquared(thisEntity, hunterPos)
+						
+						if closestDist == -1 or thisDist < closestDist then
+							closestDist = thisDist
+							closestTarget = thisEntity
+						end
+					end
+				end
+			end
+		end
+	end
+		
+	return closestTarget
+end
+
+
+--? @shortdesc Returns the average position of the rovingArmy, or the spawnLocation if it has no units.
+--? @args RovingArmy moduleData
+--? @result a position or marker
+function RovingArmy_GetPosition(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	if SGroup_CountSpawned(rovingArmy.sgroup) > 0 then
+		return SGroup_GetPosition(rovingArmy.sgroup)
+	elseif rovingArmy.spawnLocation ~= nil then
+		return rovingArmy.spawnLocation
+	else
+		assert(false, "unable to get position for RoivngArmy")	
+	end
+end
+
+
+--? @shortdesc Instructs the rovingArmy to send out a reinforcement request. 
+--? @args rovingArmy moduleData, table units[, table unitSources][, string priority]
+--? @result nil
+function RovingArmy_RequestUnits(moduleData, units, unitSources, priority)
+	
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	-- make the request
+	local requestData = {
+		units = units,
+		priority = priority,
+		onFulfill = rovingArmy.reinforcements.onFulfill,
+	}
+	if unitSources == nil and rovingArmy.reinforcements ~= nil then
+		unitSources = rovingArmy.reinforcements.unitSources
+	end
+	
+	local result = MissionOMatic_RequestUnits(rovingArmy, requestData, unitSources)
+	
+	-- check to see if something replied that it would build the units
+	if result ~= nil then 
+		Reinforcement_RequestHasBeenTriggered(rovingArmy, result)		-- this updates tracking in the module, adjusts thresholds, etc
+	end
+end
+
+--? @shortdesc Returns the position that the module wants reinforcements to head towards. 
+--? @args Module moduleData
+function RovingArmy_GetRendezvousPosition(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	if rovingArmy.status == ARMY_STATUS_ATTACKING then
+		return rovingArmy.targets[rovingArmy.targetIndex].position
+	elseif rovingArmy.status == ARMY_STATUS_DEFENDING then
+		if rovingArmy.defendType == ARMY_DEFEND_TYPE_FALLBACK then
+			return rovingArmy.fallbacks[rovingArmy.fallbackIndex].position
+		elseif rovingArmy.defendType == ARMY_DEFEND_TYPE_SPAWN then
+			return rovingArmy.spawnLocation.position
+		elseif rovingArmy.defendType == ARMY_DEFEND_TYPE_TARGET then
+			return rovingArmy.previousTarget.position
+		end
+	else
+		return rovingArmy.spawnLocation
+	end
+end
+
+--? @shortdesc Returns true if the module is now empty, but once held units 
+--? @args Module moduleData
+function RovingArmy_IsDead(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+
+	return (rovingArmy.status == ARMY_STATUS_EMPTY and rovingArmy.highestUnitCount > 0)	
+end
+
+--? @shortdesc Returns true if the module is now empty 
+--? @args Module moduleData
+function RovingArmy_IsEmpty(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	return (rovingArmy.status == ARMY_STATUS_EMPTY or SGroup_CountSpawned(rovingArmy.sgroup) == 0)
+end
+
+--? @shortdesc Checks if the module should be defending. Returns true if any of the 3 possible reasons are true. 
+--? @args Module moduleData
+function _RovingArmy_HasDefendReason(moduleData)
+	local rovingArmy = Prefab_GetInstance(moduleData)
+	
+	if rovingArmy.paused or rovingArmy.isWithdrawn or rovingArmy.isComplete or rovingArmy.isBlocked then
+		return true
+	else
+		return false
+	end
+end

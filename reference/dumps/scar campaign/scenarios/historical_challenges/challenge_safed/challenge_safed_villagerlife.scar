@@ -1,0 +1,370 @@
+-- Developed by Forgotten Empires
+
+--Custom Safed Villagerlife
+--different from the traditional missionomatic VillagerLife
+--Allied villagers will work, garrison when battle is taking place, and ungarrison and return to work when the battle is over. No villagers are removed.
+
+--? @shortdesc This is the proper way to create a VillagerLife at runtime. Villagers can be assigned to 5 different jobs, and you can provide an sgroup for each job. SGroups can be nil if you don't want villagers in those roles. 
+--? @args Player player, String name, SGroup sg_roaming, SGroup sg_wood, SGroup sg_food, SGroup sg_stone, SGroup sg_gold, Marker mkr_home
+--? @result
+function Safed_VillagerLife_Create(player, name, sg_roaming, sg_wood, sg_food, sg_stone, sg_gold, mkr_home)
+	
+	assert(scartype(name) == ST_STRING, "invalid name")
+	
+	local data = {}
+	data.created_at_runtime = true
+	
+	villger_life_created_at_runtime_count = villger_life_created_at_runtime_count or 1 
+	data.instanceName = "safed_villager_life_"..villger_life_created_at_runtime_count
+	villger_life_created_at_runtime_count = villger_life_created_at_runtime_count + 1
+	
+	data.player = player
+	data.instanceName = name
+	
+	data.sg_roaming = SGroup_CreateIfNotFound(data.instanceName.."_roaming")
+	if scartype(sg_roaming) == ST_SGROUP then SGroup_Duplicate(sg_roaming, data.sg_roaming) end
+	data.sg_wood = SGroup_CreateIfNotFound(data.instanceName.."_wood")
+	if scartype(sg_wood) == ST_SGROUP then SGroup_Duplicate(sg_wood, data.sg_wood) end
+	data.sg_food = SGroup_CreateIfNotFound(data.instanceName.."_food")
+	if scartype(sg_food) == ST_SGROUP then SGroup_Duplicate(sg_food, data.sg_food) end
+	data.sg_stone = SGroup_CreateIfNotFound(data.instanceName.."_stone")
+	if scartype(sg_stone) == ST_SGROUP then SGroup_Duplicate(sg_stone, data.sg_stone) end
+	data.sg_gold = SGroup_CreateIfNotFound(data.instanceName.."_gold")
+	if scartype(sg_gold) == ST_SGROUP then SGroup_Duplicate(sg_gold, data.sg_gold) end
+	
+	data.sg_villagers = SGroup_CreateIfNotFound(data.instanceName.."_villagers")
+	SGroup_AddGroup(data.sg_villagers, data.sg_roaming)
+	SGroup_AddGroup(data.sg_villagers, data.sg_wood)
+	SGroup_AddGroup(data.sg_villagers, data.sg_food)
+	SGroup_AddGroup(data.sg_villagers, data.sg_stone)
+	SGroup_AddGroup(data.sg_villagers, data.sg_gold)
+	
+	data.eg_buildings = EGroup_CreateIfNotFound(data.instanceName.."_buildings")
+	
+	data.mkr_home = mkr_home
+	
+	return Safed_VillagerLife_Init(data)
+end
+
+
+
+
+--? @shortdesc Private function. Do not call this function in mission scripts, call Safed_VillagerLife_Create instead. Safed_VillagerLife_Create calls this, and the prefab system calls this when it creates a VillagerLife during startup.  
+function Safed_VillagerLife_Init(data)
+	local instance = nil
+
+	if data.created_at_runtime == true then
+		instance = data
+	else
+		instance = Prefab_GetInstance(data)
+		instance.sg_roaming = SGroup_CreateIfNotFound(instance.instanceName.."_roaming")
+		instance.sg_wood = SGroup_CreateIfNotFound(instance.instanceName.."_wood")
+		instance.sg_food = SGroup_CreateIfNotFound(instance.instanceName.."_food")
+		instance.sg_stone = SGroup_CreateIfNotFound(instance.instanceName.."_stone")
+		instance.sg_gold = SGroup_CreateIfNotFound(instance.instanceName.."_gold")
+		instance.sg_villagers = SGroup_CreateIfNotFound(instance.instanceName.."_villagers")
+		instance.eg_buildings = EGroup_CreateIfNotFound(instance.instanceName.."_buildings")
+				
+		if instance.player ~= Game_GetLocalPlayer() then
+			if Player_HasUpgrade(instance.player, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1) then
+				Player_RemoveUpgrade(instance.player, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1)
+			end
+		end
+		
+		if instance.roaming_count ~= nil and instance.roaming_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_roaming, {type = "scar_villager", numSquads = instance.roaming_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_roaming)
+			Modify_UnitSpeed(instance.sg_roaming, 0.7)
+		end
+		
+		if instance.wood_count ~= nil and instance.wood_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_wood, {type = "scar_villager", numSquads = instance.wood_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_wood)
+		end
+		
+		if instance.food_count ~= nil and instance.food_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_food, {type = "scar_villager", numSquads = instance.food_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_food)
+		end
+		
+		if instance.stone_count ~= nil and instance.stone_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_stone, {type = "scar_villager", numSquads = instance.stone_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_stone)
+		end
+		
+		if instance.gold_count ~= nil and instance.gold_count > 0 then
+			UnitEntry_DeploySquads(instance.player, instance.sg_gold, {type = "scar_villager", numSquads = instance.gold_count}, instance.mkr_home)
+			SGroup_AddGroup(instance.sg_villagers, instance.sg_gold)
+		end
+	end
+	
+	instance.is_working = false
+	instance.is_fleeing = false
+	instance.is_monitoring = true
+	instance.monitor_ruleID = nil
+	
+	assert(scartype(instance.mkr_home) == ST_MARKER, "mkr_home is invalid")
+	
+	Player_GetAllEntitiesNearMarker(instance.player, instance.eg_buildings, instance.mkr_home)
+	EGroup_Filter(instance.eg_buildings, "defensive_structure", FILTER_REMOVE)
+
+	Safed_VillagerLife_GoToWork(instance)
+	instance.monitor_ruleID = Rule_AddInterval(Safed_VillagerLife_Monitor, 1, {instance = instance})
+	
+	--Query Pre-Existing
+	local instanceExists = false
+	if #t_villagerLifePrefabs > 0 then
+		for index, entry in pairs(t_villagerLifePrefabs) do
+			if entry.instanceName == instance.instanceName then
+				instanceExists = true
+				t_villagerLifePrefabs[index] = instance
+			end
+		end
+	end
+	
+	if instanceExists == false then
+		table.insert(t_villagerLifePrefabs, instance)
+	end
+
+	return instance
+end
+
+
+
+
+--? @args String name
+function Safed_VillagerLife_Find(name)
+	for index, instance in pairs(t_villagerLifePrefabs) do
+		if instance.instanceName == name then
+			return instance
+		end
+	end
+end
+
+
+
+
+--? @shortdesc Add some new villagers to a VillagerLife. If job is left as nil, villagers will roam. Or you can specify "roaming", "wood", "food", "gold", or "stone".  
+--? @args VillagerLife instance, SGroup sgroup, String job
+function Safed_VillagerLife_AddSGroup(instance, sgroup, job)
+	if job == nil or job == "roaming" then
+		SGroup_AddGroup(instance.sg_roaming, sgroup)
+	elseif job == "wood" then
+		SGroup_AddGroup(instance.sg_wood, sgroup)
+	elseif job == "food" then
+		SGroup_AddGroup(instance.sg_food, sgroup)
+	elseif job == "stone" then
+		SGroup_AddGroup(instance.sg_stone, sgroup)
+	elseif job == "gold" then
+		SGroup_AddGroup(instance.sg_gold, sgroup)
+	end
+	SGroup_AddGroup(instance.sg_villagers, sgroup)
+	
+	Safed_VillagerLife_GoToWork(instance)
+	
+	if instance.is_monitoring == false then
+		instance.is_monitoring = true
+		instance.monitor_ruleID = Rule_AddInterval(Safed_VillagerLife_Monitor, 1, {instance = instance})
+	end
+end
+
+
+
+
+--? @shortdesc Private function. Orders the villagers to harvest resources.
+function Safed_VillagerLife_GoToWork(instance)
+	
+	if (SGroup_CountSpawned(instance.sg_gold) > 0) then
+		Gathering_AssignVillagersToGold(instance.sg_gold, eg_allGoldResources, true, false)
+	end
+	
+	if (SGroup_CountSpawned(instance.sg_food) > 0) then
+		Gathering_AssignVillagersToFarms(instance.sg_food, eg_farms, true, true)
+	end
+	
+	if (SGroup_CountSpawned(instance.sg_wood) > 0) then
+		Gathering_AssignVillagersToWood(instance.sg_wood, eg_allWoodResources, true, false)	
+	end
+	
+	if (SGroup_CountSpawned(instance.sg_stone) > 0) then
+		Gathering_AssignVillagersToStone(instance.sg_stone, eg_allStoneResources, true, false)
+	end
+	
+end
+
+
+
+
+--? @shortdesc Private function. This is the main loop that keeps villagers working.
+function Safed_VillagerLife_Monitor(context, data)
+	
+	local instance = data.instance
+	local mkr_home = instance.mkr_home
+	
+	if (SGroup_CountSpawned(instance.sg_villagers) > 0) then
+		
+		--check if under attack in proximity
+		SGroup_Duplicate(sg_enemy_waves, sg_temp)
+		SGroup_FilterByProximity(sg_temp, Marker_GetPosition(mkr_home), FILTER_KEEP, Marker_GetProximityRadiusOrDefault(mkr_home, 50))
+		local under_attack = SGroup_IsUnderAttack(sg_temp, false, 1)
+		
+		--send to work
+		if (EGroup_CountSpawned(instance.eg_buildings) > 0 and instance.is_fleeing == false and instance.is_working == false) then
+			instance.is_working = true
+			Safed_VillagerLife_GoToWork(instance)
+		end
+		
+		--sets villager roaming/wandering if they have nothing to do (resource is depleted)
+		--delayed as ungarrisoning villagers takes time before the go to work command kick in
+		if (instance.is_fleeing == false and instance.is_working == true) then
+			Rule_AddOneShot(Safed_VillagerLife_SetWander, 2, { instance = instance })
+		end
+		
+		--under attack, villagers flee and garrison to TC
+		if (under_attack == true and instance.is_fleeing == false and instance.is_working == true) then
+			
+			instance.is_working = false
+			instance.is_fleeing = true
+			
+			--nearest TC for garrison
+			Player_GetAllEntitiesNearMarker(player4, eg_blah, mkr_home, Marker_GetProximityRadiusOrDefault(mkr_home, 50))
+			EGroup_Filter(eg_blah, "town_center_capital", FILTER_KEEP)
+			
+			Sound_PlayWallaFearOnSGroup(instance.sg_villagers)
+			
+			Cmd_Garrison(instance.sg_villagers, eg_blah, true, false, false)
+
+		end
+		
+		--area is cleared villagers return to work
+		if (SGroup_Count(sg_enemy_waves) < 1 and instance.is_fleeing == true and instance.is_working == false) then
+			instance.is_working = false
+			instance.is_fleeing = false
+			--send back to work, eject from TC
+			Cmd_EjectOccupants(eg_blah)
+		end
+		
+	else
+		instance.is_monitoring = false
+		Rule_RemoveMe()
+	end
+end
+
+
+
+
+--? @shortdesc Private function. When a villager becomes idle (resource is depleted) set to roam/wandering
+function Safed_VillagerLife_SetWander(context, data)
+
+	local instance = data.instance
+
+	local _wander = function(sgroup, index, squad)				
+		if (Squad_IsIdle(squad) == true) then			
+			SGroup_Remove(instance.sg_gold, squad)
+			SGroup_Remove(instance.sg_food, squad)
+			SGroup_Remove(instance.sg_wood, squad)
+			SGroup_Remove(instance.sg_stone, squad)
+			
+			SGroup_Add(instance.sg_roaming, squad)
+			
+			Safed_VillagerLife_Wander(instance, squad)
+		end
+	end
+	SGroup_ForEach(instance.sg_villagers, _wander)
+end
+
+
+
+
+--? @shortdesc Private function. Orders a single villager to wander to a random building or random location. 
+function Safed_VillagerLife_Wander(instance, squad)
+	SGroup_Single(sg_single, squad)
+	local target = nil
+	if EGroup_CountSpawned(instance.eg_buildings) > 0 and World_GetRand(1,2)~= 1 then
+		target = EGroup_GetRandomSpawnedEntity(instance.eg_buildings) 
+	else
+		target = Util_GetRandomPosition(instance.mkr_home)	
+	end
+	Cmd_FormationMove(sg_single, target, false)
+end
+
+
+
+
+--initializes villager life
+function Safed_Init_Villager_Life()
+	Safed_Villager_Life_Create("mkr_mine_town", SAFED_VILLAGER_LIFE.mine_towns)
+end
+
+
+
+
+--mkr_prefix (str) e.g. "mkr_mine_town" will create references for mkr_mine_town1_villager_roam etc.
+--each villager life location needs a mkr_home. e.g. mkr_mine_town1
+function Safed_Villager_Life_Create(mkr_prefix, villager_locations)
+	
+	--each town
+	for k, v in ipairs(villager_locations) do
+	
+		local mkr_prefix = mkr_prefix..k
+		
+		local sg_roaming = nil
+		local sg_wood = nil
+		local sg_food = nil
+		local sg_stone = nil
+		local sg_gold = nil
+		
+		--mine town marker exists
+		if (Marker_Exists(mkr_prefix, "") == true) then
+			
+			--each villager life types e.g. roam, food, wood, stone
+			for i, j in pairs(v) do
+				
+				--only creates villagers if marker exists e.g. mkr_mine_town1_villager_food
+				if (Marker_Exists(mkr_prefix.."_villager_"..i, "")) then
+					
+					local sg_villagers = SGroup_CreateUnique(mkr_prefix.."_"..i)
+					
+					UnitEntry_DeploySquads(
+						player4,
+						sg_villagers,
+						{
+							{ type = "scar_villager", numSquads = j }
+						},
+						mkr_prefix.."_villager_"..i --e.g. mkr_mine_town1_villager_food
+					)
+					
+					if (i == "roam") then
+						sg_roaming = sg_villagers
+					elseif (i == "wood") then
+						sg_wood = sg_villagers
+					elseif (i == "food") then
+						sg_food = sg_villagers
+					elseif (i == "stone") then
+						sg_stone = sg_villagers
+					elseif (i == "gold") then
+						sg_gold = sg_villagers
+					end
+						
+				end
+				
+			end
+			
+			--markers for mkr_home
+			--e.g. mkr_mine_town1
+			if (Marker_Exists(mkr_prefix, "")) then
+				
+				local villager_life_name = mkr_prefix.."_villager_life"
+				local mkr_home = Marker_FromName(mkr_prefix, "")
+				
+				Safed_VillagerLife_Create(player4, villager_life_name, sg_roaming, sg_wood, sg_food, sg_stone, sg_gold, mkr_home)
+			
+			end
+			
+		end
+	end
+	
+end
+
+
+

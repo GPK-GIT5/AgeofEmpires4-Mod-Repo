@@ -1,0 +1,423 @@
+import("scarutil.scar")
+
+function army_encounter_fatal(msg)
+	if Game_IsRTM() then
+		print("WARNING:" .. msg)
+	else
+		fatal(msg)
+	end
+end
+
+function ArmyEncounter_InitSystem()
+	t_armyEncounterFamily_allFamilies = {}
+	t_armyEncounterFamily_releasedSquadInfo = {}
+	t_armyEncounterFamily_addedSquadInfo = {}
+end
+
+---------------------------------------------------------------
+--------------------- ArmyEncounterChild ----------------------
+---------------------------------------------------------------
+
+ArmyEncounterChild = {
+	encounterID = 0, 
+	callbackID = 0
+}
+
+function ArmyEncounterChild:new(o, encounterID, callbackID)
+	o = o or {encounterID = encounterID, callbackID = callbackID}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+---------------------------------------------------------------
+--------------------- ArmyEncounterFamily ---------------------
+---------------------------------------------------------------
+
+ArmyEncounterFamily = {
+	id = -1,
+	army = -1,
+	parentEncounterID = -1,
+	parentCallbackID = -1, 
+	parentStatus = true, 
+	children = {}, 
+	endReasonResults = {}, 
+	originalStateModels = {},
+	isStopped = false,
+	stoppedEncounters = {},
+}
+
+
+
+-- Create an encounter family from a table of stateModels. In a simple case, the EncounterFamily
+-- will create a single StateTree Encounter, but if the units are split up, either because they start too
+-- spread out, or because they use a siege tower, they will get split into multiple StateTree Encounters
+function ArmyEncounterFamily:new(o, army, stateModels)
+	local id = ArmyEncounterFamily.GetID()
+	o = o or {
+		id = id,
+		army = army,
+		parentEncounterID = -1,
+		parentCallbackID = -1,
+		parentStatus = true, 
+		children = {}, 
+		endReasonResults = {}, 
+		originalStateModels = stateModels,
+		isStopped = false,
+		stoppedEncounters = {},
+	}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+function ArmyEncounterFamily:start()
+	local ai_best_available_squads = self.originalStateModels.sgroupTunings.ai_best_available_squads
+	assert(SGroup_CountSpawned(ai_best_available_squads) > 0, self:getIdentifier().." requires at least 1 unit")
+	local arraySGroups = SGroup_DivideIntoClusters(ai_best_available_squads, true, 50)
+	local isChild = false
+	table.insert(t_armyEncounterFamily_allFamilies, self) 
+	if #arraySGroups == 0 then
+		local sgroup = SGroup_CreateUnique(self:getIdentifier())
+		SGroup_AddGroup(sgroup, ai_best_available_squads)
+		arraySGroups = { sgroup }
+	end
+	for i, sgroup in ipairs(arraySGroups) do
+		local encounterID = self:addAndTriggerParentOrChild(isChild, sgroup)
+		if DEBUG_ARMY_ENCOUNTER then
+			print(self:getIdentifier().." created encounter "..encounterID.." with "..SGroup_CountSpawned(sgroup).." units")
+		end
+		isChild = true
+	end
+end
+
+function ArmyEncounterFamily:getIdentifier()
+	return "Army "..self.army.name.." EF "..self.id
+end
+
+function ArmyEncounterFamily:addChild(encounterID)
+	local babyEncounter = ArmyEncounterChild:new(nil, encounterID, EventRule_GetNextUniqueRuleID())
+	table.insert(self.children, babyEncounter)
+end
+
+function ArmyEncounterFamily:removeChild(childIdx)
+	if childIdx >= 0 then
+		table.remove(self.children, childIdx)
+	end
+end
+
+function ArmyEncounterFamily:areAllDone()
+	return #self.children == 0 and self.parentStatus == false
+end
+
+function ArmyEncounterFamily:findChild(callbackID)
+	if #self.children == 0 then
+		return -1
+	end
+	for i, child in ipairs(self.children) do
+		if child.callbackID == callbackID then
+			return i
+		end
+	end
+	return -1 -- child not found
+end
+
+function ArmyEncounterFamily:promoteChild()
+	if #self.children == 0 then
+		self.parentStatus = false
+	else
+		for i, child in ipairs(self.children) do
+			self.parentEncounterID = child.encounterID
+			self.parentCallbackID = child.callbackID
+			self:removeChild(i)
+			return
+		end
+	end
+end
+
+-- 
+-- if it is a child encounter that is done, just remove it, but if it is the parent and there   
+-- are children, promote one of the children to be the parent encounter. 
+function ArmyEncounterFamily:markDone(callbackID)
+	if callbackID == self.parentCallbackID then
+		self:promoteChild()
+	else 
+		local childIndex = self:findChild(callbackID)
+		assert(childIndex > -1, "EncounterFamily child could not be found")
+		self:removeChild(childIndex)
+	end
+end
+
+-- Stops an encounter family, including the parent and all children. Also disconnects the family from
+-- it's army so that any delayed notifications that come after this are not passed up.
+function ArmyEncounterFamily:stop()
+	if self.isStopped then
+		if DEBUG_ARMY_ENCOUNTER then
+			print(self:getIdentifier().." is already stopped. Ignoring stop request.")
+		end
+		return
+	end
+
+	if DEBUG_ARMY_ENCOUNTER then
+		print(self:getIdentifier().." stopping...")
+	end
+	local player = self.originalStateModels.player
+	self:stopSingleEncounter(player, self.parentEncounterID)
+	for i, child in ipairs(self.children) do
+		self:stopSingleEncounter(player, child.encounterID)	
+	end
+	self.isStopped = true
+	if DEBUG_ARMY_ENCOUNTER then
+		print(self:getIdentifier().." stopped")
+	end
+end
+
+function ArmyEncounterFamily:stopSingleEncounter(player, encounterID)
+	assert(scartype(encounterID) == ST_NUMBER, self:getIdentifier().." encounterID needs to be a number, is "..tostring(scartype(encounterID)))
+	assert(encounterID > 0, self:getIdentifier().." encounterID needs to be > 0, is "..encounterID)
+	local encounter_ptr = AIEncounter_GetEncounterFromID(player, encounterID)
+	if encounter_ptr then
+		if DEBUG_ARMY_ENCOUNTER then
+			print(self:getIdentifier().." stopping encounter "..encounterID)
+		end
+		AIEncounter_Cancel(encounter_ptr)	
+	else
+		if DEBUG_ARMY_ENCOUNTER then
+			print(
+				self:getIdentifier().." unable to stop encounter " ..  encounterID .. " directly. " ..
+				"It probably was queued but not created yet.")
+		end
+	end
+
+	-- The AI updates less often than the campaign scripts. Even sending AIEncounter_Cancel has to wait for the next
+	-- update tick before it is processed and properly stopped.
+	-- In order to prevent desynchronized behaviour with queued commands the AI executes at a later time we store the
+	-- encounter ids we already stopped so we can check in the notification callback if we already dealt with it.
+	table.insert(self.stoppedEncounters, encounterID)
+end
+
+--? @shortdesc Adds a parent or child encounter to a family and triggers it 
+--? @args ArmyEncounterFamily family, bool isChild, sgroup squadsToUse
+function ArmyEncounterFamily:addAndTriggerParentOrChild(isChild, squadsToUse)	
+	local stateModels = Clone(self.originalStateModels, true)
+	stateModels.sgroupTunings.ai_best_available_squads = squadsToUse
+	local formUpPosition = Util_GetPosition(squadsToUse)
+
+	-- if we have transports this is a transport encounter and we can skip the formup position on land
+	if stateModels.sgroupTunings.ai_transports == nil then
+		if SGroup_CountSpawned(squadsToUse) >= 1 then
+			local squad = SGroup_GetSpawnedSquadAt(squadsToUse, 1)
+			if Squad_Count(squad) >= 1 then
+				local entity = Squad_GetFirstEntity(squad)
+				formUpPosition = World_GetSpawnablePosition(formUpPosition, entity)
+			end
+		end
+	end
+	
+	local nextEncounterID = AI_GetAndReserveNextTaskID(stateModels.player)
+	stateModels.integerTunings.ai_phase_encounter_override_encounter_id = nextEncounterID
+	stateModels.positionTunings.ai_best_formup_targets = {formUpPosition}
+		
+	if isChild == false then
+		self.parentEncounterID = nextEncounterID
+		self.parentCallbackID = EventRule_GetNextUniqueRuleID()
+		stateModels.integerTunings.ai_phase_encounter_notify_rule_id = self.parentCallbackID
+	else
+		self:addChild(nextEncounterID)
+		local child = self.children[#self.children]
+		stateModels.integerTunings.ai_phase_encounter_notify_rule_id = child.callbackID
+	end
+	
+	AIStateTree_SpawnRootControllerWithStateModelTunings(
+		stateModels.player,
+		stateModels.branchName,
+		stateModels.keepAlive,
+		stateModels.tuningsBP,
+		stateModels.sgroupTunings,
+		stateModels.egroupTunings,
+		stateModels.positionTunings,
+		stateModels.markerTunings,
+		stateModels.entitytypesTunings,
+		stateModels.coordinatorPbgTunings,
+		stateModels.booleanTunings,
+		stateModels.floatTunings,
+		stateModels.integerTunings
+	)
+	
+	UnsavedEventRule_AddRuleIDEvent(ArmyEncounterFamily_NotificationFromStateTree, stateModels.integerTunings.ai_phase_encounter_notify_rule_id, GE_AIPlayer_EncounterNotification)
+	return nextEncounterID
+end
+
+-- Clean up the associated pending released squads info for this encounter family.
+function ArmyEncounterFamily:cleanUpTemporaryGlobalData()
+	for releasedSquadsInfoIndex, releasedSquadsInfo in ipairs(t_armyEncounterFamily_releasedSquadInfo) do
+		local callbackIDmatches = false
+		if self.parentCallbackID == releasedSquadsInfo.callbackID then
+			callbackIDmatches = true
+		else
+			for childIndex, child in ipairs(self.children) do
+				if child.callbackID == releasedSquadsInfo.callbackID then
+					callbackIDmatches = true
+					break
+				end
+			end
+		end
+		if callbackIDmatches then
+			table.remove(t_armyEncounterFamily_releasedSquadInfo, releasedSquadsInfoIndex)
+		end
+	end	
+end
+
+----------------------------------------------------------------------
+-------------------------- Class Methods -----------------------------
+----------------------------------------------------------------------
+
+function ArmyEncounterFamily.GetID()
+	g_armyEncounterIndex = g_armyEncounterIndex or 0
+	g_armyEncounterIndex = g_armyEncounterIndex + 1
+	return g_armyEncounterIndex
+end
+
+--? @shortdesc Takes a callbackID and returns the family, along with the EncounterID of the
+--? parent or child that has that callbackID.
+function ArmyEncounterFamily.FindFamilyAndEncounterID(callbackID)
+	for familyIndex, family in ipairs(t_armyEncounterFamily_allFamilies) do 
+		if callbackID == family.parentCallbackID then
+			return familyIndex, family.parentEncounterID
+		end
+		local childIndex = family:findChild(callbackID)
+		if childIndex > -1 then
+			return familyIndex, family.children[childIndex].encounterID
+		end
+	end
+	army_encounter_fatal("EncounterFamily not found with callback:"..callbackID)
+end
+
+-- this is called for AI Encounter notifications that we've sent out for split up encounters, it finds the relevant 
+-- encounter family and once the encounters are determined to be done, farms out the army response
+function ArmyEncounterFamily_NotificationFromStateTree(context)
+ 	local callbackID = context.encounterID --for some reason this is called the encounter ID when it is the callback ID
+	assert(scartype(callbackID) == ST_NUMBER, "EncounterFamily recieved invalid callbackID from StateTree")
+	local notificationType = context.notificationType
+	local encounterStage = context.encounterStage
+	local familyIndex, encounterID = ArmyEncounterFamily.FindFamilyAndEncounterID(callbackID)
+	local family = t_armyEncounterFamily_allFamilies[familyIndex]
+	assert(family, "EncounterFamily could not be found with callbackID "..callbackID)
+	local army = family.army
+
+	-- This is here to sort out encounters that we requested to be stopped but that were stuck in queue because
+	-- of how AI and campaign scripts update at different frequency.
+	for index, encounterIDPending in ipairs(family.stoppedEncounters) do
+		if encounterID == encounterIDPending then
+			table.remove(family.stoppedEncounters, index)
+			if DEBUG_ARMY_ENCOUNTER then
+				print(
+					family:getIdentifier() .. " encounter " .. encounterID .. " ended. Nothing to do, " ..
+					"we requested it to be stopped earlier and had to wait for it to be synchronized with AI.")
+			end
+
+			-- We already have a new encounter for this family running stop processing this notification.
+			return
+		end
+	end
+
+	if notificationType == AIEncounterNotification_StateTreeExit then 
+		local endReason = encounterStage
+		local endReasonString = AIFormationPhaseEncounter_EndReason_ToString(endReason)
+		if DEBUG_ARMY_ENCOUNTER then
+			print(family:getIdentifier().." encounter "..encounterID.." ended with "..endReasonString)	
+		end
+		family:markDone(callbackID)
+		table.insert(family.endReasonResults, endReason)
+		if family:areAllDone() then
+			-- To return "SelfSquadsEmpty" result, all end reasons must be "SelfSquadsEmpty". If the 1st subgroup arrived (with "AtDestination") 
+			-- but the 2nd subgroup is all killed (with "SelfSquadsEmpty" result), we still want to return "AtDestination" as the overall result
+			local familyEndReason = endReason
+			local familyEndReasonString = AIFormationPhaseEncounter_EndReason_ToString(endReason)
+			for i, reason in ipairs(family.endReasonResults) do
+				if reason ~= AIFormationPhaseEncounter_EndReason_SelfSquadsEmpty then
+					familyEndReason = reason
+					familyEndReasonString = AIFormationPhaseEncounter_EndReason_ToString(reason)
+					break
+				end
+			end
+			if DEBUG_ARMY_ENCOUNTER then
+				print(family:getIdentifier().." ended with "..familyEndReasonString)	
+			end
+
+			-- set isStopped before we send the notification so any followup encounter knowns that there is no need
+			-- to call stop. It's already stopped because of the StateTree exiting.
+			family.isStopped = true
+			EventRule_RemoveRuleIDEvent(ArmyEncounterFamily_NotificationFromStateTree, callbackID)
+			_Army_NotificationFromEncounterFamily(army, notificationType, familyEndReason)
+			family:cleanUpTemporaryGlobalData()
+			table.remove(t_armyEncounterFamily_allFamilies, familyIndex)
+		end
+		
+	-- The "Count" notification comes before the individual "Squad ID" notifications.
+	elseif notificationType == AIEncounterNotification_SquadReleased_Count then
+		if family.isStopped == false then
+			-- Check if entry already exists (it shouldn't if statetree data is set up correctly).
+			local existingEntry = false
+			for releasedInfoIndex, releasedInfo in ipairs(t_armyEncounterFamily_releasedSquadInfo) do
+				if releasedInfo.callbackID == callbackID then
+					existingEntry = true
+				end
+			end
+			if not existingEntry then
+				local squadReleaseInfo = { callbackID = callbackID, releaseCount = encounterStage, releasedSquadIDs = {} }
+				table.insert(t_armyEncounterFamily_releasedSquadInfo, squadReleaseInfo)
+			else
+				army_encounter_fatal(family:getIdentifier().." encounter "..encounterID.."Duplicate SquadReleased_Count was received. callbackID:"..callbackID..". Check StateTree setup.")
+			end
+		end
+	elseif notificationType == AIEncounterNotification_SquadReleased_ID then
+		if family.isStopped == false then
+			local entryFound = false
+			for index, info in ipairs(t_armyEncounterFamily_releasedSquadInfo) do
+				if info.callbackID == callbackID then
+					table.insert(info.releasedSquadIDs, encounterStage) -- this value is released squad ID
+					-- If all squad released notifications have been received, create add a new child AIEncounter using all released squads.
+					if info.releaseCount == #info.releasedSquadIDs then
+						local hasNonSiegeTowerUnits = false
+						local releasedSGroup = SGroup_CreateUnique()
+						for index2, squadID in ipairs(info.releasedSquadIDs) do
+							SGroup_Add(releasedSGroup, Squad_FromID(squadID))
+							-- Check if released squads still contain non siege towers.
+							if not hasNonSiegeTowerUnits and not Squad_IsOfType(Squad_FromID(squadID), "siege_tower") then
+								hasNonSiegeTowerUnits = true
+							end
+						end
+						-- If the released squads only contain siege towers, don't recreate encounters for them because
+						-- the current AIStateTree setup will just release them right away again without creating an encounter instance.
+						if hasNonSiegeTowerUnits then
+							local newEncounterID = family:addAndTriggerParentOrChild(true, releasedSGroup)
+							if DEBUG_ARMY_ENCOUNTER then
+								print(family:getIdentifier().." encounter "..encounterID.." split and created Encounter "..newEncounterID.." with "..SGroup_CountSpawned(releasedSGroup).." units")
+							end
+						else
+							if DEBUG_ARMY_ENCOUNTER then
+								print(family:getIdentifier().." encounter "..encounterID.." released siege tower")	
+							end
+							SGroup_RemoveGroup(army.sgroup, releasedSGroup)			
+						end
+						-- Done handling this batch of released squads. Clean up temporary stored info.
+						table.remove(t_armyEncounterFamily_releasedSquadInfo, index)
+					end
+					entryFound = true
+					break
+				end
+			end
+			if not entryFound then
+				army_encounter_fatal(family:getIdentifier().." encounter "..encounterID.." SquadReleased_Count was not received in the correct order. callbackID:"..callbackID..". Check StateTree setup.")
+			end
+		end
+	-- for field constructed rams
+	elseif notificationType == AIEncounterNotification_SquadAdded_Count or notificationType == AIEncounterNotification_SquadAdded_ID then
+		if family.isStopped == false then
+			_Army_NotificationFromEncounterFamily(army, notificationType, encounterStage)				
+		end
+	else
+		army_encounter_fatal(family:getIdentifier().." Unknown notification. CallbackID="..callbackID.." notificationType="..notificationType.."(Other)")
+	end
+end

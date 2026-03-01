@@ -1,0 +1,964 @@
+--
+-- Tribute 1375 - Collect Taxes objective
+--
+
+
+
+
+function CollectTaxes_InitObjectives()
+
+	OBJ_CollectTaxes = {
+	
+		Title = "$11180235", -- Collect taxes from neighboring settlements
+		Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.CollectTaxes_ObjectiveStart,
+		
+		OnStart = CollectTaxes_Start,
+		
+	}
+	
+	SOBJ_MaintainTradeRoutes = {
+	
+		Title = "$11180236", -- Maintain trade routes with settlements
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_CollectTaxes,
+		StartAlongsideParent = true,
+		
+	}
+	
+	SOBJ_Bandits = {
+	
+		Title = "$11180238", -- Protect trade routes from bandits
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_CollectTaxes,
+		
+		Intel_Start = EVENTS.Bandits_ObjectiveStart,
+		
+	}
+	
+	Objective_Register(OBJ_CollectTaxes)
+	Objective_Register(SOBJ_MaintainTradeRoutes)
+	Objective_Register(SOBJ_Bandits)
+	
+	
+	
+	i_numSettlementsFound = 0		
+	i_nextSettlementFoundIndex = 1			-- when a settlement is found we add a "foundOrder" field to it, so later on we can show them in the buy panel in the order they were found
+	
+	timestamp_newBanditsRequested = 0
+	b_banditsPaused = false 
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+            Mission_Complete()
+	       end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+
+	--Rule_AddOneShot(Bandits_Init, 0.125)
+	
+end
+
+
+
+
+
+
+
+function CollectTaxes_Start()
+
+	Bandits_Start()
+	
+	Rule_AddInterval(CollectTaxes_MonitorBanditsSpotted, 1)
+	Rule_AddInterval(CollectTaxes_DiscoverNewSettlements, 1)
+
+	Rule_AddOneShot (CollectTaxes_NewSettlementsIntro, 15)
+	
+	Rule_AddOneShot(CollectTaxes_RemindPlayerToSearchForSettlements, 4 * 60)
+	Rule_AddOneShot(CollectTaxes_TriggerTraderHint, 13 * 60)
+	
+end
+
+
+function CollectTaxes_DiscoverNewSettlements()
+	
+	local allSeen = true 
+	
+	for index, settlement in pairs(t_settlementData) do 
+		if settlement.seen ~= true then 
+			
+			if Player_CanSeeEGroup(player1, settlement.egroup, ANY) then 
+				
+				CollectTaxes_MarkSettlementAsSeen(settlement) 	-- adds the hintpoint
+				
+				local cta_title = Loc_FormatText("$11183425", Loc_GetString(settlement.displayName))
+				
+				Sound_Play2D("mus_stinger_campaign_positive")	
+				EventCues_CallToAction(cta_title, CTA_CELEBRATE, settlement.Intel_Discover, nil, settlement.marker, 20)
+				Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+				
+				
+			else
+				
+				allSeen = false 				
+
+				-- check if the player is sort of close-ish, and add a hint to guide the player to the settlement				
+				if settlement.nearbyBlipID == nil then
+					
+					local distance = t_difficulty.findSettlements_NearbyDistance
+					if Objective_IsStarted(SOBJ_FindMoreSettlements) then 	-- if we've had to tell the player to find more settlements, make this check more forgiving
+						distance = distance + 60
+					end
+					
+					if distance > 0 and Prox_ArePlayersNearMarker(player1, settlement.marker, ANY, distance) then 	
+						settlement.nearbyBlipID = Objective_AddPing(OBJ_CollectTaxes, settlement.egroup)
+					end
+					
+				end
+				
+			end
+			
+		end
+	end
+	
+	if allSeen == true then 
+		
+		Rule_RemoveMe()
+		
+		if Objective_IsStarted(SOBJ_FindMoreSettlements) then 	-- if we showed the "find more settlements" objective, mark it as complete as we have found them all!
+			Objective_Complete(SOBJ_FindMoreSettlements)
+		end
+		
+	end	
+	
+end
+
+function CollectTaxes_MarkSettlementAsSeen(settlement)
+
+	if scartype(settlement) == ST_STRING then 			-- if the input is a string, look up the settlement data table with this as the id
+		for index, item in pairs(t_settlementData) do 
+			if item.id == settlement then 
+				settlement = item 
+				break
+			end
+		end
+	end
+
+	if settlement.nearbyBlipID ~= nil then 				-- remove the guidance hintpoint if there was one
+		Objective_RemovePing(OBJ_CollectTaxes, settlement.nearbyBlipID)
+		settlement.nearbyBlipID = nil 
+	end
+	
+	settlement.seen = true
+	settlement.hpid = HintPoint_Add(settlement.egroup, true, settlement.displayName, 5)
+
+	i_numSettlementsFound = i_numSettlementsFound + 1
+	
+	settlement.foundOrder = i_nextSettlementFoundIndex				-- this helps up present the list of settlements in the order they were found
+	i_nextSettlementFoundIndex = i_nextSettlementFoundIndex + 1
+
+	FOW_RevealArea(Util_GetPosition(settlement.marker), 20, 0.125)	-- explore the area around the new TC (a 1-tick reveal accomplishes this) 
+	
+end	
+
+function CollectTaxes_NewSettlementsIntro()
+	Util_StartIntel(EVENTS.SearchForMoreSettlementsSetup)
+end
+
+
+
+function CollectTaxes_RemindPlayerToSearchForSettlements()
+
+	if b_firstNewSettlementSpotted ~= true then 	
+		Util_StartIntel(EVENTS.SearchForMoreSettlementsHint)
+	end
+	
+end
+
+
+
+
+function CollectTaxes_MonitorBanditsSpotted()
+	
+	Player_GetAll(player2)
+	
+	if Player_CanSeeSGroup(player1, sg_allsquads, ANY) then 
+		
+		Objective_Start(SOBJ_Bandits)
+		Rule_RemoveMe()
+		
+	end
+	
+	
+end
+
+
+
+
+function CollectTaxes_TriggerTraderHint()
+	
+	-- see if the player has any tradecarts aside from the initial two (i.e. they've built more)
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, SBP.RUS.UNIT_TRADE_CART_RUS, FILTER_KEEP)
+	SGroup_RemoveGroup(sg_allsquads, sg_tradecart_settlement2)
+	SGroup_RemoveGroup(sg_allsquads, sg_tradecart_settlement7)
+	
+	if SGroup_CountSpawned(sg_allsquads) == 0 then
+		
+		if UI_IsXboxControllerUI() then
+			MissionTutorial_AddHintToBuildTraders_Xbox()
+		else
+			MissionTutorial_AddHintToBuildTraders()
+		end
+		
+	end
+	
+end
+
+
+
+
+
+--
+-- Bandits
+--
+
+
+
+
+function Bandits_Init()
+	
+	
+	-- these are the zones around which bandits will wander - one zone per settlement
+	t_banditZones = {
+		{
+			settlement = "settlement1",
+			sgroup = sg_bandits_zone1,
+			markers = AllMarkers_FromName("mkr_banditzone_s1", ""),
+			extraMarkers = AllMarkers_FromName("mkr_banditzone_s1_postpurchase", ""),
+		},
+		{
+			settlement = "settlement2",
+			sgroup = sg_bandits_zone2,
+			markers = AllMarkers_FromName("mkr_banditzone_s2", ""),
+			extraMarkers = AllMarkers_FromName("mkr_banditzone_s2_postpurchase", ""),
+		},
+		{
+			settlement = "settlement3",
+			sgroup = sg_bandits_zone3,
+			markers = AllMarkers_FromName("mkr_banditzone_s3", ""),
+			extraMarkers = AllMarkers_FromName("mkr_banditzone_s3_postpurchase", ""),
+		},
+		{
+			settlement = "settlement4",
+			sgroup = sg_bandits_zone4,
+			markers = AllMarkers_FromName("mkr_banditzone_s4", ""),
+			extraMarkers = AllMarkers_FromName("mkr_banditzone_s4_postpurchase", ""),
+		},
+		{
+			settlement = "settlement5",
+			sgroup = sg_bandits_zone5,
+			markers = AllMarkers_FromName("mkr_banditzone_s5", ""),
+			extraMarkers = AllMarkers_FromName("mkr_banditzone_s5_postpurchase", ""),
+		},
+		{
+			settlement = "settlement6",
+			sgroup = sg_bandits_zone6,
+			markers = AllMarkers_FromName("mkr_banditzone_s6", ""),
+			extraMarkers = AllMarkers_FromName("mkr_banditzone_s6_postpurchase", ""),
+		},
+		{
+			settlement = "settlement7",
+			sgroup = sg_bandits_zone7,
+			markers = AllMarkers_FromName("mkr_banditzone_s7", ""),
+			extraMarkers = AllMarkers_FromName("mkr_banditzone_s7_postpurchase", ""),
+		},
+	}
+	
+	-- there is also one large group of "wandering" bandits that covers the whole map	
+	t_banditWanderers = {	
+		-- no settlement set!
+		markers = AllMarkers_FromName("mkr_banditzone_wander1", ""),
+		sgroup = sg_bandits_wanderers,
+	}
+	table.insert(t_banditZones, t_banditWanderers) 	-- add this wandering group into the bandit zone table 
+	
+
+	-- add some standard stuff to each zone table for tracking purposes
+	for index, zone in pairs(t_banditZones) do 
+		zone.currentGroups = {}
+		zone.banditsBeingCreated = false
+		zone.banditCampCreationFrequencyModifier = 0
+		if scartype(zone.settlement) == ST_STRING then 								-- replace any settlement references with links to the relevant settlement table
+			zone.settlement = BuySettlements_FindSettlement(zone.settlement)
+		end
+	end
+	
+
+	
+	
+	
+	-- these are the potential spawn points for bandits around the edge of the map
+	t_banditSpawnMarkers = {
+		mkr_banditspawn1,
+		mkr_banditspawn2,
+		mkr_banditspawn3,
+		mkr_banditspawn4,
+		mkr_banditspawn5,
+		mkr_banditspawn6,
+		mkr_banditspawn7,
+		mkr_banditspawn8,
+		mkr_banditspawn9,
+		mkr_banditspawn10,
+		mkr_banditspawn11,
+		mkr_banditspawn12,
+		mkr_banditspawn13,
+		mkr_banditspawn14,
+		mkr_banditspawn15,
+		mkr_banditspawn16,
+		mkr_banditspawn17,
+		mkr_banditspawn18,
+	}
+	
+	t_banditExitMarkers = {
+		mkr_banditspawn1,
+		mkr_banditspawn2,
+		mkr_banditspawn3,
+		mkr_banditspawn4,
+		mkr_banditspawn5,
+		mkr_banditspawn6,
+		mkr_banditspawn7,
+		mkr_banditspawn8,
+		mkr_banditspawn9,
+		mkr_banditspawn10,
+		mkr_banditspawn11,
+		mkr_banditspawn12,
+		mkr_banditspawn13,
+		mkr_banditspawn14,
+		mkr_banditspawn15,
+		mkr_banditspawn16,
+		mkr_banditspawn17,
+		mkr_banditspawn18,
+	}
+	
+	
+	
+	
+	-- this table specifies the number of simultaneous bandit groups that should be at each settlement location, and the makeup ('loadout') of those groups 
+	-- note: this table MUST be ordered highest threshold to lowest
+	t_banditStrengthLevels_settlements = {
+		{threshold = 9, numGroups = 4, loadouts = "Strength5"},	-- this will get swapped out with the actual loadouts table below - the "Strength5" is the id of the loadout to swap in in		
+		{threshold = 8, numGroups = 3, loadouts = "Strength5"},		
+		{threshold = 7, numGroups = 3, loadouts = "Strength4"},	
+		{threshold = 6, numGroups = 2, loadouts = "Strength4"},	
+		{threshold = 5, numGroups = 3, loadouts = "Strength3"},	
+		{threshold = 4, numGroups = 2, loadouts = "Strength3"},	
+		{threshold = 3,	numGroups = 3, loadouts = "Strength2"},	
+		{threshold = 2, numGroups = 2, loadouts = "Strength2"},	
+		{threshold = 1, numGroups = 2, loadouts = "Strength1"},
+		{threshold = 0, numGroups = 1, loadouts = "Strength1", baseLevel = true},		-- this baseLevel flag means "don't look for a level lower than this!"
+	}
+	-- Note: threshold here is calculated against: number of trade carts assigned to the settlement + the number of settlements bought
+	-- Difficulty modifies this threshold
+	
+	
+	t_banditStrengthLevels_wanderers = {
+		{threshold = 6, numGroups = 11, loadouts = "Strength5"},	
+		{threshold = 5, numGroups = 10, loadouts = "Strength5"},	
+		{threshold = 4, numGroups = 10, loadouts = "Strength4"},	
+		{threshold = 3, numGroups = 9,  loadouts = "Strength4"},	
+		{threshold = 2, numGroups = 8,  loadouts = "Strength3"},	
+		{threshold = 1, numGroups = 7,  loadouts = "Strength3"},
+		{threshold = 0, numGroups = 6,  loadouts = "Strength2"},
+		{threshold = -1, numGroups = 5,  loadouts = "Strength2"},
+		{threshold = -2, numGroups = 4,  loadouts = "Strength2"},
+		{threshold = -3, numGroups = 3,  loadouts = "Strength2"},
+		{threshold = -4, numGroups = 3,  loadouts = "Strength1", baseLevel = true},		-- this baseLevel flag means "don't look for a level lower than this!"
+	}
+	-- Difficulty modifies the number of groups of these free-range wanderers
+	
+	
+	-- these are the various styles of units, and variations within that group
+	t_banditLoadouts = {
+
+		Strength1 = {		-- at Strength1, you will get one of these groups of units (randomly, though it will err towards a group not already present in that zone)
+			{
+				{type = "scar_spearman", numSquads = Util_DifVar({0, 0, 1, 2})},
+				{type = "scar_archer", numSquads = Util_DifVar({4, 4, 3, 3})},						-- archers ONLY on easy, archer + spearmen combo otherwise
+			},
+			{
+				{type = "scar_spearman", numSquads = 1},
+				{type = "scar_horseman", numSquads = 2},
+			},
+			{
+				{type = "scar_spearman", numSquads = 4},
+			},
+		},
+		
+		Strength2 = {		-- at Strength2, you will get one of these groups
+			{
+				{type = "scar_spearman", numSquads = Util_DifVar({1, 1, 2, 3})},
+				{type = "scar_archer", numSquads = Util_DifVar({4, 4, 3, 3})},
+			},
+			{
+				{type = "scar_spearman", numSquads = 2},
+				{type = "scar_horseman", numSquads = 2},
+			},
+			{
+				{type = "scar_spearman", numSquads = 5},
+			},
+		},
+
+		Strength3 = {		-- at Strength3, you will get one of these groups
+			{
+				{type = "scar_spearman", numSquads = Util_DifVar({3, 3, 2, 3})},
+				{type = "scar_archer", numSquads = Util_DifVar({3, 3, 4, 4})},
+			},
+			{
+				{type = "scar_spearman", numSquads = 2},
+				{type = "scar_horseman", numSquads = 3},
+			},
+			{
+				{type = "scar_archer", numSquads = Util_DifVar({3, 3, 2, 2})},
+				{type = "scar_horseman", numSquads = Util_DifVar({1, 1, 2, 2})},
+			},
+		},
+
+		Strength4 = {		-- at Strength4, you will get one of these groups
+			{
+				{type = "scar_spearman", numSquads = Util_DifVar({1, 1, 2, 2})},
+				{type = "scar_archer", numSquads = 4},
+			},
+			{
+				{type = "scar_spearman", numSquads = 3},
+				{type = "scar_horseman", numSquads = 4},
+			},
+			{
+				{type = "scar_spearman", numSquads = Util_DifVar({0, 0, 2, 2})},
+				{type = "scar_archer", numSquads = Util_DifVar({3, 3, 2, 2})},
+				{type = "scar_horseman", numSquads = 3},
+			},
+		},
+
+		Strength5 = {		-- at Strength5, you will get one of these groups
+			{
+				{type = "scar_spearman", numSquads = Util_DifVar({5, 5, 4, 4})},
+				{type = "scar_archer", numSquads = 3},
+				{type = "scar_horseman", numSquads = Util_DifVar({0, 0, 2, 2})},
+			},
+			{
+				{type = "scar_spearman", numSquads = Util_DifVar({0, 0, 2, 2})},
+				{type = "scar_archer", numSquads = 3},
+				{type = "scar_horseman", numSquads = Util_DifVar({5, 5, 4, 4})},
+			},
+			{
+				{type = "scar_spearman", numSquads = Util_DifVar({0, 0, 2, 2})},
+				{type = "scar_archer", numSquads = 5},
+				{type = "scar_horseman", numSquads = Util_DifVar({3, 3, 2, 2})},
+			},
+		},
+		
+	}	
+	
+
+	
+	-- now replace all of the loadouts that are only a reference (string) with the actual loadout table
+	local MapStrengthLevelLoadouts = function(level)
+		if scartype(level.loadouts) == ST_STRING then 
+			for index, loadout in pairs(t_banditLoadouts) do
+				if level.loadouts == index then 
+					level.strength = index
+					level.loadouts = loadout
+					return 
+				end
+			end
+		end
+	end
+
+	for index, level in pairs(t_banditStrengthLevels_settlements) do 
+		MapStrengthLevelLoadouts(level)	
+	end
+	for index, level in pairs(t_banditStrengthLevels_wanderers) do 
+		MapStrengthLevelLoadouts(level)	
+	end
+
+	
+	t_markersWander2and3 = {}
+	
+
+	-- finally, add these markers to the wanderers marker list at different points in the mission
+	t_banditWanderers_extraMarkers = {
+		{
+			threshold = 1,		-- when the player has bought 1 settlement
+			markersToAddToExistingModules = {
+				"mkr_banditzone_wander2",
+			},
+			markersForNewModules = {
+				"mkr_banditzone_wander1",
+				"mkr_banditzone_wander2",
+			},
+		},
+		{
+			threshold = 2,		-- when the player has bought 2 settlements
+			markersForNewModules = {
+				"mkr_banditzone_wander2",
+			},
+		},
+		{
+			threshold = 3,		-- when the player has bought 3 settlements
+			markersToAddToExistingModules = {
+				"mkr_banditzone_wander3",
+			},
+			markersForNewModules = {
+				"mkr_banditzone_wander2",
+				"mkr_banditzone_wander3",
+			},
+		},
+		{
+			threshold = 4,		-- when the player has bought 4 settlements
+			markersForNewModules = {
+				"mkr_banditzone_wander3",
+			},
+		},
+	}
+	
+end
+
+	
+function Bandits_Start()
+	
+	Rule_AddInterval(Bandits_Monitor, 1)
+	Rule_AddInterval(Bandits_PauseWhileCombatIsHappening, 1)
+
+	
+	Rule_AddInterval(Bandits_AddExtraWandererMarkers, 5)	
+	
+end
+
+
+function Bandits_Monitor()
+	
+	local groupCreatedThisRound = false		-- this ensures we will only ever add one new group per pass, so it slows the rate at which units enter the map
+	local groupRemovedThisRound = false	
+	
+	-- randomize the order 
+	local shuffledZones = Table_GetRandomItem(t_banditZones, #t_banditZones)
+	
+	-- now check each one
+	for index, zone in pairs(shuffledZones) do 
+		
+		local currentGroupCount = #zone.currentGroups
+		local desiredBandits, desiredGroupCount, currentGroupCount = Bandits_GetDesiredBanditData(zone)
+		
+		zone.debug_currentNumGroups = currentGroupCount
+		zone.debug_desiredNumGroups = desiredGroupCount
+		zone.debug_desiredStrength = desiredBandits.strength 
+		
+		if desiredGroupCount > currentGroupCount and zone.banditsBeingCreated == false and (World_GetGameTime() - timestamp_newBanditsRequested) >= (t_difficulty.bandits_GlobalCreationFrequency + (i_numCampsDestroyed * t_difficulty.bandits_CreationFrequency_CampBonus)) then 
+			
+			-- create a single new group
+			
+			local newLoadout = Bandits_ChooseLoadout(desiredBandits, zone.currentGroups)
+			
+			local delay = t_difficulty.bandits_ZoneCreationFrequency + zone.banditCampCreationFrequencyModifier
+			if zone.settlement ~= nil and zone.settlement.purchased == true then 
+				delay = delay * 2 
+			end
+			
+			Rule_AddOneShot(Bandits_CreateNewGroup, delay, {zone = zone, units = newLoadout})
+			
+			timestamp_newBanditsRequested = World_GetGameTime()
+			zone.banditsBeingCreated = true 
+			groupCreatedThisRound = true
+				
+		elseif desiredGroupCount < currentGroupCount and groupRemovedThisRound == false then
+			
+			-- retire a group
+			
+			local rand = World_GetRand(1, #zone.currentGroups)
+			local groupToRetire = zone.currentGroups[rand]
+			local tempSGroup = SGroup_CreateUnique("")
+			
+			Prefab_DoAction(groupToRetire.module, "Disband", tempSGroup)
+			
+			if scartype(tempSGroup) == ST_SGROUP and SGroup_CountSpawned(tempSGroup) >= 1 then 
+				Rule_AddOneShot(Bandits_LeaveTheMapPlease, 2, {sgroup = tempSGroup})
+			end
+			
+			table.remove(zone.currentGroups, rand)
+			
+			groupRemovedThisRound = true 
+			
+		end
+
+		-- now check the health of all groups 
+
+		for index = #zone.currentGroups, 1, -1 do 
+			
+			local group = zone.currentGroups[index]
+			
+			local sgroup = Prefab_DoAction(group.module, "GetSGroup")
+			
+			if SGroup_CountSpawned(sgroup) == 0 then 
+				Prefab_DoAction(group.module, "Disband")
+				table.remove(zone.currentGroups, index)
+			end
+			
+		end
+
+
+		
+	end
+
+	
+end
+
+
+
+function Bandits_PauseWhileCombatIsHappening()
+
+	Player_GetAll(player1)
+	local combatIsHappening = SGroup_IsUnderAttackByPlayer(sg_allsquads, player2, 5) or EGroup_IsUnderAttackByPlayer(eg_allentities, player2, 5)
+	
+	if b_banditsPaused == false and combatIsHappening == true then 
+		
+		local ZoneIsUnderAttack = function(zone)
+			return SGroup_IsUnderAttackByPlayer(zone.sgroup, player1, 5) -- or SGroup_IsDoingAttack(zone.sgroup, ANY, 5)
+		end
+		
+		-- pause any zones not in combat (and always pause the wanderers)
+		for index, zone in pairs(t_banditZones) do 
+			if zone.settlement == nil or ZoneIsUnderAttack(zone) == false then 
+				for i, group in pairs(zone.currentGroups) do 
+					RovingArmy_Pause(group.module, true)
+				end			
+			end
+		end
+		
+		b_banditsPaused = true 
+		timeStamp_bandits_combatStoppedAfterPause = nil 
+		
+	elseif b_banditsPaused == true and combatIsHappening == false then 
+		
+		if timeStamp_bandits_combatStoppedAfterPause == nil then 
+			timeStamp_bandits_combatStoppedAfterPause = World_GetGameTime()
+		elseif World_GetGameTime() - timeStamp_bandits_combatStoppedAfterPause >= (t_difficulty.bandits_PauseReleaseTimer - 5) then		-- the -5 is to account for the five seconds free of combat required by the combatIsHappening flag 
+			
+			for index, zone in pairs(t_banditZones) do 
+				for i, group in pairs(zone.currentGroups) do 
+					RovingArmy_Pause(group.module, false)
+				end			
+			end
+			
+			b_banditsPaused = false
+			timeStamp_bandits_combatStoppedAfterPause = nil 
+			
+		end
+		
+	end
+	
+end
+
+function Bandits_LeaveTheMapPlease(context, data)
+	
+	local sgroup = data.sgroup
+
+	if scartype(sgroup) == ST_SGROUP and SGroup_CountSpawned(sgroup) >= 1 then
+		
+		local pos = Util_GetPosition(sgroup)
+		local closestExit = Util_GetClosestMarker(pos, t_banditExitMarkers)
+		Cmd_FormationMove(sgroup, closestExit, false, true)
+		
+	end
+	
+	SGroup_Destroy(sgroup)	
+	
+end	
+
+
+
+function Bandits_GetDesiredBanditData(zone)
+	
+	local desiredBandits 
+	
+	-- get the desired bandit data for this zone
+	if scartype(zone.settlement) == ST_TABLE then 
+		desiredBandits = Bandits_GetDesiredBanditDataForSettlement(zone.settlement)
+	elseif zone.settlement == nil then  
+		desiredBandits = Bandits_GetDesiredBanditDataForWanderers(i_numSettlementsBought)
+	end
+
+	-- figure out if we need to add or subtract a group
+	local desiredGroupCount	= desiredBandits.numGroups + i_banditCampBonus_QuietModifier
+	if zone.settlement == nil then 
+		desiredGroupCount = desiredGroupCount + t_difficulty.bandits_WanderersModifier
+	end
+
+	local currentGroupCount = #zone.currentGroups
+	
+	return desiredBandits, math.max(desiredGroupCount, 1), currentGroupCount
+	
+end
+
+function Bandits_GetDesiredBanditDataForSettlement(settlement)
+
+	local value
+	
+	if settlement.purchased ~= true then 	
+		local activeTradeCarts = BuySettlements_GetActiveTraderCount(settlement)
+		value = activeTradeCarts + i_numSettlementsBought 					-- based on the number of trade carts on that route, and escalating as you buy more settlements
+	else 
+		value = 1 																							-- purchased settlements are a relatively low value - the bandits are trying to ambush your traders rather than attack towns outright
+	end
+	
+	value = value + t_difficulty.bandits_SettlementsModifier + math.floor(i_mongolPaymentCycle * 0.34)		-- increase the value per difficulty, and escalate it every few payment cycles
+	
+	for index, data in ipairs(t_banditStrengthLevels_settlements) do 
+		
+		if value >= data.threshold or data.baseLevel == true then 
+			return data
+		end
+		
+	end
+	
+end
+
+function Bandits_GetDesiredBanditDataForWanderers(settlementsPurchased)
+	
+	local value = settlementsPurchased + math.floor(i_mongolPaymentCycle * 0.34)
+	
+	for index, data in ipairs(t_banditStrengthLevels_wanderers) do 
+		
+		if value >= data.threshold or data.baseLevel == true then 
+			return data
+		end
+		
+	end
+	
+end
+
+
+
+function Bandits_ChooseLoadout(desiredBandits, currentGroups)
+
+	local potentialLoadouts = {}
+
+	for index, loadout in pairs(desiredBandits.loadouts) do 
+		
+		local alreadyInUse = false 
+		
+		for i, group in pairs(currentGroups) do 
+			if group.loadout == loadout then
+				alreadyInUse = true 
+				break 
+			end
+		end
+		
+		if alreadyInUse == true then 
+			table.insert(potentialLoadouts, loadout)
+		else
+			table.insert(potentialLoadouts, loadout)	-- this loadout isn't already in use, so add it three times to give it a better chance of being picked
+			table.insert(potentialLoadouts, loadout)
+			table.insert(potentialLoadouts, loadout)
+		end
+		
+	end
+	
+	local rand = World_GetRand(1, #potentialLoadouts)
+
+	return potentialLoadouts[rand]
+	
+end
+	
+	
+
+
+function Bandits_CreateNewGroup(context, data)
+	
+	local zone = data.zone
+	local units = data.units 
+
+	local desiredBandits, desiredGroupCount, currentGroupCount = Bandits_GetDesiredBanditData(zone)
+
+	if currentGroupCount < desiredGroupCount then 
+		
+		-- once a settlement is purchased, we add some extra markers (the settlement itself) to the zone's markers. We also do this if you build a market near the settlement, because you're a cheater!
+		if zone.settlement ~= nil and zone.extraMarkers ~= nil and (zone.settlement.purchased == true or Bandits_IsMarketNearSettlement(zone.settlement) == true) then 	
+			if scartype(zone.extraMarkers) ~= ST_TABLE then
+				zone.extraMarkers = {zone.extraMarkers}
+			end
+			for index, item in pairs(zone.extraMarkers) do 
+				table.insert(zone.markers, item)
+			end
+			zone.extraMarkers = nil
+		end
+		
+		local rovingArmyModule = {
+			type = "RovingArmy",
+			descriptor = Bandits_GetUniqueDescriptor(zone),
+			player = player2, 
+			targetingType = ARMY_TARGETING_RANDOM_MEANDERING,
+			targets = Clone(zone.markers),
+			attackMove = attackMoveStyle_attackEverything,
+			spawnLocation = Bandits_ChooseSpawnLocation(Table_GetRandomItem(zone.markers)),
+			units = units,
+			idleTime = 4,
+			sgroup = SGroup_CreateUniqueWithPrefix("Bandits"),
+		}
+		RovingArmy_Init(rovingArmyModule)
+
+		SGroup_AddGroup(zone.sgroup, rovingArmyModule.sgroup)
+		
+		local newGroup = {
+			style = units,
+			module = rovingArmyModule,
+		}
+		table.insert(zone.currentGroups, newGroup)
+		
+	end
+	
+	zone.banditsBeingCreated = false 
+	
+end
+
+
+
+function Bandits_IsMarketNearSettlement(settlement)
+
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "trade_post", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+
+	return Prox_AreEntitiesNearMarker(eg_allentities, settlement.marker, ANY, 100)	
+	
+end
+
+
+function Bandits_AddExtraWandererMarkers()
+	
+	local data = t_banditWanderers_extraMarkers[1]
+	
+	if i_numSettlementsBought >= data.threshold then 
+		
+		-- add new markers to wanderers currently active
+		if scartype(data.markersToAddToExistingModules) == ST_TABLE then 
+			for index, group in pairs(t_banditWanderers.currentGroups) do 
+				for i, markerName in pairs(data.markersToAddToExistingModules) do 
+					local markers = AllMarkers_FromName(markerName, "")
+					for j, marker in pairs(markers) do 
+						Prefab_DoAction(group.module, "AddTarget", marker)
+					end
+				end
+			end
+		end
+		
+		-- add the same markers to the set for future wanderer groups
+		if scartype(data.markersForNewModules) == ST_TABLE then 
+			t_banditWanderers.markers = {}
+			for i, markerName in pairs(data.markersForNewModules) do 
+				local markers = AllMarkers_FromName(markerName, "")
+				for index, marker in pairs(markers) do 
+					table.insert(t_banditWanderers.markers, marker)
+				end
+			end
+		end 
+		
+		table.remove(t_banditWanderers_extraMarkers, 1)
+
+		if #t_banditWanderers_extraMarkers == 0 then 
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+end
+
+
+
+function Bandits_GetUniqueDescriptor(zone)
+	
+	if i_lastBanditIndex == nil then 
+		i_lastBanditIndex = 0
+	end
+
+	i_lastBanditIndex = i_lastBanditIndex + 1
+
+	local name = "Bandits "
+
+	if scartype(zone.settlement) == ST_TABLE then 
+		name = name..zone.settlement.id.." "
+	else 
+		name = name.."Wandering "
+	end
+	
+	return name..i_lastBanditIndex
+	
+end
+
+
+function Bandits_ChooseSpawnLocation(destination)
+
+	Player_GetAll(player1)
+	
+	local potentialSpawns = {}
+	local backupSpawns = {}	
+	
+	for index, marker in pairs(t_banditSpawnMarkers) do 
+		
+		local distance = Util_GetDistanceSquared(marker, destination) 
+		
+		local distanceSGroup = 9999999
+		local distanceEGroup = 9999999
+		
+		if SGroup_CountSpawned(sg_allsquads) >= 1 then 
+			distanceSGroup = Util_GetDistanceSquared(marker, SGroup_GetClosestSquad(sg_allsquads, marker))
+		end
+		
+		if EGroup_CountSpawned(eg_allentities) >= 1 then 
+			distanceEGroup = Util_GetDistanceSquared(marker, EGroup_GetClosestEntity(eg_allentities, marker))
+		end
+		
+		local closestItem = math.min(distanceSGroup, distanceEGroup)
+		
+		
+		local entry = {
+			marker = marker,
+			distance = distance,
+		}
+		
+		if closestItem > 40^2 then			-- we had the distances -squared-, so we need to check againt the radii squared as well. Square roots are expensive, nobody can afford that.
+			table.insert(potentialSpawns, entry)		
+		end
+		table.insert(backupSpawns, entry)		
+		
+	end
+	
+	if #potentialSpawns >= 1 then 
+		
+		table.sort(potentialSpawns, function(a, b) return a.distance < b.distance end)		-- sort them so the shortest distance is first
+		
+		local rand = World_GetRand(1, math.ceil(#potentialSpawns * 0.25))
+		return potentialSpawns[rand].marker
+	
+	else
+		
+		table.sort(backupSpawns, function(a, b) return a.distance < b.distance end)		-- sort them so the shortest distance is first
+		
+		local rand = World_GetRand(1, math.ceil(#backupSpawns * 0.25))
+		return backupSpawns[rand].marker
+		
+	end
+	
+end
+
+
+
+
+
+

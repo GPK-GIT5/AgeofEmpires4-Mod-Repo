@@ -1,0 +1,352 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+function Pirates_Init()
+	
+	sg_pirate_villagers = SGroup_CreateIfNotFound("sg_pirate_villagers")
+	eg_pirate_dock = EGroup_CreateIfNotFound("eg_pirate_dock")
+	
+	active_pirate_hunter = nil
+	pirate_targets =
+	{
+		{
+			mkr_pirate_attack_2_pt_1,
+			mkr_pirate_attack_2_pt_2,
+			mkr_pirate_attack_2_pt_3,
+			mkr_pirate_attack_2_pt_4,
+			mkr_pirate_attack_2_pt_2,
+		},
+		{
+			mkr_pirate_attack_3_pt_1,
+			mkr_pirate_attack_3_pt_2,
+			mkr_pirate_attack_3_pt_3,
+			mkr_pirate_attack_3_pt_4,
+			mkr_pirate_attack_3_pt_5,
+			mkr_pirate_attack_3_pt_6,
+			mkr_pirate_attack_3_pt_2,
+		},
+	}
+	-- On Intermediate and Hard, the pirates can also go close to the player base
+	if Game_GetSPDifficulty() >= GD_HARD then
+		pirate_targets_near_player = 
+		{
+			mkr_pirate_attack_1_pt_1,
+			mkr_pirate_attack_1_pt_2,
+			mkr_pirate_attack_1_pt_3,
+			mkr_pirate_attack_1_pt_4,
+			mkr_pirate_attack_1_pt_5,
+		}
+	end
+	
+	-- This is for patrolling around the island
+	pirate_patrol_route =
+	{
+		mkr_pirate_patrol_1,
+		mkr_pirate_patrol_2,
+		mkr_pirate_patrol_3,
+		mkr_pirate_patrol_4,
+		mkr_pirate_patrol_5,
+	}
+	
+	g_pirateFleetIdx = 1
+	g_pirateDockPos = Util_GetPosition(eg_pirate_dock)
+	g_pirateFreeTime = World_GetGameTime()
+	
+	Rule_AddInterval(Pirates_RebuildDock, 5)
+	-- Also kick off a thing to handle the Crusader camp
+	Rule_AddInterval(Pirates_CheckForCampAttack, 1)
+end
+
+function Pirates_Start()
+	Rule_AddInterval(Pirates_CheckForPlayerSighting, 3)
+	-- If there's an outright battleship on the water, give the player more time before it starts sinking fishing ships
+	local pirateActivityDelay = 55
+	if t_difficulty.pirateHunterBattleships > 0 then
+		pirateActivityDelay = pirateActivityDelay + 60
+	end
+	Rule_AddInterval(Pirates_Monitor, {delay = pirateActivityDelay, interval = 3})
+	if Game_GetSPDifficulty() >= GD_HARD then
+		-- Have a delay so the pirates don't go near the player too soon
+		Rule_AddOneShot(Pirates_EnablePlayerBaseDriveby, 300)
+	end
+end
+
+function Pirates_CheckForCampAttack()
+	if SGroup_CountSpawned(sg_camped_pirates) <= 0 then
+		Rule_RemoveMe()
+		return
+	end
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_raider_camp, Marker_GetProximityRadius(mkr_raider_camp))
+	if SGroup_Count(sg_temp) > 0 or SGroup_IsUnderAttack(sg_camped_pirates, ANY, 5) == true then
+		g_raiderCampTroops = Army_Init({
+			name = "pirate_campers",
+			player = player2,
+			sgroup = sg_camped_pirates,
+			onCompleteFunction = nil,
+			onDeathFunction = nil,
+			targets = {mkr_raider_camp},
+		})
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, sg_camped_pirates)
+		Rule_RemoveMe()
+	end
+end
+
+function Pirates_EnablePlayerBaseDriveby(context, data)
+	table.insert(pirate_targets, pirate_targets_near_player)
+end
+
+function Pirates_CheckForPlayerSighting()
+	-- See if the player has spotted the pirates
+	if Objective_IsStarted(SOBJ_PirateHunt) == false then
+		Player_GetAll(player3)
+		local debug_squads = SGroup_CountSpawned(sg_allsquads)
+		local debug_entities = EGroup_CountSpawned(eg_allentities)
+		local canSeeSquads = Player_CanSeeSGroup(player1, sg_allsquads, ANY)
+		local canSeeEntities = Player_CanSeeEGroup(player1, eg_allentities, ANY)
+		if canSeeSquads or canSeeEntities then
+			Objective_Start(SOBJ_PirateHunt, true, true)
+			print("Pirate hunt started!")
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function Pirates_Monitor()
+	
+	-- If the pirate dock is gone, we can't spawn more!
+	if EGroup_Count(eg_pirate_dock) == 0 and active_pirate_hunter == nil then
+		Rule_RemoveMe()
+		return
+	end
+	
+	-- If there are no pirates, commence more piracy
+	if active_pirate_hunter == nil then
+		if g_pirateFreeTime < 0 then
+			g_pirateFreeTime = World_GetGameTime()
+		elseif (World_GetGameTime() - g_pirateFreeTime) > t_difficulty.pirateRespawnDelay then
+			Pirates_Spawn(true)
+		end
+		return
+	end
+	
+	-- If there's no patrol, make sure there's a patrol!
+	if active_pirate_patrol == nil then
+		Pirates_Spawn(false)
+		return
+	end
+	
+	-- If there are raiders and the pirates spot them, let's have a little fun
+	if #raider_armies <= 0 then
+		return
+	end
+	
+	-- See if there's a raider group to engage and clash with!
+	active_pirate_hunter.pursuitTarget = nil
+	for idx, raiderArmy in pairs(raider_armies) do
+		if SGroup_CanSeeSGroup(active_pirate_hunter.sgroup, raiderArmy.sgroup, ANY) == true then
+			nobodyVisible = false
+			active_pirate_hunter.pursuitTarget = raiderArmy.sgroup
+			break
+		end
+	end
+	
+	-- If we can't see anyone at all, stop pursuing if we're pursuing, and go back to usual targets
+	if active_pirate_hunter.pursuitTarget == nil and active_pirate_hunter.pursuing == true then
+		active_pirate_hunter.pursuing = false
+		Army_SetTargets(active_pirate_hunter, Table_GetRandomItem(pirate_targets))
+		
+	--If we can see someone but we weren't pursuing them, follow them!
+	elseif active_pirate_hunter.pursuitTarget ~= nil and active_pirate_hunter.pursuing == false then
+		active_pirate_hunter.pursuing = true
+		Army_SetTarget(active_pirate_hunter, SGroup_GetPosition(active_pirate_hunter.pursuitTarget))
+		
+	-- Update the target if the SGroup is being tracked but has moved too much
+	elseif active_pirate_hunter.pursuitTarget ~= nil then
+		-- Make sure the target isn't a table - that means we're not actually tracking the raiders
+		local currentPirateTarget = Army_GetTarget(active_pirate_hunter)
+		if scartype(currentPirateTarget) == ST_SCARPOS and Util_GetDistanceSquared(currentPirateTarget, SGroup_GetPosition(active_pirate_hunter.pursuitTarget)) > 25 then
+			Army_SetTarget(active_pirate_hunter, SGroup_GetPosition(active_pirate_hunter.pursuitTarget))
+		end
+	
+	end
+	
+end
+
+function Pirates_RebuildDock()
+	
+	-- If the pirate camp has been destroyed, stop this rule - no more pirates!
+	if EGroup_Count(eg_pirate_camp) == 0 then
+		Rule_RemoveMe()
+		print("PIRATE DOCK - Camp destroyed, dock reconstruction stopped!")
+		return
+	-- Skip this rule for now if there is a dock
+	elseif EGroup_Count(eg_pirate_dock) > 0 then
+		return
+	end
+	
+	-- Don't bother with this if there's a dock for now, or if the player is really close
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_pirate_spawn, Marker_GetProximityRadius(mkr_pirate_spawn) * 2)
+	if SGroup_Count(sg_temp) > 0 then
+		print("PIRATE DOCK - Can't rebuild, player too close")
+		return
+	end
+	
+	print("PIRATE DOCK - Start rebuilding!")
+	-- Place a planned dock at the right spot
+	LocalCommand_PlayerPlaceAndConstructEntitiesPlanned(
+		player3,
+		EBP.ABBASID.BUILDING_UNIT_NAVAL_ABB,
+		g_pirateDockPos,
+		Util_GetOffsetPosition(g_pirateDockPos, OFFSET_FRONT, 10),
+		false,
+		false)
+	
+	-- A delay is required before the building starts to properly exist
+	Rule_AddOneShot(Pirates_CommenceConstruction, 3)
+	
+end
+
+function Pirates_CommenceConstruction()
+	-- Find that newly placed dock and add it to the dock EGroup
+	local dockRange = 10
+	--Player_GetAllEntitiesNearMarker(player3, eg_pirate_dock, Marker_GetPosition(mkr_pirate_dock), dockRange)
+	
+	eg_temp = Player_GetAllEntities(player3)
+	local countBefore = EGroup_Count(eg_temp)
+	EGroup_Filter(eg_temp, EBP.ABBASID.BUILDING_UNIT_NAVAL_ABB, FILTER_REMOVE, eg_pirate_dock)
+	local countAfter = EGroup_Count(eg_temp)
+	
+	-- If this failed somehow, issue a warning and try the previous phase again
+	if EGroup_Count(eg_pirate_dock) == 0 then
+		Pirates_RebuildDock()
+		print(string.format("WARNING - No dock found for pirates! Before: %s, After: %s, EGroup: %s", countBefore, countAfter, EGroup_Count(eg_pirate_dock)))
+		return
+	end
+	
+	-- Start the repair maintenance rule
+	print("PIRATE DOCK - Pirates rebuilding dock!")
+	if Rule_Exists(Pirates_MaintainReconstruction) == false then
+		Rule_AddInterval(Pirates_MaintainReconstruction, 1)
+	end
+	
+end
+
+-- This should keep running until there's a completed dock
+function Pirates_MaintainReconstruction()
+	
+	--If there's no dock at all, stop this - we need Pirates_RebuildDock to pick place one back!
+	if EGroup_Count(eg_pirate_dock) == 0 then
+		Pirates_RebuildDock()
+		Rule_RemoveMe()
+		return
+	end
+	
+	-- End this if there's a completed dock
+	EGroup_Clear(eg_temp)
+	EGroup_AddEGroup(eg_temp, eg_pirate_dock)
+	EGroup_FilterUnderConstruction(eg_temp, FILTER_REMOVE)
+	if EGroup_Count(eg_temp) > 0 then
+		Rule_RemoveMe()
+		return
+	end
+	
+	-- If there aren't any villagers to construct the docks, create some
+	if SGroup_Count(sg_pirate_villagers) < 2 then
+		Util_CreateSquads(
+			player3,
+			sg_pirate_villagers,
+			SBP.ABBASID.UNIT_VILLAGER_1_ABB,
+			Marker_GetPosition(mkr_pirate_workers),
+			nil,
+			2)
+	end
+	
+	-- Add a delay in case we just created the villagers
+	Rule_AddOneShot(Pirates_MaintainReconstruction_B, 1)
+	
+end
+
+function Pirates_MaintainReconstruction_B()
+	-- If the group is idle, order it to construct the pirate dock! At this point we should be safe in there being a dock to target
+	if SGroup_IsIdle(sg_pirate_villagers, ANY) == true then
+		
+		-- Finally, issue the build command
+		LocalCommand_SquadEntity(player3, sg_pirate_villagers, SCMD_BuildStructure, eg_pirate_dock, false)
+		-- And an order to return, queued up to happen after
+		Cmd_Move(sg_pirate_villagers, Marker_GetPosition(mkr_pirate_workers), true)
+		
+	end
+end
+
+function Pirates_Spawn(isHunter)
+	if isHunter == true and active_pirate_hunter ~= nil then
+		return
+	elseif isHunter == false and active_pirate_patrol ~= nil then
+		return
+	end
+	
+	if Player_CanSeePosition(player1, Marker_GetPosition(mkr_pirate_spawn)) == true then
+		return
+	end
+	
+	local pirateFleetName = "pirate_fleet_"..tostring(g_pirateFleetIdx)
+	local pirateUnits = {
+		{sbp = SBP.AYYUBID_CMP.UNIT_NAVAL_BAGHLAH_AYY, numSquads = t_difficulty.pirateHunterHulks },
+		{sbp = SBP.AYYUBID_CMP.UNIT_NAVAL_XEBEC_PIRATE_AYY, numSquads = t_difficulty.pirateHunterBattleships },
+	}
+	local pirateTargets = Table_GetRandomItem(pirate_targets)
+	-- If it's not the hunter spawn, it's the patroller spawn
+	if isHunter == false then
+		pirateFleetName = "pirate_patrol_"..tostring(g_pirateFleetIdx)
+		pirateTargets = pirate_patrol_route
+		pirateUnits = {
+			{sbp = SBP.AYYUBID_CMP.UNIT_NAVAL_DHOW_AYY, numSquads = t_difficulty.piratePatrolGalleys },
+			{sbp = SBP.AYYUBID_CMP.UNIT_NAVAL_BAGHLAH_AYY, numSquads = t_difficulty.piratePatrolHulks },
+		}
+	end
+	
+	local newPirates = NavalArmy_Init({
+		name = pirateFleetName,
+		player = player3,
+		spawn = mkr_pirate_spawn, 
+		units = pirateUnits,
+		onCompleteFunction = Pirates_OnComplete,
+		onDeathFunction = Pirates_OnDeath,
+		targets = pirateTargets,
+	})
+	print(newPirates.name.." has spawned")
+	
+	newPirates.pursuing = false
+	newPirates.pursuitTarget = nil
+	
+	if isHunter == true then
+		active_pirate_hunter = newPirates
+		-- Reset this so that when they're defeated, we know to start counting to the next spawn
+		g_pirateFreeTime = -1
+	else
+		active_pirate_patrol = newPirates
+	end
+	
+	g_pirateFleetIdx = g_pirateFleetIdx + 1
+end
+
+function Pirates_OnComplete(army)
+	-- Reset the same target route for now
+	local resetTargets = Table_GetRandomItem(pirate_targets)
+	if army == active_pirate_patrol then
+		resetTargets = pirate_patrol_route
+	end
+	
+	Army_SetTargets(army, resetTargets)
+	print(army.name.." reassigned target route")
+end
+
+function Pirates_OnDeath(army)
+	print(army.name.." has died")
+	if army == active_pirate_hunter then
+		active_pirate_hunter = nil
+	elseif army == active_pirate_patrol then
+		active_pirate_patrol = nil
+	end
+end

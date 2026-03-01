@@ -1,0 +1,1346 @@
+--
+-- Patay 1429
+--
+-- Hundred campaign, mission 6
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("hun_chp3_patay_data.scar")
+import("diplomacy_chp3_patay.scar")
+import("obj_defeat_english.scar")
+import("obj_reinforcements.scar")
+
+-- Training
+import("hun_chp3_patay_training.scar")
+
+
+function Mission_SetupPlayers()
+
+	player1 = World_GetPlayerAt(1)
+	player2 = World_GetPlayerAt(2)
+	player3 = World_GetPlayerAt(3)
+	player4 = World_GetPlayerAt(4)
+	
+	playerFrench = player1
+	playerEnglish = player2
+	playerAllies = player3
+	playerNeutrals = player4 -- placeholder for leader
+	
+	Setup_SetPlayerName(player1, Loc_GetString("$11180115")) -- ("Jeanne d'Arc")))
+	Player_SetCurrentAge(player1, AGE_CASTLE)
+	Player_SetMaximumAge(player1, AGE_CASTLE)
+	
+	Setup_SetPlayerName(playerEnglish, Loc_GetString("$11180116")) -- ("John Talbot")))
+	Player_SetCurrentAge(playerEnglish, AGE_CASTLE)
+	Player_SetMaximumAge(playerEnglish, AGE_CASTLE)
+	
+	Setup_SetPlayerName(playerAllies, Loc_GetString("$11156660")) -- ("Patay")))
+	Player_SetCurrentAge(playerAllies, AGE_CASTLE)
+	Player_SetMaximumAge(playerAllies, AGE_CASTLE)
+	
+	Setup_SetPlayerName(playerNeutrals, Loc_GetString("$11180115")) -- ("Jeanne d'Arc")))
+	Player_SetCurrentAge(playerNeutrals, AGE_CASTLE)
+	Player_SetMaximumAge(playerNeutrals, AGE_CASTLE)
+	AI_Enable(playerNeutrals,false)
+	
+	Player_SetRelationship(player1, playerNeutrals, R_ALLY)
+	Player_SetRelationship(playerNeutrals, player1, R_ALLY)
+	
+	Player_SetRelationship(player1, playerAllies, R_ALLY)
+	Player_SetRelationship(playerAllies, player1, R_ALLY)
+	
+	Player_SetRelationship(playerEnglish, playerAllies, R_NEUTRAL)
+	Player_SetRelationship(playerAllies, playerEnglish, R_NEUTRAL)
+	
+	Player_SetRelationship(playerEnglish, playerNeutrals, R_NEUTRAL)
+	Player_SetRelationship(playerNeutrals, playerEnglish, R_NEUTRAL)
+	
+	Player_SetMaxPopulation(player1, CT_Personnel, 200)	
+	Patay_SetPopulationCapVisibility(false)
+	
+	PlayerColour_Enable()
+	
+    Game_SetPlayerSlotColour(player1, 1)
+	Game_SetPlayerUISlotColour(player1, 1)
+	
+    Game_SetPlayerSlotColour(playerEnglish, 2)
+	Game_SetPlayerUISlotColour(playerEnglish, 2)
+	
+    Game_SetPlayerSlotColour(playerAllies, 3)
+	Game_SetPlayerUISlotColour(playerAllies, 3)
+	
+    Game_SetPlayerSlotColour(playerNeutrals, 1)
+	Game_SetPlayerUISlotColour(playerNeutrals, 1)
+	
+end
+
+
+function Mission_SetupVariables()
+	
+	Patay_Data_Init()
+	Patay_InitStartingUnits()
+	Patay_InitDebug ()
+end
+
+function Mission_SetRestrictions()
+	
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_TOWER_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_WALL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_WALL_GATE_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TOWN_CENTER_CAPITAL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TOWN_CENTER_FRE, ITEM_REMOVED)
+	
+end
+
+function Mission_SetDifficulty()
+	
+	t_difficulty = {
+		--upgradeLevel = Util_DifVar({0, 1, 2, 3}),
+		regimentWakeTimer = Util_DifVar({60, 40, 30, 30}),
+		regimentBaseCount = Util_DifVar({9, 10, 10, 10}),
+		regimentSiegeCount = Util_DifVar({1, 2, 2, 2}),
+	}
+	
+ end
+
+function Mission_PreInit()
+	Patay_HideTributeMenu()
+end
+
+function Patay_ShowTributeMenu()
+	Diplomacy_ShowUI(true)
+end
+
+function Patay_SetPopulationCapVisibility(visibility)
+	
+	for index, player in pairs(PLAYERS) do
+		if player.isLocal == true then
+			player.scarModel.PopulationCapOn  = visibility
+			UI_SetPlayerDataContext(player1, player.scarModel)
+		end
+    end
+end
+
+function Patay_HideTributeMenu()
+
+	Core_CallDelegateFunctions("DiplomacyEnabled", false)
+	Diplomacy_ShowUI(false)
+end
+
+function Patay_CheckReinforcePanel()
+	
+	if  reinforce_panel_enabled == false then
+		
+		reinforce_panel_enabled = true
+		Patay_ShowTributeMenu()
+		UI_ReinforcePanel_UpdateData()
+		Rule_AddInterval(UI_ReinforcePanel_UpdateData, 1)
+		
+		if UI_IsXboxUI() == false then
+			Diplomacy_ShowDiplomacyUI(true)
+		end
+		
+		Rule_AddInterval(Patay_CheckDiplomacyReminder, 1)
+		Rule_AddOneShot(Patay_EnableSendGoldHint, 20)
+		
+	end
+end
+
+function Patay_CheckDiplomacyReminder()
+	
+	current_gold_total = Player_GetResource(player1, RT_Gold)
+	
+	if current_gold_total >= 1000 then
+		if current_gold_total > prev_gold_total and Diplomacy_IsExpanded() == false and UI_IsXboxUI() == false then
+			Diplomacy_ShowDiplomacyUI(true)
+		end
+	end
+	
+	prev_gold_total = current_gold_total
+end
+
+function Patay_EnableSendGoldHint()
+	TrainingGoal_AddSendGold()
+	TrainingGoal_EnableSendGold()
+end
+
+
+
+function Mission_Preset()
+	
+	PlayerUpgrades_Auto(player1, false)
+	PlayerUpgrades_Auto(playerEnglish, false, { 
+		UPG.COMMON.UPGRADE_RANGED_ARCHER_SILKSTRING,
+		UPG.FRENCH.UPGRADE_RANGED_INCENDIARY_FRE,
+		UPG.COMMON.UPGRADE_RANGED_DAMAGE_II
+	})
+	
+	PlayerUpgrades_LearnAllResearch(playerAllies, AGE_FEUDAL, {}, Player_GetRaceName(playerAllies))
+	PlayerUpgrades_LearnAllUnits(playerAllies, AGE_FEUDAL, {}, Player_GetRaceName(playerAllies))
+	
+	Player_CompleteUpgrade(player1, UPG.FRENCH.UPGRADE_UNIT_KNIGHT_3_FRE)
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_UNIT_HORSEMAN_3)
+	
+	DefeatEnglish_InitObjectives()
+	
+	Rule_AddGlobalEvent(Patay_OnSquadKilled, GE_SquadKilled)
+	
+	-- Audio considerations
+	if Music_UnlockIntensity then
+		Sound_SetForceMusic(false)
+	else
+		Sound_SetForceMusic(true)
+	end
+	
+	AudioTrigger_InitAreaTrigger({
+		marker = mkr_patay_trigger,
+		audioCue = MUSIC_COMBAT_RARE,
+		triggeringPlayer = playerEnglish,
+		startAboveUnitCount = 10,
+		duration = 40,
+	})	
+	
+	Patay_MoveStartingUnits1()
+	Patay_MoveStartingUnits2()
+	Rule_AddOneShot(Patay_ReverseSpeedMod, 7)
+	
+	Patay_SetGoldValue()
+	Patay_InitPatay()
+	
+end
+
+function Mission_Start()
+	-- on console don't restore VPS at first (as we have no villagers until we reach Patay)
+	Cardinal_EnablePartialXboxUI(true, {VF_XboxUIVillagerPriorities})
+
+	Objective_Start(OBJ_DefeatEnglish)
+	Rule_AddInterval(Patay_CheckAmbushTrigger, 1)
+	Rule_AddInterval(Patay_CheckMissionFail, 1)
+	Rule_AddInterval(Patay_CheckGoldPickupsLooted, 1)
+	
+	road_blocker_init_count = SGroup_CountSpawned(sg_road_blockers)
+	
+	Cmd_Ability(sg_road_blockers, BP_GetAbilityBlueprint("deploy_palings"))
+	Cmd_Ability(sg_main_line, BP_GetAbilityBlueprint("deploy_palings"))
+	
+	-- Reset resources
+	Player_SetResource(player1, RT_Wood, 0)
+	Player_SetResource(player1, RT_Gold, 3000)
+	Player_SetResource(player1, RT_Food, 0)
+	
+	FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_patay_trigger), 50, -1)
+	hint_patay = HintPoint_Add(mkr_patay_trigger, true, "$11156660", LOCATION_LABEL_HEIGHT, nil, nil, nil, true, nil)
+	
+	Patay_SpawnSigmundReserve()
+	
+end
+
+function Patay_CheckMissionFail()
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_REMOVE)
+	SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+	EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+	
+	if SGroup_CountSpawned(sg_allsquads) <= 0 and EGroup_CountSpawned(eg_allentities) <= 0 then
+		Mission_Fail()
+	end
+	
+	if Objective_IsStarted(OBJ_DefendPatay) then
+		if EGroup_CountSpawned(eg_patay_tc) == 0 then
+			Mission_Fail()
+		end
+	end
+	
+end
+
+function Patay_CombatIntensityIntro()
+	Sound_SetMinimumMusicCombatIntensity(801,0)
+end
+
+function Patay_StartRearguardPursuit()
+	
+	if rearguard_pursuit_started == false then
+		rearguard_pursuit_started = true
+		RovingArmy_SetTargets(MissionOMatic_FindModule("Rearguard1"), rearguard_pursuit_targets)
+		RovingArmy_SetTargets(MissionOMatic_FindModule("Rearguard2"), rearguard_pursuit_targets)
+		RovingArmy_SetTargets(MissionOMatic_FindModule("Rearguard3"), rearguard_pursuit_targets)
+		RovingArmy_SetTargets(MissionOMatic_FindModule("Rearguard4"), rearguard_pursuit_targets)
+	end
+
+end
+
+function Patay_DisbandRearguard()
+	
+	RovingArmy_Disband(MissionOMatic_FindModule("Rearguard1"))
+	RovingArmy_Disband(MissionOMatic_FindModule("Rearguard2"))
+	RovingArmy_Disband(MissionOMatic_FindModule("Rearguard3"))
+	RovingArmy_Disband(MissionOMatic_FindModule("Rearguard4"))
+	
+	Cmd_AttackMove(sg_rearguard, mkr_rearguard_flee)
+	Rule_AddInterval(Patay_CheckRearguardDespawn, 3)
+
+end
+
+--mkr_ford_trigger
+
+function Patay_CheckHasLeftAmbushArea()
+	
+	if Prox_AreSquadsNearMarker(sg_startingUnitsFrench, mkr_ford_trigger, ANY, 15) or Prox_AreSquadsNearMarker(sg_startingUnitsFrench, mkr_barricade1, ANY, 15) then
+		
+		if SGroup_CountSpawned(sg_rearguard) > 0 then
+			Patay_StartRearguardPursuit()
+		end
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Patay_CheckRearguardDespawn()
+	
+	if SGroup_CountSpawned(sg_rearguard) == 0 then
+		Rule_RemoveMe()
+	end
+	
+	if Prox_AreSquadsNearMarker(sg_rearguard, mkr_rearguard_flee, ANY, 10) then
+		if not Player_CanSeeSGroup(player1, sg_rearguard, ANY) then
+			SGroup_DestroyAllSquads(sg_rearguard)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function Patay_CheckSigmundTrigger()
+
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_sigmund_trigger_center, ANY, 40) then
+		Rule_AddOneShot(Patay_MergeReserveIntoSigmund, 3)
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_CheckPatayTrigger()
+	
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_patay_trigger, ANY, 50) then
+		Objective_Complete(OBJ_TakePatay)
+		Patay_TakeControlOfPatay()
+		Music_PlayStinger(MUS_STING_POSITIVE)
+		Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_patay_trigger, Marker_GetProximityRadius(mkr_patay_trigger))
+		Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_CheckClearRoadTrigger()
+	
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_clear_road_trigger, ANY) then
+		Objective_Start(OBJ_ClearRoad)
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_CheckAmbushTrigger()
+
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_ambush_trigger, ANY, 15) then
+		
+		if not intro_skipped then
+			SGroup_DestroyAllSquads(sg_intro_archers1)
+			SGroup_DestroyAllSquads(sg_intro_archers2)
+			SGroup_DestroyAllSquads(sg_intro_archers3)
+			SGroup_DestroyAllSquads(sg_intro_archers4)
+			SGroup_DestroyAllSquads(sg_intro_archers5)
+		end
+		
+		Patay_SpawnAmbush()
+		
+		FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_rearguard_attack1), 10, 12)
+		FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_rearguard_attack2), 10, 12)
+		FOW_PlayerRevealArea(player1, Util_GetPosition(mkr_rearguard_attack3), 10, 12)
+		
+		Rule_AddInterval(Patay_CheckClearRoadTrigger, 1)
+		Rule_AddInterval(Patay_CheckStSigmundTrigger, 1)
+		Rule_AddInterval(Patay_CheckHasLeftAmbushArea, 1)
+		
+		Util_StartIntel(EVENTS["Ambush"])
+		
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_CheckStSigmundTrigger()
+	
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_sigmund_trigger_start, ANY) then
+		Objective_Start(OBJ_ClearStSigmund)
+		Rule_AddInterval(Patay_CheckMainBattleTrigger, 1)
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_CheckMainBattleTrigger()
+	
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_main_battle_trigger, ANY, 25)  then
+		
+		Patay_StartDefeatArmy()
+		Patay_StartRoadPatrol()
+		Rule_AddInterval(Patay_CheckMainBattleStartTrigger, 1)
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_CheckMainBattleStartTrigger()
+	
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_main_battle_start_trigger, ANY, 30)  then
+		Patay_BeginMainBattle()
+		--Rule_AddInterval(Patay_CheckMainRearTrigger, 2)
+		
+		if not Objective_IsComplete(OBJ_ClearStSigmund) then
+			Rule_AddInterval(Patay_CheckSigmundFail, 2)
+		end
+		
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_CheckSigmundFail()
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_main_battle_start_trigger, 35)
+	if SGroup_CountSpawned(sg_temp) > 5 then
+		--the player has run past st.sigmund without completing it
+		Objective_Fail(OBJ_ClearStSigmund)
+		DissolveModuleIntoModule("SigmundDefenders", "SigmundAttackers")
+		
+		--the blockade army is harder to break, now that it knows help is coming
+		battle_group_threshold = 1
+		main_line_threshold = 3
+		
+		Rule_RemoveMe()
+	end
+	
+	if Objective_IsComplete(OBJ_ClearStSigmund) then
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_StartRoadPatrol()
+	
+	UnitEntry_DeploySquads(playerEnglish, sg_road_patrol, {{type = "scar_archer", numSquads = 5}}, mkr_road_patrol)
+	Cmd_AttackMove(sg_road_patrol, mkr_road_patrol_dest)
+	Rule_AddInterval(Patay_CheckRoadPatrol, 1)
+end
+
+function Patay_CheckRoadPatrol()
+	if Player_CanSeeSGroup(player1, sg_road_patrol, ANY) then
+		Rule_AddOneShot(Patay_MergeRoadPatrol, 2)
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_MergeRoadPatrol()
+	Cmd_FormationMove(sg_road_patrol, mkr_main_battle_center)
+	Prefab_DoAction(MissionOMatic_FindModule("BattleGroup2"), "AddSGroup", sg_road_patrol)
+end
+
+function Patay_AddArmyTarget(moduleName, sgroup, target)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		RovingArmy_AddTarget(MissionOMatic_FindModule(moduleName), target)
+	end
+end
+
+function Patay_AddArmyTargets(moduleName, sgroup, targets)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		RovingArmy_AddTargets(MissionOMatic_FindModule(moduleName), targets)
+	end
+end
+
+--function Patay_CheckMainRearTrigger()
+	
+	--Player_GetAll(player1)
+	--if Prox_AreSquadsNearMarker(sg_allsquads, mkr_main_battle_rear_trigger, ANY, 30) then
+		
+		--Patay_AddArmyTarget("BattleGroup4", sg_battle_group4, mkr_battle_group_attack4)
+		--Rule_RemoveMe()
+	--end
+--end
+
+--function Patay_CheckJoanTrigger()
+	
+	--Player_GetAll(player1)
+	--if Prox_AreSquadsNearMarker(sg_allsquads, mkr_joan_trigger, ANY, 25)  then
+		--joan_has_arrived = true
+		--EventCues_CallToAction(11180136, CTA_CELEBRATE, nil, Patay_JoanCav_Cheer, MissionOMatic_GetSGroupForTaggedUnit("General"), 20)
+		--Rule_RemoveMe()
+	--end
+--end
+
+function Patay_JoanCav_Cheer()
+	
+	SGroup_PlaySpeech(g_leaderJoan.sgroup,"Campaign_Speech/leaders/hun/jeanne/french_jeannedarc_hun_chp3_orleans_iHigh_cMed_07")
+	
+	SGroup_Clear(sg_temp)
+	SGroup_AddGroups(sg_temp, {sg_joan_cav1, sg_joan_cav2})
+	Sound_PlayWallaChargeOnSGroup(sg_temp)	
+end
+
+function Patay_CheckDepartTrigger()
+	
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_depart_trigger, ANY, 30)  then
+		Patay_BeginChasePhase()
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_CheckPatayDefendTrigger()
+	
+	Player_GetAll(playerEnglish)
+	
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_patay_trigger, ANY, 50) then
+		
+		Player_GetAllSquadsNearMarker(playerEnglish, sg_temp, mkr_patay_trigger, 50)
+		if SGroup_CountSpawned(sg_temp) >= 2 then
+			
+			Objective_Start(OBJ_DefendPatay)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function Patay_CheckSigmundRetreatTrigger()
+	
+	if SGroup_CountSpawned(sg_sigmund_main) > 0 then
+		if Prox_AreSquadsNearMarker(sg_sigmund_main, mkr_main_battle_rear_trigger, ANY, 30) then
+			if SGroup_CountSpawned(sg_battle_group2) > 0 then
+				Prefab_DoAction(MissionOMatic_FindModule("BattleGroup2"), "AddSGroup", sg_sigmund_main)
+			end
+			Rule_RemoveMe()
+		end
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function Patay_MergeRetreatIntoRegiment1()
+	
+	local data = t_regiments[1]
+	
+	if SGroup_CountSpawned(data.sgroup) > 0 and SGroup_CountSpawned(sg_main_retreat) > 0 then
+		
+		Prefab_DoAction(MissionOMatic_FindModule("Regiment1"), "AddSGroup", sg_main_retreat)
+		SGroup_AddGroup(data.sgroup_master, sg_main_retreat)
+		data.initCount = SGroup_CountSpawned(data.sgroup_master)
+	end
+	
+end
+
+function Patay_SetGoldValue()
+	
+	local _SetGold = function(gid, idx, eid)
+		Entity_SetStateModelFloat(eid, "resource_pickup_amount_gold", 400)
+	end
+	EGroup_ForEach(eg_gold, _SetGold)
+end
+
+function Patay_InitStartingUnits()
+
+	SpawnUnitGroups(player1, "sg_starting", t_player_starting_units, "mkr_player_army", false)
+	SpawnUnitGroups(playerEnglish, "sg_intro_archers", t_intro_archer_units, "mkr_intro_archer", false)
+	
+	Player_GetAll(player1)
+	SGroup_AddGroup(sg_startingUnitsFrench, sg_allsquads)
+
+end
+
+function Patay_SpawnTestArcher()
+	
+	sg_test_archer = SGroup_CreateIfNotFound("sg_test_archer")
+	UnitEntry_DeploySquads(playerEnglish, sg_test_archer, {type = "scar_archer", numSquads = 1}, Misc_GetMouseOnTerrain())
+	Cmd_Ability(sg_test_archer, BP_GetAbilityBlueprint("deploy_palings"))
+end
+
+function Patay_SpawnJoanCav()
+	
+	joan_has_spawned = true
+	
+	local units = {
+		{type = "scar_scout", numSquads = 1},
+		{type = "scar_horseman", numSquads = 5}
+	}
+	
+	UnitEntry_DeploySquads(player1, sg_joan_cav1, units, mkr_joan_cav1)
+	UnitEntry_DeploySquads(player1, sg_joan_cav2, units, mkr_joan_cav2)
+	UnitEntry_DeploySquads(player1, sg_joan_cav3, units, mkr_joan_cav3)
+	UnitEntry_DeploySquads(player1, sg_joan_cav4, units, mkr_joan_cav4)
+	
+	UnitEntry_DeploySquads(player1, g_leaderJoan.sgroup, {{sbp = BP_GetSquadBlueprint("unit_joan_of_arc_cmp_fre"), numSquads = 1, tag = "General" }}, mkr_joan)
+	Cmd_Move(MissionOMatic_GetSGroupForTaggedUnit("General"), mkr_joan_dest)
+	
+	Cmd_FormationAttackMove(sg_joan_cav1, mkr_joan_cav_dest1)
+	Cmd_FormationAttackMove(sg_joan_cav2, mkr_joan_cav_dest2)
+	Cmd_FormationAttackMove(sg_joan_cav3, mkr_joan_cav_dest3)
+	Cmd_FormationAttackMove(sg_joan_cav4, mkr_joan_cav_dest4)
+	
+	mkr_reinforce_main = mkr_reinforce3
+	mkr_reinforce_main_dest = mkr_reinforce_dest3
+	
+end
+
+function Patay_SpawnSigmundReserve()
+	
+	Patay_SpawnUnitCluster("mkr_sigmund1", 3, "scar_archer", sg_sigmund_reserve)
+	Patay_SpawnUnitCluster("mkr_sigmund2", 2, "scar_spearman", sg_sigmund_reserve)
+	Patay_SpawnUnitCluster("mkr_sigmund3", 2, "scar_archer", sg_sigmund_reserve)
+	Patay_SpawnUnitCluster("mkr_sigmund4", 3, "scar_spearman", sg_sigmund_reserve)
+	Patay_SpawnUnitCluster("mkr_sigmund5", 3, "scar_archer", sg_sigmund_reserve)
+	Patay_SpawnUnitCluster("mkr_sigmund6", 2, "scar_spearman", sg_sigmund_reserve)
+	Patay_SpawnUnitCluster("mkr_sigmund7", 2, "scar_archer", sg_sigmund_reserve)
+	Patay_SpawnUnitCluster("mkr_sigmund8", 3, "scar_spearman", sg_sigmund_reserve)
+	
+	SGroup_AddGroup(sg_sigmund_main, sg_sigmund_reserve)
+	
+	sigmund_init_count = SGroup_CountSpawned(sg_sigmund_main)
+	
+end
+
+function Patay_SpawnAmbush()
+	
+	SpawnUnitsToModule({{type = "scar_archer", numSquads = 4}, {type = "scar_scout", numSquads = 1}}, "Rearguard1")
+	SpawnUnitsToModule({{type = "scar_archer", numSquads = 4}}, "Rearguard2")
+	SpawnUnitsToModule({{type = "scar_archer", numSquads = 4}, {type = "scar_scout", numSquads = 1}}, "Rearguard3")
+	SpawnUnitsToModule({{type = "scar_archer", numSquads = 4}}, "Rearguard4")
+	
+	SGroup_AddGroup(sg_rearguard, sg_rearguard1)
+	SGroup_AddGroup(sg_rearguard, sg_rearguard2)
+	SGroup_AddGroup(sg_rearguard, sg_rearguard3)
+	SGroup_AddGroup(sg_rearguard, sg_rearguard4)
+	
+end
+
+function Patay_SpawnUnitCluster(markerName, numPerMarker, unitType, masterSgroup)
+	
+	local sgroup = SGroup_CreateUnique("")
+	local marker = Marker_FromName(markerName, "")
+	UnitEntry_DeploySquads(playerEnglish, sgroup, {{type = unitType, numSquads = numPerMarker }}, marker)
+	SGroup_AddGroup(masterSgroup, sgroup)
+end
+
+function Patay_StartDefeatArmy()
+	if not Objective_IsStarted(OBJ_DefeatArmy) then
+		Objective_Start(OBJ_DefeatArmy)
+	end
+end
+
+function Patay_SetRegimentUnitData()
+	
+	t_regiments[1].units = {
+		{type = "scar_archer", numSquads = 3 * t_difficulty.regimentBaseCount},
+		{type = "scar_horseman", numSquads = t_difficulty.regimentBaseCount}
+	}
+	
+	t_regiments[2].units = {
+		{type = "scar_archer", numSquads = 2 * t_difficulty.regimentBaseCount},
+		{type = "scar_spearman", numSquads = 4 * t_difficulty.regimentBaseCount},
+		{type = "scar_springald", numSquads = t_difficulty.regimentSiegeCount}
+	}
+	
+	t_regiments[3].units = {
+		{type = "scar_archer", numSquads = 3 * t_difficulty.regimentBaseCount},
+		{type = "scar_manatarms", numSquads = 4 * t_difficulty.regimentBaseCount},
+		{type = "scar_mangonel", numSquads = t_difficulty.regimentSiegeCount}
+	}
+	
+end
+
+function Patay_BeginMainBattle()
+	
+	main_battle_started = true
+	
+	Patay_SetRegimentUnitData()
+	
+	Patay_AddArmyTarget("BattleGroup1", sg_battle_group1, mkr_battle_group_attack1)
+	Patay_AddArmyTarget("BattleGroup2", sg_battle_group2, mkr_battle_group_attack2)
+	Patay_AddArmyTarget("BattleGroup3", sg_battle_group3, mkr_battle_group_attack3)
+	
+	Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, sg_main_line)
+	Rule_AddInterval(Patay_ProcessMainBattle, 1)
+	
+	Rule_AddInterval(Patay_CheckDepartTrigger, 1)
+	
+	RovingArmy_SetTarget(MissionOMatic_FindModule("LureArchers"), mkr_lure_archer_dest)
+	
+	Rule_AddOneShot(Patay_SpawnRegiment, 2, {index = 1})
+	Rule_AddOneShot(Patay_SpawnRegiment, 3, {index = 2})
+	Rule_AddOneShot(Patay_SpawnRegiment, 4, {index = 3})
+	
+end
+
+function Patay_SpawnRegiment(context, data)
+	
+	local i = data.index
+	local regiment = t_regiments[i]
+	SpawnUnitsToModule(regiment.units, regiment.name, regiment.marker)
+	SGroup_AddGroup(regiment.sgroup_master, regiment.sgroup)
+	
+	
+	if i <= #t_scatter_groups then
+		
+		local scatter_group = t_scatter_groups[i]
+		
+		local marker_main = Marker_FromName("scatter"..tostring(i).."_main", "")
+		local marker1 = Marker_FromName("scatter"..tostring(i).."_1", "")
+		local marker2 = Marker_FromName("scatter"..tostring(i).."_2", "")
+		
+		UnitEntry_DeploySquads(playerEnglish, scatter_group.sgroup, scatter_group.units[1], marker_main)
+		UnitEntry_DeploySquads(playerEnglish, scatter_group.sgroup, scatter_group.units[2], marker1)
+		UnitEntry_DeploySquads(playerEnglish, scatter_group.sgroup, scatter_group.units[3], marker2)
+		
+		SGroup_AddGroup(scatter_group.sgroup_master, scatter_group.sgroup)
+	end
+	
+	-- init counts
+	local regiment = t_regiments[i]
+	regiment.initCount = SGroup_CountSpawned(regiment.sgroup_master)
+	
+end
+
+
+function Patay_SetBattleProgress(initCount, currentCount, threshold)
+	
+	local remaining = currentCount - threshold
+	
+	if remaining <= 0 then
+		main_battle_progress = main_battle_progress + (1/4)
+	else
+		local allowed_losses = initCount - threshold
+		local progress = (allowed_losses - remaining) / allowed_losses
+		main_battle_progress = main_battle_progress + (progress * (1/4))
+	end
+	
+end
+
+function Patay_ProcessMainBattle()
+	
+	local player_count = Player_GetTotalPopulation(player1)
+	
+	if main_line_broken == false then
+		
+		local main_line_count = SGroup_CountSpawned(sg_main_line)
+		
+		main_battle_progress = 0
+		Patay_SetBattleProgress(24, main_line_count, main_line_threshold)
+		
+		if main_line_count <= main_line_threshold then
+			
+			main_line_broken = true
+			Cmd_FormationMove(sg_main_line, mkr_reg1_main)
+		end
+	
+	else
+		main_battle_progress = (1/4)
+		
+		Player_GetAllSquadsNearMarker(playerEnglish, sg_temp, mkr_main_battle_center, 40)
+		
+		if battle_groups_broken >= 3 or SGroup_CountSpawned(sg_temp) == 0 then
+			
+			SGroup_AddGroup(sg_main_retreat, sg_main_line)
+			SGroup_AddGroup(sg_main_retreat, sg_battle_retreat1)
+			SGroup_AddGroup(sg_main_retreat, sg_battle_retreat2)
+			SGroup_AddGroup(sg_main_retreat, sg_battle_retreat3)
+			--SGroup_AddGroup(sg_main_retreat, sg_battle_retreat4)
+			
+			Rule_AddOneShot(Patay_MergeRetreatIntoRegiment1, 35)
+			
+			Objective_Complete(OBJ_DefeatArmy)
+			--Rule_AddInterval(Patay_CheckMainRetreatTrigger, 1)
+			Rule_RemoveMe()
+		end
+	end
+	
+	for i = 1, 3 do Patay_CheckBattleGroup(i) end
+	Obj_SetProgress(OBJ_DefeatArmy.ID, main_battle_progress)
+end
+
+function Patay_CheckBattleGroup(num)
+	
+	local sgroup = SGroup_FromName("sg_battle_group"..tostring(num))
+	local unit_count = SGroup_CountSpawned(sgroup)
+	
+	Patay_SetBattleProgress(14, unit_count, battle_group_threshold)
+	
+	if unit_count > 0 and unit_count <= battle_group_threshold then
+		
+		local module = MissionOMatic_FindModule("BattleGroup"..tostring(num))
+		local sgroup_retreat = SGroup_FromName("sg_battle_retreat"..tostring(num))
+		
+		local _Assign = function(gid, idx, sid)
+			if Squad_IsAlive(sid) then
+				SGroup_Add(sgroup_retreat, sid)
+			end
+		end
+		
+		SGroup_ForEach(sgroup, _Assign)
+		RovingArmy_Disband(module)
+		Cmd_FormationMove(sgroup_retreat, mkr_reg1_main)
+		
+		battle_groups_broken = battle_groups_broken + 1
+	end
+end
+
+function Patay_StartClearRegiments()
+	Objective_Start(OBJ_ClearRegiments)
+end
+
+function Patay_InitPatay()
+	
+	UnitEntry_DeploySquads(playerAllies, sg_player_farmers, {{type = "scar_villager", numSquads = 8 }}, mkr_patay1)
+	UnitEntry_DeploySquads(playerAllies, sg_player_woodcutters, {{type = "scar_villager", numSquads = 6 }}, mkr_patay2)
+	UnitEntry_DeploySquads(playerAllies, sg_player_gold_miners, {{type = "scar_villager", numSquads = 3 }}, mkr_patay3)
+	UnitEntry_DeploySquads(playerAllies, sg_player_stone_miners, {{type = "scar_villager", numSquads = 1 }}, mkr_patay4)
+	UnitEntry_DeploySquads(playerAllies, sg_player_shepherds, {{type = "scar_villager", numSquads = 2 }}, mkr_patay5)
+	
+	AssignVillagersToFarms(sg_player_farmers)
+	AssignVillagersToGold(sg_player_gold_miners)
+	AssignVillagersToStone(sg_player_stone_miners)
+	AssignVillagersToWood(sg_player_woodcutters)
+	
+	Modify_WoodGatherRate(sg_player_woodcutters, 0.1)
+	Modify_GoldGatherRate(sg_player_gold_miners, 0.1)
+	Modify_StoneGatherRate(sg_player_stone_miners, 0.1)
+	
+end
+
+function Patay_CheckAllyFlee()
+	
+	if farmers_fled == false then
+		if Player_CanSeeSGroup(playerEnglish, sg_player_farmers, ANY) then
+			farmers_fled = true
+			Cmd_AttackMove(sg_player_farmers, mkr_ally_flee)
+		end
+	end
+	
+	if woodcutters_fled == false then
+		if Player_CanSeeSGroup(playerEnglish, sg_player_woodcutters, ANY) then
+			woodcutters_fled = true
+			Cmd_AttackMove(sg_player_woodcutters, mkr_ally_flee)
+		end
+	end
+	
+	if gold_miners_fled == false then
+		if Player_CanSeeSGroup(playerEnglish, sg_player_gold_miners, ANY) then
+			gold_miners_fled = true
+			Cmd_AttackMove(sg_player_gold_miners, mkr_ally_flee)
+		end
+	end
+	
+	if stone_miners_fled == false then
+		if Player_CanSeeSGroup(playerEnglish, sg_player_stone_miners, ANY) then
+			stone_miners_fled = true
+			Cmd_AttackMove(sg_player_stone_miners, mkr_ally_flee)
+		end
+	end
+	
+	if shepherds_fled == false then
+		if Player_CanSeeSGroup(playerEnglish, sg_player_shepherds, ANY) then
+			shepherds_fled = true
+			Cmd_AttackMove(sg_player_shepherds, mkr_ally_flee)
+		end
+	end
+end
+
+function Patay_TakeControlOfPatay()
+	-- if on console, restore the VPS at this point
+	if UI_IsXboxControllerUI() then
+		Game_SetVisibility(VF_XboxUIVillagerPriorities, true)
+	end
+	
+	Rule_Remove(Patay_CheckAllyFlee)
+	Rule_Remove(Patay_CheckDiplomacyReminder)
+	
+	Player_SetMaxPopulation(player1, CT_Personnel, 0)	
+	Patay_SetPopulationCapVisibility(true)
+	
+	EGroup_SetPlayerOwner(eg_patay, player1)
+	EGroup_SetPlayerOwner(eg_patay_tc, player1)
+	
+	Defend_Disband(MissionOMatic_FindModule("PatayDefenders1"))
+	Defend_Disband(MissionOMatic_FindModule("PatayDefenders2"))
+	
+	Player_GetAll(playerAllies)
+	SGroup_SetPlayerOwner(sg_allsquads, player1)
+	
+	--give the player some resources based on time
+	local minutes_elapsed = math.ceil((World_GetGameTime() - patay_start_time) * 0.01667)
+	
+	local resources = {
+		gold = 100 * minutes_elapsed, 
+		wood = 100 * minutes_elapsed, 
+		food = 200 * minutes_elapsed, 
+		stone = 50 * minutes_elapsed,
+	}
+	
+	Player_AddResources(player1, resources)
+	
+	AssignVillagersToSheep(sg_player_shepherds)
+	
+	Modify_WoodGatherRate(sg_player_woodcutters, 10)
+	Modify_GoldGatherRate(sg_player_gold_miners, 10)
+	Modify_StoneGatherRate(sg_player_stone_miners, 10)
+	
+	mkr_reinforce_main = mkr_reinforce4
+	mkr_reinforce_main_dest = mkr_reinforce_dest4
+	
+	Util_AutoSave()
+	
+end
+
+
+function Patay_BeginChasePhase()
+	
+	Objective_Start(OBJ_ClearRegiments)
+	Rule_AddInterval(Patay_CheckPatayDefendTrigger, 1)
+	Rule_AddInterval(Patay_CheckRegiments, 1)
+	Rule_AddSGroupEvent(Patay_CheerRegiment1, sg_regiment1, GE_SquadKilled)
+	Rule_AddSGroupEvent(Patay_CheerRegiment2, sg_regiment2, GE_SquadKilled)
+	Rule_AddSGroupEvent(Patay_CheerRegiment3, sg_regiment3, GE_SquadKilled)
+	Rule_AddInterval(Patay_CheckScatterGroups, 3)
+	
+	-- slow down regiments
+	Modify_UnitSpeed(sg_regiment_main1, 0.5)
+	Modify_UnitSpeed(sg_regiment_main2, 0.5)
+	Modify_UnitSpeed(sg_regiment_main3, 0.5)
+	
+	-- timed activation of regiments
+	Rule_AddOneShot(Patay_WakeRegiment1, t_difficulty.regimentWakeTimer)
+	Rule_AddOneShot(Patay_WakeRegiment2, t_difficulty.regimentWakeTimer * 3)
+	Rule_AddOneShot(Patay_WakeRegiment3, t_difficulty.regimentWakeTimer * 5)
+	
+	if SGroup_CountSpawned(sg_sigmund_attack) > 0 then
+		RovingArmy_SetTarget(MissionOMatic_FindModule("SigmundAttackers"), mkr_patay_center)
+	end
+	
+	if not Objective_IsComplete(OBJ_DefeatArmy) then
+		
+		local targets = {mkr_eastroad1, mkr_eastroad2, mkr_eastroad3, mkr_eastroad4, mkr_eastroad5, mkr_eastroad6, mkr_patay_center}
+		
+		-- relief army heads to patay
+		if SGroup_CountSpawned(sg_main_line) > 0 then
+			Prefab_DoAction(MissionOMatic_FindModule("BattleGroup1"), "AddSGroup", sg_main_line)
+		end
+		
+		Patay_AddArmyTargets("BattleGroup1", sg_battle_group1, targets)
+		Patay_AddArmyTargets("BattleGroup2", sg_battle_group2, targets)
+		Patay_AddArmyTargets("BattleGroup3", sg_battle_group3, targets)
+		--Patay_AddArmyTargets("BattleGroup4", sg_battle_group4, targets)
+		
+		Objective_RemoveUIElements(OBJ_DefeatArmy, hpid_army)
+		Objective_AddUIElements(OBJ_DefeatArmy, sg_battle_group1, true, 11180181, false)
+	end
+	
+end
+
+function Patay_CheckScatterGroups()
+	
+	for i = 1, #t_scatter_groups do
+		
+		local scatter_group = t_scatter_groups[i]
+		
+		if scatter_group.isAlive == true then
+		
+			if SGroup_CountSpawned(scatter_group.sgroup) == 0 then
+				scatter_group.isAlive = false
+			elseif scatter_group.hasMerged == true then
+				-- is there anything further to do here?
+			elseif scatter_group.isFleeing == true then
+				-- am i close enough to the main regiment to merge in?
+				
+				if SGroup_CountSpawned(scatter_group.sgroup_target) > 0 then
+					if Prox_AreSquadsNearMarker(scatter_group.sgroup, Util_GetPosition(scatter_group.sgroup_target), ANY, 20) then
+						scatter_group.hasMerged = true
+						Prefab_DoAction(MissionOMatic_FindModule(scatter_group.merge_target), "AddSGroup", scatter_group.sgroup)
+					end
+				end
+			else
+				-- does the player locally outnumber me?
+				Player_GetAllSquadsNearMarker(player1, sg_temp, scatter_group.marker, 15)
+				if SGroup_CountSpawned(sg_temp) > SGroup_CountSpawned(scatter_group.sgroup) then
+					scatter_group.isFleeing = true
+					Cmd_FormationMove(scatter_group.sgroup, mkr_patay_center)
+				end
+			end
+		end
+	end
+end
+
+function Patay_CheckRegiments()
+	
+	Patay_CheckRegiment(SOBJ_ClearRegiment1, t_regiments[1])
+	Patay_CheckRegiment(SOBJ_ClearRegiment2, t_regiments[2])
+	Patay_CheckRegiment(SOBJ_ClearRegiment3, t_regiments[3])
+	
+end
+
+function Patay_CheckRegiment(objective, data)
+	
+	if not Objective_IsComplete(objective) then
+		
+		local count = SGroup_CountSpawned(data.sgroup_master)
+		
+		if count == 0 then
+			regiments_cleared = regiments_cleared + 1
+			
+			if regiments_cleared < regiments_total then
+				Objective_Complete(objective)
+			else
+				Objective_Complete(objective, false)
+				Objective_Complete(OBJ_ClearRegiments)
+			end
+		else
+			local progress = (data.initCount - count) / data.initCount
+			Objective_SetProgressBar(objective, progress)
+			
+			--Obj_SetProgress(objective.ID, progress)
+		end
+		
+		
+		if data.isActive == false then
+			
+			Player_GetAll(player1)
+			if Prox_AreSquadsNearMarker(sg_allsquads, data.marker, ANY, 60) then
+				Patay_ActivateRegiment(data)
+			end
+			
+		elseif data.hasSpeededUp == false then
+			
+			Player_GetAll(player1)
+			if Prox_AreSquadsNearMarker(sg_allsquads, Util_GetPosition(data.sgroup), ANY, 35) then
+				data.hasSpeededUp = true
+				Modify_UnitSpeed(data.sgroup, 2)
+			end
+			
+		elseif data.hasFullyMerged == false then
+			
+			if count < (data.initCount * 0.5) then
+				Patay_MergeRegiment(data)
+			end
+		end
+
+	end
+	
+end
+
+function Patay_CheerRegiment1(context,data)
+	
+	if SGroup_CountSpawned(sg_regiment1) < 1 then
+		local pos = Squad_GetPosition(context.victim)
+		Player_GetAllSquadsNearMarker(player1, sg_temp, pos, 35)
+		Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+		Music_PlayStinger(MUS_STING_TRIUMPHANT)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Patay_CheerRegiment2(context,data)
+		
+	if SGroup_CountSpawned(sg_regiment2) < 1 then
+		local pos = Squad_GetPosition(context.victim)
+		Player_GetAllSquadsNearMarker(player1, sg_temp, pos, 35)
+		Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+		Music_PlayStinger(MUS_STING_TRIUMPHANT)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Patay_CheerRegiment3(context,data)
+	
+	if SGroup_CountSpawned(sg_regiment3) < 1 then
+		local pos = Squad_GetPosition(context.victim)
+		Player_GetAllSquadsNearMarker(player1, sg_temp, pos, 35)
+		Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+		Music_PlayStinger(MUS_STING_TRIUMPHANT)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Patay_WakeRegiment1()
+	Rule_AddInterval(Patay_CheckAllyFlee, 3)
+	Patay_ActivateRegiment(t_regiments[1])
+	Patay_MergeRegiment(t_regiments[1])
+end
+
+function Patay_WakeRegiment2()
+	Patay_ActivateRegiment(t_regiments[2])
+	Patay_MergeRegiment(t_regiments[2])
+end
+
+function Patay_WakeRegiment3()
+	Patay_ActivateRegiment(t_regiments[3])
+	Patay_MergeRegiment(t_regiments[3])
+end
+
+function Patay_ActivateRegiment(data)
+	
+	if data.isActive == false then
+		data.isActive = true
+		local module = MissionOMatic_FindModule(data.name)
+		RovingArmy_SetTargets(module, data.final_targets)
+	end
+end
+
+function Patay_MergeRegiment(data)
+	
+	if data.hasFullyMerged == false then
+		
+		data.hasFullyMerged = true
+		
+		for i = 1, #t_scatter_groups do
+			
+			local scatter_group = t_scatter_groups[i]
+			
+			if scatter_group.hasMerged == false and scatter_group.isAlive == true then
+				if scatter_group.merge_target == data.name then
+					scatter_group.hasMerged = true
+					Prefab_DoAction(MissionOMatic_FindModule(scatter_group.merge_target), "AddSGroup", scatter_group.sgroup)
+				end
+			end
+		end
+	end
+end
+
+function Patay_MoveStartingUnits1()
+	
+	Modify_UnitSpeed(sg_intro_archers1, 1.4, -1)
+	Modify_UnitSpeed(sg_intro_archers2, 1.4, -1)
+	Modify_UnitSpeed(sg_intro_archers3, 1.4, -1)
+	Modify_UnitSpeed(sg_intro_archers4, 1.4, -1)
+	Modify_UnitSpeed(sg_intro_archers5, 1.4, -1)
+	
+	FOW_RevealSGroup(sg_intro_archers1, 20, 10)
+	FOW_RevealSGroup(sg_intro_archers2, 20, 10)
+	FOW_RevealSGroup(sg_intro_archers3, 20, 10)
+	FOW_RevealSGroup(sg_intro_archers4, 20, 10)
+	FOW_RevealSGroup(sg_intro_archers5, 20, 10)
+	
+	Cmd_FormationMove(sg_intro_archers1, mkr_intro_archer_dest)
+	Cmd_FormationMove(sg_intro_archers2, mkr_intro_archer_dest)
+	Cmd_FormationMove(sg_intro_archers3, mkr_intro_archer_dest)
+	Cmd_FormationMove(sg_intro_archers4, mkr_intro_archer_dest)
+	Cmd_FormationMove(sg_intro_archers5, mkr_intro_archer_dest)
+
+end
+
+function Patay_MoveStartingUnits2()
+	
+	local speed_mod = 0.1
+	Modify_UnitSpeed(sg_starting1, speed_mod)
+	Modify_UnitSpeed(sg_starting2, speed_mod)
+	Modify_UnitSpeed(sg_starting3, speed_mod)
+	Modify_UnitSpeed(sg_starting4, speed_mod)
+	Modify_UnitSpeed(sg_starting5, speed_mod)
+	Modify_UnitSpeed(sg_starting6, speed_mod)
+	Modify_UnitSpeed(sg_starting7, speed_mod)
+	Modify_UnitSpeed(sg_starting8, speed_mod)
+	
+	Cmd_FormationMove(sg_starting1, mkr_player_dest1)
+	Cmd_FormationMove(sg_starting2, mkr_player_dest2)
+	Cmd_FormationMove(sg_starting3, mkr_player_dest3)
+	Cmd_FormationMove(sg_starting4, mkr_player_dest4)
+	Cmd_FormationMove(sg_starting5, mkr_player_dest5)
+	Cmd_FormationMove(sg_starting6, mkr_player_dest6)
+	Cmd_FormationMove(sg_starting7, mkr_player_dest7)
+	Cmd_FormationMove(sg_starting8, mkr_player_dest8)
+	
+end
+
+function Patay_ReverseSpeedMod()
+	
+	if speedModReversed == false then
+		speedModReversed = true
+		local speed_mod = 10
+		Modify_UnitSpeed(sg_starting1, speed_mod)
+		Modify_UnitSpeed(sg_starting2, speed_mod)
+		Modify_UnitSpeed(sg_starting3, speed_mod)
+		Modify_UnitSpeed(sg_starting4, speed_mod)
+		Modify_UnitSpeed(sg_starting5, speed_mod)
+		Modify_UnitSpeed(sg_starting6, speed_mod)
+		Modify_UnitSpeed(sg_starting7, speed_mod)
+		Modify_UnitSpeed(sg_starting8, speed_mod)
+	end
+end
+
+function Patay_TriggerOutro()
+	Mission_Complete()
+end
+
+function Patay_RestartMusic()
+	Music_RestartAfterObjective(1)
+	Sound_SetMinimumMusicCombatIntensity(801, 0)
+end
+
+function Patay_RestartMusicCombat()
+	Music_CombatMusicOnly()
+	Music_RestartAfterObjective(1)
+	Sound_SetMinimumMusicCombatIntensity(801, 0)
+end
+
+
+function Patay_SetUpOutro()
+	
+	UnitEntry_DeploySquads(player1, sg_outro_joan, {{sbp = BP_GetSquadBlueprint("unit_joan_of_arc_cmp_fre"), numSquads = 1 }}, mkr_outro_joan)
+	
+	local outro_army = {
+		{type = "scar_manatarms", numSquads = 10, spawn = mkr_outro_army1, sgroup = sg_outro_cheer },
+		{type = "scar_spearman",  numSquads = 10, spawn = mkr_outro_army2, destination = mkr_outro_army2_dest, sgroup = sg_outro_cheer },
+		{type = "scar_knight",    numSquads = 6, spawn = mkr_outro_army3, destination = mkr_outro_army3_dest, },
+		{type = "scar_horseman",  numSquads = 10, spawn = mkr_outro_army4, destination = mkr_outro_army4_dest },		
+		{type = "scar_spearman",  numSquads = 10, spawn = mkr_outro_army5, destination = mkr_outro_army5_dest, sgroup = sg_outro_cheer },
+	}
+		
+	UnitEntry_DeploySquads(player1, sg_outro_army, outro_army, nil)
+	
+	Modify_UnitSpeed(sg_outro_army, 0.5)
+	
+end
+
+function Patay_MergeReserveIntoSigmund()
+	
+	if SGroup_CountSpawned(sg_sigmund_reserve) > 0 then
+		Prefab_DoAction(MissionOMatic_FindModule("SigmundDefenders"), "AddSGroup", sg_sigmund_reserve)
+	end
+end
+
+function Patay_MergeIntoSigmund()
+	
+	if SGroup_CountSpawned(sg_road_blockers) > 0 then
+		sigmund_init_count = sigmund_init_count + SGroup_CountSpawned(sg_road_blockers)
+		Prefab_DoAction(MissionOMatic_FindModule("SigmundDefenders"), "AddSGroup", sg_road_blockers)
+	end
+end
+
+
+function Patay_OnSquadKilled(context)
+	
+	local victim = context.victim
+	
+	if not World_OwnsSquad(victim) then
+		
+		if Squad_GetPlayerOwner(victim) == playerEnglish then
+			
+			if SGroup_ContainsSquad(sg_road_blockers, victim.SquadID, true) then
+				
+				if not Objective_IsComplete(OBJ_ClearRoad) then
+					
+					--if rear_guard_disbanded == false then
+						--rear_guard_disbanded = true
+						--Patay_DisbandRearguard()
+					--end
+					
+					if SGroup_CountSpawned(sg_road_blockers) <= road_blocker_threshold then
+						
+						Objective_Complete(OBJ_ClearRoad)
+						
+						Cmd_FormationMove(sg_road_blockers, mkr_sigmund_trigger_center)
+						Rule_AddOneShot(Patay_MergeIntoSigmund, 15)
+						--Prefab_DoAction(MissionOMatic_FindModule("SigmundDefenders"), "AddSGroup", sg_road_blockers)
+						
+						Patay_CheckReinforcePanel()
+						
+					else
+						
+						local kill_count_goal = road_blocker_init_count - road_blocker_threshold
+						local kill_count = road_blocker_init_count - SGroup_CountSpawned(sg_road_blockers)
+						local progress = kill_count / kill_count_goal
+						Objective_SetProgressBar(OBJ_ClearRoad, progress)
+						
+					end
+				end
+				
+			elseif SGroup_ContainsSquad(sg_sigmund_main, victim.SquadID, true) then
+				
+				if not Objective_IsComplete(OBJ_ClearStSigmund) then
+					
+					if SGroup_CountSpawned(sg_sigmund_main) <= sigmund_threshold then
+						
+						Objective_SetProgressBar(OBJ_ClearStSigmund, 1)
+						Objective_Complete(OBJ_ClearStSigmund)
+						
+						Defend_Disband(MissionOMatic_FindModule("SigmundDefenders"))
+						
+						Cmd_FormationMove(sg_sigmund_main, mkr_main_battle_rear_trigger)
+						Rule_AddInterval(Patay_CheckSigmundRetreatTrigger, 1)
+						
+						mkr_reinforce_main = mkr_reinforce2
+						mkr_reinforce_main_dest = mkr_reinforce_dest2
+						
+						Patay_CheckReinforcePanel()
+						
+					else
+						
+						local kill_count_goal = sigmund_init_count - sigmund_threshold
+						local kill_count = sigmund_init_count - SGroup_CountSpawned(sg_sigmund_main)
+						local progress = kill_count / kill_count_goal
+						Objective_SetProgressBar(OBJ_ClearStSigmund, progress)
+						
+					end
+				end
+				
+			end
+				
+		end
+		
+	end
+	
+end
+
+function Tribute_Intel()
+	if b_tributeIntelPlayed == false then
+		b_tributeIntelPlayed = true
+		--Util_StartIntel(EVENTS.TributeMenu)
+	end
+end
+
+--function Reinforcement_Intel(reserve)
+	
+	--if reserve.intel_played == false then
+		--reserve.intel_played = true
+		--Util_StartIntel(EVENTS[reserve.intel_event])
+	--end
+--end
+
+function Patay_InitDebug ()
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Player_GetAll(playerEnglish)
+			SGroup_DestroyAllSquads(sg_allsquads)
+			
+			Music_StopMedium()
+			--Music_Stop()
+			Patay_TriggerOutro()
+			
+	       end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+end
+
+-- Achievement tracking for Achievement #14 - Fill The Coffers - Collect every Gold chest in the Battle of Patay
+function Patay_CheckGoldPickupsLooted()
+	
+	if EGroup_Count(eg_gold) == 0 then
+		
+		-- Unlock Achievement
+		Game_SendCustomChallengeEvent(player1, CE_ACHIEVALLGOLDCHESTSPATAY, 1)
+		Rule_RemoveMe()
+	end
+end

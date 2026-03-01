@@ -1,0 +1,324 @@
+--
+-- Hastings 1066 - Feign objective
+--
+
+import("ang_chp1_hastings.scar")
+
+
+function Feign_InitObjectives()	
+
+	OBJ_Feign = {
+	
+		Title = "$11181629", -- Feign a retreat
+		Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.TheFeign_Start,
+		Intel_Complete = EVENTS.TheFeign_Complete,
+		
+		SetupUI = function()
+			
+			Objective_Show(OBJ_DefeatSaxons, false)	-- hide the previous objective for now, as we'll bring it back later on (after the feign)
+			Objective_RemoveUIElements(OBJ_DefeatSaxons, hpid_initialAttack)
+			
+			hpid_feign = Objective_AddUIElements(OBJ_Feign, mkr_hintpoint_feign, true, "$11181630", true) -- Order your units away from the shield wall
+			Music_PlayStinger("sfx_campaign_Hastings_horn_retreat") -- Retreat horn, play 5 * times	
+			Rule_AddInterval(Feign_HasPlayerRetreated, 0.5)
+			
+			--local reticuleID = UI_ModalVisual_CreateReticule(BP_GetReticuleBlueprint("direction_1_no_damage"), 10)
+			--UI_ModalVisual_SetPosition(reticuleID, Util_GetPosition(mkr_shieldwall_b))
+			--UI_ModalVisual_SetRotation(reticuleID, Util_GetDirection(mkr_shieldwall_b))
+		end,
+
+		--PreStart = function()
+			--Rule_AddInterval(Feign_MonitorShieldWallEngagers, 0.5)
+		--end,
+		
+		OnStart = function()
+			MissionTutorial_AddHintToSelectAll()
+		end,
+		
+		PreComplete = function()
+			Objective_RemoveUIElements(OBJ_Feign, hpid_feign)
+			--Hastings_BacklineCheer(false)
+		end,
+		OnComplete = function()
+			Rule_AddOneShot(DefeatSaxons_StartObjective, 10)
+			Rule_AddInterval(Hastings_ForceAttackWilliam, 1)
+		end,
+		
+	}
+	
+	Objective_Register(OBJ_Feign)
+
+
+	--
+	-- any other variable initialization can go in here
+	--
+	
+	b_shieldWallBroken = false 
+			
+	Rule_AddInterval(Feign_MonitorShieldWallEngagers, 0.5)	
+	
+end
+
+
+
+--
+-- any other script relating to this objective should go down below here
+--
+
+
+function Feign_StartObjective()	-- called on a delay from the InitialAttack script
+	
+	Objective_Start(OBJ_Feign)
+	Music_LockIntensity(MUSIC_TENSE_RARE)
+	
+end
+
+function Feign_MonitorShieldWallEngagers()
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_shieldwall_circumference, Marker_GetProximityRadiusOrDefault(mkr_shieldwall_circumference, 0) + 5)
+	SGroup_AddGroup(sg_initialattack_shieldwallengagers, sg_temp)
+	
+end
+
+function Feign_HasPlayerRetreated()
+	
+	local zones = {																							-- different segments of the wall (the more the merrier)
+		{frontMarker = mkr_shieldwall_a_front, feignMarker = mkr_shieldwall_a_feign, wallid = wallid_a},
+		{frontMarker = mkr_shieldwall_b_front, feignMarker = mkr_shieldwall_b_feign, wallid = wallid_a},	-- each segment has:
+		{frontMarker = mkr_shieldwall_c_front, feignMarker = mkr_shieldwall_c_feign, wallid = wallid_a},	--    - frontMarker	= the area directly in front of the wall
+		{frontMarker = mkr_shieldwall_d_front, feignMarker = mkr_shieldwall_d_feign, wallid = wallid_a},	--    - feignMarker	= the area further down the hill from the frontMarker
+		{frontMarker = mkr_shieldwall_e_front, feignMarker = mkr_shieldwall_e_feign, wallid = wallid_b},	--    - wallid		= the wall id of the section of wall covering this zone (so we can make *that* section break)
+		{frontMarker = mkr_shieldwall_f_front, feignMarker = mkr_shieldwall_f_feign, wallid = wallid_b},
+		{frontMarker = mkr_shieldwall_g_front, feignMarker = mkr_shieldwall_g_feign, wallid = wallid_b},
+		{frontMarker = mkr_shieldwall_h_front, feignMarker = mkr_shieldwall_h_feign, wallid = wallid_b},
+		{frontMarker = mkr_shieldwall_i_front, feignMarker = mkr_shieldwall_i_feign, wallid = wallid_b},
+		{frontMarker = mkr_shieldwall_j_front, feignMarker = mkr_shieldwall_j_feign, wallid = wallid_c},
+		{frontMarker = mkr_shieldwall_k_front, feignMarker = mkr_shieldwall_k_feign, wallid = wallid_c},
+		{frontMarker = mkr_shieldwall_l_front, feignMarker = mkr_shieldwall_l_feign, wallid = wallid_c},
+		{frontMarker = mkr_shieldwall_m_front, feignMarker = mkr_shieldwall_m_feign, wallid = wallid_c},
+	}
+	
+	for index, zone in pairs(zones) do 
+	
+		Player_GetAllSquadsNearMarker(player1, sg_temp, zone.frontMarker)			-- if no-one is in the zone in front of the shieldwall...
+
+		if SGroup_CountSpawned(sg_temp) <= 3 then 
+			
+			Player_GetAllSquadsNearMarker(player1, sg_temp, zone.feignMarker)		-- ...but they are in the zone further down the hill (the "feign" zone)
+			SGroup_Intersection(sg_temp, sg_initialattack_shieldwallengagers)			-- (restrict this to units that have got up and engaged the shieldwall, not units that are still only on their way up)
+			
+			if SGroup_CountSpawned(sg_temp) >= 3 then 
+				
+				Rule_RemoveMe()
+				Feign_TriggerShieldWallBreak(zone.wallid, zone.frontMarker)
+				
+				break 
+				
+			end
+			
+		end
+		
+	end
+
+	-- backup - if everyone has left the hill
+	if b_shieldWallBroken == false then 
+	
+		if Prox_ArePlayersNearMarker(player1, mkr_feign_circumference, ANY, Marker_GetProximityRadius(mkr_feign_circumference) + 10) == false then 
+			
+			Rule_RemoveMe()
+			Feign_TriggerShieldWallBreak(wallid_b, mkr_shieldwall_g_front)
+			
+		end
+		
+	end
+		
+end
+
+function Feign_TriggerShieldWallBreak(wall, feignOrigin)
+	
+	b_shieldWallBroken = true 
+
+	Rule_Remove(Feign_MonitorShieldWallEngagers)
+
+	Sound_PlayOnSquad(WALLA_CAMP_FEAR_LARGE, sg_initialattack_shieldwallengagers)
+	Music_PlayStinger("sfx_campaign_Hastings_horn_retreat_stop")
+
+	Modifier_Remove(modid_playerArcherRange)
+	Cmd_Stop(sg_archers)
+	Cmd_HoldPosition(sg_archers, nil, true)
+			
+	SGroup_AddGroup(sg_shieldwall_a, sg_shieldwall_a_spearmen)
+	SGroup_AddGroup(sg_shieldwall_b, sg_shieldwall_b_spearmen)
+	SGroup_AddGroup(sg_shieldwall_c, sg_shieldwall_c_spearmen)
+	
+	Objective_Complete(OBJ_Feign)
+	
+	EGroup_DestroyAllEntities(eg_blockers_player)
+	
+	-- assign delays to the wall segments according to their distance from the segment that triggered the break
+	
+	local stagger1 = 0.125		-- the three delay periods	-- the first will break this many seconds
+	local stagger2 = 6.5									-- the second this many seconds
+	local stagger3 = 10										-- etc
+ 
+	local delay_a 				-- the delay for segment A will be assigned to this variable, etc
+	local delay_b 
+	local delay_c 
+	
+	if wall == wallid_a then
+		delay_a = stagger1
+		delay_b = stagger2
+		delay_c = stagger3
+	elseif wall == wallid_b then 
+		delay_a = stagger2
+		delay_b = stagger1
+		delay_c = stagger3
+	else 
+		delay_a = stagger3
+		delay_b = stagger2
+		delay_c = stagger1
+	end 
+	
+	Rule_AddOneShot(Feign_BreakShieldWall, delay_a, {wallid = wallid_a, feignOrigin = feignOrigin, playerKillMarker = mkr_shieldwall_a, blockersEGroup = eg_blockers_shieldwall_a, sgroup = sg_shieldwall_a, williamSecondLine = sg_william_left_secondline, target = sg_william_left_secondline, backupTargetWilliam = mkr_shieldwall_a, backupTargetHarold = mkr_hill_bottom_left, trackingGroup = sg_saxons_left})
+	Rule_AddOneShot(Feign_BreakShieldWall, delay_b, {wallid = wallid_b, feignOrigin = feignOrigin, playerKillMarker = mkr_shieldwall_b, blockersEGroup = eg_blockers_shieldwall_b, sgroup = sg_shieldwall_b, williamSecondLine = sg_william_center_secondline, target = sg_william_center_secondline, backupTargetWilliam = mkr_shieldwall_b, backupTargetHarold = mkr_hill_bottom_center, trackingGroup = sg_saxons_center})
+	Rule_AddOneShot(Feign_BreakShieldWall, delay_c, {wallid = wallid_c, feignOrigin = feignOrigin, playerKillMarker = mkr_shieldwall_c, blockersEGroup = eg_blockers_shieldwall_c, sgroup = sg_shieldwall_c, williamSecondLine = sg_william_right_secondline, target = sg_william_right_secondline, backupTargetWilliam = mkr_shieldwall_c, backupTargetHarold = mkr_hill_bottom_right, trackingGroup = sg_saxons_right})
+	
+	Rule_AddOneShot(Feign_Complete, 3)
+	
+end
+
+
+
+function Feign_BreakShieldWall(context, data)
+	
+	if scartype(data.blockersEGroup) == ST_EGROUP then 
+		EGroup_DestroyAllEntities(data.blockersEGroup)
+	end
+
+	-- kill some of the units in front of the wall - this will allow the shield wall units to charge downhill easier and shift the battle to the side of the hill rather than the top
+	Player_GetAllSquadsNearMarker(player1, sg_temp, data.playerKillMarker)
+	SGroup_RemoveGroup(sg_temp, sg_dukewilliam)
+	SGroup_Duplicate(sg_temp, sg_blah)
+	
+	local numSquads = SGroup_CountSpawned(sg_temp)
+	local numToKill = math.floor(numSquads * 0.65)
+	
+	print("Killing "..numToKill.." out of "..numSquads.." attackers in front of "..data.wallid.name)
+	for index = 1, numToKill do 
+		local squad = SGroup_GetRandomSpawnedSquad(sg_temp)
+		SGroup_Remove(sg_temp, squad)
+	end
+	SGroup_Kill(sg_temp)
+
+	
+	--SGroup_SetAutoTargetting(sg_blah, "hardpoint_01", false)
+	--Cmd_Stop(sg_blah)
+	--Rule_AddOneShot(Feign_PlayerUnitsRunDownHill, 2, data)
+	Feign_PlayerUnitsRunDownHill(context, data)
+
+	
+	ShieldWall_Release(data.wallid)
+	
+	if scartype(data.target) == ST_MARKER or scartype(data.target) == ST_SGROUP then 
+		Hastings_StaggeredAttack(data.sgroup, data.target, {origin = data.feignOrigin, numToSend = 2, backupTarget = data.backupTargetHarold})
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, data.sgroup)
+	end
+
+	SGroup_AddGroup(data.trackingGroup, data.sgroup)
+	SGroup_AddGroup(sg_saxons_all, data.sgroup)
+	SGroup_AddGroup(sg_saxons_phase2_all, data.sgroup)	
+	SGroup_AddGroup(sg_activeUnits_player2, data.sgroup)	
+	
+	--Modify_ReceivedDamage(data.sgroup, 1.4)
+	--Modify_WeaponDamage(data.sgroup, "hardpoint_01", 0.7)
+	
+	Rule_AddOneShot(Feign_BreakShieldWall_WilliamSecondLineReaction, 2.25, data)
+	
+end
+
+
+
+function Feign_PlayerUnitsRunDownHill(context, data)
+
+
+	SGroup_SetAutoTargetting(sg_blah, "hardpoint_01", true)
+
+	local _RunDownHillABit = function(gid, idx, sid)
+		local pos = Squad_GetPosition(sid)
+		local markerFacing = Marker_GetDirection(data.playerKillMarker)
+		local distance = World_GetRand(6, 25)
+		pos.x = pos.x + (markerFacing.x * distance)
+		pos.z = pos.z + (markerFacing.z * distance)
+
+		Rule_AddOneShot(Feign_PlayerUnitsRunDownHill_PartB, World_GetRand(1, 16)/8, {worldID = Squad_GetID(sid), destination = pos})	
+		
+	end
+	SGroup_ForEach(sg_blah, _RunDownHillABit)
+	
+
+	
+end
+function Feign_PlayerUnitsRunDownHill_PartB(context, data)
+
+	if Squad_IsValid(data.worldID) then 
+
+		SGroup_Single(sg_single, Squad_FromID(data.worldID))
+		
+		--local modifier = Modify_UnitSpeed(sg_single, 0.6)
+		Cmd_Move(sg_single, data.destination)
+
+		--Rule_AddOneShot(Feign_PlayerUnitsRunDownHill_PartC, 5, {modifier = modifier})	
+		
+	end
+	
+end
+
+function Feign_PlayerUnitsRunDownHill_PartC(context, data)
+
+	Modifier_Remove(data.modifier)
+	
+end
+
+
+function Feign_BreakShieldWall_WilliamSecondLineReaction(context, data)
+	
+	if SGroup_CountSpawned(data.sgroup) >= 1 then 
+		Cmd_AttackMove(data.williamSecondLine, data.sgroup)
+	else
+		Cmd_AttackMove(data.williamSecondLine, data.backupTargetWilliam)
+	end
+	
+	Rule_AddOneShot(Feign_BreakShieldWall_WilliamSecondLineReaction_SwapPlayerOwner, PASS_CONTROL_DELAY, data)
+	if b_williamSecondLineHasCharged ~= true then 
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, data.williamSecondLine)
+		b_williamSecondLineHasCharged = true
+	end
+	
+end
+function Feign_BreakShieldWall_WilliamSecondLineReaction_SwapPlayerOwner(context, data)
+	
+	Hastings_PassControlOfUnitsToPlayer(data.williamSecondLine)
+	
+end
+
+
+
+function Feign_Complete()
+
+	Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE)
+	
+	KingHarold_RejoinEntourage()
+	
+	Modifier_Remove(modid_williamReducedDamage)
+	modid_williamReducedDamage = nil 
+	
+	modid_playerArcherRange = Modify_WeaponRange(sg_archers, "hardpoint_01", 0.01)
+	
+	Rule_AddOneShot(Feign_Complete_PartB, 3)
+	
+end
+function Feign_Complete_PartB()
+	--EGroup_ReSpawn(eg_blockers_phase3)
+end

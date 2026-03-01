@@ -1,0 +1,1296 @@
+-----------------------------------------------------------------------
+--
+-- Player diplomacy & tribute system.	-- CUSTOMIZED VERSION FOR ROUEN MISSION
+--
+-- (c) Relic Entertainment 2017
+--
+-----------------------------------------------------------------------
+
+if(UI_IsXboxUI()) then
+	import("gameplay/xbox_diplomacy_menus.scar")
+end
+
+-----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+Core_RegisterModule("Diplomacy")
+
+
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+
+-- Callback invoked (normally from the the OnInit() function of the game mode script) to indicate whether diplomacy is enabled.  
+function Diplomacy_DiplomacyEnabled(is_enabled)			
+	if not _diplomacy then 	
+		_diplomacy = {
+			is_enabled = is_enabled,							-- true = dynamic diplomacy, false = locked teams
+			is_ui_created = false,
+			data_context = {
+				is_ui_visible = true,										
+				is_ui_expanded = false,				
+				is_subtotal_visible = false,					-- Whether to show/hide total/subtotal/tax amounts
+				is_team_visible = true,							-- Whether the team column is displayed
+				is_tribute_enabled = false,						-- Whether the local player meets the requirements to send tribute to others  
+				is_progress_visible = true, --_diplomacy.data_context.is_progress_visible = false
+				
+				text = {
+					bb_header = Loc_GetString(11196693), --Bureau Brother's Workshop --REPLACE XAML LINE 842 WITH LOC STRING, <!-- Header -->
+					current_progressrate = Loc_GetString(11196694), -- Current Progress Rate:"), REPLACE XAML LINE 967 WITH LOC STRING, Total Income text
+					locationblurb = Loc_GetString(11196695), -- Complete this location objective to unlock this benefit."), REPLACE XAML LINE 940 WITH LOC STRING, Tooltip blurb
+					panelblurb = Loc_GetString(11196696), -- Seizing strategic resource locations will provide special benefits to your cannon production."), REPLACE XAML LINE 986 WITH LOC STRING, Panel context blurb				
+					
+					----------------------------------------------------------------
+					--diplomacy = Loc_GetString(11161242), 		-- "Diplomacy"
+					send_button = Loc_GetString(11161243), 		-- "Send"
+					clear_button = Loc_GetString(11161244),		-- "Clear"
+					--send_tooltip = Loc_GetString(11161245),	-- "A 30% tax is deducted from tribute sent."
+					player_header = Loc_GetString(11164878),	-- "PLAYER"
+					team_header = Loc_GetString(11164879),		-- "TEAM"
+					tribute_header = Loc_GetString(11164880),	-- "TRIBUTE"
+				},
+				command = {
+					toggle_ui = UI_CreateCommand("Diplomacy_ToggleDiplomacyUI"),
+					send_tribute = UI_CreateCommand("Diplomacy_SendTribute"),
+					clear_tribute = UI_CreateCommand("Diplomacy_ClearTribute"),
+				},
+				subtotal = {
+					{amount = 0, text = "0", opacity = 0.0},	-- food subtotal	-- opacity is a hack to get around NumberToVis converter not supporting Hidden.
+					{amount = 0, text = "0", opacity = 0.0},	-- wood subtotal
+					{amount = 0, text = "0", opacity = 0.0},	-- gold subtotal
+					{amount = 0, text = "0", opacity = 0.0},	-- stone subtotal
+				},				
+				total_resources = {amount = 0, text = Loc_FormatInteger(0)},
+				total_taxes = {amount = 0, text = Loc_FormatInteger(0)},
+				total_cost = {amount = 0, text = Loc_FormatInteger(0)},
+				players = {},
+				
+				-- additions for the Buy Settlements Panel
+				buySettlements = {
+					Visible = false,
+				},
+				
+				-- SALISBURY, Add title_text to campaigns using diplomacy to use in the generic title template
+				title_text = Loc_GetString(11196693),
+				IsMultiPage = false,
+				increment = 100,						-- Amount by which one button click increments/decrements tribute
+			},
+			cue = {							-- Event cue template (shown when player changes relationship or receives tribute) 
+				lifetime = 10.0,
+				repeatTime = 20.0,
+				title = Loc_Empty(),
+				desc = Loc_Empty(),
+				sfx = "sfx_ui_tribute_received_play",
+				icon = "",
+				color = {r = 255, g = 255, b = 255, a = 255},
+				template = "low_priority", 
+				style = ECV_Queue,
+			},
+			entity_type = {
+				market = "trade_post",
+			},
+			tribute = {
+				is_age_2 = false,						-- used to calculate data_context.is_tribute_enabled				
+				is_market_built = false,				-- used to calculate data_context.is_tribute_enabled	
+				is_enabled_override = nil,				-- used to override data_context.is_tribute_enabled 
+				is_subtotal_visible_override = nil, 	-- used to override data_context.is_subtotal_visible
+				
+				is_score_visible_override = nil, 		-- used to override data_context.players.player.is_score_visible	
+				is_team_visible_override = nil,			-- used to override data_context.players.player.is_team_visible	
+				
+				tax_rate = 0.3,							-- TODO: Move this into AE data?
+				limit = 9999,							-- Limit button text to 4 digits so it doesn't wrap
+			},		
+			resources = { 
+				{ resource_type = RT_Food, image = "pack://application:,,,/WPFGUI;component/icons/resources/resource_food_icon.png", help = 11164967 },
+				{ resource_type = RT_Wood, image = "pack://application:,,,/WPFGUI;component/icons/resources/resource_wood_icon.png", help = 11164968 },			
+				{ resource_type = RT_Gold, image = "pack://application:,,,/WPFGUI;component/icons/resources/resource_gold_icon.png", help = 11164969 },
+				{ resource_type = RT_Stone,image = "pack://application:,,,/WPFGUI;component/icons/resources/resource_stone_icon.png", help = 11164970},
+			},
+			relations = {
+				{ relation_type = R_ALLY, image = "pack://application:,,,/WPFGUI;component/icons/common/orders/rally.png" },
+				{ relation_type = R_NEUTRAL, image = "pack://application:,,,/WPFGUI;component/icons/races/common/buildings/market.png" },
+				{ relation_type = R_ENEMY, image = "pack://application:,,,/WPFGUI;component/icons/races/common/buildings/barracks.png" },
+			},
+			age = {						-- Loc_string lookup table (indexed by age)
+				Loc_GetString(11180928),					-- I
+				Loc_GetString(11180929),					-- II
+				Loc_GetString(11180930),					-- III
+				Loc_GetString(11180931),					-- IV
+			},
+		}
+		Diplomacy_CreateDataContext()
+	end
+end
+
+
+-- Callback invoked to indicate whether sending of tribute is disabled (as a match option).
+-- Invoked through game mode script's *_OnIntit() function. 
+-- This callback is intended for disabling tribute as a match option - use Diplomacy_OverrideSettings() to otherwise customize tribute behaviour.    
+function Diplomacy_TributeEnabled(is_enabled)
+	if is_enabled == false then 
+		_diplomacy.tribute.is_enabled_override = false
+	end
+end
+
+
+-- Callback invoked by Core::OnInit()
+function Diplomacy_OnInit()			
+	Rule_AddGlobalEvent(Diplomacy_OnUpgradeComplete, GE_UpgradeComplete)
+	Rule_AddGlobalEvent(Diplomacy_OnConstructionComplete, GE_ConstructionComplete)
+	Rule_AddGlobalEvent(Diplomacy_OnPlayerNameChanged, GE_PlayerNameChanged)
+end
+
+
+function Diplomacy_Start()	
+	if _diplomacy ~= nil then 
+		Network_RegisterEvent("Diplomacy_ChangeRelationNtw")
+		Network_RegisterEvent("Diplomacy_SendTributeNtw")
+		
+		-- Initial age
+		for _, context_player in pairs(_diplomacy.data_context.players) do				
+			local player = Core_GetPlayersTableEntryFromIndex(context_player.player_index)			
+			local age = Player_GetCurrentAge(player.id)
+			context_player.age = _diplomacy.age[age]									
+			if context_player.is_local and age >= AGE_FEUDAL and not _diplomacy.tribute.is_age_2 then
+				_diplomacy.tribute.is_age_2 = true
+			end								
+		end	
+		
+		Diplomacy_UpdateDataContext()
+		Diplomacy_CreateUI()
+	end
+end
+
+
+-- Callback invoked by Core_OnGameOver()
+function Diplomacy_OnGameOver()
+	Rule_RemoveGlobalEvent(Diplomacy_OnUpgradeComplete)
+	Rule_RemoveGlobalEvent(Diplomacy_OnConstructionComplete)
+	Rule_RemoveGlobalEvent(Diplomacy_OnPlayerNameChanged)
+	Diplomacy_RemoveUI()
+end
+
+-- Callback invoked by Core_OnGameRestore()
+function Diplomacy_OnGameRestore()
+	_diplomacy.is_ui_created = false	-- coming in from a savegame - the UI won't have been saved so we need to clear this flag and then recreate the UI
+	if UI_IsXboxUI() then
+		_diplomacy.data_context.is_ui_expanded = false -- When loading a save where the menu was open, have it closed
+		DiplomacyMenus_UpdateGameplayControl() 
+	end
+	Diplomacy_CreateUI()
+	--Diplomacy_UpdateUI()	
+end
+
+
+-- Callback invoked by Diplomacy button
+function Diplomacy_ToggleDiplomacyUI()
+	-- SALISBURY, Ensure the ui can only be toggled if it's visible
+	if (UI_IsXboxUI() and _diplomacy.data_context.is_ui_visible) or not UI_IsXboxUI() then
+		_diplomacy.data_context.is_ui_expanded = not _diplomacy.data_context.is_ui_expanded
+		
+		if(UI_IsXboxUI()) then
+			DiplomacyMenus_UpdateGameplayControl()
+		end
+
+		Diplomacy_UpdateUI()
+		--Tribute_Intel()
+	end
+end
+
+-- Force menu open or closed (more for use by mission scripts)
+function Diplomacy_ShowDiplomacyUI(show)	
+	_diplomacy.data_context.is_ui_expanded = show
+	
+	if(UI_IsXboxUI()) then
+		DiplomacyMenus_UpdateGameplayControl()
+	end
+
+	Diplomacy_UpdateUI()
+end
+
+--[[
+-- Callback invoked by Relation radio buttons
+function Diplomacy_ChangeRelation(parameter)
+	Network_CallEvent("Diplomacy_ChangeRelationNtw", parameter)
+end
+]]
+
+-- Callback invoked by clicking resource tribute button
+function Diplomacy_IncreaseTribute(parameter)
+	local parts = string.split(parameter)
+	local player_index = tonumber(parts[1])
+	local resource_index = tonumber(parts[2])
+	if Diplomacy_AddTribute(player_index, resource_index, _diplomacy.data_context.increment) then 
+		Diplomacy_UpdateUI()
+	end
+end
+
+
+-- Callback invoked by right-clicking resource tribute button
+function Diplomacy_DecreaseTribute(parameter)
+	local parts = string.split(parameter)
+	local player_index = tonumber(parts[1])
+	local resource_index = tonumber(parts[2])	
+	if Diplomacy_AddTribute(player_index, resource_index, -_diplomacy.data_context.increment) then 
+		Diplomacy_UpdateUI()
+	end
+end
+
+
+-- Callback invoked by Clear Tribute button
+function Diplomacy_ClearTribute()
+	for i, context_player in pairs(_diplomacy.data_context.players) do 
+		for j, tribute in pairs(context_player.tribute) do
+			if tribute.amount > 0 then 
+				Diplomacy_AddTribute(context_player.player_index, j, -tribute.amount)
+			end
+		end
+	end
+	Diplomacy_UpdateUI()	
+end
+
+
+-- Callback invoked by Send Tribute button
+function Diplomacy_SendTribute()	
+	local tribute_data = ""	
+	for i, player in pairs(_diplomacy.data_context.players) do
+		tribute_data = string.format("%s%d,%d,%d,%d,%d|", tribute_data, player.tribute[1].amount, player.tribute[2].amount, player.tribute[3].amount, player.tribute[4].amount, player.player_index)		
+	end
+	
+	-- Prevent player sending resources in excess of what they own
+	local over_capacity = false
+	for i = 1, #_diplomacy.data_context.subtotal do
+		over_capacity = over_capacity or (Player_GetResource(Game_GetLocalPlayer(), _diplomacy.resources[i].resource_type) < _diplomacy.data_context.subtotal[i].amount * (1.0 + Diplomacy_GetTaxRate(Game_GetLocalPlayer())))
+	end	
+	
+	if not over_capacity then
+		Diplomacy_ClearTribute()
+		Network_CallEvent("Diplomacy_SendTributeNtw", tribute_data)		
+	end
+end
+
+-- Callback used to show/hide scripted UI elements. 
+function Diplomacy_ShowUI(show)
+	if _diplomacy ~= nil and scartype(show) == ST_BOOLEAN then 
+		-- Close the menu before hiding it so focus is removed
+		if UI_IsXboxUI() and _diplomacy.data_context.is_ui_expanded and not show then
+			Diplomacy_ToggleDiplomacyUI()
+		end
+		_diplomacy.data_context.is_ui_visible = show
+		Diplomacy_UpdateUI()
+	end
+end
+
+--[[
+-- Callback invoked when relationship changes			
+--TODO: Make this a global event (GE_RelationChanged) triggered by code.  
+function Diplomacy_OnRelationshipChanged(observerPlayerID, targetPlayerID, show_notification)
+	if _diplomacy ~= nil then 	
+		-- Show event cue
+		if show_notification ~= false then
+			local targetPlayer = Core_GetPlayersTableEntry(targetPlayerID)	
+			if targetPlayer.isLocal and not targetPlayer.isEliminated then				
+				local relation = Player_ObserveRelationship(observerPlayerID, targetPlayerID)		
+				local observerPlayer = Core_GetPlayersTableEntry(observerPlayerID)
+				local text = Loc_FormatText(11161246, Player_GetDisplayName(observerPlayer.id))	-- "%1PLAYER_NAME% is now neutral"
+				local cue = _diplomacy.cue		
+				if relation == R_ALLY then
+					text = Loc_FormatText(11161247, Player_GetDisplayName(observerPlayer.id))	-- "%1PLAYER_NAME% is now friendly"
+				elseif relation == R_ENEMY then
+					text = Loc_FormatText(11161248, Player_GetDisplayName(observerPlayer.id))	-- "%1PLAYER_NAME% is now hostile"
+				end
+				UI_CreateEventCueClickable(-1, cue.lifetime, 0, cue.repeatTime, text, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, nothing)
+			end
+		end
+		
+		-- Update data context
+		local localPlayer = Core_GetPlayersTableEntry(Game_GetLocalPlayer())	
+		if localPlayer.id == observerPlayerID or localPlayer.id == targetPlayerID then 
+			for i, context_player in ipairs(_diplomacy.data_context.players) do 		
+				local player = Core_GetPlayersTableEntryFromIndex(context_player.player_index)		
+				if not player.is_local then 		
+					context_player.name.color = UI_GetColourAsString(Player_GetUIColour(player.id))
+					context_player.nameTooltip = Diplomacy_RelationToTooltipConverter(player, localPlayer)
+					context_player.relationTooltip = Diplomacy_RelationToTooltipConverter(localPlayer, player)			
+					context_player.is_ally = Player_ObserveRelationship(player.id, localPlayer.id) == R_ALLY
+					context_player.is_enemy = Player_ObserveRelationship(player.id, localPlayer.id) == R_ENEMY
+					for j, relation in ipairs(context_player.relations) do
+						relation.isChecked = Diplomacy_RelationConverter(relation.relation) == Player_ObserveRelationship(localPlayer.id, player.id)
+					end
+				end
+			end
+			Diplomacy_UpdateUI()
+		end	
+	end
+end
+]]
+
+-- Global event callback for GE_ConstructionComplete
+-- Allows sending tribute only after local player builds a market
+function Diplomacy_OnConstructionComplete(context)	
+	if _diplomacy ~= nil then 
+		local player = Core_GetPlayersTableEntry(context.player)
+		if player ~= nil and player.isLocal and context.entity ~= nil and Entity_IsOfType(context.entity, _diplomacy.entity_type.market) and not _diplomacy.tribute.is_market_built then							
+			_diplomacy.tribute.is_market_built = true
+			Diplomacy_UpdateDataContext()
+		end	
+
+		if _diplomacy.tribute.is_market_built and Rule_Exists(Diplomacy_OnConstructionComplete) then 
+			Rule_RemoveGlobalEvent(Diplomacy_OnConstructionComplete)
+		end
+	end
+end
+
+
+-- Callback invoked by Core_SetPlayerDefeated() when a player is eliminated.
+function Diplomacy_OnPlayerDefeated(player, reason)
+	if _diplomacy ~= nil and player ~= nil then 
+		if player.isLocal and player.isEliminated then
+			Diplomacy_ShowUI(false)
+		else
+			for i, context_player in pairs(_diplomacy.data_context.players) do
+				if context_player.player_index == player.index then
+					context_player.is_eliminated = true
+					context_player.name.color = UI_GetColourAsString(Player_GetUIColour(player.id))
+					for j, tribute in pairs(context_player.tribute) do
+						tribute.is_enabled = false						
+						if tribute.amount > 0 then
+							Diplomacy_AddTribute(context_player.player_index, j, -tribute.amount)
+						end
+					end
+				end
+			end			
+			Diplomacy_UpdateDataContext()
+		end
+	end
+end
+
+
+--  Global event callback for GE_PlayerNameChanged
+function Diplomacy_OnPlayerNameChanged(context)
+	if _diplomacy ~= nil then 
+		for _, context_player in pairs(_diplomacy.data_context.players) do	
+			local player = Core_GetPlayersTableEntryFromIndex(context_player.player_index)
+			context_player.name = Player_GetDisplayName(player.id).LocString
+		end		
+		Diplomacy_UpdateDataContext()
+	end
+end
+
+
+-- Global event callback for GE_UpgradeComplete
+function Diplomacy_OnUpgradeComplete(context)
+	if _diplomacy ~= nil and BP_IsUpgradeOfType(context.upgrade, "wonder_age_upgrade") then
+		for _, context_player in pairs(_diplomacy.data_context.players) do				
+			local player = Core_GetPlayersTableEntryFromIndex(context_player.player_index)			
+			local age = Player_GetCurrentAge(player.id)
+			context_player.age = _diplomacy.age[age]									
+			if context_player.is_local and age >= AGE_FEUDAL and not _diplomacy.tribute.is_age_2 then
+				_diplomacy.tribute.is_age_2 = true
+				Diplomacy_UpdateDataContext()
+			end								
+		end		
+		Diplomacy_UpdateUI()
+	end
+end
+
+-----------------------------------------------------------------------
+-- Internal helper functions
+-----------------------------------------------------------------------
+
+-- Updates all data related to UI state (enabled, visibility, etc)
+function Diplomacy_UpdateDataContext()
+	
+	if _diplomacy == nil then 
+		return
+	end
+	
+	if _diplomacy.tribute.is_enabled_override ~= nil then
+		_diplomacy.data_context.is_tribute_enabled = _diplomacy.tribute.is_enabled_override 
+	else
+		_diplomacy.data_context.is_tribute_enabled = _diplomacy.tribute.is_age_2 and _diplomacy.tribute.is_market_built  
+	end
+	
+	if _diplomacy.tribute.is_subtotal_visible_override ~= nil then  
+		_diplomacy.data_context.is_subtotal_visible = _diplomacy.data_context.is_tribute_enabled and _diplomacy.tribute.is_subtotal_visible_override
+	else
+		_diplomacy.data_context.is_subtotal_visible = _diplomacy.data_context.is_tribute_enabled
+	end
+	
+	if _diplomacy.tribute.is_team_visible_override ~= nil then  
+		_diplomacy.data_context.is_team_visible = _diplomacy.tribute.is_team_visible_override
+	else
+		_diplomacy.data_context.is_team_visible = true
+	end	
+		
+	-- Individual players
+	for i, context_player in pairs(_diplomacy.data_context.players) do
+			
+		if context_player.is_visible_override ~= nil then  
+			context_player.is_visible = context_player.is_visible_override
+		else
+			context_player.is_visible = true 
+		end
+		 		
+		context_player.is_team_visible = _diplomacy.data_context.is_team_visible
+		
+		if _diplomacy.tribute.is_score_visible_override ~= nil then  
+			context_player.is_score_visible = _diplomacy.tribute.is_score_visible_override
+		else 
+			context_player.is_score_visible = true
+		end		
+		
+		if context_player.is_tribute_visible_override ~= nil then 
+			context_player.is_tribute_visible = context_player.is_tribute_visible_override
+		else
+			context_player.is_tribute_visible = not context_player.is_local
+		end
+		
+		--Individual resource buttons
+		for j, resource in pairs(context_player.tribute) do
+			
+			if not context_player.is_eliminated and resource.is_enabled_override ~= nil then 
+				resource.is_enabled = resource.is_enabled_override
+				resource.tooltip.requirements = Loc_Empty()
+			else	
+				resource.is_enabled = _diplomacy.data_context.is_tribute_enabled
+					and not context_player.is_eliminated
+					and not context_player.is_enemy  -- TODO: When diplomacy works replace with:  Player_ObserveRelationship(player_local.id, Core_GetPlayersTableEntryFromIndex(context_player.player_index).id) ~= R_ENEMY
+					and not (_diplomacy.resources[j].resource_type == RT_Stone and Core_GetPlayersTableEntryFromIndex(context_player.player_index).race == RACE.MONGOL)					
+			
+				-- Update requirements
+				if resource.is_enabled then
+					resource.tooltip.requirements = Loc_Empty()
+				elseif context_player.is_eliminated then
+					resource.tooltip.requirements = Loc_GetString(11165016)		-- "Requires: Not eliminated"
+				elseif context_player.is_enemy then
+					resource.tooltip.requirements = Loc_GetString(11165017)		--"Requires: Not hostile"
+				elseif (_diplomacy.resources[j].resource_type == RT_Stone and Core_GetPlayersTableEntryFromIndex(context_player.player_index).race == RACE.MONGOL) then
+					resource.tooltip.requirements = Loc_GetString(11165018)		--"Requires: Not Mongol"
+				elseif not _diplomacy.tribute.is_age_2 and not _diplomacy.tribute.is_market_built then 
+					resource.tooltip.requirements = Loc_GetString(11165019)		-- "Requires: Progress to Age II and a Market"
+				elseif _diplomacy.tribute.is_age_2 and not _diplomacy.tribute.is_market_built then
+					resource.tooltip.requirements = Loc_GetString(11165020)		--"Requires: Market"
+				else
+					resource.tooltip.requirements = Loc_Empty()
+				end
+			end
+			
+			-- HACK: Converts true/false to opacity values for enabled/disabled state of resource buttons
+			if resource.is_enabled then 
+				resource.opacity = 1.0
+			else 
+				resource.opacity = 0.44
+			end
+		end
+	end	
+	Diplomacy_UpdateUI()
+end
+
+
+
+-- Overrides the default UI behaviour for a given player. true/false to override a value. nil to use default.
+function Diplomacy_OverridePlayerSettings(playerID, is_player_visible, is_tribute_visible, is_food_enabled, is_wood_enabled, is_gold_enabled, is_stone_enabled)	
+	local player = Core_GetPlayersTableEntry(playerID)
+	for i, context_player in pairs(_diplomacy.data_context.players) do		
+		if context_player.player_index == player.index then
+			context_player.is_visible_override = is_player_visible
+			context_player.is_tribute_visible_override = is_tribute_visible
+			context_player.tribute[1].is_enabled_override = is_food_enabled
+			context_player.tribute[2].is_enabled_override = is_wood_enabled
+			context_player.tribute[3].is_enabled_override = is_gold_enabled
+			context_player.tribute[4].is_enabled_override = is_stone_enabled
+			break
+		end		
+	end
+	Diplomacy_UpdateDataContext()
+end
+
+
+-- Overrides the default UI behaviour. true/false to override a value. nil to use default.
+function Diplomacy_OverrideSettings(is_tribute_enabled, is_subtotal_visible, is_score_visible, is_team_visible)	
+	_diplomacy.tribute.is_enabled_override = is_tribute_enabled
+	_diplomacy.tribute.is_subtotal_visible_override = is_subtotal_visible
+	_diplomacy.tribute.is_score_visible_override = is_score_visible
+	_diplomacy.tribute.is_team_visible_override = is_team_visible	
+	Diplomacy_UpdateDataContext()
+end
+
+
+--[[
+-- Converts relation to integer and integer to relation  
+function Diplomacy_RelationConverter(relation)	
+	if scartype(relation) == ST_NUMBER then
+		if relation == 1 then 
+			return R_ENEMY
+		elseif relation == 2 then 
+			return R_ALLY
+		elseif relation == 3 then 
+			return R_NEUTRAL
+		end
+	else
+		if relation == R_ENEMY then 
+			return 1
+		elseif relation == R_ALLY then 
+			return 2
+		elseif relation == R_NEUTRAL then
+			return 3
+		end
+	end
+end
+
+
+-- Returns the relation (R_ALLY, R_ENEMY, R_NEUTRAL) of observer vs target as a tooltip.	 
+function Diplomacy_RelationToTooltipConverter(observer, target)
+	local relation = Player_ObserveRelationship(observer.id, target.id)
+	if observer.isLocal then 
+		if relation ==  R_ALLY then 
+			return Loc_FormatText(11161249, Player_GetDisplayName(target.id))				-- "You are friendly to %1PLAYER_NAME%"
+		elseif relation == R_ENEMY then 
+			return Loc_FormatText(11161253, Player_GetDisplayName(target.id))				-- "You are hostile to %1PLAYER_NAME%"
+		else
+			return Loc_FormatText(11161254, Player_GetDisplayName(target.id))				-- "You are neutral to %1PLAYER_NAME%"
+		end	
+	elseif target.isLocal then 
+		if relation ==  R_ALLY then 
+			return Loc_FormatText(11161255, Player_GetDisplayName(observer.id))				-- "%1PLAYER_NAME% is friendly to you"
+		elseif relation == R_ENEMY then 
+			return Loc_FormatText(11161256, Player_GetDisplayName(observer.id))				-- "%1PLAYER_NAME% is hostile to you"
+		else
+			return Loc_FormatText(11161257, Player_GetDisplayName(observer.id))				-- "%1PLAYER_NAME% is neutral  to you"
+		end					
+	end
+	return Loc_Empty()
+end
+]]
+
+-- Returns the tax rate to apply to tribute sent by a player.
+function Diplomacy_GetTaxRate(playerID)
+	return _diplomacy.tribute.tax_rate		-- For now, assume a fixed tax rate
+end
+
+
+-- Sets the tax rate to apply to tribute sent by a given player.
+function Diplomacy_SetTaxRate(playerID, tax_rate)
+	_diplomacy.tribute.tax_rate = tax_rate	-- For now, apply the same rate to all players. 
+end
+
+
+-- Helper function to add a given amount of a resource to the allotment queued for tribute.
+-- Returns true if the local player's tribute allotment changed.
+function Diplomacy_AddTribute(player_index, resource_index, amount)
+	
+	local Increment = function(t, n, min_opacity)
+		min_opacity = min_opacity or 0.0
+		t.amount = t.amount + math.floor(n)
+		t.text = Loc_FormatInteger(t.amount)
+		t.opacity = math.min(1.0, t.amount + min_opacity)
+	end
+	
+	for _, context_player in pairs(_diplomacy.data_context.players) do 
+		if context_player.player_index == player_index then
+			local resource_type = _diplomacy.resources[resource_index].resource_type
+			local tribute = context_player.tribute[resource_index]
+			local tax_rate = Diplomacy_GetTaxRate(Game_GetLocalPlayer())
+			local tax = amount * tax_rate 
+			local total = amount + tax
+			if (amount < 0 and tribute.amount + amount >= 0) or 
+				(amount > 0 and tribute.amount + amount < _diplomacy.tribute.limit and
+				Player_GetResource(Game_GetLocalPlayer(), resource_type) >= (_diplomacy.data_context.subtotal[resource_index].amount + amount) * (1.0 + tax_rate)) then							
+				Increment(context_player.tribute[resource_index], amount, 1.0) 		
+				Increment(_diplomacy.data_context.subtotal[resource_index], amount)
+				Increment(_diplomacy.data_context.total_resources, amount)
+				Increment(_diplomacy.data_context.total_taxes, tax)
+				Increment(_diplomacy.data_context.total_cost, total)				
+				return true
+			else
+				return false		
+			end
+		end
+	end
+end
+
+-----------------------------------------------------------------------
+-- UI functions
+-----------------------------------------------------------------------
+
+function Diplomacy_CreateDataContext()
+	
+	local CreatePlayerDataContext = function(player)
+		local player_local = Core_GetPlayersTableEntry(Game_GetLocalPlayer())
+		local context_player = { 	
+				player_index = player.index,
+				is_local = player.isLocal,
+				is_eliminated = player.isEliminated,
+				name = {
+					text = Player_GetDisplayName(player.id).LocString,
+					color = UI_GetColourAsString(Player_GetUIColour(player.id)),
+					--tooltip = Diplomacy_RelationToTooltipConverter(player, player_local),
+				},			
+				civ_flag = string.format("pack://application:,,,/WPFGUI;component/%s.png", string.gsub(World_GetRaceIcon(Player_GetRace(player.id)), "\\", "/" )),
+				team = {
+					number = player.team.index,
+					name = Diplomacy_FormatTeamNumber(player.team.index)
+				},
+				age = _diplomacy.age[Player_GetCurrentAge(player.id)],
+				score_total = math.floor(Player_GetStateModelFloat(player.id, "total_score")),
+				is_visible = true,																	-- whether to show this row at all
+				is_score_visible = true,				
+				is_tribute_visible = not player.isLocal,			
+				is_tribute_enabled = _diplomacy.tribute.is_enabled and _diplomacy.tribute.is_market_built,-- and not player.isLocal,
+				--relationTooltip = Diplomacy_RelationToTooltipConverter(player_local, player),
+				is_ally = Player_ObserveRelationship(player.id, player_local.id) == R_ALLY,
+				is_enemy = Player_ObserveRelationship(player.id, player_local.id) == R_ENEMY,
+				relations = {},
+				tribute = {},				
+		}
+--[[				
+		for j, relation in ipairs(_diplomacy.relations) do
+			table.insert(context_player.relations, {
+				relation = Diplomacy_RelationConverter(relation.relation_type),
+				relationGroup = string.format("group%d", player.index),					
+				imageSource = relation.image,
+				isChecked = Player_ObserveRelationship(player_local.id, player.id) == relation.relation_type,
+				relationClickedCommand = UI_CreateCommand("Diplomacy_ChangeRelation"),
+				relationParameter = string.format("%d,%d", player.index, Diplomacy_RelationConverter(relation.relation_type)),
+			})
+		end
+]]		
+		for j, resource in ipairs(_diplomacy.resources) do	
+			table.insert(context_player.tribute, {
+				amount = 0, 
+				text = Loc_FormatInteger(0),
+				imageSource = resource.image, 
+				resourceClickedCommand = UI_CreateCommand("Diplomacy_IncreaseTribute"),
+				resourceRightClickedCommand = UI_CreateCommand("Diplomacy_DecreaseTribute"),
+				resourceClickedParameter = string.format("%d,%d", player.index, j),		 
+				is_enabled = false,
+				tooltip = {
+					name = Loc_GetString(11164972), -- "Tribute"
+					extra = Loc_GetString(11164971), -- "Left-click to increase. Right-click to decrease."
+					help = Loc_FormatText(resource.help, Player_GetDisplayName(player.id)),
+					requirements = Loc_Empty(),	
+				},
+			})
+		end
+		return context_player
+	end
+	
+	-- Add local player to data context first so it appears at the top of the list. 
+	local player_local = Core_GetPlayersTableEntry(Game_GetLocalPlayer())	
+	table.insert(_diplomacy.data_context.players, CreatePlayerDataContext(player_local))
+	
+	for _, player in ipairs(PLAYERS) do		
+		if not player.isLocal then 
+			table.insert(_diplomacy.data_context.players, CreatePlayerDataContext(player))
+		end
+	end		
+	Diplomacy_SortDataContext()	
+	
+	-- TODO: Hide tribute UI if teams are locked and player is on a team of one.
+	--_diplomacy.data_context.is_ui_visible = (_diplomacy.is_enabled or #player_local.team.players > 1)		
+	
+	_diplomacy.data_context.tax_rate = Diplomacy_GetTaxRate(player_local.id) * 100
+end
+
+
+-- 
+function Diplomacy_FormatTeamNumber(team_number)	
+	if team_number > 10000 then 
+		return "-"
+	end
+	return tostring(team_number)
+end
+
+
+-- Sort player list by team number and player name if teams are locked.
+function Diplomacy_SortDataContext()	
+	if not _diplomacy.is_enabled then
+		local SortTeamsAndPlayers = function(a, b)
+			if a.team.number == b.team.number then 				
+				return a.name.text < b.name.text
+			end
+			return a.team.number < b.team.number 
+		end
+		table.sort(_diplomacy.data_context.players, SortTeamsAndPlayers)
+	end
+end
+
+function Diplomacy_CycleRefreshUI()
+	Diplomacy_RemoveUI()
+	Diplomacy_CreateUI()
+end
+
+
+function Diplomacy_CreateUI()
+	
+	if UI_IsXboxUI() then
+		DiplomacyMenus_CreateXboxResourceLocationsUI()
+		return
+	end
+	
+	if not _diplomacy.is_ui_created then 
+	
+		local Xaml =
+[[<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" 
+		xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" 
+		xmlns:engineSharedControls="clr-namespace:WPFGUI.Shared.Controls;assembly=EngineUI"
+		xmlns:sharedConverters="clr-namespace:WPFGUI.Shared.Converters;assembly=EngineUI"
+		xmlns:utility="clr-namespace:WPFGUI.Shared.Utility;assembly=EngineUI"
+		HorizontalAlignment="Right" 
+		VerticalAlignment="Top" 
+		SnapsToDevicePixels="True"
+		Margin="0,10,13,0"
+		MaxWidth="550"
+		Visibility="{Binding [is_ui_visible], Converter={StaticResource BoolToVis}}">
+	<Grid.Resources>
+		<ResourceDictionary.MergedDictionaries>
+			<ResourceDictionary Source="pack://application:,,,ui/Resources/HUDResources.xaml" />
+		</ResourceDictionary.MergedDictionaries>	
+		<!-- Tooltip style -->
+		<!-- Style x:Key="SimpleToolTipStyle" TargetType="ToolTip">
+            <Setter Property="HasDropShadow" Value="True" />
+            <Setter Property="OverridesDefaultStyle" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <ContentPresenter />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style-->
+		
+		<!-- Tribute tooltip style -->
+		<Style x:Key="TributeToolTipStyle" TargetType="{x:Type ToolTip}">
+            <Setter Property="HasDropShadow" Value="True" />
+			<Setter Property="SnapsToDevicePixels" Value="true" />
+            <Setter Property="OverridesDefaultStyle" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ToolTip}">
+                        <ContentPresenter />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>	
+		<!-- Resource button style - a clone of HUDBaseButtonStyle but IsEnabled setter changes Opacity instead of Visibility of background -->
+		<Style x:Key="ResourceButtonStyle" TargetType="Button">
+	        <Setter Property="SnapsToDevicePixels" Value="true" />
+	        <Setter Property="OverridesDefaultStyle" Value="true" />
+	        <Setter Property="HorizontalAlignment" Value="Left" />
+			<Setter Property="utility:AudioAttachedProperty.PreviewMouseLeftButtonUpSound"
+	                Value="sfx_ui_hud_inGame_button_play" />
+	        <Setter Property="Template">
+	            <Setter.Value>
+	                <ControlTemplate TargetType="Button">
+	                    <Border Name="ResourceButton" BorderThickness="0" BorderBrush="Transparent" Effect="{StaticResource DropShadowButtonStyle}">
+	                        <Grid>
+	                            <Rectangle Name="Base" Fill="#33505050" RadiusX="{StaticResource HUDButtonRadiusX}"
+	                                    RadiusY="{StaticResource HUDButtonRadiusY}" />
+	                            <Rectangle Name="Enabled" Fill="{StaticResource ButtonBackgroundBrush}"
+	                                    RadiusX="{StaticResource HUDButtonRadiusX}"
+	                                    RadiusY="{StaticResource HUDButtonRadiusY}" />
+	                            <Rectangle Name="Rollover" Visibility="Collapsed"
+	                                    Fill="{StaticResource ButtonHighlightBrush}"
+	                                    RadiusX="{StaticResource HUDButtonRadiusX}"
+	                                    RadiusY="{StaticResource HUDButtonRadiusY}" />
+	                            <Rectangle Name="Highlight" Fill="#FF93BED7" Visibility="Collapsed"
+	                                    RadiusX="{StaticResource HUDButtonRadiusX}"
+	                                    RadiusY="{StaticResource HUDButtonRadiusY}" />
+	                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+	                        </Grid>
+	                    </Border>
+	                    <ControlTemplate.Triggers>
+	                        <Trigger Property="IsMouseOver" Value="true">
+	                            <Setter TargetName="Rollover" Property="Visibility" Value="Visible" />
+	                        </Trigger>
+	                        <Trigger Property="IsPressed" Value="true">
+	                            <Setter TargetName="Highlight" Property="Visibility" Value="Visible" />
+	                        </Trigger>
+	                        <Trigger Property="IsEnabled" Value="false">
+								 <Setter TargetName="Enabled" Property="Opacity" Value="0.44" />
+	                        </Trigger>
+	                        <Trigger Property="IsEnabled" Value="true">
+	                            <Setter TargetName="Enabled" Property="Effect" Value="{StaticResource DropShadowButtonStyle}" />
+	                        </Trigger>
+	                    </ControlTemplate.Triggers>
+	                </ControlTemplate>
+	            </Setter.Value>
+	        </Setter>
+	    </Style>	
+	</Grid.Resources>
+	<Grid.RowDefinitions>
+	    <RowDefinition Height="Auto" />
+	    <RowDefinition Height="*" />
+	</Grid.RowDefinitions>
+	<!-- Diplomacy button -->	
+	<Button Grid.Row="0"
+			Command="{Binding [command][toggle_ui]}" 
+			HorizontalAlignment="Right" 
+	        VerticalAlignment="Top" 
+	        Margin="0,0,0,10"
+	        Style="{StaticResource DiplomacyButtonStyle}"
+			engineSharedControls:TagAdorner.ArrowDataTemplate="{StaticResource hudPage:TagArrowDataTemplate}"
+			engineSharedControls:TagAdorner.TargetDataTemplate="{StaticResource hudPage:EmptyTagDataTemplate}"
+			engineSharedControls:TagAdorner.DataTemplate="{StaticResource TagDataTemplate}"
+			engineSharedControls:TagAdorner.AlignmentMode="Relative"
+			engineSharedControls:TagAdorner.VerticalPlacement="Bottom"
+			engineSharedControls:TagAdorner.VerticalAnchor="Top"
+			engineSharedControls:TagAdorner.HorizontalPlacement="Left"
+			engineSharedControls:TagAdorner.HorizontalAnchor="Right">     	
+		<engineSharedControls:TagAdorner.IsTagged>
+			<MultiBinding Converter="{StaticResource IsTaggedConverter}"
+					ConverterParameter="DiplomacyButton">
+				<Binding Path="TagVersion" Source="{x:Static model:HUDModel.Instance}" />
+			</MultiBinding>
+		</engineSharedControls:TagAdorner.IsTagged>
+		<engineSharedControls:TagAdorner.Data>
+			<MultiBinding Converter="{StaticResource TagDataConverter}"
+					ConverterParameter="DiplomacyButton">
+				<Binding Path="TagVersion" Source="{x:Static model:HUDModel.Instance}" />
+			</MultiBinding>
+		</engineSharedControls:TagAdorner.Data>
+	</Button>
+	<!-- Diplomacy panel -->
+	<Grid Grid.Row="1" MinWidth="300" Width="Auto" Visibility="{Binding [is_ui_expanded], Converter={StaticResource BoolToVis}}">
+		<ContentControl Template="{StaticResource CanvasTertiaryVerticalGradientBackgroundBox}">
+			<ContentControl Template="{StaticResource TexturedTertiaryThickDoubleBorders}">
+				<Grid Style="{StaticResource FlowControl}">
+					<Grid.RowDefinitions>
+						<!--  Header  -->
+						<RowDefinition Height="Auto" />
+						<!--  Separator (for alignment)  -->
+						<RowDefinition Height="Auto" />
+						<!--  List  -->
+						<RowDefinition Height="*" />
+						<!--  Blurb  -->
+						<RowDefinition Height="Auto" />
+					</Grid.RowDefinitions>
+					
+					<!-- Header -->	
+					<TextBlock Grid.Row="0" 
+							   HorizontalAlignment="Center"
+							   Style="{StaticResource HUDPrimaryColorGradientVerticalSubtitleTextBlock14ptStyle}"
+							   Text="{Binding [text][bb_header]}"
+							   Visibility="{Binding [buySettlements][Visible], Converter={StaticResource BoolToVis}}" />
+					<Separator Grid.Row="1" 
+							   Margin="0,8,0,0" HorizontalAlignment="Stretch"
+							   VerticalAlignment="Bottom"
+							   Style="{StaticResource PrimarySeperatorStyle}" />
+					
+			 		<!-- Settlements list -->
+			        <ItemsControl Grid.Row="2"
+								  Margin="0,5"
+								  ItemsSource="{Binding [buySettlements][Settlements]}"								  					
+								  Visibility="{Binding [buySettlements][Visible], Converter={StaticResource BoolToVis}}" >
+			            <ItemsControl.ItemTemplate>
+			                <DataTemplate>
+								<StackPanel>
+									<Grid Margin="0,10">
+										<Grid.ColumnDefinitions>
+											<ColumnDefinition Width="*" />
+											<ColumnDefinition Width="Auto" />
+										</Grid.ColumnDefinitions>
+
+										<!--  Name  -->
+										<TextBlock Grid.Column="0" 
+												   VerticalAlignment="Center"
+							                       TextTrimming="CharacterEllipsis"
+												   Style="{StaticResource HUDWhiteBaseTextBlock18ptStyle}"
+												   Text="{Binding [Name]}" 
+												   engineSharedControls:TextBlockExtensions.AutoToolTip="True"
+												   ToolTipService.InitialShowDelay="0"
+							                       ToolTipService.ShowDuration="86400000">
+											<TextBlock.Tooltip>
+                    							<ToolTip Style="{StaticResource HUDBaseAutoTooltipStyle}" />
+											</TextBlock.Tooltip>
+										</TextBlock>
+									
+										<!-- Visibility="{Binding [ProgressValue_Visible], Converter={StaticResource BoolToVis}}" 
+					                   		<TextBlock Grid.Column="1"
+												Text="{Binding [IncomeAmount]}"
+												Style="{StaticResource HUDParentBodyTextBlock18ptStyle}"
+												Foreground="{Binding [CostColour]}"
+												Width="Auto"
+												Visibility="{Binding [ProgressValue_Visible], Converter={StaticResource BoolToVis}}"
+												Margin="0,0,70,0"
+												HorizontalAlignment="Center" VerticalAlignment="Center" /> -->
+		
+										<Button Grid.Column="1" Margin="{StaticResource LargeMarginLeft}"
+												Command="{Binding [BuyButtonCommand]}" 
+												CommandParameter="{Binding [BuyButtonParameter]}" 
+												Content="{Binding [AidButtonTitle]}"
+												Style="{StaticResource HUDPrimaryRaisedTextButton}" 
+												Width="266" Height="30"
+												HorizontalAlignment="Right" 
+												IsEnabled="{Binding [BuyButtonEnabled]}"
+												Opacity="{Binding [BuyButtonOpacity]}"
+												ToolTipService.InitialShowDelay="0"
+						                        ToolTipService.ShowOnDisabled="True"
+						                        ToolTipService.ShowDuration="86400000">
+												<!--<Image Source="pack://application:,,,/WPFGUI;component/icons/resources/resource_gold_icon.png"
+													Opacity="{Binding [opacity]}" /> -->											
+											<Button.ToolTip>
+												<ToolTip Style="{StaticResource TributeToolTipStyle}" 
+														Placement="Left" 
+														Content="{Binding}" 
+														DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}" >
+						                            <ToolTip.ContentTemplate>
+						                                <DataTemplate>
+						                                    <ContentControl Style="{StaticResource HUDTooltipBorderStyle}" Width="{StaticResource HUDTooltipMaxWidthSmall}">
+										                        <Grid>
+										                            <Grid.ColumnDefinitions>
+										                                <ColumnDefinition Width="{StaticResource HUDTooltipGutterWidthGridLength}" />
+										                                <ColumnDefinition Width="*" />
+										                            </Grid.ColumnDefinitions>											
+										                            <StackPanel Orientation="Vertical" Grid.Column="1">
+										                                <TextBlock Text="{Binding [AidButtonTitle]}"
+																				Style="{StaticResource HUDPrimaryColorLightTitleTextBlock18ptStyle}" />
+										                                <TextBlock Text="{Binding [AidButtonTooltip]}" 
+																				Style="{StaticResource HUDGray80ParagraphTextBlock14ptStyle}" 
+																				Margin="{StaticResource SmallMarginTop}" />
+																		<TextBlock Text="{Binding [ToolTip_CompletionText]}"
+																				Style="{StaticResource HUDGray80ParagraphTextBlock14ptStyle}" 
+																				Margin="{StaticResource SmallMarginTop}" />
+																		<TextBlock Text="{utility:LocString $11182639}"
+																				Style="{StaticResource HUDRedParagraphTextBlock14ptStyle}"
+																				Visibility="{Binding [PopWarning], Converter={StaticResource BoolToVis}}"
+																				Margin="{StaticResource SmallMarginTop}" />
+																	</StackPanel>
+										                   		</Grid>
+										              		</ContentControl>													
+						                           		</DataTemplate>
+						                      		</ToolTip.ContentTemplate>
+						                    	</ToolTip>
+											</Button.ToolTip>
+										</Button>
+									</Grid>
+									<Separator HorizontalAlignment="Stretch" VerticalAlignment="Bottom"
+											   Style="{StaticResource PrimarySeperatorStyle}" />
+								</StackPanel>
+			                </DataTemplate>
+			            </ItemsControl.ItemTemplate>
+			        </ItemsControl>
+	
+					<!-- Total income 
+					<ContentControl Grid.Row="3" >
+						<StackPanel Orientation="Horizontal" 
+								HorizontalAlignment="Left"
+								Margin="0,0,8,0"
+								Visibility="{Binding [is_progress_visible], Converter={StaticResource BoolToVis}}">
+							<TextBlock Text="{Binding [text][current_progressrate]}" 
+								Style="{StaticResource HUDWhiteBaseTextBlock18ptBoldStyle}"
+								Margin="8,0,0,0" 
+								Width="Auto"
+								HorizontalAlignment="Left" VerticalAlignment="Center" />
+			           		<TextBlock Text="{Binding [buySettlements][SumIncome]}"
+								Style="{StaticResource HUDWhiteBaseTextBlock18ptStyle}"
+								Margin="100,0,0,0"
+								HorizontalAlignment="Right" VerticalAlignment="Center" />
+						</StackPanel>
+					</ContentControl> -->
+		
+			 		<!-- Blurb -->	
+					<TextBlock Grid.Row="3"
+							   VerticalAlignment="Center"
+							   Style="{StaticResource HUDGray80BodyTextBlock18ptStyle}"
+							   Text="{Binding [text][panelblurb]}" 
+							   TextWrapping="Wrap"
+							   Visibility="{Binding [buySettlements][Visible], Converter={StaticResource BoolToVis}}" />
+				</Grid>	
+			</ContentControl>
+		</ContentControl>
+	</Grid>
+</Grid>]]
+		
+		UI_AddChild("", "XamlPresenter", "DiplomacyUI", { IsHitTestVisible = true, Xaml = Xaml, DataContext = UI_CreateDataContext(_diplomacy.data_context) })		
+		UI_AddCommandBinding("hud_game", "toggle_diplomacy_panel", "Diplomacy_ToggleDiplomacyUI")
+		_diplomacy.is_ui_created = true
+	end
+end
+
+function Diplomacy_RemoveUI()
+	if _diplomacy ~= nil then
+		UI_RemoveCommandBinding("hud_game", "toggle_diplomacy_panel")
+		UI_Remove("DiplomacyUI")
+		_diplomacy.is_ui_created = false
+	end
+end
+
+function Diplomacy_UpdateUI()
+	-- UI_SetDataContext() is expensive so only call it once per frame (e.g. score changes when >1 squads die in a frame)
+	if not Rule_Exists(Rule_Diplomacy_UpdateUI) then
+		Rule_AddOneShot(Rule_Diplomacy_UpdateUI, 0.125)
+	end
+end
+
+function Rule_Diplomacy_UpdateUI()		 			
+	if _diplomacy ~= nil and _diplomacy.is_ui_created then 
+		UI_SetDataContext("DiplomacyUI", _diplomacy.data_context)
+	end
+end
+
+-- TEMP: For UI testing 
+function Diplomacy_Restart()
+	Diplomacy_RemoveUI()
+	Diplomacy_CreateUI()
+	Diplomacy_UpdateDataContext()
+end
+
+
+function Diplomacy_ShowEventCue(tribute)
+	
+	local cue = _diplomacy.cue
+	
+	if tribute.food > 0 then 
+		local text = Loc_FormatText(11161258, tribute.food, Player_GetDisplayName(tribute.sender.id))		-- "%1AMOUNT% food received from %2PLAYER_NAME%"
+		UI_CreateEventCueClickable(-1, cue.lifetime, 0, cue.repeatTime, text, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, nothing)
+	end
+	if tribute.wood > 0 then 
+		local text = Loc_FormatText(11161259, tribute.wood, Player_GetDisplayName(tribute.sender.id))		-- "%1AMOUNT% wood received from %2PLAYER_NAME%"
+		UI_CreateEventCueClickable(-1, cue.lifetime, 0, cue.repeatTime, text, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, nothing)
+	end
+	if tribute.stone > 0 then 
+		local text = Loc_FormatText(11161260, tribute.stone, Player_GetDisplayName(tribute.sender.id))	-- "%1AMOUNT% stone received from %2PLAYER_NAME%"
+		UI_CreateEventCueClickable(-1, cue.lifetime, 0, cue.repeatTime, text, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, nothing)
+	end
+	if tribute.gold > 0 then 
+		local text = Loc_FormatText(11161261, tribute.gold, Player_GetDisplayName(tribute.sender.id))		-- "%1AMOUNT% gold received from %2PLAYER_NAME%"
+		UI_CreateEventCueClickable(-1, cue.lifetime, 0, cue.repeatTime, text, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, nothing)
+	end	
+end
+
+
+-----------------------------------------------------------------------
+-- Network functions
+-----------------------------------------------------------------------
+
+--[[
+function Diplomacy_ChangeRelationNtw(playerID, data)  
+
+	-- Expected format of data parameter is: observerPlayerID,targetPlayerID,relationAsAnInt
+	local parts = string.split(data)
+	local observerPlayer = Core_GetPlayersTableEntry(playerID)
+ 	local targetPlayer = Core_GetPlayersTableEntryFromIndex(tonumber(parts[1]))
+	local relation = Diplomacy_RelationConverter(tonumber(parts[2]))
+	
+	if Player_ObserveRelationship(playerID, targetPlayer.id) ~= relation then 
+		Player_SetRelationship(playerID, targetPlayer.id, relation)								
+		Core_CallDelegateFunctions("OnRelationshipChanged", playerID, targetPlayer.id)		-- HACK: Player_SetRelationship() needs to trigger a global event (GE_RelationChanged)
+	end
+end
+]]
+
+function Diplomacy_SendTributeNtw(playerID, data)
+	
+	local sender = Core_GetPlayersTableEntry(playerID)
+	local tax_rate = Diplomacy_GetTaxRate(playerID)	
+	local tribute_data = {}
+	local chunks = string.split(data ,"|")	
+	
+	-- Returns tribute amount after withholding tax has been applied.
+	local EffectiveTribute = function(amount)
+		return  math.floor(amount * (1.0 + tax_rate))
+	end
+	
+	for i = 1, #chunks do 
+		local parts = string.split(chunks[i])
+		if #parts == 5 then 
+			local receiver = Core_GetPlayersTableEntryFromIndex(tonumber(parts[5]))
+			local tribute = {
+				food = tonumber(parts[1]),
+				wood = tonumber(parts[2]),
+				gold = tonumber(parts[3]),
+				stone = tonumber(parts[4]),				
+				sender = sender,		
+				receiver = receiver,
+				tax_rate = tax_rate,
+			}		
+			table.insert(tribute_data, tribute)
+						
+			if tribute.food > 0 then 
+				Player_AddResource(receiver.id, RT_Food, tribute.food)
+				Player_AddResource(sender.id, RT_Food, -EffectiveTribute(tribute.food))
+			end
+			if tribute.wood > 0 then 
+				Player_AddResource(receiver.id, RT_Wood, tribute.wood)
+				Player_AddResource(sender.id, RT_Wood, -EffectiveTribute(tribute.wood))
+			end
+			if tribute.gold > 0 then 
+				Player_AddResource(receiver.id, RT_Gold, tribute.gold)
+				Player_AddResource(sender.id, RT_Gold, -EffectiveTribute(tribute.gold))
+			end
+			if tribute.stone > 0 then 
+				Player_AddResource(receiver.id, RT_Stone, tribute.stone)
+				Player_AddResource(sender.id, RT_Stone, -EffectiveTribute(tribute.stone))
+			end
+		
+			if tribute.receiver.isLocal and not tribute.receiver.isEliminated then
+				Diplomacy_ShowEventCue(tribute)
+			elseif sender.isLocal and (tribute.food > 0 or tribute.wood > 0 or tribute.gold > 0 or tribute.stone > 0) then
+				local cue = _diplomacy.cue
+				local text = Loc_FormatText(11164677, Player_GetDisplayName(tribute.receiver.id))		-- "Tribute sent to %1PLAYER_NAME%"
+				UI_CreateEventCueClickable(-1, cue.lifetime, 0, cue.repeatTime, text, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, nothing)
+			end
+		end
+	end	
+	
+	Core_CallDelegateFunctions("OnTributeSent", tribute_data)   
+end
+
+-----------------------------------------------------------
+------------------ROUEN UNIQUE DIPLO SCRIPT----------------
+----------------------------------------------------------
+
+function Init_RouenWorkshopUI()
+	t_reinforcementData = {
+		{
+			id = "settlement1",
+			displayName = 11196577, -- Trade Route
+			buttontext = 11196576 , -- Reliable Supplies
+			tooltip = 11196575, --Reduce cannon build times by 50%
+			aidAmount = 0,
+			income = 1,
+			purchased = false,
+			spawn = mkr_player_base,
+			units = {{ type = "scar_horseman", numSquads = aid_Horseman},},
+			marker = mkr_traderoute,
+			activated = false,
+		},
+		{
+			id = "settlement2",
+			displayName = 11196579, --River Port
+			buttontext = 11196571, --Ship-worthy Timber
+			tooltip = 11196572, --Increase cannon health by 50%
+			aidAmount = 0, 
+			aidAmount_2 = 0,
+			income = 1,
+			purchased = false,
+			spawn = mkr_player_base,
+			units = {{ type = "scar_spearman", numSquads = aid_Menatarms}, { type = "scar_manatarms", numSquads = aid_Spearman_1}},
+			marker = mkr_riverport,
+			activated = false,
+		},
+		{
+			id = "settlement3",
+			displayName = 11196578, --Mine
+			buttontext = 11196574, --Surplus Iron
+			tooltip = 11196573, -- Reduce cannon gold costs by 85%
+			aidAmount = 0, 
+			income = 1,
+			purchased = false,
+			spawn = mkr_player_base,
+			units = {{ type = "scar_archer", numSquads = aid_Archers},},
+			marker = mkr_mine,
+			activated = false,
+		},
+		--{
+			--id = "settlement4",
+			--displayName = 11196580, -- University
+			--buttontext = 11196581, --Inspired Learning
+			--tooltip = 11196582, --Bonus cannon research progress rate & prototype cannons
+			--aidAmount = 0, 
+			--income = 3,
+			--purchased = false,
+			--spawn = mkr_player_base,
+			--units = {{ type = "scar_monk", numSquads = aid_Monks},},
+			--marker = mkr_university,
+			--activated = false,
+		--},
+	}
+	
+	UI_ReinforcePanel_UpdateData()
+	Rule_AddInterval(UI_ReinforcePanel_UpdateData, 1)
+	
+	
+end
+
+function UI_ReinforcePanel_UpdateData()
+	
+	uiData_ReinforcePanel = {
+		Visible = true,
+		Settlements = {},
+		SumIncome = 0,
+	}
+	
+	for index, settlement in pairs(t_reinforcementData) do
+		if settlement.purchased ~= true then
+			local uiData = {
+				
+				Name = Loc_GetString(settlement.displayName),
+				
+				TradeCountVisible = false,				
+				
+				BuyButtonVisible = false,
+				BuyButtonEnabled = false,
+				BuyButtonOpacity = 0.44,
+				BuyButtonCommand = UI_CreateCommand("UI_CameraSnap_ButtonCallback"),
+				BuyButtonParameter = settlement.id,
+				AidButtonTitle = Loc_GetString(settlement.buttontext),
+				--AidButtonTooltip = settlement.tooltip,
+				AidIncome = settlement.income,
+				ToolTip_CompletionText = Loc_GetString(11196695),
+				--BuyButtonTooltip = "",
+				PopWarning = true,
+				ProgressValue_Visible = _diplomacy.data_context.is_progress_visible,
+				CostColour = "#FFBFBFBF",
+				
+				
+				--Order = settlement.foundOrder,
+				--utility:LocString $11196695 --Complete this location
+			}			
+			
+			uiData.TradeCountVisible = false
+			uiData.BuyButtonVisible = true
+			
+			--if Player has pop cap available
+			local totalAidAmount = (settlement.aidAmount_2 or 0) + settlement.aidAmount
+			if (Player_GetCurrentPopulation(player1, CT_Personnel) + totalAidAmount) <= 200 then --Player_GetCurrentPopulationCap(player1, CT_Personnel) then
+				uiData.BuyButtonEnabled = true 
+				uiData.BuyButtonOpacity = 1.0
+				uiData.PopWarning = false
+			end
+			--end
+			
+			if settlement.activated == true then
+				uiData.CostColour = "#FFFFDB88"
+				uiData.ToolTip_CompletionText = Loc_GetString(11202094)
+				uiData_ReinforcePanel.SumIncome = uiData_ReinforcePanel.SumIncome + settlement.income
+			end
+			
+			--uiData.BuyButtonTooltip = Loc_GetString(Loc_FormatText(11180286, uiData.AidIncome))
+			uiData.IncomeAmount = Loc_GetString(Loc_FormatText(11196585, uiData.AidIncome)) -- Progress Rate Bonus: %1AMOUNT%
+			--Loc_GetString(Loc_FormatText(11180286, 69))
+			if settlement.aidAmount_2 ~= nil then
+				uiData.AidButtonTooltip = Loc_GetString(settlement.tooltip) --Loc_GetString(Loc_FormatText(settlement.tooltip, settlement.aidAmount, settlement.aidAmount_2)) -- %1AMMOUNT% Reinforcement type 1 and %2AMMOUNT% Reinforcement type 2
+			else
+				uiData.AidButtonTooltip = Loc_GetString(settlement.tooltip) --Loc_GetString(Loc_FormatText(settlement.tooltip, settlement.aidAmount)) -- %1AMMOUNT% Reinforcement type
+			end
+			
+			table.insert(uiData_ReinforcePanel.Settlements, uiData)
+		end
+	end
+	
+	--if #uiData_ReinforcePanel.Settlements == 0 then 
+		uiData_ReinforcePanel.Visible = true
+	--end
+	uiData_ReinforcePanel.SumIncome = tostring(uiData_ReinforcePanel.SumIncome) --LOC(uiData_ReinforcePanel.SumIncome) --Loc_GetString(Loc_FormatText(11180287, uiData_ReinforcePanel.SumIncome))
+	
+	--table.sort(uiData_ReinforcePanel.Settlements, function(a, b) return a.Order < b.Order end)		-- this sorts the settlements into the order they were found
+	
+	_diplomacy.data_context.buySettlements = uiData_ReinforcePanel
+	Diplomacy_UpdateUI()
+	
+end
+
+function UI_CameraSnap_ButtonCallback(parameter)
+		
+	for index, settlement in pairs(t_reinforcementData) do 
+	
+		if settlement.id == parameter then
+			Camera_FocusOnPosition(Util_GetPosition(settlement.marker))
+		end
+	end
+end

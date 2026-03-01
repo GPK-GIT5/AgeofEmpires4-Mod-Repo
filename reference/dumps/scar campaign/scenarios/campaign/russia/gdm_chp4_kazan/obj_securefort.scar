@@ -1,0 +1,350 @@
+--
+-- Siege of Kazan
+--
+
+function SecureFort_InitObjectives()
+	
+	OBJ_SecureFort = {
+		Title = "$11180269", -- Secure a foothold
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.OBJ_Mongol_Settlement,
+		Intel_Complete = EVENTS.OBJ_Construct_Wall,
+		
+		OnStart = function()
+			
+			if UI_IsXboxControllerUI() then
+				MissionTutorial_KazanLeaderAura_Xbox()
+			else
+				MissionTutorial_KazanLeaderAura()
+			end
+			
+			Rule_AddInterval(Kazan_CheckDefendNorthOutpostKilled, 10)
+			Rule_AddInterval(Kazan_CheckDefendFieldGateKilled, 10)
+			Rule_AddInterval(Kazan_HasPlayerReachedCity, 5)
+			Rule_AddInterval(Kazan_IntensityCheck, 10)
+			Kazan_GroupWallsForObjectives()
+			
+			--SGroup_SetSelectable(MissionOMatic_FindModule("WestForest").sgroup, false)
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_BuildFort)
+		end,
+		
+		OnComplete = function()
+			Music_Stop()
+			Objective_Start(OBJ_SiegeKazan)
+		end,
+		
+		IsFailed = function()
+		end,
+		
+		OnFail = function()
+		end,
+	}
+	
+	SOBJ_KillWoodcutters = {
+		Title = "$11180268", -- Destroy Tatar Settlement
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_SecureFort,
+		StartAlongsideParent = true,
+		Intel_Complete = EVENTS.Mongol_Settlement_Complete,
+		
+		counterTarget = 0,
+		
+		OnStart = function()
+			Rule_AddInterval(PreventMultiple_TC, 1)
+			Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_cost_stone", MUT_Multiplication, false, 0, EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS), player1, 0)
+			Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_cost_wood", MUT_Multiplication, false, 0, EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS), player1, 0)
+			
+			SOBJ_KillWoodcutters.counterTarget = (EGroup_Count(eg_mon_woodcutters) + EGroup_Count(eg_mon_woodcutters_towers))
+			hint_Settlement = Objective_AddUIElements(SOBJ_KillWoodcutters, mkr_woodcutters, true, 11180275, true, nil, nil, nil, "icons/races/mongols/abilities/unpack" ) -- Kazan Outer Wall
+			Rule_AddGlobalEvent(Kazan_OnEntityDestroyed, GE_EntityKilled)
+			Obj_SetProgressVisible(SOBJ_KillWoodcutters.ID, true)
+			Obj_SetProgress(SOBJ_KillWoodcutters.ID, 0 / SOBJ_KillWoodcutters.counterTarget)
+		end,
+		
+		IsComplete = function()
+			return SGroup_IsEmpty(sg_mon_defend_woodcutters) and EGroup_IsEmpty(eg_mon_woodcutters)
+		end,
+		
+		PreComplete = function()
+			Objective_RemoveUIElements(SOBJ_TatarBuildings, hint_tatarBuildings)
+		end,
+		
+		OnComplete = function()
+			Objective_RemoveUIElements(SOBJ_KillWoodcutters, hint_Settlement)
+			
+			Kazan_SpawnVillagers()
+			EventCues_CallToAction(11189301, CTA_CELEBRATE, EVENTS.Villagers_Arrive, nil, sg_rus_villagers, 20) -- "Villagers have arrived to construct a fort"	
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			Sound_Play2D("mus_stinger_campaign_triumph_short")
+
+			-- Cavalry Waves
+			kazan_intensity = kazan_intensity + 1
+			
+			Objective_Start(SOBJ_BuildFort)
+		end,
+	}
+	
+	--dummy objective for UI elements
+	SOBJ_TatarBuildings = {
+		Title = "$11198462",
+		Type = ObjectiveType_Battle,
+	}
+	
+	SOBJ_BuildFort = {
+		Title = "$11180270", -- Construct a Town Center
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SecureFort,
+		PreStart = function()
+			-- on console, restore the VPS at this point
+			if UI_IsXboxControllerUI() then
+				Game_SetVisibility (VF_XboxUIVillagerPriorities, true)
+			end				
+			UI_SetPlayerDataContext(player1, { PopulationCapOn = true })
+			-- Add Resources
+			Player_SetResource(player1, RT_Food, 500)
+			Player_SetResource(player1, RT_Wood, 2000)
+			Player_SetResource(player1, RT_Stone, 600)
+			Player_SetResource(player1, RT_Gold, 1600)	
+			
+			Util_AutoSave()			
+		end,
+		
+		OnStart = function()
+		Music_UnlockIntensity()
+		Sound_SetMinimumMusicCombatIntensity(0, 0)
+		end,
+		
+		IsComplete = function()
+			return Player_HasBuilding(player1, {EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS})
+		end,
+		
+		--Complete
+		OnComplete = function()
+			local rus_entities = Player_GetEntities(player1)
+			EGroup_Filter(rus_entities, "town_center", FILTER_KEEP)
+			pos_rus_tc = EGroup_GetPosition(rus_entities)
+			Music_Stop()
+		end,
+		
+		--Fail
+		IsFailed = function()
+		end,
+		
+		OnFail = function()
+		end,
+	}
+	
+	Objective_Register(OBJ_SecureFort)
+	Objective_Register(SOBJ_KillWoodcutters)
+	Objective_Register(SOBJ_BuildFort)
+	Objective_Register(SOBJ_TatarBuildings)
+end
+
+
+function Kazan_OnEntityDestroyed(context)
+	local victim = context.victim
+	local owner = context.victimOwner
+	
+	if owner == player2 then 
+		if Entity_IsOfType(victim, "building") then
+			if Objective_IsStarted(SOBJ_KillWoodcutters) and not Objective_IsComplete(SOBJ_KillWoodcutters) then
+				local current = SOBJ_KillWoodcutters.counterTarget - EGroup_CountSpawned(eg_mon_woodcutters)
+				Obj_SetProgress(SOBJ_KillWoodcutters.ID, current / SOBJ_KillWoodcutters.counterTarget)
+				
+				if EGroup_Count(eg_mon_woodcutters) == 0 then
+					Obj_SetProgressVisible(SOBJ_KillWoodcutters.ID, false)
+					Rule_RemoveMe()
+					
+				elseif EGroup_CountSpawned(eg_mon_woodcutters) <= 4 then
+					if hint_tatarBuildings ~= nil then
+						Objective_RemoveUIElements(SOBJ_TatarBuildings, hint_tatarBuildings)
+					else
+						Objective_RemoveUIElements(SOBJ_KillWoodcutters, hint_Settlement)
+					end
+						
+					-- Mark remaining buildings with hints
+					hint_tatarBuildings = Objective_AddUIElements(SOBJ_TatarBuildings, eg_mon_woodcutters, true, "$11198462", true, nil, nil, nil )
+				end
+			end
+		end
+	end
+end
+
+function Kazan_AddMissionFailureCheckLoop()
+	Rule_AddInterval(Kazan_CheckFailure, 5)	
+end
+
+function Kazan_IntensityCheck()
+	if kazan_intensity >= 1 then
+		Wave_OverrideUnitBuildTime("scar_spearman", 10)
+		Wave_OverrideUnitBuildTime("scar_manatarms", 10)
+		Wave_OverrideUnitBuildTime("scar_archer", 10)
+		Wave_OverrideUnitBuildTime("scar_crossbowman", 10)
+		Wave_OverrideUnitBuildTime("scar_horseman", 10)
+		Wave_OverrideUnitBuildTime("scar_knight", 10) 
+		
+		Rule_AddOneShot( Kazan_AddCavLoop, 90)
+		Rule_AddInterval(Kazan_WestFordLoop, 120)
+		Rule_RemoveMe()
+	end
+end
+
+function Kazan_SpawnVillagers()			
+	sg_rus_transport_1 = SGroup_CreateIfNotFound("sg_rus_transport_1")
+	sg_rus_transport_2 = SGroup_CreateIfNotFound("sg_rus_transport_2")
+	sg_rus_transport_3 = SGroup_CreateIfNotFound("sg_rus_transport_3")
+	-- Spawn villagers and move them towards camp
+	
+	Action_SpawnUnits_Do({
+		player = player5,
+		spawnLocation = mkr_rustransport_enter,
+		units = {
+			{ sbp = SBP.RUS.UNIT_NAVAL_TRANSPORT_SHIP_2_RUS, numSquads = 1, sgroup = sg_rus_transport_1, },
+			{ sbp = SBP.RUS.UNIT_NAVAL_TRANSPORT_SHIP_2_RUS, numSquads = 1, sgroup = sg_rus_transport_2, },
+			{ sbp = SBP.RUS.UNIT_NAVAL_SCOUT_2_RUS, numSquads = 1, sgroup = sg_rus_transport_3, },
+		},
+	})
+	Action_SpawnUnits_Do({
+		player = player5,
+		spawnLocation = mkr_landingpoint_1,
+		sgroup = sg_rus_villagers,
+		units = {
+			{ type = "scar_villager", numSquads = Util_DifVar({11, 8, 8, 8}), sgroup = sg_rus_villagers_1, spawnLocation = mkr_landingpoint_1,},
+			{ type = "scar_monk", numSquads = 1, sgroup = sg_rus_monk, spawnLocation = mkr_landingpoint_1,},
+			{ type = "scar_villager", numSquads = Util_DifVar({11, 8, 8, 8}), sgroup = sg_rus_villagers_2, spawnLocation = mkr_landingpoint_2,},
+		},
+	})
+	Cmd_Garrison(sg_rus_villagers_1, sg_rus_transport_1, nil, nil, true)
+	Cmd_Garrison(sg_rus_monk, sg_rus_transport_1, nil, nil, true)
+	Cmd_Garrison(sg_rus_villagers_2, sg_rus_transport_2, nil, nil, true)
+	--Cmd_Garrison(sg_rus_villagers_3, sg_rus_transport_3, nil, nil, true)
+	Modify_UnitSpeed(sg_rus_transport_1, 1.25)
+	Modify_UnitSpeed(sg_rus_transport_2, 1.25)
+	Modify_UnitSpeed(sg_rus_transport_3, 1.25)
+	
+	Rule_AddOneShot(Kazan_MoveTransport, 1)
+end
+
+function Kazan_MoveTransport()
+	Cmd_FormationMove(sg_rus_transport_1, mkr_landingpoint_1, true)
+	Cmd_FormationMove(sg_rus_transport_2, mkr_landingpoint_2, true)
+	Cmd_FormationMove(sg_rus_transport_3, mkr_landingpoint_3, true)
+	Rule_AddOneShot(Kazan_UnloadVillagers, 15)
+end
+
+function Kazan_UnloadVillagers()
+	Cmd_UngarrisonSquad(sg_rus_villagers, mkr_rusfort, true)
+	Cmd_FormationMove(sg_rus_villagers, mkr_rusfort, true)
+	Rule_AddInterval(Kazan_ToggleMonkHeal, {delay = 2, interval = 1})
+	SGroup_SetPlayerOwner(sg_rus_villagers, player1)
+	Rule_AddOneShot(Kazan_DespawnTransport, 4)
+end
+
+function Kazan_ToggleMonkHeal()
+	if SGroup_CountSpawned(sg_rus_monk) > 0 then
+		local AutoHeal = BP_GetAbilityBlueprintByPbgID(165351)
+		local Monk = SGroup_GetSquadAt(sg_rus_monk, 1)
+		if Squad_IsAbilityActive_CS(Monk, AutoHeal) then
+			Rule_RemoveMe()
+		else
+			LocalCommand_SquadAbility(player1, sg_rus_monk, BP_GetAbilityBlueprintByPbgID(165351), true, false) --Toggle Autoheal
+		end
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function Kazan_DespawnTransport()
+	--In and Out troop transports
+	Cmd_FormationMoveToAndDestroy(sg_rus_transport_1, mkr_rustransport_enter, true)
+	Cmd_FormationMoveToAndDestroy(sg_rus_transport_2, mkr_rustransport_enter, true)
+	
+	--Scout boat does a loop of the river
+	Cmd_FormationMove(sg_rus_transport_3, mkr_rustransport_1, true)
+	Cmd_FormationMove(sg_rus_transport_3, mkr_rustransport_2, true)
+	Cmd_FormationMove(sg_rus_transport_3, mkr_rustransport_3, true)
+	Cmd_FormationMove(sg_rus_transport_3, mkr_rustransport_4, true)
+	Cmd_FormationMove(sg_rus_transport_3, mkr_rustransport_5, true)
+	Cmd_FormationMoveToAndDestroy(sg_rus_transport_3, mkr_rustransport_exit, true)
+end
+
+function Kazan_AddCavLoop()
+	if Game_GetSPDifficulty() >= GD_NORMAL then 
+		Rule_AddInterval(Kazan_VaryCavSpawn, kazan_waveinterval)	
+	end
+end
+
+function Kazan_VaryCavSpawn() -- This will queue up the next attack wave from Kazan city, while randomizing the timing and strength of the wave
+	local attackTier = kazan_intensity
+	
+	if kazan_intensity > 1 then -- after the intro waves, lets random up the strength a bit
+		
+		local flex = kazan_intensityFlex -- Pick an upper wave strength, capped at two
+		if flex > 2 then
+			flex = 2
+		end
+		
+		attackTier = World_GetRand(kazan_intensity, (kazan_intensity + flex)) -- Randomly select a strength between min and the selected flex
+		
+		if attackTier > kazan_intensity then -- If we used flex strength, spend that value. If we didn't, pool another flex for next time
+			kazan_intensityFlex = kazan_intensityFlex - (attackTier - kazan_intensity)
+		else
+			kazan_intensityFlex = kazan_intensityFlex + 1
+		end
+	end
+		
+	local spawndelay = (attackTier - kazan_intensity)*kazan_waveintervalvariance*kazan_waveinterval --wave spawn time will increase for higher tier attacks
+	Rule_AddOneShot(Kazan_SpawnCavAttackWave, spawndelay, { attackTier = attackTier })	
+end
+
+function Kazan_WestFordLoop()
+	if Game_GetSPDifficulty() == GD_EASY or EGroup_IsEmpty(eg_mon_westroad) then
+		Rule_RemoveMe()
+	else
+		if westFord_Count ~= nil then
+			westFord_Count = westFord_Count + 1
+		else
+			westFord_Count = 0
+		end
+		if westFord_Count == 5 then
+			Wave_AddUnits(wave_ford1, {{ type = "scar_manatarms", numSquads = 1 }, { type = "scar_archer", numSquads = 2 }})
+			westFord_Count = 0
+		end
+		
+		Wave_Prepare(wave_ford1)
+		RovingArmy_SetTarget(MissionOMatic_FindModule("AttackWest"), pos_rus_tc)
+	end
+end
+
+function PreventMultiple_TC()
+	eg_tcunderconstruction = EGroup_CreateUnique("eg_TCUC_")
+	eg_completedTC = EGroup_CreateUnique("eg_completeTC_")
+	Player_GetAll(player1, sg_allsquads, eg_tcunderconstruction)
+	EGroup_Filter(eg_tcunderconstruction, "town_center", FILTER_KEEP)
+	EGroup_Duplicate(eg_tcunderconstruction, eg_completedTC)
+	--int_TotalTCs = EGroup_CountSpawned(eg_allentities)
+	EGroup_FilterUnderConstruction(eg_tcunderconstruction, FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_completedTC, FILTER_REMOVE)
+	
+	if EGroup_CountSpawned(eg_tcunderconstruction) > 1 then
+		EGroup_Clear(eg_temp)
+		EGroup_Duplicate(eg_tcunderconstruction, eg_temp)
+		EGroup_Remove(eg_temp, EGroup_GetEntityAt(eg_tcunderconstruction, 1))
+		EGroup_DestroyAllEntities(eg_temp)
+	end
+	
+	if EGroup_CountSpawned(eg_tcunderconstruction) > 0 then
+		Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS, ITEM_LOCKED)
+	elseif EGroup_CountSpawned(eg_tcunderconstruction) + EGroup_CountSpawned(eg_completedTC) < 1 then
+		Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS, ITEM_UNLOCKED)
+	elseif EGroup_CountSpawned(eg_completedTC) > 0 then
+		Rule_RemoveMe()
+		Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS, ITEM_UNLOCKED)
+	end
+		
+	EGroup_Destroy(eg_tcunderconstruction)
+	EGroup_Destroy(eg_completedTC)
+end

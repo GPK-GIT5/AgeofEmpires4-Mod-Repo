@@ -1,0 +1,1564 @@
+import("cardinal.scar")
+
+function Rogue_Poi_Precache()
+	
+	POI_CHAMPION_MAX = 3
+	POI_MARKER_RADIUS = 45
+	
+	local rogue_player = PLAYERS[1].id
+	
+	Rogue_POI_InitUnitTables()
+	
+	local ebp_monastery = Cardinal_ConvertTypeToEntityBlueprint("scar_monastery", rogue_player)
+	Scar_PrecachePrematchResource(ebp_monastery)
+	
+	local ebp_keep = Cardinal_ConvertTypeToEntityBlueprint("scar_keep", rogue_player)
+	if ebp_keep ~= nil then Scar_PrecachePrematchResource(ebp_keep) end
+	
+	local sbp_monk = Cardinal_ConvertTypeToSquadBlueprint("scar_monk", rogue_player)
+	Scar_PrecachePrematchResource(sbp_monk)
+	
+	local sbp_manatarms = Cardinal_ConvertTypeToSquadBlueprint("scar_manatarms", rogue_player)
+	Scar_PrecachePrematchResource(sbp_manatarms)
+	
+	local sbp_handcannon = Cardinal_ConvertTypeToSquadBlueprint("scar_handcannon", rogue_player)
+	if sbp_handcannon ~= nil then Scar_PrecachePrematchResource(sbp_handcannon) end
+	
+	local sbp_crossbowman = Cardinal_ConvertTypeToSquadBlueprint("scar_crossbowman", rogue_player)
+	if sbp_crossbowman ~= nil then Scar_PrecachePrematchResource(sbp_crossbowman) end
+	
+	local sbp_knight = Cardinal_ConvertTypeToSquadBlueprint("scar_knight", rogue_player)
+	if sbp_knight ~= nil then Scar_PrecachePrematchResource(sbp_knight) end
+	
+	-- ensure special_unit for player civ is precached
+	local player_civ = Player_GetRaceName(rogue_player)
+	for i = 1, #t_poi_civ_settings do
+		if t_poi_civ_settings[i].civ_name == player_civ then
+			if t_poi_civ_settings[i].special_unit ~= nil then
+				Scar_PrecachePrematchResource(t_poi_civ_settings[i].special_unit)
+			end
+		end
+	end
+end
+
+--? @shortdesc Inits points of interest
+function Rogue_POI_Init(enemy_player, custom_unit_types, extra_poi_types, count_used_t1, count_used_t2)
+	
+	POI_ENEMY = enemy_player
+	
+	poi_count = 0
+	poi_army_count = 0
+	
+	poi_champion_count = 0
+	
+	poi_tempSGroup = nil
+	
+	Rogue_POI_InitData(custom_unit_types, extra_poi_types)
+	
+	Rogue_POI_Spawn("mkr_poi_t1", nil, 1, count_used_t1)
+	Rogue_POI_Spawn("mkr_poi_t2", nil, 2, count_used_t2)
+	
+end
+
+--? @shortdesc Inits unit data tables
+function Rogue_POI_InitUnitTables()
+	
+	t_poi_directions = {DIRECTION_FRONT,DIRECTION_BACK,DIRECTION_RIGHT,DIRECTION_LEFT}
+	
+	t_basic_unit_types = {"scar_spearman", "scar_archer", "scar_horseman"}
+	
+	t_unit_types = {
+		{scar_type = "scar_militia", value = 60, tier = 1, score_multiplier = 1.0}, 
+		{scar_type = "scar_spearman", value = 80, tier = 1, score_multiplier = 0.6},
+		{scar_type = "scar_archer", value = 80, tier = 1, score_multiplier = 1.1},
+		{scar_type = "scar_manatarms", value = 120, tier = 2, score_multiplier = 1.0},
+		{scar_type = "scar_crossbowman", value = 120, tier = 2, score_multiplier = 1.0},
+		{scar_type = "scar_manatarms", value = 120, tier = 3, score_multiplier = 1.0},
+		{scar_type = "scar_crossbowman", value = 120, tier = 3, score_multiplier = 1.0},
+		{scar_type = "scar_handcannon", value = 220, tier = 3, score_multiplier = 1.0},
+		{scar_type = "scar_knight", value = 240, tier = 3, score_multiplier = 1.0},
+	}
+	
+	t_champion_types = {
+		{name = "archer", sbp = BP_GetSquadBlueprint("unit_archer_champion_rogue")},
+		{name = "berserker", sbp = BP_GetSquadBlueprint("unit_berserker_champion_rogue")},
+		{name = "crossbowman", sbp = BP_GetSquadBlueprint("unit_crossbowman_champion_rogue")},
+		{name = "hospitaller", sbp = BP_GetSquadBlueprint("unit_hospitaller_champion_rogue")},
+		{name = "engineer", sbp = BP_GetSquadBlueprint("unit_engineer_champion_rogue")},
+		{name = "horse_archer", sbp = BP_GetSquadBlueprint("unit_horsearcher_champion_rogue")},
+		{name = "horseman", sbp = BP_GetSquadBlueprint("unit_horseman_champion_rogue")},
+		{name = "knight", sbp = BP_GetSquadBlueprint("unit_knight_champion_rogue")},
+		{name = "manatarms", sbp = BP_GetSquadBlueprint("unit_manatarms_champion_rogue")},
+		{name = "mercenary", sbp = BP_GetSquadBlueprint("unit_mercenary_champion_rogue")},
+		{name = "teutonic", sbp = BP_GetSquadBlueprint("unit_teutonic_champion_rogue")},
+		{name = "spearman", sbp = BP_GetSquadBlueprint("unit_spearman_champion_rogue")},
+	}
+	
+	t_siege_types = {
+		{name = "great_trebuchet", sbp = BP_GetSquadBlueprint("unit_great_trebuchet_rogue")},
+		{name = "mangonel", sbp = BP_GetSquadBlueprint("unit_mangonel_rogue")},
+		{name = "nest_of_bees", sbp = BP_GetSquadBlueprint("unit_giant_nest_of_bees_rogue")},
+		{name = "cannon", sbp = BP_GetSquadBlueprint("unit_cannon_rogue")},
+	}
+	
+	-- civ-specific unit settings
+	t_poi_civ_settings = {
+		{	civ_name = "abbasid", 
+			scar_types = {"scar_archer", "scar_manatarms", "scar_spearman", "scar_crossbowman"},
+			favored_types = {"scar_manatarms", "scar_archer"},
+			favored_champions = {"engineer","horseman","spearman"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.ABBASID.UNIT_CAMEL_RIDER_4_ABB,
+		},
+		{	civ_name = "abbasid_ha_01", 
+			scar_types = {"scar_manatarms", "scar_javelin", "scar_pirate"},
+			favored_types = {"scar_javelin", "scar_pirate"},
+			favored_champions = {"engineer","horseman","spearman"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.ABBASID_HA_01.UNIT_MAMLUK_4_ABB_HA_01,
+		},
+		{	civ_name = "byzantine", 
+			scar_types = {"scar_spearman", "scar_manatarms", "scar_crossbowman"},
+			favored_types = {"scar_manatarms", "scar_crossbowman"},
+			favored_champions = {"berserker","mercenary"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.BYZANTINE.UNIT_KNIGHT_4_BYZ,
+		},
+		{	civ_name = "byzantine_ha_mac", 
+			scar_types = {"scar_spearman", "scar_manatarms", "scar_archer"},
+			favored_types = {"scar_manatarms", "scar_archer"},
+			favored_champions = {"berserker","mercenary"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.BYZANTINE_HA_MAC.UNIT_KNIGHT_4_BYZ_HA_MAC,
+		},
+		{	civ_name = "chinese", 
+			scar_types = {"scar_manatarms", "scar_repeater_crossbow", "scar_grenadier", "scar_crossbowman"},
+			favored_types = {"scar_grenadier", "scar_repeater_crossbow"},
+			favored_champions = {"engineer","archer"},
+			favored_siege = {"nest_of_bees","great_trebuchet"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.CHINESE.UNIT_NEST_OF_BEES_4_CLOCKTOWER_CHI,
+		},
+		{	civ_name = "chinese_ha_01", 
+			scar_types = {"scar_manatarms", "scar_repeater_crossbow", "scar_grenadier", "scar_crossbowman"},
+			favored_types = {"scar_grenadier", "scar_repeater_crossbow"},
+			favored_champions = {"engineer","archer"},
+			favored_siege = {"nest_of_bees","great_trebuchet"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.CHINESE_HA_01.UNIT_NEST_OF_BEES_4_CHI_HA_01,
+		},
+		{	civ_name = "hre", 
+			scar_types = {"scar_landsknecht", "scar_crossbowman", "scar_manatarms", "scar_monk"},
+			favored_types = {"scar_manatarms", "scar_landsknecht"}, 
+			favored_champions = {"manatarms","teutonic"},
+			favored_siege = {"cannon"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.HRE.UNIT_KNIGHT_4_HRE,
+		},
+		{	civ_name = "hre_ha_01", 
+			scar_types = {"scar_manatarms", "scar_spearman", "scar_archer"},
+			favored_types = {"scar_manatarms", "scar_spearman"},
+			favored_champions = {"manatarms","teutonic"},
+			favored_siege = {"cannon"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.HRE_HA_01.UNIT_KNIGHT_4_HRE_HA_01,
+		},
+		{	civ_name = "french", 
+			scar_types = {"scar_spearman", "scar_crossbowman", "scar_crossbowman", "scar_manatarms"},
+			favored_types = {"scar_crossbowman"},
+			favored_champions = {"crossbowman","knight"},
+			favored_siege = {"cannon"},
+			favored_naval = {"scar_galleass"},
+			special_unit = SBP.FRENCH.UNIT_KNIGHT_4_FRE,
+		},
+		{	civ_name = "french_ha_01", 
+			scar_types = {"scar_spearman", "scar_crossbowman", "scar_archer", "scar_manatarms", "scar_horseman"},
+			favored_types = {"scar_manatarms", "scar_crossbowman"},
+			favored_champions = {"crossbowman","knight"},
+			favored_siege = {"cannon"},
+			favored_naval = {"scar_galleass"},
+			special_unit = SBP.FRENCH_HA_01.UNIT_RALLY_HORSEMAN_4_FRE_HA_01,
+		},
+		{	civ_name = "english", 
+			scar_types = {"scar_wynguard_footman", "scar_wynguard_ranger", "scar_archer", "scar_manatarms"},
+			favored_types = {"scar_wynguard_ranger", "scar_wynguard_footman"},
+			favored_champions = {"archer","manatarms"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.ENGLISH.UNIT_KNIGHT_4_ENG,
+		},
+		{	civ_name = "lancaster", 
+			scar_types = {"scar_horseman", "scar_manatarms", "scar_archer", "scar_archer"},
+			favored_types = {"scar_archer", "scar_manatarms"},
+			favored_champions = {"archer","manatarms"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.LANCASTER.UNIT_KNIGHT_4_LAN,
+		},
+		{	civ_name = "ottoman", 
+			scar_types = {"scar_manatarms", "scar_handcannon", "scar_spearman", "scar_crossbowman"},
+			favored_types = {"scar_handcannon", "scar_spearman"},
+			favored_champions = {"engineer","horse_archer","horseman"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_galleass"},
+			special_unit = SBP.OTTOMAN.UNIT_GREAT_BOMBARD_3_OTT,
+		},
+		{	civ_name = "malian", 
+			scar_types = {"scar_manatarms", "scar_spearman", "scar_archer", "scar_horseman"},
+			favored_types = {"scar_manatarms", "scar_spearman"},
+			favored_champions = {"archer","horseman"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_combat_ship"},
+			special_unit = SBP.MALIAN.UNIT_MANSA_MUSOFADI_4_MAL,
+		},
+		{	civ_name = "rus", 
+			scar_types = {"scar_handcannon", "scar_spearman", "scar_manatarms", "scar_horsearcher"},
+			favored_types = {"scar_handcannon", "scar_manatarms"},
+			favored_champions = {"knight","horse_archer"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_war_galley"},
+			special_unit = SBP.RUS.UNIT_HORSEARCHER_4_RUS,
+		},
+		{civ_name = "mongol", 
+			scar_types = {"scar_horsearcher", "scar_archer", "scar_spearman", "scar_manatarms", "scar_horseman"},
+			favored_types = {"scar_horsearcher", "scar_archer"},
+			favored_champions = {"horseman","horse_archer"},
+			favored_siege = {"nest_of_bees","great_trebuchet"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.MONGOL.UNIT_KHAGANATE_NEST_OF_BEES_4_MON,
+		},
+		{	civ_name = "mongol_ha_gol", 
+			scar_types = {"scar_archer", "scar_spearman", "scar_manatarms"},
+			favored_types = {"scar_manatarms", "scar_archer"},
+			favored_champions = {"horseman","horse_archer"},
+			favored_siege = {"nest_of_bees","great_trebuchet"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.MONGOL_HA_GOL.UNIT_KNIGHT_4_MON_HA_GOL,
+		},
+		{	civ_name = "japanese", 
+			scar_types = {"scar_manatarms", "scar_archer", "scar_spearman", "scar_onna_bugeisha"},
+			favored_types = {"scar_manatarms", "scar_onna_bugeisha"},
+			favored_champions = {"horseman","horse_archer"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.JAPANESE.UNIT_BANNER_SAMURAI_CAVALRY_4_JPN,
+		},
+		{	civ_name = "japanese_ha_sen", 
+			scar_types = {"scar_kanabo", "scar_archer", "scar_manatarms", "scar_monk"},
+			favored_types = {"scar_kanabo", "scar_manatarms"},
+			favored_champions = {"horseman","horse_archer"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.JAPANESE_HA_SEN.UNIT_DAIMYO_4_JPN_HA_SEN,
+		},
+		{	civ_name = "templar", 
+			scar_types = {"scar_hospitaller", "scar_heavy_spearman", "scar_genoese", "scar_crossbowman", "scar_manatarms"},
+			favored_types = {"scar_hospitaller", "scar_heavy_spearman", "scar_genoese"},
+			favored_champions = {"knight","hospitaller","teutonic"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_4_TEM,
+		},
+		{	civ_name = "sultanate", 
+			scar_types = {"scar_spearman", "scar_archer", "scar_manatarms", "scar_horseman"},
+			favored_types = {"scar_spearman", "scar_archer"},
+			favored_champions = {"manatarms","horseman","spearman"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.SULTANATE.UNIT_WAR_ELEPHANT_3_SUL,
+		},
+		{	civ_name = "sultanate_ha_tug", 
+			scar_types = {"scar_spearman", "scar_archer", "scar_manatarms"},
+			favored_types = {"scar_manatarms", "scar_archer"},
+			favored_champions = {"manatarms","spearman"},
+			favored_siege = {"mangonel"},
+			favored_naval = {"scar_warship"},
+			special_unit = SBP.SULTANATE_HA_TUG.UNIT_WAR_ELEPHANT_BALLISTA_4_SUL_HA_TUG,
+		},
+	}
+	
+end
+
+--? @shortdesc Returns champion sbp based on player civ
+function Rogue_POI_GetFavoredChampion()
+	
+	local player_civ = Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1])
+	
+	for i = 1, #t_poi_civ_settings do
+		if t_poi_civ_settings[i].civ_name == player_civ then
+			local champion_name = Table_GetRandomItem(t_poi_civ_settings[i].favored_champions)
+			return Rogue_POI_GetChampionByName(champion_name)
+		end
+	end
+	
+	-- return random by default
+	return Rogue_POI_GetRandomChampion()
+end
+
+--? @shortdesc Returns random champion sbp
+function Rogue_POI_GetRandomChampion()
+	local random_champion = Table_GetRandomItem(t_champion_types)
+	return random_champion.sbp
+end
+
+--? @shortdesc Returns special siege sbp based on player civ
+function Rogue_POI_GetFavoredSiege()
+	
+	local player_civ = Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1])
+	
+	for i = 1, #t_poi_civ_settings do
+		if t_poi_civ_settings[i].civ_name == player_civ then
+			local siege_name = Table_GetRandomItem(t_poi_civ_settings[i].favored_siege)
+			return Rogue_POI_GetSiegeByName(siege_name)
+		end
+	end
+	
+	-- return random by default
+	return Rogue_POI_GetRandomSiege()
+end
+
+--? @shortdesc Returns random special siege sbp
+function Rogue_POI_GetRandomSiege()
+	local random_siege = Table_GetRandomItem(t_siege_types)
+	return random_siege.sbp
+end
+
+--? @shortdesc Returns siege sbp by short name
+function Rogue_POI_GetSiegeByName(siege_name)
+	
+	for i = 1, #t_siege_types do
+		if t_siege_types[i].name == siege_name then
+			return t_siege_types[i].sbp
+		end
+	end
+end
+
+--? @shortdesc Returns champion sbp by short name
+function Rogue_POI_GetChampionByName(champion_name)
+	
+	for i = 1, #t_champion_types do
+		if t_champion_types[i].name == champion_name then
+			return t_champion_types[i].sbp
+		end
+	end
+end
+
+--? @shortdesc Returns naval sbp based on player civ
+function Rogue_POI_GetFavoredNaval()
+	
+	local player_civ = Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1])
+	local sbp_naval = nil
+	
+	for i = 1, #t_poi_civ_settings do
+		if t_poi_civ_settings[i].civ_name == player_civ then
+			local naval_type = Table_GetRandomItem(t_poi_civ_settings[i].favored_naval)
+			sbp_naval = Cardinal_ConvertTypeToSquadBlueprint(naval_type, ROGUE_HUMAN_PLAYERS[1])
+			return sbp_naval
+		end
+	end
+	
+	-- return default
+	sbp_naval = BP_GetSquadBlueprint("unit_naval_combat_warship_4_rogue")
+	return sbp_naval
+end
+
+function Rogue_POI_GetUnitTypesByCiv()
+	
+	local player_civ = Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1])
+	local default_types = {"scar_spearman", "scar_archer"}
+	
+	for i = 1, #t_poi_civ_settings do
+		if t_poi_civ_settings[i].civ_name == player_civ then
+			return t_poi_civ_settings[i].scar_types
+		end
+	end
+	return default_types
+end
+
+function Rogue_POI_GetFavoredTypesByCiv()
+	
+	local player_civ = Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1])
+	local default_types = {"scar_spearman", "scar_archer"}
+	
+	for i = 1, #t_poi_civ_settings do
+		if t_poi_civ_settings[i].civ_name == player_civ then
+			return t_poi_civ_settings[i].favored_types
+		end
+	end
+	return default_types
+end
+
+function Rogue_POI_GetSpecialUnitByCiv()
+	
+	local player_civ = Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1])
+	local sbp_default = SBP.HRE_HA_01.UNIT_KNIGHT_4_HRE_HA_01
+	
+	for i = 1, #t_poi_civ_settings do
+		if t_poi_civ_settings[i].civ_name == player_civ then
+			return t_poi_civ_settings[i].special_unit
+		end
+	end
+	return sbp_default
+end
+
+function Rogue_POI_GetRandomUnitDataByCiv(budget)
+	local scar_types = Rogue_POI_GetUnitTypesByCiv()
+	local unit_type = Table_GetRandomItem(scar_types)
+	return Rogue_POI_GetUnitDataByType(unit_type, budget)
+end
+
+--? @shortdesc Gets unit data by type for the human player
+function Rogue_POI_GetUnitDataByType(unit_type, budget)
+	
+	local unit_sbp = Cardinal_ConvertTypeToSquadBlueprint(unit_type, ROGUE_HUMAN_PLAYERS[1])
+	
+	local total_cost = 0
+	local cost = Player_GetSquadBPCost(ROGUE_HUMAN_PLAYERS[1], unit_sbp)
+	
+	total_cost = cost.food + cost.wood + cost.gold + cost.stone + cost.merc_byz
+	
+	local unit_data = {sbp = unit_sbp, numSquads = math.ceil(budget / total_cost)}
+	return unit_data
+end
+
+function Rogue_POI_GetAllyUnitsByValue(units, budget)
+	
+	local unit_list = {}
+	while budget > 0 do
+		
+		local unit = Table_GetRandomItem(units)
+		local unit_sbp = unit
+		
+		if scartype(unit) == ST_STRING then
+			unit_sbp = Cardinal_ConvertTypeToSquadBlueprint(unit, ROGUE_HUMAN_PLAYERS[1])
+		end
+		
+		local total_cost = 0
+		local cost = Player_GetSquadBPCost(ROGUE_HUMAN_PLAYERS[1], unit_sbp)
+		
+		total_cost = cost.food + cost.wood + cost.gold + cost.stone + cost.merc_byz
+		
+		table.insert(unit_list, unit_sbp)
+		
+		budget = budget - total_cost
+	end
+	
+	return unit_list
+end
+
+
+--? @shortdesc Inits data for POI types
+function Rogue_POI_InitData(custom_unit_types, extra_poi_types)
+	
+	if custom_unit_types ~= nil then
+		t_unit_types = custom_unit_types
+	end
+	
+	t_poi_types = {
+		-- TIER 1 POINTS OF INTEREST
+		{
+			name = "poi_mine1", tier = 1, reward_value = 800,
+			title = "$11268631",
+			ebp = BP_GetEntityBlueprint("rogue_poi_stone_mining_camp_01"),
+			sbp_ally = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", ROGUE_HUMAN_PLAYERS[1]),
+			ebp_deposit_stone = BP_GetEntityBlueprint("resource_stone_deposit_small"),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_stone_rogue"),
+			ally_count = 2,
+			includes = {"mining_camp", "house"},
+			civilian_ally = true,
+			excluded_civs = {"mongol","mongol_ha_gol"},
+		},
+		{
+			name = "poi_village1", tier = 1, reward_value = 950,
+			title = "$11268683",
+			ebp = BP_GetEntityBlueprint("rogue_poi_farming_village_01"),
+			sbp_ally = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", ROGUE_HUMAN_PLAYERS[1]),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_food_rogue"),
+			ally_count = 3,
+			includes = {"gristmill", "farm", "house"},
+			civilian_ally = true,
+			excluded_civs = {"mongol","mongol_ha_gol"},
+		},
+		{
+			name = "poi_village2", tier = 1, reward_value = 950,
+			title = "$11268683",
+			ebp = BP_GetEntityBlueprint("rogue_poi_sheep_village_01"),
+			sbp_ally = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", ROGUE_HUMAN_PLAYERS[1]),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_food_rogue"),
+			ally_count = 3,
+			includes = {"gristmill", "farm", "house"},
+			sheep_count = 6,
+			civilian_ally = true,
+			excluded_civs = {"mongol","mongol_ha_gol"},
+		},
+		{
+			name = "poi_siege1", tier = 1, reward_value = 800,
+			title = "$11269795",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_siege_01"),
+			sbp_ally = Cardinal_ConvertTypeToSquadBlueprint("scar_mangonel", ROGUE_HUMAN_PLAYERS[1]),
+			rand_pickups = true,
+		},
+		{
+			name = "poi_siege2", tier = 1, reward_value = 700,
+			title = "$11268761",
+			alt_titles = {{"sultanate_ha_tug", "$11269362"}},
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_siege_01"),
+			units_data_ally = Rogue_POI_GetUnitDataByType("scar_springald", 500),
+			rand_pickups = true,
+		},
+		{
+			name = "poi_knight", tier = 1, reward_value = 800,
+			title = "$11269363",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_sm_01"),
+			sbp_ally = SBP.HRE_HA_01.UNIT_KNIGHT_4_HRE_HA_01,
+			rand_pickups = true,
+		},
+		{
+			name = "poi_allies1", tier = 1, reward_value = 850,
+			title = "$11268634",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_md_01"),
+			ally_list = Rogue_POI_GetAllyUnitsByValue(Rogue_POI_GetFavoredTypesByCiv(), 800),
+		},
+		{
+			name = "poi_allies2", tier = 1, reward_value = 1400,
+			title = "$11268634",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_lg_01"),
+			ally_list = Rogue_POI_GetAllyUnitsByValue(Rogue_POI_GetFavoredTypesByCiv(), 1100),
+			rand_pickups = true,
+		},
+		{
+			name = "poi_camp_besieged1", tier = 1, reward_value = 1200,
+			title = "$11269851",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_besieged_01"),
+			ally_list = Rogue_POI_GetAllyUnitsByValue(Rogue_POI_GetUnitTypesByCiv(), 1100),
+			rand_pickups = true,
+		},
+		{
+			name = "poi_camp_besieged2", tier = 1, reward_value = 1400,
+			title = "$11269851",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_besieged_01"),
+			ally_list = Rogue_POI_GetAllyUnitsByValue(Rogue_POI_GetUnitTypesByCiv(), 850),
+			sbp_ally_center = Rogue_POI_GetSpecialUnitByCiv(),
+			rand_pickups = true,
+		},
+		{
+			name = "poi_favored_champion", tier = 1, reward_value = 1100,
+			title = "$11268699",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_sm_01"),
+			sbp_ally = Rogue_POI_GetFavoredChampion(),
+			rand_pickups = true,
+			is_champion = true,
+			checks_command_string = true,
+			weight = 5,
+		},
+		{
+			name = "poi_random_champion", tier = 1, reward_value = 1200,
+			title = "$11268699",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_sm_01"),
+			sbp_ally = Rogue_POI_GetRandomChampion(),
+			rand_pickups = true,
+			is_champion = true,
+			checks_command_string = true,
+			weight = 5,
+		},
+		{
+			name = "poi_shepherd", tier = 1, reward_value = 650,
+			title = "$11269437",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_sm_01"),
+			sbp_ally = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", ROGUE_HUMAN_PLAYERS[1]),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_food_rogue"),
+			ally_count = 4,
+			sheep_count = 6,
+			civilian_ally = true,
+		},
+		{
+			name = "poi_relic1", tier = 1, reward_value = 600,
+			title = "$11268634",
+			ebp = BP_GetEntityBlueprint("rogue_poi_relic_camp_01"),
+			sbp_ally = Cardinal_ConvertTypeToSquadBlueprint("scar_monk", ROGUE_HUMAN_PLAYERS[1]),
+			ally_count = 3,
+			civilian_ally = true,
+		},
+		{
+			name = "poi_holy1", tier = 1, reward_value = 800,
+			title = "$11269465",
+			ebp = BP_GetEntityBlueprint("rogue_poi_holy_site_01"),
+			sbp_ally = Cardinal_ConvertTypeToSquadBlueprint("scar_monk", ROGUE_HUMAN_PLAYERS[1]),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_gold_rogue"),
+			ally_count = 3,
+			civilian_ally = true,
+		},
+		{
+			name = "poi_hoard1", tier = 1, reward_value = 650,
+			title = "$11269368",
+			ebp = BP_GetEntityBlueprint("rogue_poi_food_hoard_01"),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_food_rogue"),
+		},
+		{
+			name = "poi_great_wolf_den", tier = 1, reward_value = 0, -- spawns wolves instead of enemy guards
+			title = "$11269244",
+			ebp = BP_GetEntityBlueprint("rogue_poi_great_wolf_den_01"),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_gold_rogue"),
+		},
+		{
+			name = "poi_caravan1", tier = 1, reward_value = 1000,
+			title = "$11270774",
+			ebp = BP_GetEntityBlueprint("rogue_poi_caravan_01"),
+			ally_list = Rogue_POI_GetAllyUnitsByValue(Rogue_POI_GetUnitTypesByCiv(), 800),
+			sbp_ally_center = Cardinal_ConvertTypeToSquadBlueprint("scar_monk", ROGUE_HUMAN_PLAYERS[1]),
+			rand_pickups = true,
+		},
+		{
+			name = "poi_merchant_hoard", tier = 1, reward_value = 700,
+			title = "$11269501",
+			ebp = BP_GetEntityBlueprint("rogue_poi_merchant_hoard_01"),
+			rand_pickups = true,
+			hp_height = 8,
+		},
+		{
+			name = "poi_great_ruins", tier = 1, reward_value = 800,
+			title = "$11269502",
+			ebp = BP_GetEntityBlueprint("rogue_poi_great_ruins_01"),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_stone_rogue"),
+			hp_height = 8,
+		},
+		{
+			name = "poi_random_siege1", tier = 1, reward_value = 1500,
+			title = "$11269795",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_sm_01"),
+			sbp_ally = Rogue_POI_GetRandomSiege(),
+			is_special_siege = true,
+		},
+		
+		-- TIER 2 POINTS OF INTEREST
+		{
+			name = "poi_favored_siege", tier = 2, reward_value = 1700,
+			title = "$11269795",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_sm_01"),
+			sbp_ally = Rogue_POI_GetFavoredSiege(),
+			rand_pickups = true,
+			is_special_siege = true,
+		},
+		{
+			name = "poi_random_siege2", tier = 2, reward_value = 1700,
+			title = "$11269795",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_sm_01"), 
+			sbp_ally = Rogue_POI_GetRandomSiege(),
+			rand_pickups = true,
+			is_special_siege = true,
+			weight = 2,
+		},
+		{
+			name = "poi_camp_besieged3", tier = 2, reward_value = 1600,
+			title = "$11269851",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_besieged_01"),
+			ally_list = Rogue_POI_GetAllyUnitsByValue(Rogue_POI_GetUnitTypesByCiv(), 950),
+			sbp_ally_center = Rogue_POI_GetFavoredChampion(),
+			is_champion = true,
+			checks_command_string = true,
+		},
+		{
+			name = "poi_camp_besieged4", tier = 2, reward_value = 1600,
+			title = "$11269851",
+			ebp = BP_GetEntityBlueprint("rogue_poi_camp_besieged_01"),
+			ally_list = Rogue_POI_GetAllyUnitsByValue(Rogue_POI_GetUnitTypesByCiv(), 950),
+			sbp_ally_center = Rogue_POI_GetRandomChampion(),
+			is_champion = true,
+			checks_command_string = true,
+			weight = 2,
+		},
+		{
+			name = "poi_mine2", tier = 2, reward_value = 1250,
+			title = "$11268631",
+			ebp = BP_GetEntityBlueprint("rogue_poi_stone_mining_camp_02"),
+			sbp_ally = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", ROGUE_HUMAN_PLAYERS[1]),
+			ebp_deposit_stone = BP_GetEntityBlueprint("resource_stone_deposit"),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_stone_rogue"),
+			ally_count = 5,
+			includes = {"mining_camp", "house"},
+			civilian_ally = true,
+			excluded_civs = {"mongol","mongol_ha_gol"},
+		},
+		{
+			name = "poi_monastery", tier = 2, reward_value = 1600,
+			title = "$11269885",
+			alt_titles = {
+				{"japanese", "$11269887"},
+				{"japanese_ha_sen", "$11269887"},
+				{"mongol", "$11269888"},
+				{"mongol_ha_gol", "$11269888"},
+				{"sultanate", "$11269886"},
+				{"sultanate_ha_tug", "$11269886"},
+				{"abbasid", "$11269886"},
+				{"abbasid_ha_01", "$11269886"},
+				{"ottoman", "$11269886"},
+				{"malian", "$11269886"}
+			},
+			ebp = BP_GetEntityBlueprint("rogue_poi_monastery_01"),
+			sbp_ally = Cardinal_ConvertTypeToSquadBlueprint("scar_monk", ROGUE_HUMAN_PLAYERS[1]),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_gold_rogue"),
+			ally_count = 3,
+			includes = {"monastery"},
+			civilian_ally = true,
+		},
+		{
+			name = "poi_hoard2", tier = 2, reward_value = 2000,
+			title = "$11268762",
+			ebp = BP_GetEntityBlueprint("rogue_poi_hoard_01"),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_gold_rogue"),
+		},
+	}
+	
+	local cropCircleChance = 50
+	if Misc_IsCommandLineOptionSet("littlegreenman") or World_GetRand(1, cropCircleChance) == cropCircleChance then
+		table.insert(t_poi_types, 
+			{
+			name = "poi_cropcircle",
+			title = "$11271050", --Disturbed Crops
+			ebp = BP_GetEntityBlueprint("rogue_crop_circle"),
+			ebpOwner = ROGUE_HUMAN_PLAYERS[1],
+			ebp_pickup = nil,
+			rand_pickups = true,
+			reward_value = 0,
+			tier = 1,
+			is_available = true,
+			force_spawn = false,
+			weight = 100,
+			customLiberationFunc = __DoNothing,
+			customInitFunc = __DoNothing,
+		}
+			)
+	end
+	
+	-- DEFENSIVE POINTS OF INTEREST
+	t_poi_types_def = {
+		{
+			name = "poi_outpost1", tier = 1, reward_value = 950,
+			title = "$11269842",
+			ebp = BP_GetEntityBlueprint("rogue_poi_outpost_01"),
+			ally_list = Rogue_POI_GetAllyUnitsByValue(Rogue_POI_GetUnitTypesByCiv(), 600),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_stone_rogue"),
+			includes = {"outpost"},
+		},
+		{
+			name = "poi_outpost2", tier = 1, reward_value = 950,
+			title = "$11269842",
+			ebp = BP_GetEntityBlueprint("rogue_poi_outpost_02"),
+			ally_list = Rogue_POI_GetAllyUnitsByValue(Rogue_POI_GetUnitTypesByCiv(), 600),
+			ebp_pickup = BP_GetEntityBlueprint("resource_pickup_stone_rogue"),
+			includes = {"outpost"},
+		},
+		{
+			name = "poi_barracks", tier = 1, reward_value = 950,
+			title = "$11269455",
+			alt_titles = {
+				{"byzantine_ha_mac", "$11270515"}
+			},
+			ebp = BP_GetEntityBlueprint("rogue_poi_military_building_01"),
+			rand_pickups = true,
+			ally_list = Rogue_POI_GetAllyUnitsByValue({"scar_spearman", "scar_manatarms"}, 500),
+			includes = {"barracks", "outpost"},
+			excluded_civs = {"mongol_ha_gol"},
+		},
+		{
+			name = "poi_stable", tier = 1, reward_value = 950,
+			title = "$11269454",
+			ebp = BP_GetEntityBlueprint("rogue_poi_military_building_01"),
+			rand_pickups = true,
+			ally_list = Rogue_POI_GetAllyUnitsByValue({"scar_spearman", "scar_archer", "scar_horseman"}, 500),
+			includes = {"stable", "outpost"},
+			excluded_civs = {"mongol_ha_gol", "sultanate_ha_tug"},
+		},
+		{
+			name = "poi_archery_range", tier = 1, reward_value = 950,
+			title = "$11269482",
+			ebp = BP_GetEntityBlueprint("rogue_poi_military_building_01"),
+			rand_pickups = true,
+			ally_list = Rogue_POI_GetAllyUnitsByValue({"scar_spearman", "scar_archer"}, 500),
+			includes = {"archery_range", "outpost"},
+			excluded_civs = {"mongol_ha_gol"},
+		},
+		{
+			name = "poi_keep", tier = 1, reward_value = 1450,
+			title = "$11269882",
+			alt_titles = {
+				{"templar", "$11269883"},
+				{"sultanate_ha_tug", "$11269884"},
+				{"japanese", "$11270332"},
+				{"japanese_ha_sen", "$11270332"},
+			},
+			ebp = BP_GetEntityBlueprint("rogue_poi_keep_01"),
+			rand_pickups = true,
+			includes = {"keep"},
+			excluded_civs = {"mongol","mongol_ha_gol"},
+			is_keep = true,
+		},
+	}
+	
+	if extra_poi_types ~= nil then
+		for a = 1, #extra_poi_types do
+			table.insert(t_poi_types, extra_poi_types[a])
+		end
+	end
+	
+	-- check for force spawn, set default values
+	t_poi_types = Rogue_POI_SetDefaults(t_poi_types)
+	t_poi_types_def = Rogue_POI_SetDefaults(t_poi_types_def)
+	
+	t_poi_instances = {}
+end
+
+--? @shortdesc Changes the owner of an sgroup by replacing it with new squads, so that player upgrades are applied
+function Rogue_POI_SetSgroupOwner(sgroup, player)
+	
+	local _Replace = function(gid, idx, sid)
+		local sbp = Squad_GetBlueprint(sid)
+		local pos = Util_GetPosition(sid)
+		local direction = Util_GetDirection(sid)
+		local facing = Util_GetFacingFromDirection(pos, direction)
+		UnitEntry_DeploySquads(player, nil, {sbp = sbp, numSquads = 1}, pos, nil, nil, {facing = facing})
+		Squad_Destroy(sid)
+	end
+
+	SGroup_ForEach(sgroup, _Replace)
+end
+
+function Rogue_POI_SetDefaults(poi_table)
+	
+	for i = 1, #poi_table do
+		
+		if poi_table[i].sbp_ally ~= nil and poi_table[i].ally_count == nil then
+			poi_table[i].ally_count = 1
+		end
+		
+		if poi_table[i].is_available == nil then poi_table[i].is_available = true end
+		if poi_table[i].force_spawn == nil then poi_table[i].force_spawn = false end
+		if poi_table[i].checks_command_string == nil then poi_table[i].checks_command_string = false end
+		if poi_table[i].is_champion == nil then poi_table[i].is_champion = false end
+		if poi_table[i].is_special_siege == nil then poi_table[i].is_special_siege = false end
+		
+		if Misc_IsCommandLineOptionSet(poi_table[i].name) then
+			poi_table[i].force_spawn = true
+				
+			if poi_table[i].checks_command_string then
+				local commandLineString = Misc_GetCommandLineString(poi_table[i].name)
+				if commandLineString ~= nil and commandLineString ~= "" then
+					
+					if poi_table[i].is_champion then
+						if poi_table[i].sbp_ally ~= nil then
+							poi_table[i].sbp_ally = Rogue_POI_GetChampionByName(commandLineString)
+						elseif poi_table[i].sbp_ally_center ~= nil then
+							poi_table[i].sbp_ally_center = Rogue_POI_GetChampionByName(commandLineString)
+						end
+					elseif is_special_siege then
+						if poi_table[i].sbp_ally ~= nil then
+							poi_table[i].sbp_ally = Rogue_POI_GetSiegeByName(commandLineString)
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	return poi_table
+end
+
+--? @shortdesc Checks if a poi type includes a particular entity type
+function Rogue_POI_Includes(type_data, entity_type)
+	
+	if type_data.includes == nil then
+		return false
+	end
+	
+	for i = 1, #type_data.includes do
+		if type_data.includes[i] == entity_type then
+			return true
+		end
+	end
+	return false
+end
+
+--? @shortdesc Returns unit data for a given budget
+function Rogue_POI_GetUnitData(budget_total, tier)
+	
+	local budget_half = budget_total * 0.5
+	
+	local unit1 = Rogue_POI_GetRandomUnitType(tier)
+	local unit2 = Rogue_POI_GetRandomUnitType(tier)
+	
+	local unit_data = nil
+	
+	if unit1.sbp ~= nil and unit2.sbp ~= nil then
+		unit_data = {
+			{sbp = unit1.sbp, numSquads = math.ceil(budget_half / unit1.value)},
+			{sbp = unit2.sbp, numSquads = math.ceil(budget_half / unit2.value)},
+		}
+	else
+		unit_data = {
+			{type = unit1.scar_type, numSquads = math.ceil(budget_half / unit1.value)},
+			{type = unit2.scar_type, numSquads = math.ceil(budget_half / unit2.value)},
+		}
+	end
+	
+	return unit_data
+end
+
+--? @shortdesc Returns random unit entry from unit types
+function Rogue_POI_GetRandomUnitType(tier)
+	
+	local chosen_index = 1
+	local highest_score = 0
+	
+	for i = 1, #t_unit_types do
+		
+		local unit_type = t_unit_types[i]
+		local score = World_GetRand(1,100)
+		
+		if unit_type.score_multiplier ~= nil then
+			score = score * unit_type.score_multiplier
+		end
+		
+		if unit_type.tier ~= tier then
+			score = 0
+		end
+		
+		if score > highest_score then
+			highest_score = score
+			chosen_index = i
+		end
+	end
+	
+	return t_unit_types[chosen_index]
+end
+
+function Rogue_POI_GetRandomPointType(tier)
+	
+	local chosen_index = -1
+	
+	-- check for force spawning
+	for i = 1, #t_poi_types do
+		if t_poi_types[i].force_spawn == true and t_poi_types[i].is_available == true and chosen_index == -1 and t_poi_types[i].tier == tier then
+			chosen_index = i
+			t_poi_types[i].is_available = false
+		end
+	end
+	
+	
+	if chosen_index == -1 then
+		
+		local t_poi_pool = {} -- selection pool
+		
+		for i = 1, #t_poi_types do
+			
+			local poi_type = t_poi_types[i]
+			local type_available = poi_type.is_available
+			
+			-- check for excluded civs
+			if poi_type.excluded_civs ~= nil then
+				for civ_index = 1, #poi_type.excluded_civs do
+					if Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == poi_type.excluded_civs[civ_index] then
+						type_available = false
+					end
+				end
+			end
+			
+			-- check for champion max
+			if poi_type.is_champion and poi_champion_count >= POI_CHAMPION_MAX then
+				type_available = false
+			end
+			
+			if poi_type.tier ~= tier then
+				type_available = false
+			end
+			
+			if type_available then
+				if poi_type.weight ~= nil then
+					for a = 1, poi_type.weight do
+						table.insert(t_poi_pool, i)
+					end
+				else
+					table.insert(t_poi_pool, i)
+				end
+			end
+		end
+		
+		chosen_index = Table_GetRandomItem(t_poi_pool)
+		
+		if t_poi_types[chosen_index].can_repeat == nil then
+			t_poi_types[chosen_index].is_available = false
+		end
+	end
+	
+	-- update champion count
+	if t_poi_types[chosen_index].is_champion then
+		poi_champion_count = poi_champion_count + 1
+	end
+	
+	return t_poi_types[chosen_index]
+
+end
+
+function Rogue_POI_GetRandomDirection()
+	return Table_GetRandomItem(t_poi_directions)
+end
+
+--? @shortdesc Sets standard radius on POI markers
+function Rogue_POI_SetRadii(marker_name)
+	
+	local poi_markers = AllMarkers_FromName(marker_name, "")
+	for i, poi_marker in ipairs(poi_markers) do
+		Marker_SetProximityCircle(poi_marker, POI_MARKER_RADIUS)
+	end
+end
+
+--? @shortdesc Spawns points of interest
+function Rogue_POI_Spawn(marker_name, custom_poi_types, tier, count_used)
+	
+	local poi_enemy_local = POI_ENEMY
+	local poi_markers_tmp = AllMarkers_FromName(marker_name, "")
+	
+	if #poi_markers_tmp == 0 then
+		return
+	end
+	
+	if count_used == nil then count_used = #poi_markers_tmp end
+	local poi_markers = {}
+	
+	if count_used == 1 then
+		table.insert(poi_markers, Table_GetRandomItem(poi_markers_tmp))
+	else
+		poi_markers = Table_GetRandomItem(poi_markers_tmp, count_used)
+	end
+	
+	local ebp_house = nil
+	local ebp_mining_camp = nil
+	local ebp_lumber_camp = nil
+	local ebp_mill = nil
+	local ebp_farm = nil
+	local sbp_villager = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", ROGUE_HUMAN_PLAYERS[1])
+	local sbp_worker_elephant = nil
+	
+	if Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "mongol" or Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "mongol_ha_gol" then
+		ebp_mining_camp = Cardinal_ConvertTypeToEntityBlueprint("scar_house", ROGUE_HUMAN_PLAYERS[1])
+		ebp_mill = ebp_mining_camp
+		ebp_lumber_camp = ebp_mining_camp
+	elseif Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "sultanate_ha_tug" then
+		ebp_farm = Cardinal_ConvertTypeToEntityBlueprint("farm", ROGUE_HUMAN_PLAYERS[1])
+		ebp_house = Cardinal_ConvertTypeToEntityBlueprint("scar_house", ROGUE_HUMAN_PLAYERS[1])
+		sbp_worker_elephant = Cardinal_ConvertTypeToSquadBlueprint("worker_elephant", ROGUE_HUMAN_PLAYERS[1])
+	else
+		ebp_farm = Cardinal_ConvertTypeToEntityBlueprint("farm", ROGUE_HUMAN_PLAYERS[1])
+		ebp_house = Cardinal_ConvertTypeToEntityBlueprint("scar_house", ROGUE_HUMAN_PLAYERS[1])
+		ebp_mining_camp = Cardinal_ConvertTypeToEntityBlueprint("scar_miningcamp", ROGUE_HUMAN_PLAYERS[1])
+		ebp_mill = Cardinal_ConvertTypeToEntityBlueprint("scar_gristmill", ROGUE_HUMAN_PLAYERS[1])
+		ebp_lumber_camp = Cardinal_ConvertTypeToEntityBlueprint("scar_lumbercamp", ROGUE_HUMAN_PLAYERS[1])
+	end
+	
+	if custom_poi_types ~= nil then
+		t_poi_types = custom_poi_types
+	end
+	
+	for i, poi_marker in ipairs(poi_markers) do
+		
+		local ally_created = false
+		
+		-- get type
+		local type_data = Rogue_POI_GetRandomPointType(tier)
+		
+		print("POI Chosen: "..type_data.name)
+		
+		-- check for enemy override
+		if type_data.enemy_override ~= nil then
+			poi_enemy_local = type_data.enemy_override
+		end
+		
+		-- determine title
+		local title_entry = type_data.title
+		
+		if type_data.alt_titles ~= nil then
+			
+			for alt_index = 1, #type_data.alt_titles do
+				
+				local title_table = type_data.alt_titles[alt_index]
+				local civ_name = title_table[1]
+				local title_string = title_table[2]
+				
+				if Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == civ_name then
+					title_entry = title_string
+				end
+			end
+		end
+		
+		-- create instance data
+		poi_count = poi_count + 1
+		local poi_instance = {
+			index = poi_count,
+			type_data = type_data,
+			type_name = type_data.name,
+			is_discovered = false,
+			is_liberated = false,
+			is_champion = type_data.is_champion,
+			is_keep = type_data.is_keep,
+			skip_title = type_data.skip_title,
+			marker = poi_marker,
+			title = title_entry,
+			hpid_title = nil,
+			hp_height = type_data.hp_height,
+			eg_ally = EGroup_CreateUniqueWithPrefix("eg_poi_ally"),
+			sg_ally = SGroup_CreateUniqueWithPrefix("sg_poi_ally"),
+			sg_enemy = SGroup_CreateUniqueWithPrefix("sg_poi_enemy"),
+		}
+		
+		-- reveal if force spawned
+		if type_data.force_spawn == true then
+			Players_RevealArea(ROGUE_HUMAN_PLAYERS, Util_GetPosition(poi_marker), 30)
+		end
+		
+		local nonWorldOwner = type_data.ebpOwner or nil
+		-- create main entity
+		CreateEntity(nonWorldOwner, type_data.ebp, poi_marker, nil, DIRECTION_FRONT) --Previously Rogue_POI_GetRandomDirection() 
+		
+		-- create shore entity for coastal poi
+		if type_data.is_coastal then
+			-- find closest shore marker
+			local shore_markers = AllMarkers_FromName("mkr_poi_shore_site", "")
+			local shore_marker = Util_GetClosestMarker(poi_marker, shore_markers)
+			local shore_owner = nil
+			local eg_shore = nil
+			
+			if Rogue_POI_Includes(type_data, "dock") then
+				shore_owner = ROGUE_NEUTRAL_PLAYER
+				eg_shore = poi_instance.eg_ally
+			end
+			
+			if type_data.ebp_shore ~= nil then
+				CreateEntity(shore_owner, type_data.ebp_shore, shore_marker, eg_shore)
+			end
+			
+			-- shore ally
+			if type_data.sbp_ally_shore ~= nil then
+				CreateUnits(ROGUE_NEUTRAL_PLAYER, {sbp = type_data.sbp_ally_shore, numSquads = type_data.ally_count}, shore_marker, poi_instance.sg_ally)
+				ally_created = true
+			end
+		end
+		
+		-- create houses
+		if Rogue_POI_Includes(type_data, "house") then
+			if ebp_house ~= nil then
+				local house_markers = AllMarkers_FromName("mkr_poi_house", "")
+				
+				for a, house_marker in ipairs(house_markers) do
+					CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_house, house_marker, poi_instance.eg_ally)
+					Marker_Destroy(house_marker)
+				end
+			end
+		end
+		
+		-- create food dropoff
+		if Rogue_POI_Includes(type_data, "gristmill") then
+	
+			local dropoff_marker = Marker_FromName("mkr_poi_dropoff", "")
+			
+			if Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "sultanate_ha_tug" then
+				UnitEntry_DeploySquads(ROGUE_NEUTRAL_PLAYER, poi_instance.sg_ally, {sbp = sbp_worker_elephant, numSquads = 1 }, dropoff_marker)
+			else
+				CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_mill, dropoff_marker, poi_instance.eg_ally)
+			end
+			Marker_Destroy(dropoff_marker)
+		end
+		
+		-- create farms
+		if Rogue_POI_Includes(type_data, "farm") then
+			if ebp_farm ~= nil then
+				local farm_markers = AllMarkers_FromName("mkr_poi_farm", "")
+				
+				for a, farm_marker in ipairs(farm_markers) do
+					CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_farm, farm_marker, poi_instance.eg_ally)
+					Marker_Destroy(farm_marker)
+				end
+			end
+		end
+		
+		-- create lumber camp
+		if Rogue_POI_Includes(type_data, "lumber_camp") then
+			
+			local dropoff_marker = Marker_FromName("mkr_poi_dropoff", "")
+			
+			if Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "sultanate_ha_tug" then
+				UnitEntry_DeploySquads(ROGUE_NEUTRAL_PLAYER, poi_instance.sg_ally, {sbp = sbp_worker_elephant, numSquads = 1 }, dropoff_marker)
+			else
+				CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_lumber_camp, dropoff_marker, poi_instance.eg_ally)
+			end
+			Marker_Destroy(dropoff_marker)
+		end
+		
+		-- create mining camp
+		if Rogue_POI_Includes(type_data, "mining_camp") then
+			
+			-- stone deposit
+			local stone_deposit_marker = Marker_FromName("mkr_poi_stone_deposit", "")
+			local eg_deposit_stone = EGroup_CreateUniqueWithPrefix("eg_deposit_stone")
+			CreateEntity(nil, type_data.ebp_deposit_stone, stone_deposit_marker, eg_deposit_stone)
+			Marker_Destroy(stone_deposit_marker)
+			
+			-- dropoff
+			local dropoff_marker_jpn = Marker_FromName("mkr_poi_dropoff_jpn", "")
+			local dropoff_marker = Marker_FromName("mkr_poi_dropoff", "")
+			
+			if Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "japanese" or Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "japanese_ha_sen" then
+				CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_mining_camp, dropoff_marker_jpn, poi_instance.eg_ally)
+			elseif Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "sultanate_ha_tug" then
+				UnitEntry_DeploySquads(ROGUE_NEUTRAL_PLAYER, poi_instance.sg_ally, {sbp = sbp_worker_elephant, numSquads = 1 }, dropoff_marker)
+			else
+				CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_mining_camp, dropoff_marker, poi_instance.eg_ally)
+			end
+			
+			Marker_Destroy(dropoff_marker_jpn)
+			Marker_Destroy(dropoff_marker)
+		end
+		
+		-- create keep
+		if Rogue_POI_Includes(type_data, "keep") then
+			local ebp_keep = Cardinal_ConvertTypeToEntityBlueprint("scar_keep", ROGUE_HUMAN_PLAYERS[1])
+			CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_keep, poi_marker, poi_instance.eg_ally, DIRECTION_FRONT)
+		end
+		
+		-- create outpost
+		if Rogue_POI_Includes(type_data, "outpost") then
+			
+			local ally_outpost_markers = AllMarkers_FromName("mkr_poi_ally_outpost", "")
+						
+			local ebp_outpost = Cardinal_ConvertTypeToEntityBlueprint("scar_outpost", ROGUE_HUMAN_PLAYERS[1])
+			for i = 1, #ally_outpost_markers do
+				CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_outpost, ally_outpost_markers[i], poi_instance.eg_ally)
+				Marker_Destroy(ally_outpost_markers[i])
+			end
+			
+			if Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "rus" then
+				Cmd_InstantUpgrade(poi_instance.eg_ally, UPG.RUS.UPGRADE_WOODEN_CASTLE_SPRINGALD_RUS)
+			elseif Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "mongol" then
+				Cmd_InstantUpgrade(poi_instance.eg_ally, UPG.MONGOL.UPGRADE_OUTPOST_SPRINGALD_MON)
+			elseif Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "mongol_ha_gol" then
+				Cmd_InstantUpgrade(poi_instance.eg_ally, UPG.MONGOL.UPGRADE_OUTPOST_SPRINGALD_MON)
+			elseif Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "byzantine" then
+				Cmd_InstantUpgrade(poi_instance.eg_ally, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+				Cmd_InstantUpgrade(poi_instance.eg_ally, UPG.BYZANTINE.UPGRADE_OUTPOST_MANGONEL_BYZ)
+			elseif Player_GetRaceName(ROGUE_HUMAN_PLAYERS[1]) == "byzantine_ha_mac" then
+				Cmd_InstantUpgrade(poi_instance.eg_ally, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+				Cmd_InstantUpgrade(poi_instance.eg_ally, UPG.BYZANTINE.UPGRADE_OUTPOST_MANGONEL_BYZ)
+			else
+				Cmd_InstantUpgrade(poi_instance.eg_ally, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+				Cmd_InstantUpgrade(poi_instance.eg_ally, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+			end
+		end
+		
+		-- create monastery
+		if Rogue_POI_Includes(type_data, "monastery") then
+			local ebp_monastery = Cardinal_ConvertTypeToEntityBlueprint("scar_monastery", ROGUE_HUMAN_PLAYERS[1])
+			CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_monastery, poi_marker, poi_instance.eg_ally)
+		end
+		
+		-- create stable
+		if Rogue_POI_Includes(type_data, "stable") then
+			local ebp_stable = Cardinal_ConvertTypeToEntityBlueprint("scar_stable", ROGUE_HUMAN_PLAYERS[1])
+			CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_stable, poi_marker, poi_instance.eg_ally)
+		end
+		
+		-- create barracks
+		if Rogue_POI_Includes(type_data, "barracks") then
+			local ebp_barracks = Cardinal_ConvertTypeToEntityBlueprint("scar_barracks", ROGUE_HUMAN_PLAYERS[1])
+			CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_barracks, poi_marker, poi_instance.eg_ally)
+		end
+		
+		-- create archery range
+		if Rogue_POI_Includes(type_data, "archery_range") then
+			local ebp_archery_range = Cardinal_ConvertTypeToEntityBlueprint("scar_archeryrange", ROGUE_HUMAN_PLAYERS[1])
+			CreateEntity(ROGUE_NEUTRAL_PLAYER, ebp_archery_range, poi_marker, poi_instance.eg_ally)
+		end
+		
+		-- spawn wolves
+		if Marker_Exists("mkr_poi_wolf", "") then
+			
+			local wolf_markers = AllMarkers_FromName("mkr_poi_wolf", "")
+			local sg_wolves = SGroup_CreateUnique("sg_wolves")
+			
+			for i, wolf_marker in ipairs(wolf_markers) do
+				UnitEntry_DeploySquads(ROGUE_ENEMY_WAVE_PLAYER, sg_wolves, {{sbp = SBP.GAIA.GAIA_HUNTABLE_WOLF, numSquads = 1 }}, wolf_marker)
+				Marker_Destroy(wolf_marker)
+			end
+			
+			SGroup_AddGroup(poi_instance.sg_enemy, sg_wolves)
+			
+			local _ChangeToGaia = function(gid, idx, sid)
+				Squad_SetWorldOwned(sid)
+			end
+			SGroup_ForEach(sg_wolves, _ChangeToGaia)
+		end
+		
+		-- center ally
+		if Marker_Exists("mkr_poi_ally_center", "") then
+			local ally_marker_center = Marker_FromName("mkr_poi_ally_center", "")
+			if type_data.sbp_ally_center ~= nil then
+				UnitEntry_DeploySquads(ROGUE_NEUTRAL_PLAYER, poi_instance.sg_ally, {sbp = type_data.sbp_ally_center, numSquads = 1}, ally_marker_center)
+			end
+			Marker_Destroy(ally_marker_center)
+		end
+		
+		-- create allied squads
+		if Marker_Exists("mkr_poi_ally", "") then
+			
+			local ally_markers = AllMarkers_FromName("mkr_poi_ally", "")
+			
+			if type_data.ally_list ~= nil then
+				
+				local marker_index = 1
+				for ally_index = 1, #type_data.ally_list do
+					
+					local unit_sbp = type_data.ally_list[ally_index]
+					
+					ally_created = true
+					CreateUnits(ROGUE_NEUTRAL_PLAYER, {sbp = unit_sbp, numSquads = 1}, ally_markers[marker_index], poi_instance.sg_ally)
+					
+					marker_index = marker_index + 1
+					if marker_index > #ally_markers then
+						marker_index = 1
+					end
+				end
+				
+				for i, ally_marker in ipairs(ally_markers) do
+					Marker_Destroy(ally_marker)
+				end
+			end
+			
+			
+			for i, ally_marker in ipairs(ally_markers) do
+				
+				if type_data.ally_count ~= nil then
+					
+					UnitEntry_DeploySquads(ROGUE_NEUTRAL_PLAYER, poi_instance.sg_ally, {sbp = type_data.sbp_ally, numSquads = type_data.ally_count}, ally_marker)
+					
+					-- spawn sheep
+					if type_data.sheep_count ~= nil then
+						
+						poi_instance.sg_ally_sheep = SGroup_CreateUniqueWithPrefix("sg_sheep")
+						
+						for sheep_index = 1, type_data.sheep_count do
+							local pos = Util_GetOffsetPosition(ally_marker, sheep_index, 4)
+							UnitEntry_DeploySquads(ROGUE_NEUTRAL_PLAYER, poi_instance.sg_ally_sheep, {{sbp = SBP.GAIA.GAIA_HERDABLE_SHEEP, numSquads = 1 }}, pos)
+						end
+					end
+					
+					ally_created = true
+					Marker_Destroy(ally_marker)
+					
+				elseif type_data.units_data_ally ~= nil then
+					
+					CreateUnits(ROGUE_NEUTRAL_PLAYER, type_data.units_data_ally, ally_marker, poi_instance.sg_ally)
+					ally_created = true
+					Marker_Destroy(ally_marker)
+				end
+			end
+		end
+			
+		-- Prevent attacks on captors
+		if ally_created then
+			Cmd_HoldPosition(poi_instance.sg_ally)
+			if type_data.civilian_ally == nil then
+				Modify_WeaponEnabled(poi_instance.sg_ally, "hardpoint_01", false)
+			end
+		end
+		
+		-- check for preplaced tents
+		if EGroup_Exists("eg_poi_tents") then
+			if EGroup_CountSpawned(eg_poi_tents) > 0 then
+				Util_SetPlayerOwner(eg_poi_tents, poi_enemy_local)
+			end
+		end
+		
+		-- create pickups
+		if Marker_Exists("mkr_poi_pickup", "") then
+			
+			local pickup_markers = AllMarkers_FromName("mkr_poi_pickup", "")
+			poi_instance.eg_pickups =  EGroup_CreateUniqueWithPrefix("eg_poi_pickups_")
+			
+			for i, marker in ipairs(pickup_markers) do
+				
+				if type_data.ebp_pickup ~= nil then
+					Util_CreateEntities(poi_enemy_local, poi_instance.eg_pickups, type_data.ebp_pickup, marker, 1)
+				elseif type_data.rand_pickups == true then
+					local randomPickup = Table_GetRandomItem({
+							BP_GetEntityBlueprint("resource_pickup_gold_rogue"),
+							BP_GetEntityBlueprint("resource_pickup_food_rogue"),
+							BP_GetEntityBlueprint("resource_pickup_wood_rogue")
+						})
+					Util_CreateEntities(poi_enemy_local, poi_instance.eg_pickups, randomPickup, marker, 1)
+				end
+				Marker_Destroy(marker)
+			end
+		end
+		
+		-- create armies
+		local poi_army_markers = AllMarkers_FromName("mkr_poi_army", "")
+		local units_data = nil
+		
+		if type_data.units_data == nil then
+			
+			local budget = type_data.reward_value
+			
+			-- adjust budget slightly for difficulty
+			budget = GetIntegerInExponentialRange((0.65 * budget), budget)
+			
+			-- adjust budget based on the number of army markers
+			budget = math.floor(budget / #poi_army_markers)
+			
+			units_data = Rogue_POI_GetUnitData(budget, tier)
+		else
+			units_data = type_data.units_data
+		end
+		
+		for i, marker in ipairs(poi_army_markers) do
+			
+			if type_data.is_naval == nil then
+				
+				poi_army_count = poi_army_count + 1
+				
+				local player_army = poi_enemy_local
+				
+				if type_data.guard_owner ~= nil then
+					player_army = type_data.guard_owner
+				end
+				
+				-- create army
+				local camp_army_params = {
+					name = "poi_army"..tostring(poi_army_count),
+					player = player_army,
+					spawn = marker,
+					targetOrder = TARGET_ORDER_PATROL,
+					targets = {Util_GetPosition(marker)},
+					units = units_data
+				}
+				local army = Army_Init(camp_army_params)
+				local sgroup = Army_GetSGroup(army)
+				
+				SGroup_AddGroup(poi_instance.sg_enemy, sgroup) 
+			else
+				UnitEntry_DeploySquads(poi_enemy_local, poi_instance.sg_enemy, units_data, marker)
+			end
+
+			Marker_Destroy(marker)
+		end
+		
+		--Runs a custom POI Init funciton if one is declared
+		if type_data.customInitFunc ~= nil then
+			type_data.customInitFunc(poi_instance)
+		end
+		
+		--Passes through a custom Liberation function if it exists
+		if type_data.customLiberationFunc ~= nil then
+			poi_instance.customLiberationFunc = type_data.customLiberationFunc
+		end
+		
+		table.insert(t_poi_instances, poi_instance)
+	end
+	
+	Rule_AddOneShot(Rogue_POI_StartTracking, 0.25)
+end
+
+function Rogue_POI_StartTracking()
+	Rule_AddInterval(Rogue_POI_Track, 1)
+end
+
+function Rogue_POI_Track()
+	local all_liberated = true
+	
+	for i, poi_instance in ipairs(t_poi_instances) do
+		
+		if poi_instance.is_discovered == false then
+			
+			all_liberated = false
+			
+			if Players_AreSquadsNearMarker(ROGUE_HUMAN_PLAYERS, poi_instance.marker) then
+				
+				Players_RevealArea(ROGUE_HUMAN_PLAYERS, Util_GetPosition(poi_instance.marker), 20, 20)
+				poi_instance.is_discovered = true
+				
+				if poi_instance.skip_title == nil then
+					
+					local title_height = 6
+					if poi_instance.hp_height ~= nil then
+						title_height = poi_instance.hp_height
+					end
+					
+					poi_instance.hpid_title = HintPoint_Add(poi_instance.marker, true, poi_instance.title, title_height, HPAT_Hint)
+				end
+			end
+			
+		elseif poi_instance.is_liberated == false then
+			
+			all_liberated = false
+			
+			if poi_instance.customLiberationFunc ~= nil then
+				
+				if poi_instance.customLiberationFunc(poi_instance) == true then
+					HintPoint_Remove(poi_instance.hpid_title)
+					poi_instance.is_liberated = true
+				end				
+				
+			else
+				if SGroup_CountSpawned(poi_instance.sg_enemy) == 0 then
+					
+					Rogue_POI_SetSgroupOwner(poi_instance.sg_ally, ROGUE_HUMAN_PLAYERS[1])
+					
+					if EGroup_IsHoldingAny(poi_instance.eg_ally) then
+						poi_tempSGroup = SGroup_CreateUnique("poi_tempSGroup")
+						EGroup_GetSquadsHeld(poi_instance.eg_ally, poi_tempSGroup)
+						Rule_AddOneShot(Rogue_POI_SetOwnerDelayed, 0.25)
+					end
+					Util_SetPlayerOwner(poi_instance.eg_ally, ROGUE_HUMAN_PLAYERS[1])
+					
+					-- check for sheep
+					if poi_instance.sg_ally_sheep ~= nil then
+						Util_SetPlayerOwner(poi_instance.sg_ally_sheep, ROGUE_HUMAN_PLAYERS[1])
+					end
+					
+					-- increment keep count
+					if poi_instance.is_keep then
+						local totalKeeps = Player_GetStateModelInt(ROGUE_HUMAN_PLAYERS[1], "total_keep_count")
+						Player_SetStateModelInt(ROGUE_HUMAN_PLAYERS[1], "total_keep_count", totalKeeps + 1)
+					end
+					
+					-- increment champion challenge
+					if poi_instance.is_champion then
+						print("Champion Rescued!")
+						Game_SendCustomChallengeEvent(ROGUE_HUMAN_PLAYERS[1], CE_ROGUECHAMPIONSCHAMPIONCOMPLETED, 1)
+					end
+					
+					if poi_instance.skip_title == nil then
+						HintPoint_Remove(poi_instance.hpid_title)
+					end
+						
+					poi_instance.is_liberated = true
+
+				end
+			end
+		end
+	end
+	
+	if all_liberated == true then
+		Rule_RemoveMe()	
+	end
+
+end
+
+function Rogue_POI_SetOwnerDelayed()
+	if poi_tempSGroup ~= nil then
+		SGroup_SetPlayerOwner(poi_tempSGroup, ROGUE_HUMAN_PLAYERS[1])
+		SGroup_Destroy(poi_tempSGroup)
+		poi_tempSGroup = nil
+	end
+end
+

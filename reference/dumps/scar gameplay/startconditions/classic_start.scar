@@ -1,0 +1,146 @@
+-----------------------------------------------------------------------
+--
+-- 'Classic' starting condition
+--
+-- This script is used for standard mode, as well as associated modes - such as Nomad Mode.
+--
+-- Players start with a town center and ugprades appropriate to the selected starting age (dark, feudal, castle, imperial) 
+--
+-- (c) Relic Entertainment 2017
+--
+-----------------------------------------------------------------------
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+
+_classicStart = {
+	ebps = {
+		townCenter = {			-- blueprints by race (filled dynamically)
+		},
+	},
+	types = {
+		townCenter = "town_center",
+	},
+	ages = {   					
+		{			
+			option = "option_start_age_1",
+			initialUpgrades = {
+				BP_GetUpgradeBlueprint("dark_age"),
+			},
+		},
+		{			
+			option = "option_start_age_2", 
+			initialUpgrades = {						
+				BP_GetUpgradeBlueprint("dark_age"),
+				BP_GetUpgradeBlueprint("feudal_age"),
+			},
+		},
+		{			
+			option = "option_start_age_3",
+			initialUpgrades = {
+				BP_GetUpgradeBlueprint("dark_age"),
+				BP_GetUpgradeBlueprint("feudal_age"),
+				BP_GetUpgradeBlueprint("castle_age"),
+			},
+		},
+		{			
+			option = "option_start_age_4",
+			initialUpgrades = {
+				BP_GetUpgradeBlueprint("dark_age"),
+				BP_GetUpgradeBlueprint("feudal_age"),
+				BP_GetUpgradeBlueprint("castle_age"),
+				BP_GetUpgradeBlueprint("imperial_age"),
+			},
+		},
+	},
+	FOWRevealRadius = 70,		-- radius around player start position within which FOW is initially revealed
+}
+
+
+-----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+Core_RegisterModule("ClassicStart")
+
+
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+  
+ 
+-- Called by OnInit() in core.scar
+function ClassicStart_OnInit()
+end
+
+  
+function ClassicStart_PostInit()
+
+	-- win condition option
+	local winConditionOptions = {}
+	Setup_GetWinConditionOptions(winConditionOptions)
+	
+	local optionAgeStartKey
+	if winConditionOptions.section_starting_conditions 
+		and winConditionOptions.section_starting_conditions.option_start_age 
+		and winConditionOptions.section_starting_conditions.option_start_age.enum_items then 
+		for key, value in pairs(winConditionOptions.section_starting_conditions.option_start_age.enum_items) do
+			if (winConditionOptions.section_starting_conditions.option_start_age.enum_value == value) then
+				optionAgeStartKey = key
+			end
+		end
+	end
+	
+	local initialUpgrades = {} 
+	for i, age in pairs(_classicStart.ages) do
+		if age.option == optionAgeStartKey then 
+			initialUpgrades = age.initialUpgrades
+			print(string.format("ClassicStart_PostInit() - %s",  age.option))
+			break
+		end
+	end
+	
+	local isNomadStart = _match.is_nomad_start
+	local needBoost = _classicStart.FOWRevealRadius ~= nil and _classicStart.FOWRevealRadius < 100 
+	local difficulty = Game_GetSPDifficulty();
+	
+	for i, player in pairs(PLAYERS) do
+	-- Initial upgrades (add in reverse chronological order so audio cues don't overlap)
+		for j = #initialUpgrades, 1, -1 do
+			if not Player_HasUpgrade(player.id, initialUpgrades[j]) then
+				Player_CompleteUpgrade(player.id, initialUpgrades[j])				
+			end
+		end
+		
+		if not isNomadStart then
+			if _classicStart.FOWRevealRadius ~= nil then
+				FOW_PlayerRevealArea(player.id, player.startingPos, _classicStart.FOWRevealRadius, 0.25)		
+			end
+
+			-- INTEGRATION WARNING - this should not be needed in XP 3 or Mainline -- START of CHEAT
+			-- Not needed in reveal mode or in Nomad where radius is already higher
+			if player.isHuman == false and difficulty == GD_EXPERT and needBoost then
+				FOW_PlayerRevealArea(player.id, player.startingPos, 100, 0.25)				
+			end
+			-- END of CHEAT 
+		end
+		
+	end
+	
+	if isNomadStart then
+		ClassicStart_NomadRemoveAllWolves()
+	end
+	
+	_classicStart = nil
+end
+
+function ClassicStart_NomadRemoveAllWolves()	
+	local eg_wolves = EGroup_Create("eg_temp_RemoveAllWolves")
+	World_GetAllNeutralEntities(eg_wolves)
+	
+	EGroup_Filter(eg_wolves, "wolf", FILTER_KEEP)
+	
+	EGroup_DestroyAllEntities(eg_wolves)
+	EGroup_Destroy(eg_wolves)
+end

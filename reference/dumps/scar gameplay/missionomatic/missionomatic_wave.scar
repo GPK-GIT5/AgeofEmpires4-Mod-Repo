@@ -1,0 +1,574 @@
+--Read all about it here!!
+-- http://relicwiki/display/CARD/Waves
+
+function _Wave_Init()
+	g_waves = {}
+	g_wave_unit_type_info = {
+		scar_villager =           { category = "town_center", build_time = 25 },
+		scar_scout =              { category = "town_center", build_time = 25 },
+		scar_shield_villager = 	  { category = "town_center", build_time = 20 },
+		scar_spearman =           { category = "infantry", build_time = 25 },
+		scar_manatarms =          { category = "infantry", build_time = 35 },
+		scar_landsknecht =    	  { category = "infantry", build_time = 35 },
+		scar_horseman =           { category = "cavalry", build_time = 30 },
+		scar_knight =             { category = "cavalry", build_time = 35 },
+		scar_horsearcher =        { category = "cavalry", build_time = 30 },
+		scar_archer =             { category = "ranged", build_time = 30 },
+		scar_crossbowman =        { category = "ranged", build_time = 25 },
+		scar_handcannon =         { category = "ranged", build_time = 30 },
+		scar_repeater_crossbow =  { category = "ranged", build_time = 30 },
+		scar_monk =		          { category = "religious", build_time = 45 },
+		scar_siege_tower =        { category = "siege", build_time = 45 },
+		scar_mangonel =           { category = "siege", build_time = 45 },
+		scar_ram =                { category = "siege", build_time = 25 },
+		scar_springald =          { category = "siege", build_time = 30 },
+		scar_cannon =	          { category = "siege", build_time = 55 },
+		scar_bombard =	          { category = "siege", build_time = 55 },
+		scar_culverin =	          { category = "siege", build_time = 55 },
+		scar_ribauldequin =       { category = "siege", build_time = 55 },
+		scar_trebuchet =       	  { category = "siege", build_time = 55 },
+		scar_trebuchet_cw =       { category = "siege", build_time = 55 },
+		scar_trebuchet_traction = { category = "siege", build_time = 55 },
+	}
+	g_wave_spawn_type_info = {
+		barracks =       { categories = { "infantry" } },
+		archery_range =  { categories = { "ranged" } },
+		stable =         { categories = { "cavalry" } },
+		siege_workshop = { categories = { "siege" } },
+		town_center =    { categories = { "town_center" } },
+		monastery =      { categories = { "religious" } },
+		universal =      { categories = { "infantry", "ranged", "cavalry", "siege", "town_center", "religious" } },
+	}
+	
+	g_sbp_to_unit_type = {
+		--[SBP.ABBASID.UNIT_KNIGHT_SPECIAL_R] = "scar_knight",
+		--[SBP.ABBASID.UNIT_KNIGHT_SPECIAL_D] = "scar_knight",
+		--[SBP.ABBASID.UNIT_KNIGHT_SPECIAL_J] = "scar_knight",
+	}
+
+	g_all_categories = { "infantry", "ranged", "cavalry", "siege", "town_center", "religious" }
+end
+
+--? @shortdesc Sets how long a wave spawner will be on cooldown after spawning a certain unit type 
+--? @args String type, Number time
+function Wave_OverrideUnitBuildTime(type, time)
+	local unit_type = g_wave_unit_type_info[type]
+	assert(unit_type, "Cannot find unit of type "..type)
+	g_wave_unit_type_info[type].build_time = time
+end
+
+--? @shortdesc Sets which unit categories can be built by a building. Categories are "infantry", "ranged", "cavalry", "siege", "town_center", and "religious"
+--? @args String building_type, Table categories
+function Wave_OverrideBuildingSpawnType(building_type, categories)
+	assert(scartype(categories) == ST_TABLE, "categories expects a table but recieved a "..tostring(scartype(categories)))
+	assert(scartype(building_type) == ST_STRING, "building_type expects a string but recieved a "..tostring(scartype(building_type)))
+	g_wave_spawn_type_info[building_type] = {categories = categories}
+end
+
+
+function Wave_MonitorAllWaves()	
+	for i, wave in ipairs(g_waves) do
+		Wave_Monitor(wave)
+	end
+end
+
+function Wave_FindWave(descriptor)
+	for i, wave in ipairs(g_waves) do
+		if wave.descriptor == descriptor then
+			return wave
+		end
+	end
+	assert(false, "Could not find a wave with the name "..descriptor)
+	return nil
+end
+
+
+--? @shortdesc Sets up a new wave
+--? @args Table wave_data 
+--? @extdesc see http://relicwiki/display/CARD/Waves to learn more about creating a wave
+--? @return Wave object that can be used in other functions
+function Wave_New(wave_data)
+	
+	local wave = {}
+	assert(wave_data.descriptor, "Wave needs a descriptor")
+	assert(wave_data.player, "Wave "..wave_data.descriptor.." needs a player")
+	assert(wave_data.spawn, "Wave "..wave_data.descriptor.." needs a spawn")
+	assert(wave_data.assault_module or wave_data.assault_module == false or wave_data.assault_module_data, "Wave "..wave_data.descriptor.." needs an assault_module or assault_module_data")
+	assert(not((wave_data.assault_module or wave_data.assault_module == false ) and wave_data.assault_module_data), "Wave cannot have both assault_module and assault_module_data")
+	assert(not(wave_data.staging_module and wave_data.staging_module_data), "Wave cannot have both staging_module and staging_module_data")
+	
+	wave.descriptor = wave_data.descriptor
+	wave.player = wave_data.player
+	wave.staging_module = wave_data.staging_module
+	wave.assault_module = wave_data.assault_module
+	wave.staging_module_data = wave_data.staging_module_data
+	wave.assault_module_data = wave_data.assault_module_data
+	wave.on_auto_launch_function = wave_data.on_auto_launch_function
+	wave.active_sgroup = wave_data.active_sgroup
+	wave.is_building = false
+	wave.is_paused = false
+	wave.index_assault = 1
+	wave.index_staging = 1
+	
+	wave.ignore_build_times = wave_data.ignore_build_times
+	if wave.ignore_build_times == nil then wave.ignore_build_times = false end
+	
+	wave.use_separate_spawns = wave_data.use_separate_spawns
+	if wave.use_separate_spawns == nil then wave.use_separate_spawns = true end
+	
+	wave.auto_launch = wave_data.auto_launch
+	if wave.auto_launch == nil then wave.auto_launch = false end
+	wave.auto_launch_delay = wave_data.auto_launch_delay
+
+	wave.onLaunchFunction = wave_data.onLaunchFunction
+	
+	--setup units
+	wave.units = {}
+	wave.queued_waves = {}
+	Wave_SetUnits(wave, wave_data.units)
+	
+	Wave_SetSpawn(wave, wave_data.spawn)
+	
+	table.insert(g_waves, wave)
+	
+	if not Rule_Exists(Wave_MonitorAllWaves) then 
+		Rule_AddInterval(Wave_MonitorAllWaves, 1)
+	end
+	
+	return wave
+end
+
+--? @shortdesc Updates the wave with a new unit table. These units will be produced whenever prepare is called
+--? @args Wave wave, Table units
+function Wave_SetUnits(wave, units)
+	Wave_FilterUnitsByDifficulty(units)
+	wave.units = {}
+	for i, unit_row in ipairs(units) do
+		if unit_row.numSquads > 0 then
+			table.insert(wave.units, { type = unit_row.type, sbp = unit_row.sbp, numSquads = unit_row.numSquads, tag = unit_row.tag })	
+		end
+	end
+end
+
+function Wave_SetSpawn(wave, spawn)
+	wave.spawn = spawn --wave.spawn can be either an egroup or a marker. It is used to inizialize wave.spawns, and refresh wave.spawns
+	wave.spawns = {}
+	if wave.use_separate_spawns then
+		Wave_InitSpawns(wave)	
+	else
+		table.insert(wave.spawns, { spawnLocation = spawn, type = "universal", available_at = -1 })	
+	end
+end
+
+function Wave_Pause(wave)
+	wave.is_paused = true
+end
+
+function Wave_Unpause(wave)
+	wave.is_paused = false
+end
+
+
+--? @shortdesc Adds units to the wave's unit table. These units will be produced whenever prepare is called
+--? @args Wave wave, Table units
+function Wave_AddUnits(wave, units)
+	Wave_FilterUnitsByDifficulty(units)
+	for i, new_unit_row in ipairs(units) do
+		local matching_row = nil
+		for j, existing_unit_row in ipairs(wave.units) do
+			if UnitTable_RowsHaveSameType(new_unit_row, existing_unit_row) then
+				matching_row = existing_unit_row
+				break
+			end
+		end
+		if matching_row then
+			matching_row.numSquads = matching_row.numSquads + new_unit_row.numSquads
+		else
+			table.insert(wave.units, { type = new_unit_row.type, sbp = new_unit_row.sbp, numSquads = new_unit_row.numSquads, tag = new_unit_row.tag })
+		end
+	end
+end
+
+
+--? @shortdesc Orders a wave to start spawning units. Units will go into the staging module, or into the assault module if no staging module is defined. You can optionally pass in an sgroup. All units that are spawned will go into it.
+--? @args Wave wave[, SGroup sg_custom, Table data]
+function Wave_Prepare(wave, sg_custom, data)
+	--print("Preparing "..wave.descriptor)
+	if wave.use_separate_spawns == true then	
+		Wave_RefreshSpawns(wave)
+	end
+	
+	if #wave.spawns > 0 and #wave.units > 0 then
+		wave.is_building = true
+		--wave.sg_custom = sg_custom
+		
+		table.insert(wave.queued_waves, { units = {}, auto_launch = wave.auto_launch, auto_launch_delay = wave.auto_launch_delay })
+		
+		for i, unit_row in ipairs(wave.units) do
+			table.insert(wave.queued_waves[#wave.queued_waves].units, { type = unit_row.type, sbp = unit_row.sbp, numSquads = unit_row.numSquads, numBuilt = 0, tag = unit_row.tag })
+		end
+		
+		local queued_wave = wave.queued_waves[#wave.queued_waves]
+		
+		--copy assault module to queued_wave, or create a new one
+		if wave.assault_module_data then
+			queued_wave.assault_module = Clone(wave.assault_module_data)
+			queued_wave.assault_module.descriptor = wave.descriptor.."_assault_"..wave.index_assault
+			wave.index_assault = wave.index_assault + 1
+			
+			MissionOMatic_InitializeModule(queued_wave.assault_module)
+		else
+			queued_wave.assault_module = wave.assault_module	
+		end
+		
+		--copy staging module to queued_wave, or create a new one
+		if wave.staging_module_data then
+			queued_wave.staging_module = Clone(wave.staging_module_data)
+			queued_wave.staging_module.descriptor = wave.descriptor.."_staging_"..wave.index_staging
+			MissionOMatic_InitializeModule(queued_wave.staging_module)
+			--queued_wave.staging_module.assault_module = queued_wave.assault_module
+			queued_wave.sg_staging = SGroup_Create(wave.descriptor.."_staging_"..wave.index_staging)
+			wave.index_staging = wave.index_staging + 1
+		elseif wave.staging_module then
+			queued_wave.staging_module = wave.staging_module
+			queued_wave.sg_staging = SGroup_Create(wave.descriptor.."_staging_"..wave.index_staging)
+			--queued_wave.staging_module.assault_module = queued_wave.assault_module
+			wave.index_staging = wave.index_staging + 1
+		end
+		
+		if sg_custom then
+			queued_wave.sg_custom = sg_custom
+		end
+		
+		queued_wave.data = data 
+		
+		if scartype(wave.auto_launch) == ST_NUMBER then
+			--print("Launching "..wave.descriptor.." in "..wave.auto_launch.." seconds")
+			Rule_AddOneShot(Wave_LaunchOneShot, wave.auto_launch, {wave = wave})
+		end
+		Wave_Monitor(wave)
+		return queued_wave
+	else
+		return nil
+	end
+end
+
+
+--? @shortdesc Transfers all the units from the staging module into the assault module. If the wave is still spawning from a prepare, it will stop. Index defaults to 1.
+--? @args Wave wave[, Int index]
+function Wave_Launch(wave, index)
+	local index = index or 1
+	assert(0 < index and index <= #wave.queued_waves, "Invalid index "..index.." for "..wave.descriptor)
+	--print("Launching "..wave.descriptor)
+	
+	local queued_wave = wave.queued_waves[index]
+	local staging_module = queued_wave.staging_module
+	local assault_module = queued_wave.assault_module
+	local sg_staging = queued_wave.sg_staging
+	assert(staging_module, "Cannot call Launch without a staging module on the queued wave")
+	assert(assault_module ~= nil, "Cannot call Launch without an assault module on the queued wave")
+	assert(sg_staging, "Cannot call Launch without an sg_staging on the queued wave")
+	
+	--table.remove(wave.queued_waves, index)
+	if staging_module ~= nil then 
+		Prefab_DoAction(MissionOMatic_FindModule(staging_module), "RemoveSGroup", sg_staging)
+		SGroup_RemoveGroup(sg_waveManagerStagedUnits, sg_staging)
+	end
+	if assault_module ~= nil then
+		Prefab_DoAction(MissionOMatic_FindModule(assault_module), "AddSGroup", sg_staging)
+	end
+	
+	if scartype(wave.onLaunchFunction) == ST_FUNCTION then 
+		wave.onLaunchFunction(queued_wave, wave)
+	end
+	
+	SGroup_Clear(sg_staging)
+	table.remove(wave.queued_waves, index)
+	
+	if assault_module ~= nil then
+		return MissionOMatic_FindModule(assault_module)
+	end
+end
+
+function Wave_LaunchOneShot(context, data)
+	
+	local assault_module = Wave_Launch(data.wave)
+	
+	if scartype(data.wave.on_auto_launch_function) == ST_FUNCTION then
+		data.wave.on_auto_launch_function(assault_module)
+	end
+end
+
+
+function Wave_Monitor(wave)
+	
+	if wave.is_building == true then
+		Wave_ValidateSpawns(wave)
+		
+		for queued_wave_index = #wave.queued_waves, 1, -1 do
+			Wave_ValidateQueuedWave(wave, queued_wave_index)
+		end
+		
+		if Wave_AnyUnitNeedsTraining(wave) == true then
+			if wave.is_paused == false then
+				for i, spawn in ipairs(wave.spawns) do
+					if spawn.available_at <= World_GetGameTime() then
+						Wave_SpawnUnits(wave, spawn)
+					end
+				end
+				
+				for queued_wave_index = #wave.queued_waves, 1, -1 do
+					local queued_wave = wave.queued_waves[queued_wave_index]
+					if #queued_wave.units == 0 and queued_wave.auto_launch == true and queued_wave.will_be_launched_soon ~= true then
+						if scartype(queued_wave.auto_launch_delay) == ST_NUMBER then
+							queued_wave.will_be_launched_soon = true
+							--print("Launching "..wave.descriptor.." in "..wave.auto_launch_delay.." seconds")
+							Rule_AddOneShot(Wave_LaunchOneShot, wave.auto_launch_delay, {wave = wave})
+						else
+							Wave_Launch(wave, queued_wave_index)	
+						end
+					end
+				end
+			end
+		else
+			wave.is_building = false	
+		end
+		
+	end	
+
+end
+
+
+function Wave_SpawnUnits(wave, spawn)	
+	for queued_wave_index, queued_wave in ipairs(wave.queued_waves) do
+		local units_to_spawn = {}
+		while spawn.available_at <= World_GetGameTime() do
+			local unit_row, row_position_index = Wave_GetUnitRowForSpawn(wave, spawn, queued_wave)
+			if unit_row == nil then
+				break
+			end
+			Wave_UpdateSpawnAndUnitRow(wave, spawn, unit_row, row_position_index, queued_wave_index)
+			UnitTable_AddUnits(units_to_spawn, {{ type = unit_row.type, sbp = unit_row.sbp, numSquads = 1, tag = unit_row.tag }})
+		end
+		if #units_to_spawn > 0 then
+			local spawningIntoStagingModule = false
+			if queued_wave.staging_module ~= nil then 
+				spawningIntoStagingModule = true
+			end
+			Wave_SpawnUnitsIntoModule(wave, units_to_spawn, queued_wave.staging_module or queued_wave.assault_module, spawn.spawnLocation, queued_wave.sg_staging, queued_wave.sg_custom, spawningIntoStagingModule)	
+		end	
+	end
+end
+
+
+function Wave_GetUnitRowForSpawn(wave, spawn, queued_wave)
+	local categories = g_wave_spawn_type_info[spawn.type].categories
+	for row_position_index, unit_row in ipairs(queued_wave.units) do
+		local unit_type = Wave_GetUnitTypeFromUnitRow(unit_row)
+		if ArrayContainsValue(categories, g_wave_unit_type_info[unit_type].category) then
+			return unit_row, row_position_index, queued_wave_index
+		end
+	end	
+end
+
+
+function Wave_UpdateSpawnAndUnitRow(wave, spawn, unit_row, row_position_index, queued_wave_index)
+	if wave.ignore_build_times == false then
+		local unit_type = Wave_GetUnitTypeFromUnitRow(unit_row)
+		spawn.available_at = World_GetGameTime() + g_wave_unit_type_info[unit_type].build_time
+	end
+	unit_row.numBuilt = unit_row.numBuilt + 1
+	if unit_row.numBuilt == unit_row.numSquads then
+		table.remove(wave.queued_waves[queued_wave_index].units, row_position_index)
+	end
+end
+
+
+function Wave_AnyUnitNeedsTraining(wave)
+	local spawnable_categories = Wave_GetSpawnableCategories(wave)
+	local spawnable_unit_found = false
+	
+	for i, queued_wave in ipairs(wave.queued_waves) do
+		for unit_row_index = #queued_wave.units, 1, -1 do
+			local unit_row = queued_wave.units[unit_row_index]
+			local unit_type = Wave_GetUnitTypeFromUnitRow(unit_row)
+			if ArrayContainsValue(spawnable_categories, g_wave_unit_type_info[unit_type].category) then
+				spawnable_unit_found = true
+			else
+				table.remove(queued_wave.units, unit_row_index)
+			end
+		end
+		
+	end
+	return spawnable_unit_found
+end
+
+
+--? @shortdesc Returns an array containing all the categories that this spawn is capable of producing
+function Wave_GetSpawnableCategories(wave)
+	local categories = {}
+	
+	for i, spawn in ipairs(wave.spawns) do
+		for i, category_name in ipairs(g_wave_spawn_type_info[spawn.type].categories) do
+			if ArrayContainsValue(categories, category_name) == false then
+				table.insert(categories, category_name)
+			end
+		end
+	end
+	return categories
+end
+
+
+function Wave_SpawnUnitsIntoModule(wave, units, module, spawnLocation, sg_staging, sg_custom, spawningIntoStagingModule)
+	local module = module
+	
+	if spawningIntoStagingModule == nil then 
+		spawningIntoStagingModule = false 
+	end
+	
+	if scartype(module) == ST_STRING then
+		module = MissionOMatic_FindModule(module)
+	end
+	
+	local player = module.player
+	local spawn = ResolveSpawnLocation(spawnLocation)
+	
+	local sg_new_units = SGroup_CreateUnique("sg_new_units")
+	UnitEntry_DeploySquads(player, sg_new_units, units, spawn)
+	if sg_staging then
+		SGroup_AddGroup(sg_staging, sg_new_units)
+		SGroup_AddGroup(sg_waveManagerStagedUnits, sg_new_units)
+	end
+	if sg_custom then
+		SGroup_AddGroup(sg_custom, sg_new_units)
+	end
+	Prefab_DoAction(module, "AddSGroup", sg_new_units, not spawningIntoStagingModule)
+	SGroup_Destroy(sg_new_units)
+end 
+
+	
+function ArrayContainsValue(array, value)
+	for i, v in ipairs(array) do
+		if value == v then return true end
+	end
+	return false
+end
+
+
+function Wave_ValidateSpawns(wave)
+	for i = #wave.spawns, 1, -1 do
+		if wave.spawns[i].entity_id ~= nil and (Entity_IsAlive(wave.spawns[i].entity_id) == false or Entity_GetPlayerOwner(wave.spawns[i].entity_id) ~= wave.player) then
+			table.remove(wave.spawns, i)
+		end
+	end
+end
+
+-- removed queued_waves that are empty and don't have a staging module
+function Wave_ValidateQueuedWave(wave, queued_wave_index)
+	local queued_wave = wave.queued_waves[queued_wave_index]
+	if queued_wave.sg_staging == nil and #queued_wave.units == 0 then
+		table.remove(wave.queued_waves, queued_wave_index)	
+	end
+end
+
+function Wave_InitSpawns(wave)
+	wave.spawns = {}
+	if scartype(wave.spawn) == ST_EGROUP then 
+		EGroup_Clear(eg_temp)
+		local _CheckEntityOwner = function(gid, idx, eid)
+			if not World_OwnsEntity(eid) then
+				if Entity_GetPlayerOwner(eid) == wave.player then 	-- make sure they're owned by the correct player
+					EGroup_Add(eg_temp, eid)
+				end
+			end
+		end
+		EGroup_ForEach(wave.spawn, _CheckEntityOwner)
+	else
+		Player_GetAllEntitiesNearMarker(wave.player, eg_temp, wave.spawn)
+	end
+	
+	Wave_AddBuildings(wave, eg_temp)
+end
+
+--? @shortdesc Searches the spawn area for any new buildings and adds them to the list of spawns
+function Wave_RefreshSpawns(wave)
+	assert(wave.use_separate_spawns, "Wave_RefreshSpawns only works if use_separate_spawns is true")
+	
+	eg_new_buildings = EGroup_CreateUnique("eg_new_buildings")	
+	
+	--add buildings to eg_new_buildings
+	if scartype(wave.spawn) == ST_EGROUP then 
+		local _CheckEntityOwner = function(gid, idx, eid)
+			if not World_OwnsEntity(eid) then
+				if Entity_GetPlayerOwner(eid) == wave.player then 	-- make sure they're owned by the correct player
+					EGroup_Add(eg_new_buildings, eid)
+				end
+			end
+		end
+		EGroup_ForEach(wave.spawn, _CheckEntityOwner)
+	else
+		Player_GetAllEntitiesNearMarker(wave.player, eg_new_buildings, wave.spawn)
+		EGroup_FilterUnderConstruction(eg_new_buildings, FILTER_REMOVE)
+	end
+	
+	--remove pre-existing buildings from eg_new_buildings
+	for i = #wave.spawns, 1, -1 do
+		if Entity_IsAlive(wave.spawns[i].entity_id) == true then
+			EGroup_Remove(eg_new_buildings, wave.spawns[i].entity_id)
+		else
+			table.remove(wave.spawns, i)
+		end
+	end
+	
+	Wave_AddBuildings(wave, eg_new_buildings)
+	
+	EGroup_Destroy(eg_new_buildings)
+end
+
+function Wave_AddBuildings(wave, egroup)
+	local wave_current_type = nil
+	local eg_buildings_of_type = nil
+	
+	local _AddBuilding = function(group_id, item_index, item_id)
+		local spawnLocation = World_GetOffsetPosition(Entity_GetPosition(item_id), Entity_GetHeading(item_id), OFFSET_FRONT, 8)
+		table.insert(wave.spawns, { spawnLocation = spawnLocation, type = wave_current_type, available_at = -1, entity_id = item_id })
+	end
+	
+	for building_name, spawn_info in pairs(g_wave_spawn_type_info) do
+		if building_name ~= "universal" then
+			wave_current_type = building_name
+			eg_buildings_of_type = EGroup_CreateUnique("eg_buildings_of_type")
+			EGroup_Filter(egroup, building_name, FILTER_REMOVE, eg_buildings_of_type)
+			EGroup_ForEach(eg_buildings_of_type, _AddBuilding)
+			EGroup_Destroy(eg_buildings_of_type)
+		end
+	end
+end
+
+
+-- filter out units according to "difficulty" parameter
+function Wave_FilterUnitsByDifficulty(units)
+	for index = #units, 1, -1 do
+		local unit_row = units[index]
+		if unit_row.difficulty ~= nil then	
+			if scartype(unit_row.difficulty) == ST_NUMBER then
+				if unit_row.difficulty ~= Game_GetSPDifficulty() then
+					table.remove(units, index)
+				end
+			elseif scartype(unit_row.difficulty) == ST_TABLE then 
+				if Table_Contains(unit_row.difficulty, Game_GetSPDifficulty()) == false then
+					table.remove(units, index)
+				end
+			end
+		end
+		
+	end
+end
+
+function Wave_GetUnitTypeFromUnitRow(unitRow)
+	local unitType = unitRow.type
+	if unitType == nil then
+		unitType = g_sbp_to_unit_type[unitRow.sbp]
+	end
+	return unitType
+end

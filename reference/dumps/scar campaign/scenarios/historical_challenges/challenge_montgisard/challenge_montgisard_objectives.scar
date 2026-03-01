@@ -1,0 +1,219 @@
+-- Developed by Forgotten Empires
+
+-- Objectives
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("MissionOMatic/MissionOMatic_utility.scar")
+
+function Montgisard_InitObjectives()
+	
+	OBJ_SacredSitesPrimary = {
+		Title = "$11266818",
+		Type = ObjectiveType_Primary,
+		SetupUI = function()
+			Objective_SetCounter(OBJ_SacredSitesPrimary, playerSitesHeld, 4)
+		end,
+		OnStart = function()
+		end,
+		PreComplete = function()
+			if conquerorActivated == true then
+				Game_SendCustomChallengeEvent(localPlayer, CE_MONTGISARDCONQ, 1)
+			end
+		end,
+		OnComplete = function()
+			-- Play voice line and provide completion time to Stats system via Data Store
+			if(conquerorActivated == true) then
+				Game_StoreTableData("conqueror", {kpi = missionTime}) -- goes in the conqueror only score table
+				Util_StartIntel(EVENTS.Victory_Conqueror)
+			else
+				Game_StoreTableData("trial", {kpi = missionTime}) -- goes in the normal score table
+				Util_StartIntel(EVENTS.Victory)
+			end
+			Mission_Complete()
+		end,
+		OnFail = function()
+		end
+	}
+	
+	SOBJ_SacredSitesTip = {
+		
+		Title = "$11266824",
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_SacredSitesPrimary,
+		StartAlongsideParent = true,
+		OnStart = function()
+		end,
+		OnComplete = function()
+		end
+	}
+	
+	SOBJ_SacredSitesTip_Build = {
+		
+		Title = "$11269236",
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_SacredSitesPrimary,
+		StartAlongsideParent = true,
+		OnStart = function()
+		end,
+		OnComplete = function()
+		end
+	}
+	
+	OBJ_DefendTC = {
+		
+		Title = "$11268422",
+		Type = ObjectiveType_Information,
+		OnComplete = function()
+		end,
+		OnFail = function()
+			Util_StartIntel(EVENTS.Defeat)
+			Mission_Fail()
+		end
+	}
+	
+	OBJ_PointsOfInterest = {
+		
+		Title = "$11266819",
+		Type = ObjectiveType_Optional,
+		SetupUI = function()
+			Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+		end,
+		OnStart = function()
+		end,
+		IsComplete = function()
+			if completedPOI == totalPOI then
+				return true
+			end
+		end,
+	}
+	
+	OBJ_ConquerorTip = {
+		
+		Title = "",
+		Type = ObjectiveType_Battle,
+		
+		OnStart = function()
+			
+		end
+	}
+	
+	----------------------------------------------
+	-- Medals Objectives
+	OBJ_ConquerorMedal = 
+	{
+		Title = Loc_FormatText("$11269857", conquerorCountdown), -- Conqueror Medal (Capture All Sacred Sites Within %1MINUTES% Minutes)
+		Type = ObjectiveType_Bonus,
+		Icon = "icons\\fe\\medal_gold.png", -- TODO: add new icon
+		StartAlongsideParent = true, 
+		OnStart = function()
+			Sound_Play2D(MUS_STING_TRIUMPHANT)
+			EventCues_CallToAction("$11266822", CTA_UNIQUE_STAKES, nil, nil, conquerorPos, 30, "icons/cta/illustrations/alarm")
+--			Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_high")
+			-- Enemy units get upgrades upn activating Conqueror Mode
+			-- Armor upgrades
+			Cmd_InstantUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_MELEE_ARMOR_I)
+			Cmd_InstantUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_MELEE_ARMOR_II)
+			Cmd_InstantUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_RANGED_ARMOR_I)
+			Cmd_InstantUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_RANGED_ARMOR_II)
+			-- Damage upgrades
+			Cmd_InstantUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_MELEE_DAMAGE_I)
+			Cmd_InstantUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_MELEE_DAMAGE_II)
+			Cmd_InstantUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_RANGED_DAMAGE_I)
+			Cmd_InstantUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_RANGED_DAMAGE_II)
+		end,
+		OnFail = function()
+			Util_StartIntel(EVENTS.Defeat)
+			Mission_Fail()
+		end
+	}
+	OBJ_GoldMedal = 
+	{
+		Title = Loc_FormatText("$11268859", goldTime), -- Gold Medal (Capture All Sacred Sites Within %1MINUTES% Minutes)
+		Type = ObjectiveType_Bonus,
+		Icon = "icons\\fe\\medal_gold.png",
+		StartAlongsideParent = true,
+		OnStart = function()
+		end
+	}
+	OBJ_SilverMedal = 
+	{
+		Title = Loc_FormatText("$11268860", silverTime), -- Silver Medal (Capture All Sacred Sites Within %1MINUTES% Minutes)
+		Type = ObjectiveType_Bonus,
+		Icon = "icons\\fe\\medal_silver.png",
+		StartAlongsideParent = true,
+		OnStart = function()
+		end
+	}
+	OBJ_BronzeMedal = 
+	{
+		Title = Loc_FormatText("$11269856", bronzeTime), -- Bronze Medal (Capture All Sacred Sites Within %1MINUTES% Minutes)
+		Type = ObjectiveType_Bonus,
+		Icon = "icons\\fe\\medal_bronze.png",
+		StartAlongsideParent = true, 
+	}
+	----------------------------------------------
+	OBJ_ConquerorMode = {
+		
+		Title = "$11266820",
+		Type = ObjectiveType_Bonus,
+		Parent = OBJ_GoldMedal,
+		StartAlongsideParent = true,
+		SetupUI = function()
+			
+		end,
+		OnStart = function()
+			Rule_AddInterval(Montgisard_TrackSacredSites, .125)
+		end,
+		IsComplete = function()
+			return conquerorActivated
+		end,
+		OnFail = function()
+			if triggerActivated == false then
+				Rule_AddOneShot(Montgisard_ConquerorTriggerSite, 1)
+			end
+		end
+	}
+	
+	-- FOR TESTING ONLY
+	
+	OBJ_TEST = {
+		
+		Title = "TEST",
+		Type = ObjectiveType_Build,
+		OnStart = function()
+			Obj_SetVisible(OBJ_TEST.ID, true)
+--			Obj_SetProgressVisible(OBJ_TEST.ID, true)
+--			Obj_SetProgress(OBJ_TEST.ID, 1)
+			Objective_SetCounter(OBJ_TEST, 1)
+		end,
+	}
+	
+	Objective_Register(OBJ_SacredSitesPrimary)
+	Objective_Register(OBJ_DefendTC)
+	Objective_Register(SOBJ_SacredSitesTip_Build)
+	Objective_Register(SOBJ_SacredSitesTip)
+	Objective_Register(OBJ_PointsOfInterest)
+	Objective_Register(OBJ_GoldMedal)
+	Objective_Register(OBJ_ConquerorMode)
+--	Objective_Register(OBJ_TEST) -- for testing (TO REMOVE)
+	
+	Objective_Start(OBJ_SacredSitesPrimary, true)
+	hpid_ss1 = Objective_AddUIElements(OBJ_SacredSitesPrimary, sacredSite_position1, true, nil, false, nil, nil, nil, "icons/objectives/objectives_holy_site")
+	hpid_ss2 = Objective_AddUIElements(OBJ_SacredSitesPrimary, sacredSite_position2, true, nil, false, nil, nil, nil, "icons/objectives/objectives_holy_site")
+	hpid_ss3 = Objective_AddUIElements(OBJ_SacredSitesPrimary, sacredSite_position3, true, nil, false, nil, nil, nil, "icons/objectives/objectives_holy_site")
+	hpid_ss4 = Objective_AddUIElements(OBJ_SacredSitesPrimary, sacredSite_position4, true, nil, false, nil, nil, nil, "icons/objectives/objectives_holy_site")
+	Objective_Start(OBJ_DefendTC, true)
+	Objective_Start(OBJ_PointsOfInterest, false)
+	Objective_Start(OBJ_GoldMedal)
+	Objective_StartTimer(OBJ_GoldMedal, COUNT_UP, 0)
+	
+	-- Add rule for recurring enemy reinforcements and attacks
+	reinforceRule = Rule_AddInterval(Montgisard_EnemyReinforcements, 360)
+	attackRule = Rule_AddInterval(Montgisard_EnemyAttacks, 420)
+	
+	Objective_Start(OBJ_ConquerorMode, false, false) -- true, false
+	Objective_StartTimer(OBJ_ConquerorMode, COUNT_DOWN, (60 * 3))
+	worldArrow = Objective_AddUIElements(OBJ_ConquerorMode, sacredSite_position1, false, "$11266821", true, 14)
+--	Objective_Start(OBJ_TEST, false) -- for testing (TO REMOVE)
+	
+end

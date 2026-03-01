@@ -1,0 +1,334 @@
+--
+-- Combat of the Thirty - PreRound
+--
+import("cardinal.scar")
+
+function PreRound_InitObjectives()
+	
+	OBJ_BuildForce = {
+		
+		Title = 11180033, -- "Select champions to combat the English"
+		Type = OT_Primary,
+		
+		PreStart = function()
+			Util_AutoSave()
+		end,
+		OnStart = function()
+			
+			Util_StartIntel(EVENTS["Recruit"])
+			
+			--Modify_PlayerProductionRate(player1, 100)
+			
+			Objective_Start(SOBJ_RecruitInfantry, false)
+			Objective_Start(OBJ_TipEnglishForces, false)
+			if UI_IsXboxControllerUI() then
+				Objective_Start(OBJ_TipDiploController, false)
+			end
+			
+			SGroup_Clear(sg_fre_army)
+			UnitEntry_DeploySquads(player1, sg_fre_army, {{ type = "scar_spearman", numSquads = 4 }, { type = "scar_manatarms", numSquads = 5 }}, mkr_frespawn)
+			Cmd_FormationMove(sg_fre_army, GetAidDestination())
+			
+			championPanelString = 11198286
+			player_champion_selections = 2
+			
+			Combat30_ShowTributeMenu()
+			
+			if UI_IsXboxUI() then
+				CampaignTraining_AddDiplomacyPanelHint("$11250032", "choose_champions_sequence")
+			else
+				Diplomacy_ShowDiplomacyUI(true)
+			end
+			
+		end,
+		OnComplete = function()
+			
+			
+			Combat30_HideTributeMenu()
+			
+			Combat30_RetreatAllUnselectedChampions()
+			
+			Music_LockIntensity(MUSIC_TENSE_RARE)
+			
+			Util_StartIntel(EVENTS["Recruit_Complete"])
+			
+			--Modify_PlayerProductionRate(player1, 0.01)
+			
+			--Create Player SGroup
+			Player_GetAll(player5, sg_eng_army)
+			SGroup_RemoveGroup(sg_eng_army, sg_eng_crowd)
+			Player_GetAll(player1, sg_fre_army)
+			
+			--Modify Damage Taken
+			Modify_ReceivedDamage(sg_fre_army, damageScale)
+			Modify_ReceivedDamage(sg_eng_army, damageScale)
+			
+			Rule_AddOneShot(Combat30_CombatStart, 18)
+		end,
+		Cheat = function()
+			Combat30_HideTributeMenu()
+			Combat30_ShowTributeMenu()
+			Diplomacy_ShowDiplomacyUI(true)
+			--Recruit3_PostDuelRelationships()			
+			SGroup_WarpToMarker(g_leaderBeaumanoir.sgroup, mkr_frerally)
+			PreRound_SpawnEnglish()
+			Combat30_SpawnChampionsAtBase()
+			--Debug_SpawnPlayerChampions()
+			--player_champion_selections = 0
+		end,
+	}
+	SOBJ_RecruitInfantry = {
+		
+		Title = 11180034, -- "Select Champions"
+		Type = OT_Secondary,
+		Parent = OBJ_BuildForce,
+		showTitle = false,
+		OnStart = function()
+			Objective_SetCounter(SOBJ_RecruitInfantry, 0, 2)
+			
+		end,
+		IsComplete = function()
+			return player_champion_selections == 0
+		end,
+		OnComplete = function()
+			
+			Objective_Complete(OBJ_TipEnglishForces, false)
+			if Objective_IsStarted(OBJ_TipDiploController) then
+				Objective_Complete(OBJ_TipDiploController, false, false)
+			end
+			HintPoint_RemoveAll()
+			--Cmd_FormationMove(sg_eng_army, mkr_eng_rally)
+			MoveToAndRespectFacing(sg_eng_army, mkr_eng_rally)
+			Objective_Complete(OBJ_BuildForce)
+		end,
+	}
+	OBJ_TipEnglishForces = {
+	
+		Title = "$11202523",			-- Tip: Longer trade routes generate more gold for each trip
+		Type = ObjectiveType_Tip,
+		
+		showTitle = false,
+		
+	}
+	OBJ_TipDiploController = {
+	
+		Title = "$11255627",			-- Tip: Open diplo to select champions
+		Type = ObjectiveType_Tip,
+		
+		showTitle = false,
+		
+	}
+	
+	Objective_Register(OBJ_BuildForce)
+	Objective_Register(SOBJ_RecruitInfantry)
+	Objective_Register(OBJ_TipEnglishForces)
+	Objective_Register(OBJ_TipDiploController)
+	
+end
+
+
+function PreRound_OnSquadBuilt(context)
+	
+	local itemOwner = Squad_GetPlayerOwner(context.spawnedSquad)
+	local objective = SOBJ_RecruitInfantry
+	if Objective_IsComplete(objective) then
+		Rule_RemoveMe()
+	elseif itemOwner == player1 then
+		Objective_SetCounter(objective, Player_GetSquadCount(player1), Obj_GetCounterMax(objective.ID))
+		local progress = Player_GetSquadCount(player1) / Obj_GetCounterMax(objective.ID)
+		Obj_SetProgress(objective.ID, progress)
+		
+		if progress >= 1 then Objective_Complete(objective, false) end
+	end
+end
+
+function Combat30_CombatStart()
+	Objective_Start(OBJ_Combat1)
+end
+
+function PreRound_SpawnEnglish()
+	local module = MissionOMatic_FindModule("DefendEngBase")
+	local unitCompositions = Util_DifVar({ combat30_unitCompositions_Story, combat30_unitCompositions_Easy, combat30_unitCompositions_Normal, combat30_unitCompositions_Hard })
+	local hintTables = Util_DifVar({ combat30_hintsStory, combat30_hintsEasy, combat30_hintsNormal, combat30_hintsHard })
+	
+	local unitChoice = World_GetRand(1,#unitCompositions)
+	local units = unitCompositions[unitChoice]
+	local hints = hintTables[unitChoice]
+	
+	UnitEntry_DeploySquads(player5, sg_eng_army, units, mkr_engbase)
+	
+	-- Hintpoints
+	for k,v in ipairs(hints) do
+		HintPoint_Add(v.spawn, true, v.string, 3)
+	end
+	
+	BuffLandsknecht()
+end
+
+function BuffLandsknecht()
+	local modHealth = Modifier_Create(MAT_Entity, "health_maximum_modifier", MUT_Multiplication, false, 1.9, "")
+	local _modifyHealthValues = function(gid, idx, sid)
+		local entity = Squad_GetFirstEntity(sid)
+		Modifier_ApplyToEntity(modHealth, entity, 0)
+	end
+	
+	SGroup_Duplicate(sg_eng_army, sg_temp)
+	SGroup_Filter(sg_temp, "scar_landsknecht", FILTER_KEEP)
+	SGroup_ForEach(sg_temp, _modifyHealthValues)
+end
+
+function Debug_SpawnPlayerChampions()
+	UnitEntry_DeploySquads(player1, sg_fre_army, {{ type = "scar_manatarms", numSquads = 13}, { type = "scar_spearman", numSquads = 5}, { sbp = SBP.FRENCH.UNIT_OLIVIER_ARREL_CMP_FRE, numSquads = 1}, { sbp = SBP.FRENCH.UNIT_CARON_DE_BOSDEGAS_CMP_FRE, numSquads = 1}}, mkr_frespawn)
+end
+
+function Combat30_ShowTributeMenu()
+	Diplomacy_ShowUI(true)
+	
+	UI_ReinforcePanel_UpdateData()
+	Rule_AddInterval(UI_ReinforcePanel_UpdateData, 1)
+end
+
+
+function Combat30_HideTributeMenu()
+
+	Core_CallDelegateFunctions("DiplomacyEnabled", false)
+	Diplomacy_ShowUI(false)
+end
+
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--														Player Reinforcement UI
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function UI_ReinforcePanel_UpdateData()
+	
+	uiData_ReinforcePanel = {
+		ChampionPanelTitle = Loc_GetString(championPanelString),
+		Visible = true,
+		Reserves = {}
+	}
+	
+	for index, reserve in pairs(t_availableRecruitData) do
+
+		local uiData = {
+			
+			Name = Loc_GetString(reserve.displayName),
+			
+			TradeCountVisible = false,
+			BuyButtonVisible = false,
+			BuyButtonEnabled = false,
+			BuyButtonOpacity = 0.44,
+			BuyButtonCommand = UI_CreateCommand("UI_RequestAid_ButtonCallback"),
+			BuyButtonParameter = reserve.id,
+			AidButtonTitle = Loc_GetString(reserve.buttontext),
+			ButtonTooltip1 = Loc_GetString(reserve.tooltip1),
+			ButtonTooltip2 = Loc_GetString(Loc_FormatText(reserve.tooltip2, reserve.aidAmount, reserve.aidAmount_2)),
+			Cost = reserve.cost,
+			SelectionsWarning = true,
+			SelectedWarning = true,
+			ShowGoldText = false,
+			ShowGreyText = true,
+		}			
+		
+		uiData.TradeCountVisible = false
+		uiData.BuyButtonVisible = true
+		
+		-- Does player have selections left?
+		local selections =  player_champion_selections > 0
+		if selections then
+			uiData.SelectionsWarning = false
+			uiData.ShowGoldText = true
+			uiData.ShowGreyText = false
+		end
+		
+		-- Has the player selected this champion?
+		local selected = reserve.selected
+		if not selected then
+			uiData.SelectedWarning = false
+		end
+		
+		if uiData.SelectionsWarning == false and uiData.SelectedWarning == false then
+			uiData.BuyButtonEnabled = true 
+			uiData.BuyButtonOpacity = 1.0
+		end
+		
+		
+		uiData.CostAmount = Loc_GetString(Loc_FormatText(11184216, uiData.Cost))
+		
+		if reserve.aidAmount_2 > 0 then
+			uiData.AidButtonTooltip = Loc_GetString(Loc_FormatText(reserve.tooltip, reserve.aidAmount, reserve.aidAmount_2))
+		else
+			uiData.AidButtonTooltip = Loc_GetString(Loc_FormatText(reserve.tooltip, reserve.aidAmount))
+		end
+		
+		table.insert(uiData_ReinforcePanel.Reserves, uiData)
+		
+	end
+	
+	uiData_ReinforcePanel.Visible = true
+	_diplomacy.data_context.buyReserves = uiData_ReinforcePanel
+	Diplomacy_UpdateUI()
+	
+end
+
+function GetAidDestination()
+	local destinations = { mkr_frespawn_dest1, mkr_frespawn_dest2, mkr_frespawn_dest3 }
+	Combat30_DestinationIndex = Combat30_DestinationIndex or 0
+	Combat30_DestinationIndex = Combat30_DestinationIndex + 1
+	return destinations[Combat30_DestinationIndex]
+end
+
+function UI_RequestAid_ButtonCallback(parameter)
+	
+	for index, reserve in pairs(t_availableRecruitData) do 
+	
+		if reserve.id == parameter then
+			if not reserve.selected then
+				
+				player_champion_selections = player_champion_selections - 1
+				reserve.selected = true
+				
+				local units = reserve.units
+				local options = { spawnInFormation = true, destination = GetAidDestination()}
+				
+				Combat30_RetreatRecruitSGroup(reserve.sgroups[1])
+				Combat30_RetreatRecruitSGroup(reserve.sgroups[2])
+				
+				Rule_AddOneShot(Combat30_SpawnPlayerUnitsFromSelection, 2, {units = units, options = options})
+				
+				if b_reinforceCooldown == false then
+					Reinforcement_Intel(reserve)
+					Start_CTACooldown(_G["sg_"..player_reinforcement_counter])
+				end
+				
+				UI_ReinforcePanel_UpdateData()
+				
+				Objective_SetCounter(SOBJ_RecruitInfantry, player_champion_selections, 2)
+			end
+		end
+	end
+end
+
+function Combat30_SpawnPlayerUnitsFromSelection(context, options)
+	
+	_G["sg_"..player_reinforcement_counter] = SGroup_CreateIfNotFound(("sg_reinforcement"..player_reinforcement_counter))
+	UnitEntry_DeploySquads(player1, _G["sg_"..player_reinforcement_counter], options.units, mkr_frespawn, nil, nil, options.options)
+end
+
+function Start_CTACooldown(target)
+	
+	Diplomacy_ShowDiplomacyUI(false)
+	b_reinforceCooldown = true
+	
+	Music_PlayStinger (MUS_STING_TRIUMPHANT)
+	EventCues_CallToAction(11176787, CTA_CELEBRATE, nil, nil, target, 20) --Reinforcements have arrived!
+	
+	Sound_PlayWallaCelebrateOnSGroup(target)
+	
+	Rule_AddOneShot(ReinforceCTA_Cooldown, 20)
+end
+
+
+function ReinforceCTA_Cooldown()
+	b_reinforceCooldown = false
+end

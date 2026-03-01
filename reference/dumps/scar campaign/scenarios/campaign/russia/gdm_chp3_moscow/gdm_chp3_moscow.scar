@@ -1,0 +1,948 @@
+--
+-- Hold Against the Horde 1382
+--
+-- Russian campaign, Mission 4
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("obj_moscowdefense.scar")	
+import("obj_mongolattacks.scar")	
+import("obj_prepare.scar")
+import("obj_refugees.scar")
+import("diplomacy_chp3_moscow.scar")
+import("training_moscow3.scar")
+
+function Mission_SetupPlayers()
+	
+	--
+	-- get player IDs for each player
+	-- 
+	
+	player1 = World_GetPlayerAt(1) -- Muscovites
+	player2 = World_GetPlayerAt(2) -- Mongols
+	player3 = World_GetPlayerAt(3) -- Refugees
+	player4 = World_GetPlayerAt(4) -- Downed Prince
+	
+	Setup_SetPlayerName(player1, Loc_GetString(11176388)) --Muscovites
+	Setup_SetPlayerName(player2, Loc_GetString(11176389)) --Mongol Horde
+	Setup_SetPlayerName(player3, Loc_GetString(11176390)) --Refugees
+	Setup_SetPlayerName(player4, Loc_GetString(11176388)) --Muscovites
+		
+	-- player 1 - Muscovites
+	Player_SetCurrentAge(player1, AGE_FEUDAL)
+	Player_SetMaximumAge(player1, AGE_CASTLE)
+
+	-- player 2 - Mongols	
+	Player_SetCurrentAge(player2, AGE_FEUDAL)
+	Player_SetMaximumAge(player2, AGE_CASTLE)
+	
+		-- player 3 - Refugees
+	Player_SetCurrentAge(player3, AGE_FEUDAL)
+	Player_SetMaximumAge(player3, AGE_FEUDAL)
+
+	-- player 4 - Dmitry (downed state)
+	Player_SetCurrentAge(player4, AGE_FEUDAL)
+	Player_SetMaximumAge(player4, AGE_CASTLE)
+	
+	AI_Enable(player4, false)
+	
+		--Perform Upgrades
+	PlayerUpgrades_Auto(player1, true)
+	PlayerUpgrades_Auto(player2, true)
+	PlayerUpgrades_Auto(player3, false)
+	PlayerUpgrades_Auto(player3, true)
+
+	--
+	-- set player relationships	
+	--
+		
+	Player_SetRelationship(player1, player3, R_ALLY)		-- Refugees are your friends 
+	Player_SetRelationship(player3, player1, R_ALLY)	
+
+	Player_SetRelationship(player1, player4, R_ALLY)	 	-- player 4 is for Dmitry's downed state
+	Player_SetRelationship(player2, player4, R_ALLY)
+	Player_SetRelationship(player3, player4, R_ALLY)
+	Player_SetRelationship(player4, player1, R_ALLY)	
+	Player_SetRelationship(player4, player2, R_ALLY)	
+	Player_SetRelationship(player4, player3, R_ALLY)	
+	
+		--Enable Player Colours
+	PlayerColour_Enable()
+	
+	Game_SetPlayerSlotColour(player1, 1)
+    Game_SetPlayerUISlotColour(player1, 1)
+	
+	Game_SetPlayerSlotColour(player2, 2)
+    Game_SetPlayerUISlotColour(player2, 2)
+	
+	Game_SetPlayerSlotColour(player3, 9)
+    Game_SetPlayerUISlotColour(player3, 9)	
+	
+	Game_SetPlayerSlotColour(player4, 1)
+    Game_SetPlayerUISlotColour(player4, 1)
+	
+end
+
+
+function Mission_SetupVariables()	-- create any extra sgroups, egroups, and mission variables in here
+	
+	
+	sg_mongols1 = SGroup_CreateIfNotFound("sg_mongols1")
+	sg_mongols2 = SGroup_CreateIfNotFound("sg_mongols2")
+	sg_mongols3 = SGroup_CreateIfNotFound("sg_mongols3")
+	sg_mongols4 = SGroup_CreateIfNotFound("sg_mongols4")
+	sg_mongols5 = SGroup_CreateIfNotFound("sg_mongols5")
+	
+	sg_mongolstemp = SGroup_CreateIfNotFound("sg_mongolstemp")
+	sg_mongolsblockade_1 = SGroup_CreateIfNotFound("sg_mongolsblockade_1")
+	sg_mongolsblockade_2 = SGroup_CreateIfNotFound("sg_mongolsblockade_2")
+	sg_mongolsblockade_3 = SGroup_CreateIfNotFound("sg_mongolsblockade_3")
+	
+	sg_refugeestemp = SGroup_CreateIfNotFound("sg_refugeestemp")
+	sg_spawned_notescaped = SGroup_CreateIfNotFound("sg_spawned_notescaped")
+	
+	sg_dmitri_start = SGroup_CreateIfNotFound("sg_dmitri_start")
+	sg_monk_start = SGroup_CreateIfNotFound("sg_monk_start")
+	sg_infantry1_start = SGroup_CreateIfNotFound("sg_infantry1_start")
+	sg_infantry2_start = SGroup_CreateIfNotFound("sg_infantry2_start")
+	sg_refugees = SGroup_CreateIfNotFound("sg_refugees")
+	sg_reinforcment_cavalry = SGroup_CreateIfNotFound("sg_reinforcment_cavalry")
+	sg_reinforcment_archers = SGroup_CreateIfNotFound("sg_reinforcment_archers")
+	sg_reinforcment_infantry = SGroup_CreateIfNotFound("sg_reinforcment_infantry")
+	
+	sg_archer_cinecommand = SGroup_CreateIfNotFound("sg_archer_cinecommand")
+	
+	g_leaderDmitry = Missionomatic_InitializeLeader({
+		name = 11159688, -- Prince Dmitry
+		owner = player1,
+		neutralHolder = player4,
+	})
+	
+	b_outerCityBreached = false
+	b_outerCity_Destroyed = false
+	b_innerwallBreached = false
+	b_reinforceCooldown = false
+	b_trebIntelPlayed = false
+	b_tributeIntelPlayed = false
+	b_reinforceIntelPlayed = false
+	b_pathIsClear = false
+	b_CanPlayDrums = true
+	drumTimer = 30 --Changes how often the mongol drums are allowed to play
+	b_EndingComplete = false
+	b_endofMission = false
+	
+	t_archer_start = AllMarkers_FromName("mkr_archer_start", "")
+	
+	t_villagerDestroy = AllMarkers_FromName("mkr_villager_destroy", "")
+	
+	GOLD_TRICKLE_AMOUNT = 300			-- how much gold we give to the player (per minute)
+	GOLD_TRICKLE_FREQUENCY = 5			-- how often this trickle is applied to the player's resource amount (scaled so as to remain in line with the per-minute amount above)
+		
+	--Reinforcement amounts in the Request Aid Menu
+	aid_Horseman = 20
+	aid_Archers = 30
+	aid_Menatarms = 10
+	aid_Spearman_1 = 30
+	aid_Spearman_2 = 30
+	aid_Monks = 10
+	aid_Knights = 15
+	aid_Streltsy = 15
+	
+end
+
+function Mission_SetDifficulty()
+
+	t_difficulty = {
+		totalMongols = Util_DifVar({300, 300, 400, 500}),
+		maxMongols = Util_DifVar({60, 80, 120, 200}), --Should to be a multiple of 20
+		mongolFrequency = Util_DifVar({120, 120, 120, 90}),
+		mongolMaxRams = Util_DifVar({0, 3, 5, 8}), --No Forced Ram waves
+		timeTillFailure = Util_DifVar({120, 60, 30, 30}),
+		totalMongolWaves = nil,
+		siegeWaves = Util_DifVar({120, 120, 200, 240}),
+		preperationTime = Util_DifVar({420, 420, 300, 300}),
+		escapingVillagers = Util_DifVar({100, 100, 200, 300}), --t_difficulty.escapingVillagers
+	}
+	
+	t_difficulty.totalMongolWaves = t_difficulty.totalMongols/10
+	
+	--How many resources the player starts with
+	local player_StartingResource = Util_DifVar(
+		{
+			{gold = 1500, wood = 5000, food = 3000, stone = 1000,},
+			{gold = 1000, wood = 3000, food = 2400, stone = 600,},
+			{gold = 500, wood = 2000, food = 1200, stone = 300,},
+			{gold = 0, wood = 1000, food = 600, stone = 100,},
+		})
+	Player_AddResources(player1, player_StartingResource)
+	
+	maxTotalMongols = t_difficulty.totalMongols
+
+  end
+
+function Mission_PreInit()
+
+	-- prep the tribute menu for this mission (will be enabled later on)
+	Core_CallDelegateFunctions("DiplomacyEnabled", true)
+	Diplomacy_ShowUI(true)
+	
+end
+
+function Mission_SetRestrictions()	-- set up any restrictions (i.e. locking out units, etc) in here
+
+	--Modify_PlayerMaxPopCap(player1, -75, MUT_Addition)
+	--Modify_PlayerMaxPopCap(player2, -200, MUT_Addition)
+	--Modify_PlayerMaxPopCap(player3, -75, MUT_Addition)
+	
+	--Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_wall_eng"), ITEM_REMOVED)
+	--Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_wall_gate_eng"), ITEM_REMOVED)
+	--Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_tower_eng"), ITEM_REMOVED)
+	--Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_landmark_age2_westminster_palace_eng"), ITEM_REMOVED)
+	--Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_landmark_age2_white_tower_eng"), ITEM_REMOVED)
+	
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("monk_conversion"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("monastery_create_relic"), ITEM_REMOVED)
+	
+	Player_CompleteUpgrade(player2, UPG.MONGOL.UPGRADE_RANGED_INCENDIARY_MON)
+	Player_SetSquadProductionAvailability(player1, SBP.RUS.UNIT_TRADE_CART_RUS, ITEM_REMOVED)
+
+end
+
+function Mission_Preset()	-- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)
+	
+	
+	MoscowDefense_InitializeObjectives()
+	Prepare_InitObjectives()	
+	MongolAttacks_InitializeObjectives()
+	Refugees_InitObjectives()	
+		
+	---- Special rules for this scenario
+	--Rule_AddGlobalEvent(York_OnItemBuilt, GE_BuildItemComplete)
+	--Rule_AddGlobalEvent(York_OnSquadKilled, GE_SquadKilled)
+	--Rule_AddGlobalEvent(York_OnEntityKilled, GE_EntityKilled)
+	
+	--Rule_AddInterval(York_CheckResources, 0.25)
+	--Rule_AddInterval(York_CheckWilliam, 1)
+	
+	--Sound_SetForceMusic(true)
+	Sound_ResetMusicIntensityMapping();
+	Sound_AddMusicIntensityMappingPoint(20, 600) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(350, 4500) -- point 2 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(800, 9999) -- raw value max to scaled value max 
+	
+	--EGroup_SetInvulnerable(eg_spacers, true)
+	--Misc_SetEGroupSelectable(eg_spacers, false)
+	--EGroup_SetTargetingType(eg_spacers, Targeting_None)
+end
+
+function Mission_Start()	-- this is triggered after the intro, just as control is passed to the player
+	
+	----DEBUG REMOVE--
+	--t_difficulty.totalMongols = 10
+	--t_difficulty.preperationTime = 1
+	-------------------
+	
+	Objective_Start(OBJ_MoscowDefense)
+	Objective_Start(OBJ_Prepare)
+	
+	Rule_AddOneShot(Mission_TrickleResources, GOLD_TRICKLE_FREQUENCY)
+	
+	Mission_VillagerSetup()
+	
+	Moscow3_Tutorials_Init()
+	
+	Rule_AddInterval(Wispness, 4)
+	
+end
+
+function GetRecipe()
+
+	local recipe = {
+		
+		audioSettings = { 
+			campaignName = "gdm",
+			missionName = "rts1382moscow",
+		},
+		
+		victory_message = "$39257", -- double check that this works
+		introNIS = EVENTS.Moscow_Intro,
+		outroNIS = EVENTS.Moscow_Outro,
+		
+		-- Locations
+		locations = {
+
+		},
+		
+		
+		-- Modules
+		modules = {
+
+			-- Player starting units
+			{
+				type = "UnitSpawner",
+				player = player1,
+				spawnLocation = mkr_intro_dmitri_spawn,
+				sgroup = sg_dmitri_start,
+				units = {
+					--{type = "scar_monk", numSquads = 10},
+					{sbp = SBP.RUS.UNIT_PRINCE_DMITRI_CMP_RUS, numSquads = 1, sgroup = g_leaderDmitry.sgroup},
+				},
+			},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				spawnLocation = mkr_intro_monk_spawn,
+				sgroup = sg_monk_start,
+				units = {
+					{type = "scar_monk", numSquads = 10},
+					--{sbp = SBP.RUS.UNIT_PRINCE_DMITRI_CMP_RUS, numSquads = 1, sgroup = g_leaderDmitry.sgroup},
+				},
+			},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				spawnLocation = mkr_intro_infantry1_spawn,
+				sgroup = sg_infantry1_start,
+				units = {
+					{type = "scar_manatarms", numSquads = 10},
+					{type = "scar_spearman", numSquads = 10},
+				},
+			},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				spawnLocation = mkr_intro_infantry2_spawn,
+				sgroup = sg_infantry2_start,
+				units = {
+					{type = "scar_manatarms", numSquads = 10},
+					{type = "scar_spearman", numSquads = 20},
+				},
+			},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				spawnLocation = mkr_intro_archer_spawn,
+				units = {
+					{type = "scar_archer", numSquads = 50},
+				},
+			},
+			
+			-- Attack modules
+
+		},
+
+
+		-- Objectives
+		objectives = {
+		},
+
+		
+		-- Playbill
+		playbill = {
+		},
+		
+		
+		-- Presentation things for the start or end of a mission
+		onStart = {
+			intelEvent = "",
+			expositionCamera = {},
+			titleCard = {
+				icon = "icons/campaign/campaign_angevin_the_conquest",
+				title = 11160672, -- 
+				date = 11160673, -- 
+			},
+			actions = {
+			},
+		},
+	}
+
+		
+		
+	return recipe
+
+end
+
+function Mission_VillagerSetup()
+	local villagers = {
+			{type = "scar_villager", numSquads = Util_DifVar({9, 8, 8, 8})},
+		}
+	local guards = {
+			{type = "scar_spearman", numSquads = 2},
+			{type = "scar_archer", numSquads = 1},
+		}
+	
+	sg_villagers_farms = SGroup_CreateIfNotFound("sg_villagers_farms")
+	sg_villagers_stone = SGroup_CreateIfNotFound("sg_villagers_stone")
+	sg_villagers_wood1 = SGroup_CreateIfNotFound("sg_villagers_wood1")
+	sg_villagers_wood2 = SGroup_CreateIfNotFound("sg_villagers_wood2")
+	
+	UnitEntry_DeploySquads(player1, sg_villagers_farms, villagers, mkr_villager_farms)
+	AssignVillagersToFarms(sg_villagers_farms)
+	
+	UnitEntry_DeploySquads(player1, sg_villagers_stone, villagers, mkr_villager_stone)
+	AssignVillagersToStone(sg_villagers_stone)
+	--UnitEntry_DeploySquads(player1, sg_temp, guards, mkr_villager_stone)
+	
+	UnitEntry_DeploySquads(player1, sg_villagers_wood1, villagers, mkr_villager_wood1)
+	AssignVillagersToWood(sg_villagers_wood1)
+	--UnitEntry_DeploySquads(player1, sg_temp, guards, mkr_villager_wood1)
+	
+	UnitEntry_DeploySquads(player1, sg_villagers_wood2, villagers, mkr_villager_wood2)
+	AssignVillagersToWood(sg_villagers_wood2)
+	--UnitEntry_DeploySquads(player1, sg_temp, guards, mkr_villager_wood2)
+	
+end
+
+
+function Mission_TrickleResources()
+		
+	if GOLD_TRICKLE_AMOUNT > 0 then
+		local goldPerTick = GOLD_TRICKLE_AMOUNT/(60/GOLD_TRICKLE_FREQUENCY)
+		Player_AddResource(player1, RT_Gold, goldPerTick, RES_Resourcing)
+		Rule_AddOneShot(Mission_TrickleResources, GOLD_TRICKLE_FREQUENCY)
+	end
+	
+end
+
+function Init_MongolInvasion()
+	
+	--Music_PlayStinger("mus_camp_cust_mongol_drum_cavalry")	
+	
+	MongolArmy_1 = { 				--First attack wave army
+				type = "RovingArmy",
+				descriptor = "MongolAttackRoute1",
+				player = player2,
+				sgroup = sg_mongols1,
+				spawnLocation = mkr_enemyspawn1,
+				fallbacks = {{marker = mkr_enemyspawn1,}},
+				
+				targetingType = ARMY_TARGETING_DISCARD,
+				onDeathFunction = NewMongolArmy,
+				onDeathDissolve = true,
+				
+				targets = {
+					mkr_outercity_target,
+					mkr_innercity_target,
+				},
+				
+				units = {
+					{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 12 },
+					{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 7 },
+					{sbp = SBP.MONGOL.UNIT_KHAN_2_MON, numSquads = 1 },
+				},
+			}
+	
+	t_difficulty.totalMongols = t_difficulty.totalMongols - 20
+	MissionOMatic_InitializeModule(MongolArmy_1)
+			
+	MongolArmy_Wood = { 				--Targets wood
+		type = "RovingArmy",
+		descriptor = "MongolAttack_Resource1",
+		player = player2,
+		--sgroup = sg_mongols1,
+		spawnLocation = mkr_enemyspawn1,
+		fallbacks = {{marker = mkr_enemyspawn1,}},
+	
+		attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+		attackMoveAtTarget = attackMoveStyle_attackEverything,
+		onlyAtTargetForFinal = true,
+		scanRangeEnRoute = 30, 
+		
+		targetingType = ARMY_TARGETING_DISCARD,
+		
+		targets = {
+			mkr_villager_wood1, 
+			mkr_villager_wood2, 
+		},
+		onCompleteFunction = UpdateWoodArmy,
+		onDeathFunction = OnWoodArmyDeath,
+		
+		units = {
+			{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 6 },
+			{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 4 },
+		},
+	}
+	
+	MongolArmy_Stone = {  				--Targets stone
+		type = "RovingArmy",
+		descriptor = "MongolAttack_Resource2",
+		player = player2,
+		--sgroup = sg_mongols1,
+		spawnLocation = mkr_enemyspawn1,
+		fallbacks = {{marker = mkr_enemyspawn1,}},
+		
+		attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+		attackMoveAtTarget = attackMoveStyle_attackEverything,
+		onlyAtTargetForFinal = true,
+		scanRangeEnRoute = 30, 
+		
+		targetingType = ARMY_TARGETING_DISCARD,
+		
+		targets = {
+			mkr_villager_stone,
+		},
+		onCompleteFunction = UpdateStoneArmy,		
+		
+		units = {
+			{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 6 },
+			{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 4 },
+		},
+	}
+	if Game_GetSPDifficulty() > GD_EASY then --Turn off these waves in story mode
+		t_difficulty.totalMongols = t_difficulty.totalMongols - 20
+		MissionOMatic_InitializeModule(MongolArmy_Wood)
+		MissionOMatic_InitializeModule(MongolArmy_Stone)
+	end
+end
+
+function NewMongolWave() --Generate a new ID for the next mongol wave
+	g_mongolWaveIndex = g_mongolWaveIndex or 1
+	local myreturnstring = "Mongol_Army_"..g_mongolWaveIndex
+	g_mongolWaveIndex = g_mongolWaveIndex+1
+	
+	return myreturnstring
+end
+
+function NewMongolArmy() --Spin up a new mongol attack wave
+	local mongolCount = Player_GetSquadCount(player2)
+	if mongolCount < t_difficulty.maxMongols and t_difficulty.totalMongols > 0 then
+	
+		--Vars--
+		local MongolTargets = {
+			Table_GetRandomItem({mkr_inner_northeast_gate, mkr_inner_northwest_gate, mkr_inner_southeast_gate, mkr_inner_southwest_gate}),
+			mkr_innercity_target,
+		}
+		local wave_SpawnLocation = mkr_enemyspawn1
+		local randSpawn = {mkr_enemyspawn1, mkr_enemyspawn2, mkr_enemyspawn3, mkr_enemyspawn4, mkr_enemyspawn5, mkr_enemyspawn6}
+		
+		--Check if default spawn area is clear of player interferance
+		Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_enemyspawn1, 70)
+		Player_GetAllEntitiesNearMarker(player1, eg_temp, mkr_enemyspawn1, 70)
+				
+		if b_outerCityBreached == false and 
+			SGroup_CountSpawned(sg_temp) < 5 and 
+				EGroup_CountSpawned(eg_temp) < 1 then	
+			wave_SpawnLocation = mkr_enemyspawn1
+		else
+			wave_SpawnLocation = Table_GetRandomItem(randSpawn)
+		end	
+						
+		--If city hasn't been breached, target gates.
+		if b_outerCity_Destroyed == false then
+			
+			--If outer city still stands, include it as the primary target
+			table.insert(MongolTargets, 1, mkr_outercity_target)
+
+			--Var with default
+			local randGate = {mkr_outer_north_gate, mkr_outer_northeast_gate, mkr_outer_south_gate, mkr_outer_southeast_gate}
+			
+			--If North Spawn:
+			if wave_SpawnLocation == mkr_enemyspawn2 then
+				--Only target north gates
+				randGate = {mkr_outer_north_gate, mkr_outer_northeast_gate}
+			
+				--NorthEast Spawn
+			elseif wave_SpawnLocation == mkr_enemyspawn3 then
+				--North & East Gates
+				randGate = {mkr_outer_north_gate, mkr_outer_northeast_gate, mkr_outer_southeast_gate}
+			
+			--South/SouthEast Spawns (South only access to the city)
+			elseif wave_SpawnLocation == mkr_enemyspawn4 or wave_SpawnLocation == mkr_enemyspawn5 then
+				--South Gates
+				randGate = {mkr_outer_south_gate}
+			
+			--East Spawns (Access to East gates)
+			else
+				--East Gates
+				randGate ={mkr_outer_northeast_gate, mkr_outer_southeast_gate}
+			end
+				
+			table.insert(MongolTargets, 1, Table_GetRandomItem(randGate))
+		end
+		
+		--Build the Mongol Unit comp based on mission progress and context
+		local t_MongolUnitComp = {}
+		if Game_GetSPDifficulty() > GD_EASY then
+			t_MongolUnitComp = Get_MongolUnits(mongolCount)
+		else
+			t_MongolUnitComp = Get_MongolUnitsStory(mongolCount)
+		end
+		
+		local copyTargetTable = Table_Copy(MongolTargets)
+				
+		--Make the new army module
+		local moduleData = {
+			descriptor = NewMongolWave(), 				
+			type = "RovingArmy",
+			player = player2,
+			
+			attackMove = attackMoveStyle_attackEverything,
+			scanRangeEnRoute = 30, 
+			targetingType = ARMY_TARGETING_DISCARD,
+			targets = copyTargetTable,
+			spawnLocation = wave_SpawnLocation,
+			
+			onDeathFunction = NewMongolArmy,
+			onDeathDissolve = true,
+		}
+		
+		local myNewModule = RovingArmy_Init(moduleData)
+		
+		--DEBUG--
+		if myNewModule.targets == {} or #myNewModule.targets <= 1 then
+				print(myNewModule.descriptor.." is in Error, improper target list.")
+		end
+		
+		--Spawn Wave
+		SpawnUnitsToModule(t_MongolUnitComp, myNewModule, wave_SpawnLocation)
+				
+		--Audio drum stinger
+		if b_CanPlayDrums == true then
+			Music_PlayStinger("mus_camp_cust_mongol_drum_cavalry")
+			b_CanPlayDrums = false
+			Rule_AddOneShot(ResetDrums, drumTimer)
+		end
+		
+		--Catalogue the module
+		allmongolWaves = allmongolWaves or {}
+		table.insert(allmongolWaves, myNewModule)
+	end
+end
+
+function ResetDrums()
+	b_CanPlayDrums = true
+end
+
+function Get_MongolUnits(mongolCount) --Generates the composition of the incoming attack waves based on mission progress criteria
+		local remainingMongols = t_difficulty.totalMongols+mongolCount --siegeWaveCount
+		local units = {}
+	
+	if mongolCount < t_difficulty.maxMongols and t_difficulty.totalMongols >= 11 then
+		if t_difficulty.totalMongols > t_difficulty.siegeWaves then 
+			Player_GetAll(player2)
+			SGroup_Filter(sg_allsquads, "scar_ram", FILTER_KEEP)
+			if b_outerCityBreached == true and SGroup_CountSpawned(sg_allsquads) < 1 then
+				units = {
+					{type = "scar_spearman", numSquads = 8},
+					{type = "scar_ram", numSquads = 2},}
+				t_difficulty.totalMongols = t_difficulty.totalMongols - 10
+			elseif b_outerCityBreached == true and SGroup_CountSpawned(sg_allsquads) < t_difficulty.mongolMaxRams then
+				local randUnitTable = {
+					{{type = "scar_horsearcher", numSquads = 6},
+					{type = "scar_knight", numSquads = 4},},
+					
+					{{type = "scar_spearman", numSquads = 8},
+					{type = "scar_ram", numSquads = 2},},
+					
+					{{type = "scar_manatarms", numSquads = 4},
+					{type = "scar_archer", numSquads = 5},
+					{type = "scar_ram", numSquads = 1},}
+				}
+				units = Table_GetRandomItem(randUnitTable, 1)
+				t_difficulty.totalMongols = t_difficulty.totalMongols - 10
+			else
+				units = {
+					{type = "scar_horsearcher", numSquads = 6},
+					{type = "scar_knight", numSquads = 4},}
+				t_difficulty.totalMongols = t_difficulty.totalMongols - 10
+			end
+		elseif t_difficulty.totalMongols <= t_difficulty.siegeWaves and t_difficulty.totalMongols > (t_difficulty.siegeWaves/2)  then
+			Trebuchet_Intel()
+			units =  {
+				{type = "scar_horsearcher", numSquads = 6 },
+				{type = "scar_knight", numSquads = 3 },
+				{type = "scar_mangonel", numSquads = 1 },}
+			t_difficulty.totalMongols = t_difficulty.totalMongols - 10
+		elseif t_difficulty.totalMongols <= (t_difficulty.siegeWaves/2) then
+			units =  {
+				{type = "scar_archer", numSquads = 6 },
+				{type = "scar_manatarms", numSquads = 3 },
+				{type = "scar_trebuchet_traction", numSquads = 1 },}
+			t_difficulty.totalMongols = t_difficulty.totalMongols - 10
+		end
+	else
+		units =  {
+			{type = "scar_horsearcher", numSquads = t_difficulty.totalMongols},}
+		t_difficulty.totalMongols = t_difficulty.totalMongols - t_difficulty.totalMongols
+		i_timeSinceFinalMongols = i_timeSinceFinalMongols or World_GetGameTime()
+		Rule_AddInterval(Emergency_Cleanup, 2)
+	end
+	
+	return units
+end
+
+function Get_MongolUnitsStory(mongolCount) --Story mode unit comps
+		local remainingMongols = t_difficulty.totalMongols+mongolCount --siegeWaveCount
+		local units = {}
+	
+	if mongolCount < t_difficulty.maxMongols and t_difficulty.totalMongols >= 11 then
+		if t_difficulty.totalMongols > t_difficulty.siegeWaves then 
+			if b_outerCityBreached == true then
+				local randUnitTable = {
+						{{type = "scar_horsearcher", numSquads = 10}},
+						{{type = "scar_horseman", numSquads = 10}},
+				}
+				units = Table_GetRandomItem(randUnitTable, 1)
+				t_difficulty.totalMongols = t_difficulty.totalMongols - 10
+			else
+				units = {
+					{type = "scar_horsearcher", numSquads = 6},
+					{type = "scar_horseman", numSquads = 4},}
+				t_difficulty.totalMongols = t_difficulty.totalMongols - 10
+			end
+		elseif t_difficulty.totalMongols <= t_difficulty.siegeWaves and t_difficulty.totalMongols > (t_difficulty.siegeWaves/2)  then
+			Trebuchet_Intel()
+			units =  {
+				{type = "scar_horsearcher", numSquads = 6 },
+				{type = "scar_horseman", numSquads = 3 },
+				{type = "scar_ram", numSquads = 1 },}
+			t_difficulty.totalMongols = t_difficulty.totalMongols - 10
+		elseif t_difficulty.totalMongols <= (t_difficulty.siegeWaves/2) then
+			units =  {
+				{type = "scar_archer", numSquads = 6 },
+				{type = "scar_spearman", numSquads = 3 },
+				{type = "scar_mangonel", numSquads = 1 },}
+			t_difficulty.totalMongols = t_difficulty.totalMongols - 10
+		end
+	else
+		units =  {
+			{type = "scar_horsearcher", numSquads = t_difficulty.totalMongols},}
+		t_difficulty.totalMongols = t_difficulty.totalMongols - t_difficulty.totalMongols
+		i_timeSinceFinalMongols = i_timeSinceFinalMongols or World_GetGameTime()
+		Rule_AddInterval(Emergency_Cleanup, 2)
+	end
+	
+	return units
+end
+
+function Emergency_Cleanup()
+	if Objective_IsComplete(OBJ_HoldAgainstTheHorde) then 
+		Rule_RemoveMe()
+	else
+		Player_GetAll(player2)
+		if Player_CanSeeSGroup(player1, sg_allsquads, ANY) then
+			i_timeSinceFinalMongols = World_GetGameTime()
+			else
+			if World_GetGameTime() - i_timeSinceFinalMongols > 30 then 
+				if SGroup_CountSpawned(sg_allsquads) < 10 then
+					Rule_RemoveMe()
+					SGroup_DestroyAllSquads(sg_allsquads)
+				else
+					i_timeSinceFinalMongols = World_GetGameTime()
+				end
+			end
+		end
+	end
+end
+
+function GetOutsideTarget(rovingArmy) --Targets player units/buildings outside the city area
+	
+	local closestDist = -1
+	local closestTarget = nil
+	local thisDist = 0
+	local hunterPos = SGroup_GetPosition(rovingArmy.sgroup)
+	
+	Player_GetAllEntitiesNearMarker(player1, eg_temp, mkr_inside_moscow)
+	Player_GetAll(player1)
+	
+	EGroup_RemoveGroup(eg_allentities, eg_temp)
+	EGroup_Filter(eg_allentities, "wall", FILTER_REMOVE)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	for index = EGroup_CountSpawned(eg_allentities), 1, -1 do
+		local thisEntity = EGroup_GetEntityAt(eg_allentities, index)
+		local thisEntityPos = Entity_GetPosition(thisEntity)
+		thisDist = Util_GetDistanceSquared(thisEntityPos, hunterPos)
+		
+		if closestDist < 0 or thisDist < closestDist then
+			closestDist = thisDist
+			closestTarget = thisEntity
+		end
+	end
+
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_inside_moscow)
+	Player_GetAll(player1)
+	
+	SGroup_RemoveGroup(sg_allsquads, sg_temp)
+
+	for index = SGroup_CountSpawned(sg_allsquads), 1, -1 do
+		local thisSquad = SGroup_GetSquadAt(sg_allsquads, index)
+		local thisSquadPos = Squad_GetPosition(thisSquad)
+		thisDist = Util_GetDistanceSquared(thisSquadPos, hunterPos)
+		
+		if closestDist < 0 or thisDist < closestDist then
+			closestDist = thisDist
+			closestTarget = thisSquad
+		end
+	end
+	
+
+	
+	return closestTarget
+	
+end
+
+function UpdateWoodArmy()
+	local WoodArmy = MissionOMatic_FindModule("MongolAttack_Resource1")
+	local closestTargetPos = nil
+	local nextTarget = GetOutsideTarget(WoodArmy)
+	
+	if nextTarget ~= nil then
+		closestTargetPos = Util_GetPosition(nextTarget)
+		RovingArmy_SetTarget(WoodArmy, closestTargetPos)
+	else
+		RovingArmy_SetTarget(WoodArmy, mkr_innercity_target)
+	end
+end
+
+function UpdateStoneArmy()
+	local StoneArmy = MissionOMatic_FindModule("MongolAttack_Resource2")
+	local closestTargetPos = nil
+	local nextTarget = GetOutsideTarget(StoneArmy)
+	
+	if nextTarget ~= nil then
+		closestTargetPos = Util_GetPosition(nextTarget)
+		RovingArmy_SetTarget(StoneArmy, closestTargetPos)
+	else
+		RovingArmy_SetTarget(StoneArmy, mkr_innercity_target)
+	end
+end
+
+function OnWoodArmyDeath() --If the Mongols attacking the exterior areas die make new ones. Turned off on Story mode
+	Rule_AddOneShot(NewWoodArmy, 60)
+end
+
+function NewWoodArmy()
+	
+	Player_GetAll(player2)
+	local mongolCount = SGroup_CountSpawned(sg_allsquads)
+	
+	if t_difficulty.totalMongols+mongolCount >= 20 then
+		local units = {
+			{type = "scar_horsearcher", numSquads = 6},
+			{type = "scar_horseman", numSquads = 4},
+		}
+		woodArmy = MissionOMatic_FindModule("MongolAttack_Resource1")
+		SpawnUnitsToModule(units, woodArmy,mkr_enemyspawn1)
+	end
+end
+
+function PositionArchers()
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_archer", FILTER_KEEP)
+	SGroup_Duplicate(sg_allsquads, sg_archer_cinecommand)
+	
+	local splitCount = SGroup_CountSpawned(sg_allsquads)/#t_archer_start
+	
+	if splitCount > 0 then
+		for index, marker in pairs(t_archer_start) do
+			SGroup_Clear(sg_temp)
+			SGroup_FilterCount(sg_allsquads, splitCount, sg_temp)
+			Cmd_FormationMove(sg_allsquads, marker)
+			SGroup_Duplicate(sg_temp, sg_allsquads)			
+		end
+		if SGroup_CountSpawned(sg_allsquads) > 0 then
+			Cmd_FormationMove(sg_allsquads, t_archer_start[1])
+		end
+	end
+end
+
+function Trebuchet_Intel()
+	if b_trebIntelPlayed == false then
+		b_trebIntelPlayed = true
+		Util_StartIntel(EVENTS.LastFiveWaves)
+	end
+end
+
+function Tribute_Intel()
+	if b_tributeIntelPlayed == false then
+		b_tributeIntelPlayed = true
+		Util_StartIntel(EVENTS.TributeMenu)
+	end
+end
+
+function Reinforcement_Intel()
+	if b_reinforceIntelPlayed == false then
+		b_reinforceIntelPlayed = true
+		Util_StartIntel(EVENTS.VassalSupport)
+		Rule_AddOneShot(Reinforcement_Intel_Cooldown, 300)
+	end
+end
+
+function Reinforcement_Intel_Cooldown()
+	b_reinforceIntelPlayed = false
+end
+
+function MongolAttack_FleeingCitizens()
+	CitizenBlockade1 = { 
+				type = "RovingArmy",
+				descriptor = "CitizenBlockade1",
+				player = player2,
+				sgroup = sg_mongolsblockade_1,
+				spawnLocation = mkr_enemyspawn4,			
+				targetingType = ARMY_TARGETING_DISCARD,
+				
+				targets = {
+					mkr_mongolblockade1
+				},
+				
+				units = {
+					{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 12 },
+					{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 8 },
+					{sbp = SBP.MONGOL.UNIT_KHAN_2_MON, numSquads = 1 },
+				},
+			}
+				
+		CitizenBlockade2 = { 
+				type = "RovingArmy",
+				descriptor = "CitizenBlockade2",
+				player = player2,
+				sgroup = sg_mongolsblockade_2,
+				spawnLocation = mkr_enemyspawn4,			
+				targetingType = ARMY_TARGETING_DISCARD,
+				
+				targets = {
+					mkr_mongolblockade2
+				},
+				units = {
+					{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 6 },
+					{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 4 },
+				},
+			}
+	
+		CitizenBlockade3 = { 
+				type = "RovingArmy",
+				descriptor = "CitizenBlockade3",
+				player = player2,
+				sgroup = sg_mongolsblockade_3,
+				spawnLocation = mkr_enemyspawn4,			
+				targetingType = ARMY_TARGETING_DISCARD,
+				
+				targets = {
+					mkr_mongolblockade3
+				},
+				units = {
+					{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 6 },
+					{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 4 },
+				},
+			}
+	
+	 		MissionOMatic_InitializeModule(CitizenBlockade1)
+			MissionOMatic_InitializeModule(CitizenBlockade2)
+			MissionOMatic_InitializeModule(CitizenBlockade3)
+end
+
+function Wispness()
+	EGroup_WarpToPos(eg_wisp, Util_GetRandomPosition(mkr_wisp))
+	local boolHideWisp = true
+	if World_GetRand(0,10) >= 9 then 
+		boolHideWisp = false
+	end
+	Entity_VisHide(EGroup_GetEntityAt(eg_wisp, 1), boolHideWisp)
+end
+
+
+
+-- OUTRO STUFF - THIS WAS PREVIOUSLY LIVING IN .EVENTS
+
+

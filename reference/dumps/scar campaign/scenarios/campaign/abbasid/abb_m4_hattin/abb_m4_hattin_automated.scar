@@ -1,0 +1,288 @@
+-----------------------------------------------------------------------
+--
+-- Abbasid - Horns of Hattin
+--
+-- Automated testing script
+--
+-----------------------------------------------------------------------
+
+import("GameScarUtil.scar")
+import("Prefabs.scar")
+import("standard.scar")
+import("scarutil.scar")
+import("team.scar")
+
+import("core.scar")
+
+-- We need to import this for anything to work. We don't need anything else
+import("MissionOMatic/MissionOMatic.scar")
+import("missionomatic/modules/module_rovingarmy.scar")
+
+-- Snumeration for objective status
+statusTable = {
+	NotRun = 0, 
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3
+}
+
+-- Bool verifying if the Campaign Auto Test Agrument is present
+debug_IsCampaignAutoTest = false
+
+player1 = World_GetPlayerAt(1)
+
+-------------------------------------------------------------------------
+-- Generic Functions
+-------------------------------------------------------------------------
+
+function AutoTest_OnInit()
+	
+	if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+		
+		import("test/common.scar")
+		import("test/standard_test.scar")
+		import("test/test_framework.scar")
+		--import("test/test_framework_cardinal.scar")
+
+		-- Tests using this file are driven by RPC and have no use for the on screen info of the legacy test system.
+		standard_test_on_screen_info.Hide()
+
+		print("CampaignAutoTest parameter detected")
+		debug_IsCampaignAutoTest = true
+		
+		--Checks for the 'NoSwoopy' Arg, and disables the swoopy intro camera on true--
+		if Util_GetCommandLineArgument("NoSwoopy") then
+			Rule_AddInterval(AutoTest_SkipAndStart, 1)
+		else
+			b_introStarted = false
+			Rule_AddInterval(AutoTest_PlayIntro, 1)
+		end
+				
+	end
+end
+
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+	if Event_IsAnyRunning() then
+		Rule_RemoveMe()
+		Game_SkipAllEvents(false)
+		AutomatedMission_Start() --Starts the autotest scar sequence
+	end
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+	if b_introStarted == false then
+		if Event_IsAnyRunning() then
+			b_introStarted = true
+		end
+	else
+		if Event_IsAnyRunning() == false then
+			Rule_RemoveMe()
+			AutomatedMission_Start() --Starts the autotest scar sequence
+		end
+	end
+end
+
+--Script for kicking off the uatomated testing flow
+function AutomatedMission_Start()
+	TechTree_GiveAllUpgrades_ByAge(player1, 3, TT_INCLUDE_BOTH)
+	FOW_RevealAll()
+	Automated_RegisterCheckpoints() --Compiles the list of checkpoints
+	if Rule_Exists(AutomatedHattin_CheckPlayStart) == false then
+		Rule_AddInterval(AutomatedHattin_CheckPlayStart, 1)	-- Delays the start of the player scripted control sequence
+	end
+end
+
+-- Compiles the list of checkpoints
+function Automated_RegisterCheckpoints()
+	---- All Checkpoints Should be preceeded with Campaign Auto Test 'cat_' --
+
+	--"cat_PlayStart", when play is handed over to the player
+	CampaignAutotest_RegisterCheckpoint("cat_PlayStart", 120)
+	CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["InProgress"])
+	
+	--"cat_TutorialComplete", the player has completed the tutorial
+	CampaignAutotest_RegisterCheckpoint("cat_TutorialComplete", 240)
+	CampaignAutotest_SetCheckpointStatus("cat_TutorialComplete", statusTable["NotRun"])
+	
+	--"cat_MissionVictory", the mission is complete with victory
+	CampaignAutotest_RegisterCheckpoint("cat_MissionVictory", 2100)
+	CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["NotRun"])
+	
+end
+
+-------------------------------------------------------------------------
+-- Mission-Specific Functions
+-------------------------------------------------------------------------
+
+--? @shortdesc Checks for the Intro completing and control being handed to the player
+function AutomatedHattin_CheckPlayStart(context, data)
+	if Objective_IsStarted(OBJ_Tutorial) == true then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_TutorialComplete", statusTable["InProgress"])
+		
+		Rule_AddInterval(AutomatedHattin_PlayerTutorial, 2)
+		Rule_AddInterval(AutomatedHattin_CheckTutorialComplete, 1)
+	end
+end
+
+function AutomatedHattin_CheckTutorialComplete(context, data)
+	if Objective_IsStarted(OBJ_Crusaders) == true then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["InProgress"])
+		Rule_AddInterval(AutomatedHattin_CheckMissionComplete, 1)
+		Rule_AddInterval(AutomatedHattin_PlayerBurnFields, 5)
+		Rule_AddInterval(AutomatedHattin_PlayerDefendRoad, {delay = 20, interval = 2})
+		Rule_AddInterval(AutomatedHattin_NilPings, 2)
+		
+		g_cat_MainObjectiveStart = World_GetGameTime()
+	end
+end
+
+--? @shortdesc Checks for mission completion
+function AutomatedHattin_CheckMissionComplete(context, data)
+	if Objective_IsComplete(OBJ_Crusaders) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["Pass"])
+	end
+end
+
+--? @shortdesc Simulates the player burning a couple of fields along the roads to stimulate Crusader navigation
+function AutomatedHattin_PlayerTutorial(context, data)
+	-- Spearmen need to be moved around a bit based on what subobjective we're on
+	sg_cat_player_tut_spears = SGroup_CreateIfNotFound("sg_cat_player_tut_spears")
+	if SGroup_CountSpawned(sg_cat_player_tut_spears) <= 10 then
+		Player_GetAll(player1)
+		SGroup_Filter(sg_allsquads, "scar_spearman", FILTER_REMOVE, sg_cat_player_tut_spears)
+	end
+	
+	if SGroup_CountSpawned(sg_cat_player_tut_spears) > 0 and SGroup_IsIdle(sg_cat_player_tut_spears, ANY) == true then
+		if Objective_IsStarted(SOBJ_SecondTutorialBurn) == false then
+			Cmd_Ability(sg_cat_player_tut_spears, BP_GetAbilityBlueprint("core_formation_line"))
+			Cmd_FormationMove(sg_cat_player_tut_spears, mkr_tutorial_player_spawn_1, false, false, mkr_tut_1)
+		elseif BurnableFields_GetOnFirePercentage(BurnableFields_GetField("tutFields2")) > 0.0 then
+			Cmd_Ability(sg_cat_player_tut_spears, BP_GetAbilityBlueprint("core_formation_line"))
+			Cmd_FormationMove(sg_cat_player_tut_spears, mkr_tutorial_pass, false, false, mkr_tutorial_cliffs_facing)
+		elseif Objective_IsStarted(SOBJ_SecondTutorialBurn) == true then
+			if g_cat_pauseRefTime ~= nil and (World_GetGameTime() - g_cat_pauseRefTime) >= 3 then
+				Cmd_Attack(sg_cat_player_tut_spears, eg_burnableFieldsTut2, false)
+			elseif g_cat_pauseRefTime == nil then
+				g_cat_pauseRefTime = World_GetGameTime()
+			end
+		end
+	end
+	
+	-- Crossbows only need to spawn and be moved into position once
+	sg_cat_player_tut_crossbows = SGroup_CreateIfNotFound("sg_cat_player_tut_crossbows")
+	if SGroup_CountSpawned(sg_cat_player_tut_crossbows) <= 0 then
+		Player_GetAll(player1)
+		SGroup_Filter(sg_allsquads, "scar_crossbowman", FILTER_REMOVE, sg_cat_player_tut_crossbows)
+		if SGroup_CountSpawned(sg_cat_player_tut_crossbows) > 0 then
+			Cmd_Ability(sg_cat_player_tut_crossbows, BP_GetAbilityBlueprint("core_formation_line"))
+			Cmd_FormationMove(sg_cat_player_tut_crossbows, mkr_tutorial_cliffs, false, false, mkr_tutorial_cliffs_facing)
+			Cmd_HoldPosition(sg_cat_player_tut_crossbows, true, true)
+		end
+	end
+	
+	-- Wrap things up when we're done
+	if Objective_IsComplete(OBJ_Tutorial) == true then
+		CampaignAutotest_SetCheckpointStatus("cat_TutorialComplete", statusTable["Pass"])
+		Cmd_FormationAttackMove(sg_cat_player_tut_spears, mkr_location7, false)
+		Cmd_FormationAttackMove(sg_cat_player_tut_crossbows, mkr_location7, false)
+		Rule_RemoveMe()
+	end
+end
+
+function AutomatedHattin_PlayerBurnFields(context, data)
+	sg_cat_player_torchers = SGroup_CreateIfNotFound("sg_cat_player_torchers")
+	if SGroup_CountSpawned(sg_cat_player_torchers) <= 0 then
+		UnitEntry_DeploySquads(player1, sg_cat_player_torchers,
+			{
+				{ type = "scar_horseman", numSquads = 5 },
+				{ type = "scar_knight", numSquads = 5 },
+				{ type = "scar_horsearcher", numSquads = 5 },
+				{ type = "scar_camel_rider", numSquads = 5 },
+			},
+			mkr_playerSpawn_1)
+	elseif SGroup_IsIdle(sg_cat_player_torchers, ALL) == true then
+		local fieldsToBurn = false
+		local timeSinceObjStart = World_GetGameTime() - g_cat_MainObjectiveStart
+		
+		if BurnableFields_HasBeenBurned(t_burnableFields.path_1_4) == false then
+			fieldsToBurn = true
+			if timeSinceObjStart > 180 then
+				Cmd_Attack(sg_cat_player_torchers, eg_burnableFields_1_4, true)
+				--print(string.format("AUTOTEST - Torchers attacking eg_burnableFields_1_4"))
+			end
+		end
+		if BurnableFields_HasBeenBurned(t_burnableFields.path_2_4) == false then
+			fieldsToBurn = true
+			if timeSinceObjStart > 300 then
+				Cmd_Attack(sg_cat_player_torchers, eg_burnableFields_2_4, true)
+				--print(string.format("AUTOTEST - Torchers attacking eg_burnableFields_2_4"))
+			end
+		end
+		if BurnableFields_HasBeenBurned(t_burnableFields.path_3_4) == false then
+			fieldsToBurn = true
+			if timeSinceObjStart > 420 then
+				Cmd_Attack(sg_cat_player_torchers, eg_burnableFields_3_4, true)
+				--print(string.format("AUTOTEST - Torchers attacking eg_burnableFields_3_4"))
+			end
+		end
+		
+		if fieldsToBurn == false then
+			Cmd_FormationAttackMove(sg_cat_player_torchers, mkr_location7, false)
+			SGroup_Clear(sg_cat_player_torchers)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function AutomatedHattin_PlayerDefendRoad(context, data)
+	sg_cat_player_main_army = SGroup_CreateIfNotFound("sg_cat_player_main_army")
+	sg_cat_player_torchers = SGroup_CreateIfNotFound("sg_cat_player_torchers")
+	
+	-- First, try adding spare units
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_military", FILTER_KEEP)
+	SGroup_RemoveGroup(sg_allsquads, sg_cat_player_main_army)
+	SGroup_RemoveGroup(sg_allsquads, sg_cat_player_torchers)
+	-- Add anything that wasn't already in there to the main army
+	if SGroup_CountSpawned(sg_allsquads) > 0 then
+		SGroup_AddGroup(sg_cat_player_main_army, sg_allsquads)
+		--print(string.format("AUTOTEST - Main army getting %s existing units added", SGroup_CountSpawned(sg_allsquads)))
+	end
+	
+	-- If there's still a lack of units, spawn more
+	if SGroup_CountSpawned(sg_cat_player_main_army) < 190 then
+		--print(string.format("AUTOTEST - Main army had %s units, getting new units spawned", SGroup_CountSpawned(sg_allsquads)))
+		UnitEntry_DeploySquads(player1, sg_cat_player_main_army,
+			{
+				{ type = "scar_manatarms", numSquads = 12 },
+				{ type = "scar_spearman", numSquads = 12 },
+				{ type = "scar_crossbowman", numSquads = 16 },
+				{ type = "scar_handcannon", numSquads = 8 },
+				{ type = "scar_mangonel", numSquads = 2 },
+			}, mkr_playerSpawn_1)
+	end
+	
+	if SGroup_CountSpawned(sg_cat_player_main_army) > 0 and Util_GetDistance(sg_cat_player_main_army, mkr_location7) > 20 then
+		Cmd_FormationAttackMove(sg_cat_player_main_army, mkr_location7, true)
+		--print("AUTOTEST - Main army ordered to move to mkr_location7")
+	elseif SGroup_CountSpawned(sg_cat_player_main_army) > 0 then
+		--print(string.format("AUTOTEST - Nothing to do to defend, %s units in main army, %s meters from hold position", SGroup_CountSpawned(sg_cat_player_main_army), Util_GetDistance(sg_cat_player_main_army, mkr_location7)))
+	end
+end
+
+function AutomatedHattin_NilPings(context, data)
+	if Objective_IsStarted(OBJ_FieldScoutingGuidance) == true and t_burnableFieldHints ~= nil then
+		for idx, hint in pairs(t_burnableFieldHints) do
+			Objective_RemoveUIElements(OBJ_FieldScoutingGuidance, hint.ping)
+			hint.ping = nil
+		end
+		Rule_RemoveMe()
+	end
+end

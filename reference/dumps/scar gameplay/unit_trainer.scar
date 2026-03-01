@@ -1,0 +1,318 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")	
+
+--? @shortdesc This is called automatically when it's needed, and maps which units can be spawned from which buildings.
+function _UnitTrainer_InitSystem()
+	print("UnitTrainer System Initialized")
+	if _UnitTrainer == nil then
+		_UnitTrainer = {
+			buildingTypes = { "barracks", "archery_range", "stable", "siege_workshop", "monastery", "town_center", "scar_dock" },
+			unitTypes = {
+				scar_villager = { 	 		buildingType = "town_center", 	 },
+				scar_spearman = { 	 		buildingType = "barracks", 	  	 },
+				scar_manatarms = { 	 		buildingType = "barracks", 	  	 },
+				scar_militia = { 	 		buildingType = "barracks", 	  	 },
+				scar_landsknecht = { 		buildingType = "barracks", 	  	 },
+				scar_archer = { 	 		buildingType = "archery_range",  },
+				scar_crossbowman = { 		buildingType = "archery_range",  },
+				scar_horsearcher = { 		buildingType = "archery_range",  },
+				scar_handcannon = {  		buildingType = "archery_range",  },
+				scar_repeater_crossbow = {  buildingType = "archery_range",  },
+				scar_horseman = { 	 		buildingType = "stable", 	 	 },
+				scar_knight = { 	 		buildingType = "stable", 		 },
+				scar_scout = { 	 	 		buildingType = "stable", 	 	 },
+				scar_mangonel = { 	 		buildingType = "siege_workshop", },
+				scar_springald = { 	 		buildingType = "siege_workshop", },
+				scar_trebuchet = { 	 		buildingType = "siege_workshop", },
+				scar_ram = { 		 		buildingType = "siege_workshop", },
+				scar_siege_tower = { 		buildingType = "siege_workshop", },
+				scar_cannon = { 		 	buildingType = "siege_workshop", },
+				scar_bombard = { 		 	buildingType = "siege_workshop", },
+				scar_culverin = { 		 	buildingType = "siege_workshop", },
+				scar_ribauldequin = { 		buildingType = "siege_workshop", },
+				scar_monk = { 		 		buildingType = "monastery", 	 },
+				scar_combat_ship = { 		buildingType = "scar_dock", 	 },
+				scar_warship = { 		 	buildingType = "scar_dock", 	 },
+				scar_war_galley = { 		buildingType = "scar_dock", 	 },
+				scar_fire_ship = { 			buildingType = "scar_dock", 	 },
+				scar_transport = { 			buildingType = "scar_dock", 	 },
+				scar_trade_ship = { 		buildingType = "scar_dock", 	 },
+			},
+			unitSBPs = {},
+			players = {},
+			request_index = 0,
+		}
+		
+		-- any units that don't fit into the above achetypes need to be added here
+		local unitSBPs = {}
+		unitSBPs[SBP.CRUSADER_CMP.UNIT_SCOUT_MANSURAH_CRU] = 					{ buildingType = "stable", 	  		}
+		unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_CRU] = 				{ buildingType = "monastery", 	  	}
+		unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_MASTER_CRU] = 			{ buildingType = "monastery", 	  	}
+		unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU] = 				{ buildingType = "monastery", 	  	}
+		unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU] = 		{ buildingType = "monastery", 	  	}
+		unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU] = 			{ buildingType = "monastery", 	  	}
+		unitSBPs[SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_MASTER_CRU] = 	{ buildingType = "monastery", 	  	}
+		
+		for k, v in pairs(unitSBPs) do
+			_UnitTrainer.unitSBPs[BP_GetName(k)] = v
+		end
+	end
+end
+
+function UnitTrainer_OverrideBuildTime(unitTrainer, unitType, newTime)
+	local unitTypeData = _UnitTrainer.unitTypes[unitType]
+	unitTypeData.buildTime = newTime
+	local sbp = Cardinal_ConvertTypeToSquadBlueprint(unitType, unitTrainer.player, false)
+	_UnitTrainer.unitSBPs[BP_GetName(sbp)] = unitTypeData
+end
+
+--? @shortdesc Runs the initialization logic that is common to BuildingTrainer and MapEdgeTrainer
+function _UnitTrainer_Init(player)
+	_UnitTrainer_InitSystem()
+	_UnitTrainer_InitPlayer(player)
+	local trainer = {
+		player = player,
+		requests = {},
+		delayed_requests = {},
+	}
+	return trainer
+end
+
+--? @shortdesc This is called automatically when it's needed, and sets up civ blueprint data for the player
+function _UnitTrainer_InitPlayer(player)
+	if _UnitTrainer.players[Player_GetID(player)] == nil then
+		local player_id = Player_GetID(player)
+		print("UnitTrainer Player "..player_id.." Initialized")
+		table.insert(_UnitTrainer.players, player_id)
+		for unitType, unitTypeData in pairs(_UnitTrainer.unitTypes) do
+			local sbp = Cardinal_ConvertTypeToSquadBlueprint(unitType, player, false)
+			if sbp then
+				_UnitTrainer.unitSBPs[BP_GetName(sbp)] = unitTypeData
+			else
+				--print("UnitTrainer could not find type "..unitType.." for player "..player_id)
+			end
+		end
+	end
+end
+
+function _UnitTrainer_NewRequestID()
+	_UnitTrainer.request_index = _UnitTrainer.request_index + 1
+	return _UnitTrainer.request_index
+end
+
+--? @shortdesc Runs the request creation logic that is common to BuildingTrainer and MapEdgeTrainer
+function _UnitTrainer_CreateRequest(trainer, units, delay, onSpawn, onComplete, data)
+	local request_id = _UnitTrainer_NewRequestID()
+	delay = delay or 0
+	local request = {
+		id = request_id,
+		units = UnitTable_Clone(units),	
+		remaining_unit_count = UnitTable_CountUnits(units),
+		sgroup = SGroup_CreateUniqueWithPrefix("sg_unit_trainer_request_"..request_id),
+		onSpawn = onSpawn,
+		onComplete = onComplete,
+		data = data,
+		start_at = World_GetGameTime() + delay,
+	}
+	for i = #request.units, 1, -1 do
+		local unitRow = request.units[i]
+		if unitRow.numSquads == 0 then
+			table.remove(request.units, i)
+		else
+			if unitRow.numSquads == nil then
+				unitRow.numSquads = 1
+			end
+			if unitRow.type then
+				unitRow.sbp = Cardinal_ConvertTypeToSquadBlueprint(unitRow.type, trainer.player, false)
+			end	
+			assert(_UnitTrainer.unitSBPs[BP_GetName(unitRow.sbp)] ~= nil, "UnitTrainer does not recognize '"..BP_GetName(unitRow.sbp).."'")
+		end
+	end
+	if World_GetGameTime() >= request.start_at then
+		table.insert(trainer.requests, request)
+	else
+		table.insert(trainer.delayed_requests, request)
+	end
+	return request
+end
+
+function _UnitTrainer_PullUnitFromQueue(trainer, source, ignore_type, custom_build_time)
+	if source.spawning_at == nil then
+		for j, request in ipairs(trainer.requests) do
+			for k, unitRow in ipairs(request.units) do
+				local unitTypeData = _UnitTrainer.unitSBPs[BP_GetName(unitRow.sbp)]
+				if ignore_type or unitTypeData.buildingType == source.type then
+					source.spawning_sbp = unitRow.sbp
+					local buildTime = unitTypeData.buildTime or custom_build_time or BP_GetEntityBPBuildTime(SBP_GetFirstEBP(unitRow.sbp))
+					source.spawning_at = World_GetGameTime() + buildTime
+					source.spawning_request = request
+					UnitTable_RemoveUnitsBySBP(request.units, unitRow.sbp, 1)
+					break
+				end
+			end
+			if source.spawning_at then
+				break
+			end
+		end
+	end
+end
+
+function _UnitTrainer_SpawnUnit(trainer, source, ignore_validation)
+	if source.spawning_at ~= nil and World_GetGameTime() >= source.spawning_at then
+		local request = source.spawning_request 
+
+		if ignore_validation or (Entity_IsValid(source.entity_id) and Entity_IsAlive(source.entity)) then
+			SGroup_Clear(sg_single)
+			local units = {{ sbp = source.spawning_sbp, numSquads = 1 }}
+			CreateUnits(trainer.player, units, source.spawn, sg_single)
+			SGroup_AddGroup(request.sgroup, sg_single)
+			local context = { request_id = request.id, unit = SGroup_GetSquadAt(sg_single, 1), sbp = source.spawning_sbp }
+			if request.onSpawn then
+				request.onSpawn(context, request.data)
+			end
+		end
+
+		request.remaining_unit_count = request.remaining_unit_count - 1
+		source.spawning_sbp = nil
+		source.spawning_at = nil
+		source.spawning_request = nil
+	end
+end
+
+function _UnitTrainer_CompleteRequests(trainer)
+	for i = #trainer.requests, 1, -1 do
+		local request = trainer.requests[i]
+		if request.remaining_unit_count == 0 then
+			table.remove(trainer.requests, i)
+			local context = { request_id = request.id, sgroup = request.sgroup }
+			if request.onComplete then
+				request.onComplete(context, request.data)
+			end
+			SGroup_Destroy(request.sgroup)
+		end
+	end
+end
+
+--? @shortdesc Creates a new buildingTrainer, which consists of a group of buildings. It accepts requests to train units, 
+--? and will train them from the appropriate buildings according to their train times.
+--? @args EGroup eg_buildings
+--? @result BuildingTrainer buildingTrainer
+function BuildingTrainer_Init(eg_buildings)
+	assert(scartype(eg_buildings) == ST_EGROUP and EGroup_CountSpawned(eg_buildings) > 0, "invalid eg_buildings")
+	local player = Entity_GetPlayerOwner(EGroup_GetEntityAt(eg_buildings, 1))
+	
+	local buildingTrainer = _UnitTrainer_Init(player)
+	
+	_BuildingTrainer_InitBuildingTypes(buildingTrainer, eg_buildings)
+	
+	Rule_AddInterval(_BuildingTrainer_Monitor, 1, { buildingTrainer = buildingTrainer })
+	return buildingTrainer
+end
+
+--? @shortdesc Runs the logic for configuring the production buildings
+function _BuildingTrainer_InitBuildingTypes(buildingTrainer, eg_buildings)
+	buildingTrainer.buildings = {}
+	for i, buildingType in ipairs(_UnitTrainer.buildingTypes) do
+		EGroup_Clear(eg_temp)
+		EGroup_AddEGroup(eg_temp, eg_buildings)
+		EGroup_Filter(eg_temp, buildingType, FILTER_KEEP)
+		for j = 1, EGroup_CountSpawned(eg_temp) do
+			local entity = EGroup_GetEntityAt(eg_temp, j)
+			local building = {
+				entity = entity,
+				entity_id = Entity_GetID(entity),
+				type = buildingType,
+				spawn = Building_GetSpawnPosition(entity, OFFSET_BACK)
+			}
+			table.insert(buildingTrainer.buildings, building)
+		end
+	end
+end
+
+--? @shortdesc Requests a buildingTrainer to start training a group of units. When a building is destroyed, rather than delaying the 
+--? time required to train all units, it results in some of the units not being trained at all. As a result, the time required to
+--? train the full set of units does not depend on the status of the buildings. Ex. even if all buildings are dead, the buildingTrainer
+--? will consider the request 'complete' after the time it would have taken should they have been alive.
+--? @extdesc  onSpawn is an optional callback that will be called when each unit is spawned. That callback will have a 'context' 
+--? parameter, which is a table of the format { Squad unit, Int request_id, SBP sbp }
+--? onComplete is an optional callback that will be called when all units are spawned. That callback will have the parameters 
+--? 'context' and 'data', 'context' is a table of the format { SGroup sgroup, Int request_id },
+--? 'data' is the same table that is passed in here.
+--? @args BuildingTrainer buildingTrainer, UnitTable units[, Int delay, Function onSpawn, Function onComplete, Table data]
+--? @result request_id 
+function BuildingTrainer_TrainUnits(buildingTrainer, units, delay, onSpawn, onComplete, data)
+	local request = _UnitTrainer_CreateRequest(buildingTrainer, units, delay, onSpawn, onComplete, data)
+	return request.id
+end
+
+function _UnitTrainer_ProcessDelayedRequests(trainer)
+	for i = #trainer.delayed_requests, 1, -1 do
+		local delayed_request = trainer.delayed_requests[i]
+		if World_GetGameTime() >= delayed_request.start_at then
+			table.insert(trainer.requests, delayed_request)
+			table.remove(trainer.delayed_requests, i)
+		end
+	end
+end
+
+function _BuildingTrainer_Monitor(context, data)
+	local buildingTrainer = data.buildingTrainer
+	
+	_UnitTrainer_ProcessDelayedRequests(buildingTrainer)
+	
+	for _, building in ipairs(buildingTrainer.buildings) do	
+		_UnitTrainer_PullUnitFromQueue(buildingTrainer, building, false, nil)
+	end
+	for _, building in ipairs(buildingTrainer.buildings) do
+		_UnitTrainer_SpawnUnit(buildingTrainer, building, false)
+	end
+	_UnitTrainer_CompleteRequests(buildingTrainer)
+end
+
+--? @shortdesc Creates a new mapEdgeTrainer. It accepts requests to train units, and will spawn them at the spawn position/marker provided. 
+--? @args EGroup eg_buildings, Pos/Marker spawn
+--? @result MapEdgeTrainer mapEdgeTrainer
+function MapEdgeTrainer_Init(player, spawn, spawn_interval)
+	assert(scartype(spawn) == ST_MARKER or scartype(spawn) == ST_SCARPOS, "invalid spawn")
+	assert(scartype(player) == ST_PLAYER, "invalid player")
+
+	local mapEdgeTrainer = _UnitTrainer_Init(player)
+	
+	mapEdgeTrainer.spawn = spawn
+	mapEdgeTrainer.spawn_interval = spawn_interval
+	
+	Rule_AddInterval(_MapEdgeTrainer_Monitor, 1, { mapEdgeTrainer = mapEdgeTrainer })
+	return mapEdgeTrainer
+end
+
+--? @shortdesc Requests a mapEdgeTrainer to start training a group of units from a fixed position/marker, typically at the map edge.
+--? @extdesc  onSpawn is an optional callback that will be called when each unit is spawned. That callback will have a 'context' 
+--? parameter, which is a table of the format { Squad unit, Int request_id, SBP sbp }
+--? onComplete is an optional callback that will be called when all units are spawned. That callback will have the parameters 
+--? 'context' and 'data', 'context' is a table of the format { SGroup sgroup, Int request_id },
+--? 'data' is the same table that is passed in here.
+--? @args MapEdgeTrainer mapEdgeTrainer, UnitTable units[, Int delay, Function onSpawn, Function onComplete, Table data]
+--? @result request_id 
+function MapEdgeTrainer_TrainUnits(mapEdgeTrainer, units, delay, onSpawn, onComplete, data)
+	local request = _UnitTrainer_CreateRequest(mapEdgeTrainer, units, delay, onSpawn, onComplete, data)
+	return request.id
+end
+
+function _MapEdgeTrainer_Monitor(context, data)
+	local mapEdgeTrainer = data.mapEdgeTrainer
+	
+	_UnitTrainer_ProcessDelayedRequests(mapEdgeTrainer)
+	
+	_UnitTrainer_PullUnitFromQueue(mapEdgeTrainer, mapEdgeTrainer, true, mapEdgeTrainer.spawn_interval)
+	_UnitTrainer_SpawnUnit(mapEdgeTrainer, mapEdgeTrainer, true)
+	_UnitTrainer_CompleteRequests(mapEdgeTrainer)
+end
+
+function UnitTable_Clone(units)
+	local newUnits = {}
+	
+	for _, unitRow in ipairs(units) do
+		table.insert(newUnits, Clone(unitRow, false))
+	end
+	return newUnits
+end

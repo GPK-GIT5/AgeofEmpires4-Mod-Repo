@@ -1,0 +1,1045 @@
+--
+-- Moscow vs Lithuania 1514
+--
+-- The Rise of Moscow, Mission 7
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("obj_capturevillages.scar") -- Capture Village Objectives
+import("obj_besiegesmolensk.scar") -- Besiege Smolensk Objectives
+--import("obj_capturesmolensk.scar") -- Capture Smolensk Objectives
+import("obj_surrenderui.scar") -- Smolensk surrender UI
+
+-- Training
+--import("training/coretraininggoals.scar")
+--import("training/campaigntraininggoals.scar")
+
+function Mission_SetupPlayers()
+	
+	--
+	-- get player IDs for each player
+	--
+	
+	player1 = World_GetPlayerAt(1) -- Moscow
+	player2 = World_GetPlayerAt(2) -- Lithuanians
+	player3 = World_GetPlayerAt(3) -- Neutrals
+	
+	-- player 1 - Moscow
+	Setup_SetPlayerName(player1, "$11172357") --Grand Duchy of Moscow
+	Player_SetCurrentAge(player1, AGE_CASTLE)
+	Player_SetMaximumAge(player1, AGE_IMPERIAL)
+	
+	-- player 2 - Lithuanians
+	Setup_SetPlayerName(player2, "$11172359") --Lithuanians
+	Player_SetCurrentAge(player2, AGE_IMPERIAL)
+	--Player_SetMaximumAge(player2, AGE_IMPERIAL)
+	
+	-- player 3 - Neutrals
+	Setup_SetPlayerName(player3, "$11172360") --Neutral
+	Player_SetCurrentAge(player3, AGE_CASTLE)
+	Player_SetMaximumAge(player3, AGE_CASTLE)
+	
+	--
+	-- set player relationships
+	--
+	
+	Player_SetRelationship(player1, player3, R_ALLY)		-- make sure you set relationships both ways
+	Player_SetRelationship(player3, player1, R_ALLY)
+	
+	Player_SetRelationship(player2, player3, R_NEUTRAL)
+	Player_SetRelationship(player3, player2, R_NEUTRAL)
+	
+	World_EnableSharedLineOfSight(player1, player3, false)
+	
+	--
+	-- Set Player Colours
+	--
+	
+	PlayerColour_Enable()
+	Game_SetPlayerColour(player1, COLOR_BLUE)
+	Game_SetPlayerColour(player2, COLOR_RED)
+	Game_SetPlayerColour(player3, COLOR_GREY)
+	
+end -- Mission_SetupPlayers()
+
+function Mission_SetupVariables()
+	
+	-- EGROUPS
+	eg_player_structures = EGroup_CreateIfNotFound("sg_player_structures")
+	eg_player_landmarks = EGroup_CreateIfNotFound("eg_player_landmarks")
+	eg_player_built_landmark = EGroup_CreateIfNotFound("eg_player_built_landmark")
+	
+	eg_outposts = EGroup_CreateIfNotFound("eg_outposts")
+	eg_roslavl = EGroup_CreateIfNotFound("eg_roslavl")
+	eg_yelnya = EGroup_CreateIfNotFound("eg_yelnya")
+	eg_vyazma = EGroup_CreateIfNotFound("eg_vyazma")
+	eg_krasny = EGroup_CreateIfNotFound("eg_krasny")
+	eg_smolensk = EGroup_CreateIfNotFound("eg_smolensk")
+	eg_west_outpost = EGroup_CreateIfNotFound("eg_west_outpost")
+	eg_east_outpost = EGroup_CreateIfNotFound("eg_east_outpost")
+	
+	-- SGROUPS
+	
+	-- PLAYER
+	sg_player_army = SGroup_CreateIfNotFound("sg_player_army")
+	sg_player_villagers = SGroup_CreateIfNotFound("sg_player_villagers")
+	sg_player_villager_farmers = SGroup_CreateIfNotFound("sg_player_villager_farmers")
+	sg_player_outro = SGroup_CreateIfNotFound("sg_player_outro")
+	
+	-- VILLAGES
+	sg_roslavl_defend = SGroup_CreateIfNotFound("sg_roslavl_defend")
+	sg_roslavl_attack = SGroup_CreateIfNotFound("sg_roslavl_attack")
+	sg_roslavl_villagers = SGroup_CreateIfNotFound("sg_roslavl_villagers")
+	
+	sg_yelnya_defend = SGroup_CreateIfNotFound("sg_yelnya_defend")
+	sg_yelnya_attack = SGroup_CreateIfNotFound("sg_yelnya_attack")
+	sg_yelnya_villagers = SGroup_CreateIfNotFound("sg_yelnya_villagers")
+	
+	sg_vyazma_defend = SGroup_CreateIfNotFound("sg_vyazma_defend")
+	sg_vyazma_attack = SGroup_CreateIfNotFound("sg_vyazma_attack")
+	sg_vyazma_villagers = SGroup_CreateIfNotFound("sg_vyazma_villagers")
+	
+	sg_west_outpost_defend = SGroup_CreateIfNotFound("sg_west_outpost_defend")
+	sg_west_outpost_inner_defend = SGroup_CreateIfNotFound("sg_west_outpost_inner_defend")
+	sg_west_outpost_gate_defend = SGroup_CreateIfNotFound("sg_west_outpost_gate_defend")
+	sg_east_outpost_defend = SGroup_CreateIfNotFound("sg_east_outpost_defend")
+	
+	sg_west_outpost_cannon1 = SGroup_CreateIfNotFound("sg_west_outpost_cannon1")
+	sg_west_outpost_cannon2 = SGroup_CreateIfNotFound("sg_west_outpost_cannon2")
+	
+	b_roslavl_breached = false
+	b_vyazma_breached  = false
+	b_yelnya_breached  = false
+	b_west_outpost_breached = false
+	b_east_outpost_breached = false
+
+	
+	--SMOLENSK
+	sg_smolensk_trader_west = SGroup_CreateIfNotFound("sg_smolensk_trader_west")
+	sg_smolensk_trader_east = SGroup_CreateIfNotFound("sg_smolensk_trader_east")
+	sg_smolensk_villagers = SGroup_CreateIfNotFound("sg_smolensk_villagers")
+	sg_smolensk_to_roslavl = SGroup_CreateIfNotFound("sg_smolensk_to_roslavl")
+	sg_smolensk_to_yelnya = SGroup_CreateIfNotFound("sg_smolensk_to_yelnya")
+	sg_smolensk_to_vyazma = SGroup_CreateIfNotFound("sg_smolensk_to_vyazma")
+	sg_trader_escorts = SGroup_CreateIfNotFound("sg_trader_escorts")
+	
+	--SMOLENSK DEFENDERS
+	sg_smolensk_defend = SGroup_CreateIfNotFound("sg_smolensk_defend")
+	sg_smolensk_melee = SGroup_CreateIfNotFound("sg_smolensk_melee")
+	sg_smolensk_ranged_1 = SGroup_CreateIfNotFound("sg_smolensk_ranged_1")
+	sg_smolensk_ranged_2 = SGroup_CreateIfNotFound("sg_smolensk_ranged_2")
+	sg_smolensk_cavalry = SGroup_CreateIfNotFound("sg_smolensk_cavalry")
+	sg_smolensk_siege = SGroup_CreateIfNotFound("sg_smolensk_siege")
+	sg_smolensk_wall = SGroup_CreateIfNotFound("sg_smolensk_wall")
+	sg_smolensk_trebuchet_1 = SGroup_CreateIfNotFound("sg_smolensk_trebuchet_1")
+	sg_smolensk_trebuchet_2 = SGroup_CreateIfNotFound("sg_smolensk_trebuchet_2")
+	sg_smolensk_trebuchet_3 = SGroup_CreateIfNotFound("sg_smolensk_trebuchet_3")
+	
+	--SCENARIO
+	difficulty = Game_GetSPDifficulty()
+	
+	
+	
+	--Village capture variables
+	villagesAttacking = false
+	villages_captured = 0
+	village_attack_timings = {
+		cavalry_min = 240, --240
+		cavalry_max = 480, --480
+		ranged_min = 300, --300
+		ranged_max = 500, --500
+		melee_min = 360, --360
+		melee_max = 500, --500
+	}
+	
+	--SMOLENSK SUPPLY
+	smolensk_supply = {
+		current = 600,
+		max = 1000,
+		increase = 100,
+		west_killed = 0,
+		east_killed = 0,
+		death_limit = 5,
+	}
+	
+	--DEBUG
+	debug = false
+	
+end -- Mission_SetupVariables()
+
+function Mission_SetRestrictions()
+	
+	--POP CAP
+	Modify_PlayerMaxPopCap(player1, -80, MUT_Addition)
+	
+	PlayerUpgrades_Auto(player1, true)
+	PlayerUpgrades_Auto(player2)
+	PlayerUpgrades_Auto(player3)
+	
+	--Player 1 Landmarks & Structures
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_TOWN_CENTER_RUS, ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS, ITEM_REMOVED)
+	Player_SetStateModelBool(player1, "player_can_construct_structures", true)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_UNIT_INFANTRY_CONTROL_RUS, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_UNIT_RANGED_CONTROL_RUS, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_UNIT_CAVALRY_CONTROL_RUS, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_TECH_UNIVERSITY_CONTROL_RUS, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_UNIT_NAVAL_RUS, ITEM_REMOVED)
+	
+	--Player 2 Landmarks
+	Player_SetEntityProductionAvailability(player2, EBP.HRE.BUILDING_LANDMARK_AGE1_IMPERIAL_PALACE_OF_PADERBORN_HRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player2, EBP.HRE.BUILDING_LANDMARK_AGE1_PALANTINE_CHAPEL_HRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player2, EBP.HRE.BUILDING_LANDMARK_AGE2_BAMBERG_CATHEDRAL_HRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player2, EBP.HRE.BUILDING_LANDMARK_AGE2_NUREMBERG_CASTLE_HRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player2, EBP.HRE.BUILDING_LANDMARK_AGE3_ELTZ_CASTLE_HRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player2, EBP.HRE.BUILDING_LANDMARK_AGE3_HOHENZOLLERN_CASTLE_HRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player2, EBP.HRE.BUILDING_TOWN_CENTER_CAPITAL_HRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player2, EBP.HRE.BUILDING_DEFENSE_OUTPOST_HRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player2, EBP.HRE.BUILDING_DEFENSE_KEEP_HRE, ITEM_REMOVED)
+	
+	Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_SIEGE_ENGINEERS)
+	Action_SetResources_Do({ player = player2, resources = { food = 1000, wood = 30000, stone = 1000, gold = 1000 } }) --extra wood for rams
+	
+	--Upgrade all outposts to arrowslits
+	Cmd_Upgrade(eg_outposts, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS, 1, true)
+	
+	--Upgrade all armed outposts to the dangerous weapons and make them out of stone
+	Cmd_Upgrade(eg_outposts_armed, UPG.COMMON.UPGRADE_OUTPOST_STONE, 1, true)
+	Cmd_Upgrade(eg_outposts_armed, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD, 1, true) 
+	
+	--Upgrade all towers to dangerous weapons
+	eg_smolensk_towers = EGroup_CreateIfNotFound("eg_smolensk_towers")
+	Player_GetAll(player2, eg_smolensk_towers)
+	EGroup_Filter(eg_smolensk_towers, EBP.HRE.BUILDING_DEFENSE_TOWER_HRE, FILTER_KEEP)
+	
+	if difficulty >= GD_HARD then
+		Cmd_Upgrade(eg_smolensk_towers, UPG.COMMON.UPGRADE_TOWER_CANNON, 1, true)
+	else
+		Cmd_Upgrade(eg_smolensk_towers, UPG.COMMON.UPGRADE_TOWER_SPRINGALD, 1, true)
+	end
+	
+	--Set player's popcap initially before villages are captured
+	UI_SetPlayerDataContext(player1, {PopulationCapOn = false})
+	
+end -- Mission_SetRestrictions()
+
+function Mission_Preset() -- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)
+	
+	PlayerColour_Enable()
+	
+	-- OBJECTIVES
+	CaptureVillages_InitLandmarks()
+	CaptureVillages_Init()
+	CaptureVillages_InitRoslavl()
+	CaptureVillages_InitYelnya()
+	CaptureVillages_InitVyazma()
+	BesiegeSmolensk_InitObjectives()
+	BesiegeSmolensk_InitKrasny()
+	
+	--Smolensk waves
+	BesiegeSmolensk_SetUpWaves()
+
+	Music_PersistentStop()
+	--Music_LockIntensity(MUSIC_TENSE, 30)
+	--Sound_SetMinimumMusicCombatIntensity(801, 0)
+	
+	-- Add extra villagers on Story
+	if Game_GetSPDifficulty() <= GD_EASY then
+		
+		local villagerlife = VillagerLife_Find("villagerlife_roslavl")
+		SGroup_Clear(sg_temp)
+		UnitEntry_DeploySquads(player1, sg_temp, {sbp = SBP.RUS.UNIT_VILLAGER_1_RUS, numSquads = 2}, villagerlife.mkr_home)
+		VillagerLife_AddSGroup(villagerlife, sg_temp)
+		
+		villagerlife = VillagerLife_Find("villagerlife_yelnya")
+		SGroup_Clear(sg_temp)
+		UnitEntry_DeploySquads(player1, sg_temp, {sbp = SBP.RUS.UNIT_VILLAGER_1_RUS, numSquads = 1}, villagerlife.mkr_home)
+		VillagerLife_AddSGroup(villagerlife, sg_temp)
+		
+		villagerlife = VillagerLife_Find("villagerlife_vyazma")
+		SGroup_Clear(sg_temp)
+		UnitEntry_DeploySquads(player1, sg_temp, {sbp = SBP.RUS.UNIT_VILLAGER_1_RUS, numSquads = 1}, villagerlife.mkr_home)
+		VillagerLife_AddSGroup(villagerlife, sg_temp)
+		
+	end
+	
+end -- Mission_Preset()
+
+function Mission_Start() -- this is triggered after the intro, just as control is passed to the player
+	
+	-- on console don't restore econ-related HUD elements at first
+	Cardinal_EnablePartialXboxUI(true, {VF_XboxUIVillagerPriorities})
+
+	-- start the opening objectives (if you're using ObjectiveTable style objectives)	
+	--Util_StartIntel(EVENTS.Outlying_Villages)
+	Music_UnlockIntensity()
+	Objective_Start(OBJ_CaptureVillages)
+	--Util_StartIntel(EVENTS.Outlying_Villages)
+	
+	--Rule_AddInterval(Smolensk_KrasnyProximityChecker, 1)
+	Rule_AddInterval(Smolensk_CheckNearWestOutpost, 1)
+	Rule_AddInterval(Smolensk_CheckNearEastOutpost, 1)
+	
+	--Module References
+	west_outpost_defend = MissionOMatic_FindModule("west_outpost_defend")
+	west_outpost_inner_defend = MissionOMatic_FindModule("west_outpost_inner_defend")
+	--west_outpost_cannons_defend = MissionOMatic_FindModule("west_outpost_cannons_defend")
+	west_outpost_gate_defend = MissionOMatic_FindModule("west_outpost_gate_defend")
+	
+	east_outpost_defend = MissionOMatic_FindModule("east_outpost_defend")
+	
+	--Landmark initial invincibility
+	Entity_SetInvulnerableMinCap(EGroup_GetEntityAt(eg_landmark_left, 1), 0.05, 0.0)
+	Entity_SetInvulnerableMinCap(EGroup_GetEntityAt(eg_landmark_center, 1), 0.05, 0.0)
+	Entity_SetInvulnerableMinCap(EGroup_GetEntityAt(eg_landmark_right, 1), 0.05, 0.0)
+	
+	sg_all_west_outpost_defenders = SGroup_CreateIfNotFound("sg_all_west_outpost_defenders")
+	SGroup_AddGroups(sg_all_west_outpost_defenders, {sg_west_outpost_defend, sg_west_outpost_inner_defend, sg_west_outpost_cannons, sg_west_outpost_gate_defend})
+	
+	EGroup_AddEGroup(eg_roslavl, eg_roslavl_forge)
+	
+	Rule_AddInterval(Smolensk_OutpostCaptureCheck, 1, {sgroup = sg_all_west_outpost_defenders, egroup = eg_west_outpost})
+	Rule_AddInterval(Smolensk_OutpostCaptureCheck, 1, {sgroup = sg_east_outpost_defend, egroup = eg_east_outpost})
+	
+	SpawnGarrisonsIntoEGroup(eg_outposts_armed, player2)
+	
+	Rule_AddInterval(CaptureVillages_TrackLandmarks, 1)
+	Rule_AddInterval(CaptureVillages_WatchForPlayerLandmarks, 1)
+	Rule_AddInterval(Smolensk_ProximityCallFunction, 1, {marker = mkr_krasny, range = 120, function_name = Smolensk_SpawnKrasnyVillagerLife})
+	
+	Game_TransitionToState("taiga_sunset", 600)
+	
+end -- Mission_Start()
+
+function GetRecipe()
+	
+	local recipe = {
+	
+		-- THIS WILL NEED TO BE ADJUSTED TO MATCH 
+		audioSettings = {
+			campaignName = "gdm",
+			missionName = "rts1514smolensk",
+		},
+		
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,		
+		
+		-- Locations
+		locations = {
+			{ descriptor = "roslavl", 		marker = mkr_roslavl,		player = player2, egroup = eg_roslavl, sgroup_defenders = sg_roslavl_defend }, --roslavl
+			{ descriptor = "yelnya", 		marker = mkr_yelnya,		player = player2, egroup = eg_yelnya, sgroup_defenders = sg_yelnya_defend }, --yelnya
+			{ descriptor = "vyazma", 		marker = mkr_vyazma,		player = player2, egroup = eg_vyazma, sgroup_defenders = sg_vyazma_defend }, --vyazma
+			{ descriptor = "krasny", 		marker = mkr_krasny,		player = player3, egroup = eg_krasny }, --krasny
+			{ descriptor = "smolensk", 		marker = mkr_smolensk, 		player = player2, egroup = eg_smolensk, sgroup_defenders = {sg_smolensk_defend, sg_smolensk_melee, sg_smolensk_ranged_1, sg_smolensk_ranged_2, sg_smolensk_cavalry, sg_smolensk_siege, sg_smolensk_wall, sg_smolensk_trebuchet_1, sg_smolensk_trebuchet_2, sg_smolensk_trebuchet_3}, blockCivConversionOnCapture = true }, --smolensk
+			{ descriptor = "west_outpost", 	marker = mkr_west_outpost, 	player = player2, egroup = eg_west_outpost },
+			{ descriptor = "east_outpost", 	marker = mkr_east_outpost, 	player = player2, egroup = eg_east_outpost },
+		},
+		
+		-- Modules
+		modules = {			
+			{
+				type = "Defend",
+				descriptor = "roslavl_defend",
+				marker = mkr_roslavl,
+				player = player2,
+				sgroup = sg_roslavl_defend,
+				spawnLocation = mkr_roslavl_s1,
+				units = {
+					{ type = "scar_horseman", 		spawn = mkr_roslavl_s2,	numSquads = Util_DifVar({6, 8, 8, 10}) },
+					{ type = "scar_knight",			spawn = mkr_roslavl_s1,	numSquads = Util_DifVar({4, 6, 6, 14}) },
+					--{ type = "scar_scout", 		spawn = mkr_roslavl_s1,	numSquads = 2 }
+				},
+				--reinforcements = {
+					--upperThreshold = 0.6,
+					--desiredStrength = 0.9,
+					--unitSources = {"roslavl_townlife", "yelnya_townlife"}},
+			}, --roslavl_defend
+			
+			{
+				type = "Defend",
+				descriptor = "yelnya_defend",
+				marker = mkr_yelnya,
+				player = player2,
+				sgroup = sg_yelnya_defend,
+				spawnLocation = mkr_yelnya_s2,
+				units = {
+					{ type = "scar_archer", 		spawn = mkr_yelnya_s2, numSquads = Util_DifVar({8,  10, 10, 6}) },
+					{ type = "scar_crossbowman", 	spawn = mkr_yelnya_s1, numSquads = Util_DifVar({2,  3,  4,  6}) },
+					{ type = "scar_crossbowman", 	spawn = mkr_yelnya_s3, numSquads = Util_DifVar({2,  3,  4,  6}) },
+					{ type = "scar_handcannon", 	spawn = mkr_yelnya_s1, numSquads = Util_DifVar({1,  1,  2,  4}) },
+					{ type = "scar_handcannon", 	spawn = mkr_yelnya_s3, numSquads = Util_DifVar({1,  1,  2,  4}) },
+					--{ type = "scar_scout", 		spawn = mkr_yelnya_s2, numSquads = 2, }
+				},
+				--reinforcements = {
+					--upperThreshold = 0.6,
+					--desiredStrength = 0.9,
+					--unitSources = {"yelnya_townlife"}},
+			}, --yelnya_defend
+			
+			{
+				type = "Defend",
+				descriptor = "vyazma_defend",
+				marker = mkr_vyazma,
+				combatRange = 50,
+				player = player2,
+				sgroup = sg_vyazma_defend,
+				spawnLocation = mkr_vyazma_s1,
+				units = {
+					{ type = "scar_spearman", 	spawn = mkr_vyazma_s2, numSquads = Util_DifVar({4, 5, 5, 8}) },
+					{ type = "scar_spearman", 	spawn = mkr_vyazma_s3, numSquads = Util_DifVar({4, 5, 5, 8}) },
+					{ type = "scar_manatarms", 	spawn = mkr_vyazma_s1, numSquads = Util_DifVar({4, 6, 6, 12}) },
+					--{ type = "scar_scout", 	spawn = mkr_vyazma_s2, numSquads = 2 }
+				},
+				--reinforcements = {
+					--upperThreshold = 0.6,
+					--desiredStrength = 0.9,
+					--unitSources = {"vyazma_townlife", "yelnya_townlife"}},
+			}, --vyazma_defend
+			
+			--OUTPOST DEFENDERS
+			{
+				type = "Defend",
+				descriptor = "west_outpost_defend",
+				marker = mkr_west_outpost,
+				player = player2,
+				sgroup = sg_west_outpost_defend,
+			}, 
+			{
+				type = "Defend",
+				descriptor = "west_outpost_inner_defend",
+				marker = mkr_west_inner_outpost,
+				player = player2,
+				sgroup = sg_west_outpost_inner_defend,
+			}, 
+			--{
+				--type = "Defend",
+				--descriptor = "west_outpost_cannons_defend",
+				--marker = mkr_west_outpost_s3,
+				--spawnLocation = mkr_west_outpost_s3,
+				--player = player2,
+				--useCustomDirection = true,
+				--sgroup = sg_west_outpost_cannons,
+			--}, 
+			{
+				type = "Defend",
+				descriptor = "west_outpost_gate_defend",
+				marker = mkr_west_outpost_gate,
+				sgroup = sg_west_outpost_gate_defend,
+				player = player2,
+			}, 
+			
+			{
+				type = "Defend",
+				descriptor = "east_outpost_defend",
+				marker = mkr_east_outpost,
+				player = player2,
+				sgroup = sg_east_outpost_defend,
+				--units = {},
+			}, --east_outpost_defend
+			
+			--SMOLENSK WALL DEFENDERS & TOWNLIFE
+			{
+				type = "Defend",
+				descriptor = "smolensk_defend",
+				location = "smolensk",
+				player = player2,
+				sgroup = sg_smolensk_defend,
+			}, --smolensk_defend
+			{
+				type = "Defend",
+				descriptor = "smolensk_defend_e_1",
+				marker = mkr_smolensk_wall_e_1,
+				player = player2,
+			}, --smolensk_defend_e_1
+			{
+				type = "Defend",
+				descriptor = "smolensk_defend_e_2",
+				marker = mkr_smolensk_wall_e_2,
+				player = player2,
+			}, --smolensk_defend_e_2
+			{
+				type = "Defend",
+				descriptor = "smolensk_defend_w_1",
+				marker = mkr_smolensk_wall_w_1,
+				player = player2,
+			}, --smolensk_defend_w_1
+			{
+				type = "Defend",
+				descriptor = "smolensk_defend_w_2",
+				marker = mkr_smolensk_wall_w_2,
+				player = player2,
+			}, --smolensk_defend_w_2
+			
+			{
+				type = "Defend",
+				descriptor = "gather_left",
+				marker = mkr_gather_left,
+				player = player2,
+			},
+			{
+				type = "Defend",
+				descriptor = "gather_center",
+				marker = mkr_gather_center,
+				player = player2,
+			},
+			{
+				type = "Defend",
+				descriptor = "gather_right",
+				marker = mkr_gather_right,
+				player = player2,
+			},
+			{
+				type = "Defend",
+				descriptor = "gather_smolensk_left",
+				marker = mkr_gather_smolensk_w,
+				player = player2,
+			},
+			{
+				type = "Defend",
+				descriptor = "gather_smolensk_center",
+				marker = mkr_gather_smolensk_e1,
+				player = player2,
+			},
+			{
+				type = "Defend",
+				descriptor = "gather_smolensk_right",
+				marker = mkr_gather_smolensk_e2,
+				player = player2,
+			},
+			
+			--SMOLENSK DEFENDERS
+			{
+				type = "Defend",
+				descriptor = "smolensk_melee",
+				marker = mkr_smolensk_melee,
+				player = player2,
+				sgroup = sg_smolensk_melee,
+			},
+			{
+				type = "Defend",
+				descriptor = "smolensk_ranged_1",
+				marker = mkr_smolensk_ranged_1,
+				player = player2,
+				sgroup = sg_smolensk_ranged_1,
+			},
+			{
+				type = "Defend",
+				descriptor = "smolensk_ranged_2",
+				marker = mkr_smolensk_ranged_2,
+				player = player2,
+				sgroup = sg_smolensk_ranged_2,
+			},
+			{
+				type = "Defend",
+				descriptor = "smolensk_cavalry",
+				marker = mkr_smolensk_cavalry,
+				player = player2,
+				sgroup = sg_smolensk_cavalry,
+			},
+			{
+				type = "Defend",
+				descriptor = "smolensk_siege",
+				marker = mkr_smolensk_siege,
+				player = player2,
+				sgroup = sg_smolensk_siege,
+			},
+			{
+				type = "Defend",
+				descriptor = "smolensk_wall",
+				marker = mkr_smolensk,
+				player = player2,
+				sgroup = sg_smolensk_wall,
+			},
+			
+			
+			{
+				type = "Defend",
+				descriptor = "smolensk_trebuchet_1",
+				marker = mkr_smolensk_trebuchet_1,
+				spawnLocation = mkr_smolensk_trebuchet_1,
+				player = player2,
+				sgroup = sg_smolensk_trebuchet_1,
+			},
+			{
+				type = "Defend",
+				descriptor = "smolensk_trebuchet_2",
+				marker = mkr_smolensk_trebuchet_2,
+				spawnLocation = mkr_smolensk_trebuchet_2,
+				player = player2,
+				sgroup = sg_smolensk_trebuchet_2,
+			},
+			{
+				type = "Defend",
+				descriptor = "smolensk_trebuchet_3",
+				marker = mkr_smolensk_trebuchet_3,
+				spawnLocation = mkr_smolensk_trebuchet_3,
+				player = player2,
+				sgroup = sg_smolensk_trebuchet_3,
+			},
+		},
+
+		-- Objectives
+		objectives = {},	-- end of OBJECTIVES table
+		
+		-- Playbill
+		playbill = {},
+		
+		onStart = {
+			intelEvent = "",
+			expositionCamera = {},
+			titleCard = {
+				title = "$11160678",
+				date = "$11160679",
+				icon = "icons/campaign/campaign_moscow_empire_to_superpower",
+			},
+			actions = {
+				{
+					action = "SetMusicIntensity",
+					intensity = MUSIC_TENSE,
+				},
+			},
+		},
+
+		onWin = {
+		},
+		
+		onLose = {
+		},
+	}
+	
+	return recipe
+
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--															UTILITY
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function Smolensk_IsPlayerEconomyTrapped()
+	Player_GetAll(player1, sg_temp, eg_temp)
+	SGroup_Filter(sg_temp, "gaia", FILTER_REMOVE)
+	return SGroup_IsEmpty(sg_temp) and Player_GetResource(player1, RT_Food) < 50 and not EGroup_IsProducingSquads(eg_temp, ANY)
+end
+
+function Smolensk_KillVillages()
+	SGroup_Kill(sg_vyazma_defend)
+	SGroup_Kill(sg_roslavl_defend)
+	SGroup_Kill(sg_yelnya_defend)
+end
+
+function Smolensk_AddResources()
+	Player_AddResource(player1, RT_Food, 500)
+	Player_AddResource(player1, RT_Wood, 800)
+	Player_AddResource(player1, RT_Gold, 500)
+	Player_AddResource(player1, RT_Stone, 500)
+end
+
+function Smolensk_KrasnyProximityChecker()
+	Player_GetAllSquadsNearMarker(player1, sg_temp, Marker_GetPosition(mkr_krasny), 100)
+	SGroup_Filter(sg_temp, "gaia", FILTER_REMOVE)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		Objective_Start(OBJ_CaptureKrasny)
+		Rule_RemoveMe()
+	end
+	SGroup_Clear(sg_temp)
+end
+
+--? @shortdesc Checks to see if player1 has a unit close enough, and spawns units into the desired module
+--? @args units, module, marker, radiusOffset
+function Smolensk_ProximitySpawner(context, data)
+	
+	local spawn = data.spawn or data.marker
+	local radiusOffset = data.radiusOffset or 0
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, Marker_GetPosition(data.marker), Marker_GetProximityRadiusOrDefault(data.marker, 0) + radiusOffset)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		SpawnUnitsToModule(data.units, data.location.."_defend", spawn)
+		
+		--if data.count ~= nil then
+			--Location_IncreaseDefenderCount(LOCATION(data.location), data.count)
+		--end
+		
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Smolensk_OverrideBuildTimes()
+	Wave_OverrideUnitBuildTime("scar_manatarms", 1)
+	Wave_OverrideUnitBuildTime("scar_crossbowman", 1)
+	Wave_OverrideUnitBuildTime("scar_spearman", 1)
+	Wave_OverrideUnitBuildTime("scar_archer", 1)
+	Wave_OverrideUnitBuildTime("scar_landsknecht", 1)
+	Wave_OverrideUnitBuildTime("scar_horseman", 1)
+	Wave_OverrideUnitBuildTime("scar_knight", 1)
+	Wave_OverrideUnitBuildTime("scar_handcannon", 1)
+	Wave_OverrideUnitBuildTime("scar_scout", 1)
+	Wave_OverrideUnitBuildTime("scar_villager", 1)
+end
+
+--? @shortdesc Checks if the outpost has been conquered, and then converts ownership to the player
+function Smolensk_OutpostCaptureCheck(context, data)
+	
+	if SGroup_CountSpawned(data.sgroup) == 0 then
+		
+		EGroup_Duplicate(data.egroup, eg_temp)
+		EGroup_Filter(eg_temp, "wall", FILTER_REMOVE)
+		
+		if EGroup_CountSpawned(eg_temp) == 0 then
+			
+			print("Outpost has been captured. Converting walls and stopping this rule check.")
+			EGroup_SetPlayerOwner(data.egroup, player1)
+			
+			local typesToConvert = {
+				"palisade_wall_section",
+				"palisade_wall_bastion",
+				"palisade_gate",
+			}
+			local eg_wallEntities = EGroup_CreateUniqueWithPrefix("")
+			local _SwapBlueprint = function(gid, idx, eid)
+				if not World_OwnsEntity(eid) then
+					for index, buildingType in pairs(typesToConvert) do 
+						if Entity_IsOfType(eid, buildingType) then
+							--Add any wall entities to our walls egroup
+							if Entity_RequiresSlottedSplineUpdateAfterBlueprintConversion(eid) then
+								EGroup_Add(eg_wallEntities, eid)
+								--break
+							end
+							
+							local newBlueprint = Cardinal_ConvertTypeToEntityBlueprint(buildingType, player1, false)
+							if newBlueprint ~= nil then
+								Entity_ConvertBlueprint(eid, newBlueprint)
+								return
+							else
+								print("WARNING: Trying to convert a location but could not find a suitable ebp with the type "..buildingType.." for the race "..Player_GetRaceName(player1))
+							end
+						end
+					end
+				end
+			end
+			
+			EGroup_ForEach(data.egroup, _SwapBlueprint)
+			Misc_UpdateSlottedSplinesContainingEGroupAfterBlueprintConversion(eg_wallEntities)
+			EGroup_Destroy(eg_wallEntities)
+			
+			Rule_RemoveMe()
+		end
+	end
+	
+end
+
+--? @shortdesc Returns a game time-scaled amount between min and max. Time scaling starts after this function is called for the first time.
+function Smolensk_GetTimeScaledAmount(min, max)
+	starting_time = starting_time or World_GetGameTime()
+	
+	local value_to_add = World_GetGameTime() - starting_time
+	local scaled_amount = min + (1/4) * (value_to_add / 60) + (1/1000000000) * (value_to_add / 60) ^ 6
+	
+	--Check it against the maximum allowable amount, or round number down to an integer for spawning
+	if scaled_amount > max then
+		scaled_amount = max
+	else
+		scaled_amount = math.floor(scaled_amount)
+	end
+	
+	return scaled_amount
+	
+end
+
+function Smolensk_CheckWestOutpostTrigger()
+	
+	Player_GetAll(player1)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_west_outpost_trigger, ANY, 20) then
+		
+		Cmd_FormationAttackMove(sg_west_outpost_cannon1, mkr_west_outpost_cannon_dest1)
+		Cmd_FormationAttackMove(sg_west_outpost_cannon2, mkr_west_outpost_cannon_dest2)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Smolensk_CheckNearWestOutpost()	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_west_outpost, Marker_GetProximityRadiusOrDefault(mkr_west_outpost, 0) + 50)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		local west_outpost_units = {
+			{ type = "scar_spearman", 	numSquads = Util_DifVar({2, 4, 4, 8}), 	spawn = mkr_west_outpost_s1 },
+			{ type = "scar_manatarms", 	numSquads = Util_DifVar({2, 4, 4, 6}), 	spawn = mkr_west_outpost_s1 },
+			{ type = "scar_spearman", 	numSquads = Util_DifVar({2, 4, 4, 8}), 	spawn = mkr_west_outpost_s2 },
+			{ type = "scar_manatarms", 	numSquads = Util_DifVar({2, 4, 4, 6}), 	spawn = mkr_west_outpost_s2 }}
+		SpawnUnitsToModule(west_outpost_units, west_outpost_defend)
+		
+		local west_outpost_inner_defend_units = {
+			{ type = "scar_spearman", numSquads = 8, spawn = mkr_west_inner_outpost },
+			{ type = "scar_manatarms", numSquads = 8, spawn = mkr_west_inner_outpost }}
+		SpawnUnitsToModule(west_outpost_inner_defend_units, west_outpost_inner_defend)
+		
+		--spawn cannons
+		local west_outpost_cannons_defend_units = {
+			{ type = "scar_cannon", numSquads = 1 }, 
+			{ type = "scar_spearman", numSquads = 4 },
+			{ type = "scar_manatarms", numSquads = 2 },
+		}
+		UnitEntry_DeploySquads(player2, sg_west_outpost_cannon1, west_outpost_cannons_defend_units, mkr_west_outpost_cannon1)
+		UnitEntry_DeploySquads(player2, sg_west_outpost_cannon2, west_outpost_cannons_defend_units, mkr_west_outpost_cannon2)
+		Rule_AddInterval(Smolensk_CheckWestOutpostTrigger, 1)
+		
+		--SpawnUnitsToModule(west_outpost_cannons_defend_units, west_outpost_cannons_defend)
+		
+		local west_outpost_gate_defend_units = {
+			{ type = "scar_spearman", numSquads = 6, spawn = mkr_west_outpost_gate_s1 },
+			{ type = "scar_spearman", numSquads = 6, spawn = mkr_west_outpost_gate_s2 }}
+		SpawnUnitsToModule(west_outpost_gate_defend_units, west_outpost_gate_defend)
+		
+		SGroup_AddGroups(sg_all_west_outpost_defenders, {sg_west_outpost_defend, sg_west_outpost_inner_defend, sg_west_outpost_cannons, sg_west_outpost_gate_defend})
+		
+		Rule_RemoveMe()
+	end
+	
+end
+function Smolensk_CheckNearEastOutpost()
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_east_outpost, Marker_GetProximityRadiusOrDefault(mkr_east_outpost, 0) + 50)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		local east_outpost_units = {
+			{ type = "scar_spearman", 		numSquads = Util_DifVar({6, 8, 8, 12}), 	spawn = mkr_east_outpost_s1 },
+			{ type = "scar_manatarms", 		numSquads = Util_DifVar({4, 6, 6, 8}), 	spawn = mkr_east_outpost_s1 },
+			{ type = "scar_archer", 		numSquads = Util_DifVar({6, 8, 8, 12}), 	spawn = mkr_east_outpost_s2 },
+			{ type = "scar_crossbowman", 	numSquads = Util_DifVar({4, 6, 6, 8}), 	spawn = mkr_east_outpost_s2 }}
+		SpawnUnitsToModule(east_outpost_units, east_outpost_defend)
+		
+		Rule_RemoveMe()
+	end
+end
+
+--Audio walla call after a delay
+function Smolensk_DelayedAudioStinger(context, data)
+	--Choir stinger
+	Sound_Play2D(MUS_STING_TRIUMPHANT)
+	
+	--Walla celebrate from nearby units
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, data.position, 30) 
+	Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--															VILLAGERLIFE PROXIMITY
+------------------------------------------------------------------------------------------------------------------------------------------
+
+--? @shortdesc 
+--? @extdesc 
+--? @args Marker marker, Int range, Function function_name
+function Smolensk_ProximityCallFunction(context, data)
+	if Prox_ArePlayersNearMarker(player1, data.marker, ANY, data.range) then
+		data.function_name()
+		Rule_RemoveMe()
+	end
+end
+
+function Smolensk_SpawnSmolenskVillagerLife()
+	
+	smolensk_villagerlife = VillagerLife_Find("villagerlife_smolensk")
+	
+	--Roaming
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player2, sg_temp, {type = "scar_villager", numSquads = 12}, smolensk_villagerlife.mkr_home)
+	VillagerLife_AddSGroup(smolensk_villagerlife, sg_temp)
+	
+	--Food
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player2, sg_temp, {type = "scar_villager", numSquads = 11}, smolensk_villagerlife.mkr_home)
+	VillagerLife_AddSGroup(smolensk_villagerlife, sg_temp, "food")
+	
+end
+
+function Smolensk_SpawnKrasnyVillagerLife()
+	
+	krasny_villagerlife = VillagerLife_Find("villagerlife_krasny")
+	
+	--Roaming
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player3, sg_temp, {type = "scar_villager", numSquads = 4}, krasny_villagerlife.mkr_home)
+	VillagerLife_AddSGroup(krasny_villagerlife, sg_temp)
+	
+	--Food
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player3, sg_temp, {type = "scar_villager", numSquads = 7}, krasny_villagerlife.mkr_home)
+	VillagerLife_AddSGroup(krasny_villagerlife, sg_temp, "food")
+	
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--															COMBAT
+------------------------------------------------------------------------------------------------------------------------------------------
+
+--? @shortdesc RovingArmy template used to spawn attacks to specified targets
+function Smolensk_SendAttack(units, sourceMarker, targetMarkers, spawn_area, staging)
+	attack_wave = attack_wave or 1
+	
+	--Creating the RovingArmy Module
+	local assault_module_descriptor = "roving_attack_"..attack_wave
+	local rovingArmy = {
+		type = "RovingArmy",
+		descriptor = assault_module_descriptor,
+		player = player2,
+		units = {},
+		spawnLocation = sourceMarker,
+		targets = targetMarkers,
+		targetingType = ARMY_TARGETING_CYCLE,
+		onDeathDissolve = true,
+		attackMove = attackMoveStyle_aggressive,
+	}
+	RovingArmy_Init(rovingArmy)
+	
+	--Creating the wave setup
+	local wave_data = {
+		descriptor = "wave_"..attack_wave,
+		player = player2,
+		use_separate_spawns = true,
+		spawn = spawn_area,
+		units = units,
+		staging_module = staging,
+		assault_module = assault_module_descriptor,
+		auto_launch = true,
+	}
+	
+	local wave_attack = Wave_New(wave_data)
+	Wave_Prepare(wave_attack)
+	
+	attack_wave = attack_wave + 1
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--															SWOOPY CAMS
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function Smolensk_IntroSpawner()
+	
+	sg_intro_units = SGroup_CreateIfNotFound("sg_intro_units")
+	
+	local scouts ={
+		{ type= "scar_scout", spawn = mkr_intro_scout_1b, sgroup = sg_intro_units },
+		{ type= "scar_scout", spawn = mkr_intro_scout_2b, sgroup = sg_intro_units },
+	}
+	
+	UnitEntry_DeploySquads(player1, nil, scouts)
+
+	local parade_units = {
+		{ type = "scar_knight", numSquads = 2, spawn = mkr_intro_cav_1a, sgroup = sg_intro_units }, 
+		{ type = "scar_knight", numSquads = 2, spawn = mkr_intro_cav_2a, sgroup = sg_intro_units }, 
+		{ type = "scar_knight", numSquads = 2, spawn = mkr_intro_cav_3a, sgroup = sg_intro_units }, 
+		{ type = "scar_knight", numSquads = 2, spawn = mkr_intro_cav_4a, sgroup = sg_intro_units }, 
+
+		{ type = "scar_spearman", numSquads = 6, spawn = mkr_intro_spear_1a, sgroup = sg_intro_units }, 
+		{ type = "scar_spearman", numSquads = 6, spawn = mkr_intro_spear_2a, sgroup = sg_intro_units }, 
+
+		{ type = "scar_manatarms", numSquads = 6, spawn = mkr_intro_maa_1a, sgroup = sg_intro_units }, 
+		{ type = "scar_manatarms", numSquads = 6, spawn = mkr_intro_maa_2a, sgroup = sg_intro_units }, 
+
+		{ type = "scar_crossbowman", numSquads = 6, spawn = mkr_intro_arch_1a, sgroup = sg_intro_units }, 
+		{ type = "scar_crossbowman", numSquads = 6, spawn = mkr_intro_arch_2a, sgroup = sg_intro_units }, 
+		{ type = "scar_crossbowman", numSquads = 6, spawn = mkr_intro_arch_3a, sgroup = sg_intro_units }, 
+		{ type = "scar_crossbowman", numSquads = 6, spawn = mkr_intro_arch_4a, sgroup = sg_intro_units }, 
+	}
+
+	local parade_markers = {
+		mkr_intro_arch_4b,
+		mkr_intro_arch_3b,
+		mkr_intro_arch_2b,
+		mkr_intro_arch_1b,
+		mkr_intro_maa_2b,
+		mkr_intro_maa_1b,
+		mkr_intro_spear_2b,
+		mkr_intro_spear_1b,
+		mkr_intro_cav_4b,
+		mkr_intro_cav_3b,
+		mkr_intro_cav_2b,
+		mkr_intro_cav_1b,
+	}
+
+	Util_UnitParade(parade_markers, parade_units)
+	
+	
+	
+end
+
+function Smolensk_SkippedIntro()
+	
+	SGroup_DestroyAllSquads(sg_intro_units)
+		
+	local player_units = {
+		{ type= "scar_scout", numSquads = 1, spawn = mkr_intro_scout_1b },
+		{ type= "scar_scout", numSquads = 1, spawn = mkr_intro_scout_2b },
+		{ type = "scar_knight", numSquads = 2, spawn = mkr_intro_cav_1b }, 
+		{ type = "scar_knight", numSquads = 2, spawn = mkr_intro_cav_2b }, 
+		{ type = "scar_knight", numSquads = 2, spawn = mkr_intro_cav_3b }, 
+		{ type = "scar_knight", numSquads = 2, spawn = mkr_intro_cav_4b }, 
+		{ type = "scar_spearman", numSquads = 6, spawn = mkr_intro_spear_1b }, 
+		{ type = "scar_spearman", numSquads = 6, spawn = mkr_intro_spear_2b }, 
+		--{ type = "scar_spearman", numSquads = 4, spawn = mkr_intro_spear_3b }, 
+		{ type = "scar_manatarms", numSquads = 6, spawn = mkr_intro_maa_1b }, 
+		{ type = "scar_manatarms", numSquads = 6, spawn = mkr_intro_maa_2b }, 
+		--{ type = "scar_manatarms", numSquads = 4, spawn = mkr_intro_maa_3b }, 
+		{ type = "scar_crossbowman", numSquads = 6, spawn = mkr_intro_arch_1b }, 
+		{ type = "scar_crossbowman", numSquads = 6, spawn = mkr_intro_arch_2b }, 
+		{ type = "scar_crossbowman", numSquads = 6, spawn = mkr_intro_arch_3b }, 
+		{ type = "scar_crossbowman", numSquads = 6, spawn = mkr_intro_arch_4b }, 
+		--{ type = "scar_crossbowman", numSquads = 4, spawn = mkr_intro_arch_5b }, 
+		--{ type = "scar_crossbowman", numSquads = 4, spawn = mkr_intro_arch_6b }, 
+	}
+	
+	UnitEntry_DeploySquads(player1, sg_intro_units, player_units)
+	
+end
+
+function Smolensk_OutroSpawner()
+	
+	--AI_EnableAll(false)
+	
+	Player_GetAllEntitiesNearMarker(player2, eg_temp, mkr_gate_in_6, 10)
+	EGroup_DestroyAllEntities(eg_temp)
+	
+	Player_GetAllEntitiesNearMarker(player2, eg_temp, mkr_outro_parade_end, 10)
+	EGroup_DestroyAllEntities(eg_temp)
+	
+	sg_outro_units = SGroup_CreateIfNotFound ("sg_outro_units")
+	
+	local parade_markers = {
+		mkr_outro_parade_1,
+		mkr_outro_parade_2,
+		mkr_outro_parade_3,
+		mkr_outro_parade_4,
+		mkr_outro_parade_5,
+		mkr_outro_parade_6,
+		mkr_outro_parade_7,
+		mkr_outro_parade_8,
+		mkr_outro_parade_9,
+		mkr_outro_parade_10,
+		mkr_outro_parade_11,
+		mkr_outro_parade_12,
+		mkr_outro_parade_end,
+	}
+	
+	
+	local parade_units = {
+		--{type = "scar_manatarms", numSquads = 4, spawn = mkr_outro_parade_3},
+		--{type = "scar_manatarms", numSquads = 4, spawn = mkr_outro_parade_2},
+		--{type = "scar_manatarms", numSquads = 4, spawn = mkr_outro_parade_1},
+		{type = "scar_spearman", numSquads = 6, spawn = mkr_gate_in_6, destination = mkr_gather_smolensk_e1},
+		{type = "scar_spearman", numSquads = 6, spawn = mkr_gate_in_5, destination = mkr_gather_smolensk_e1},
+		{type = "scar_spearman", numSquads = 6, spawn = mkr_gate_in_4, destination = mkr_gather_smolensk_e1},
+		{type = "scar_manatarms", numSquads = 6, spawn = mkr_gate_in_3, destination = mkr_gather_smolensk_e2},
+		{type = "scar_manatarms", numSquads = 6, spawn = mkr_gate_in_2, destination = mkr_gather_smolensk_e2},
+		{type = "scar_manatarms", numSquads = 6, spawn = mkr_gate_in_1, destination = mkr_gather_smolensk_e2},
+	}
+	
+	Util_UnitParade(parade_markers, parade_units, sg_outro_units)
+
+	local cheer = BP_GetAbilityBlueprint("cheer_toggle")	
+	Cmd_Ability(sg_outro_units, cheer, nil, nil, nil, true)
+	
+end

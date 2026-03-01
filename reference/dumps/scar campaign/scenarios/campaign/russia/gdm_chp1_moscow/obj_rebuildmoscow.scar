@@ -1,0 +1,833 @@
+--
+-- Moscow 1238 - Rebuild Moscow objective
+--
+
+
+
+
+function RebuildMoscow_InitObjectives()
+
+	OBJ_RebuildMoscow = {
+		
+		Title = "$11180199", -- Rebuild Moscow
+		Type = ObjectiveType_Build,
+		
+		Intel_Start = EVENTS.RebuildMoscow_ObjectiveStart,
+		
+		PreStart = RebuildMoscow_PreStart,
+		OnStart = RebuildMoscow_Start,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_RebuildMoscow, ALL)
+		end,
+
+		OnComplete = RebuildMoscow_OnComplete,
+		
+	}	
+
+	SOBJ_GatherWood = {
+		
+		Title = Loc_FormatText("$11180200", Loc_FormatNumber(i_desiredWoodAmount, 0)), -- Gather Wood
+		Type = ObjectiveType_Build,
+		Parent = OBJ_RebuildMoscow,
+		StartAlongsideParent = true, 
+		
+		SetupUI = GatherWood_SetupUI, 
+		
+		OnStart = GatherWood_Start,
+		
+	}
+
+	SOBJ_GatherPeople = {
+		
+		Title = Loc_FormatText("$11180201", Loc_FormatNumber(i_desiredVillagerAmount, 0)), -- Produce or locate %1AMOUNT% additional Villagers
+		Type = ObjectiveType_Build,
+		Parent = OBJ_RebuildMoscow,
+		StartAlongsideParent = true, 
+
+		SetupUI = GatherPeople_SetupUI,
+		
+		OnStart = GatherPeople_Start,
+		
+	}
+	
+	SOBJ_RebuildStructures = {
+		
+		Title = Loc_FormatText("$11180202", Loc_FormatNumber(20, 0)), -- Rebuild the destroyed structures
+		Type = ObjectiveType_Build,
+		Parent = OBJ_RebuildMoscow,
+		StartAlongsideParent = true, 
+		
+		SetupUI = RebuildStructures_SetupUI, -- this kicks off the creation of the ghost buildings and the tracking, too
+		
+	}
+
+
+	Objective_Register(OBJ_RebuildMoscow)
+	Objective_Register(SOBJ_GatherWood)
+	Objective_Register(SOBJ_GatherPeople)
+	Objective_Register(SOBJ_RebuildStructures)
+	
+	
+	-- note the type and position of every building in the rebuild group, and the remove them
+
+	t_buildingsToConstruct_GradWallMarkers = {
+		mkr_wall_corner1,
+		mkr_wall_corner2,
+		mkr_wall_corner3,
+		mkr_wall_corner4,
+		mkr_wall_corner5,
+		mkr_wall_corner6,
+		mkr_wall_corner7,
+		mkr_wall_corner8,
+		mkr_wall_corner9,
+		mkr_wall_corner10,
+		mkr_wall_corner11,
+		mkr_wall_corner12,
+		mkr_wall_corner13,
+		mkr_wall_corner14,
+		mkr_wall_corner15,
+		mkr_wall_corner16,
+		mkr_wall_corner17,
+		mkr_wall_corner18,
+		mkr_wall_corner19,
+	}
+
+	local location = LOCATION("InnerCity")
+	EGroup_AddEGroup(eg_importantBuildings, location.egroup)
+	EGroup_RemoveGroup(eg_importantBuildings, eg_destroyDuringIntro)
+	EGroup_Filter(eg_importantBuildings, {"palisade_gate"}, FILTER_REMOVE)
+	
+	
+	t_buildingsToRebuild = BuildStructures_RememberPositionsOfBuildings(eg_importantBuildings, true)
+	t_buildingsToConstruct_Age1 = BuildStructures_RememberPositionsOfBuildings(eg_constructAge1)
+	t_buildingsToConstruct_Landmark = BuildStructures_RememberPositionsOfBuildings(eg_constructLandmark)
+	
+	for index, item in pairs(t_buildingsToRebuild) do 		-- append the list of buildings to repair to the Age 1 list
+		table.insert(t_buildingsToConstruct_Age1, item)
+	end
+	
+	EGroup_DestroyAllEntities(eg_constructAge1)	
+	EGroup_DestroyAllEntities(eg_constructLandmark)	
+	
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS, ITEM_LOCKED)	
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_DEFENSE_PALISADE_GATE_RUS, ITEM_LOCKED)
+	
+	Rule_AddInterval(RebuildMoscow_TriggerObjective, 1)
+	
+end
+
+
+
+function RebuildMoscow_BuildConstructionManifest(egroup, list, rebuildFlag)
+	
+	local list = {}
+	
+	local _AddBuildingDetails = function(gid, idx, eid)
+		local entry = {
+			entityWorldID = Entity_GetID(eid),
+			ebp = Entity_GetBlueprint(eid),
+			position = Entity_GetPosition(eid),
+			heading = Entity_GetHeading(eid),
+			rebuild = rebuildFlag,
+		}
+		table.insert(list, entry)
+	end
+	EGroup_ForEach(egroup, _AddBuildingDetails)	
+	
+end
+
+
+function RebuildMoscow_TriggerObjective()
+	
+	if Objective_IsComplete(OBJ_ProtectMoscow) then 
+		
+		Rule_RemoveMe()
+		
+		Objective_Start(OBJ_RebuildMoscow)	-- also starts its associated sub-objectives
+		
+	end
+
+end
+	
+
+function RebuildMoscow_PreStart()
+	
+
+end
+
+
+function RebuildMoscow_Start()
+	
+	Rule_AddOneShot(FindVillagers_StartIfNotAlreadyStarted, 5 * 60)
+	Rule_AddOneShot(RebuildMoscow_AddDropoffHint, 10)
+	
+end
+
+function RebuildMoscow_AddDropoffHint()
+
+	MissionTutorial_AddHintToDropoffHuntingCabins()
+
+end
+
+
+--
+-- Build Structures
+--
+
+function RebuildStructures_SetupUI()
+	
+	BuildStructures_FilterManifest(t_buildingsToConstruct_Age1)
+	--BuildStructures_FilterManifest(t_buildingsToConstruct_Landmark)
+	--BuildStructures_FilterManifest(t_buildingsToConstruct_Age2)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS, ITEM_DEFAULT)			-- need to unlock these (temporarily) in order to place the planned splines
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_DEFENSE_PALISADE_GATE_RUS, ITEM_DEFAULT)
+	
+	-- re-create the walls 
+	for index = 1, #t_buildingsToConstruct_GradWallMarkers do 
+		
+		local pos1 = t_buildingsToConstruct_GradWallMarkers[index]
+		local pos2 = t_buildingsToConstruct_GradWallMarkers[index + 1] or t_buildingsToConstruct_GradWallMarkers[1]	-- this loops the final marker back to the first
+		
+		LocalCommand_PlayerPlaceAndConstructSlottedSplinePlanned(player1, EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS, Util_GetPosition(pos1), Util_GetPosition(pos2), false, true)
+		
+	end
+
+	-- rebuild the rest of the city	
+	for index, entry in pairs(t_buildingsToConstruct_Age1) do 
+
+		if Entity_IsEBPOfType(entry.ebp, "wall") == false then 		-- don't create entity if it's part of a wall (that would have been done prior)
+			LocalCommand_PlayerPlaceAndConstructEntitiesPlanned(player1, entry.ebp, entry.position, Util_GetOffsetPosition(entry.position, OFFSET_FRONT, 10), true, true)
+		end
+		
+	end
+	
+	local constructionList = BuildStructures_MonitorConstructionProgress(t_buildingsToConstruct_Age1, {objective = SOBJ_RebuildStructures})
+
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS, ITEM_LOCKED)				-- now the planned splines are placed, we can lock these again
+	Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_DEFENSE_PALISADE_GATE_RUS, ITEM_LOCKED)
+
+	Rule_AddInterval(RebuildStructures_CheckRebuildingFinished, 1, {manifestToCheck = constructionList})
+
+	i_rebuildMoscow_numBuildingsToBuild = constructionList.numberOfHintpoints 
+	i_rebuildMoscow_numBuildingsBuilt = 0
+
+	Objective_UpdateText(SOBJ_RebuildStructures, Loc_FormatText("$11180202", Loc_FormatNumber(i_rebuildMoscow_numBuildingsToBuild, 0)), 0, false, true)
+	Objective_SetCounter(SOBJ_RebuildStructures, i_rebuildMoscow_numBuildingsBuilt, i_rebuildMoscow_numBuildingsToBuild)			
+	
+	Rule_AddGlobalEvent(RebuildStructure_OnConstructionComplete, GE_ConstructionComplete)
+	
+end
+
+
+function RebuildStructures_CheckRebuildingFinished(context, data)
+
+	if BuildStructures_IsManifestComplete(data.manifestToCheck) then 
+		
+		Rule_RemoveMe()
+		
+		Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS, ITEM_DEFAULT)		-- unlock them permanently now this objective is complete
+		Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_DEFENSE_PALISADE_GATE_RUS, ITEM_DEFAULT)
+	
+		Objective_Complete(SOBJ_RebuildStructures)
+		
+	end
+	
+end
+
+function RebuildStructure_OnConstructionComplete(context)
+	
+	if Entity_IsEBPOfType(context.pbg, "wall") then
+		
+		-- get the position of the just finished wall (used to find the closest next piece, and the closest villager)
+		local pos = Util_GetPosition(context.entity)
+		
+		-- get all unfinished wall segments (palisade walls + palisade wall bastions)
+		Player_GetAll(context.player)
+		EGroup_FilterUnderConstruction(eg_allentities, FILTER_KEEP)
+		EGroup_Filter(eg_allentities, "wall", FILTER_KEEP)
+		
+		if EGroup_CountSpawned(eg_allentities) >= 1 then
+			
+			SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+			SGroup_Clear(sg_temp)
+			
+			-- get villagers that are interested in walls by checking if COMMITTED_CONSTRUCT target is a wall
+			-- i.e. villagers that are either constructing or moving towards a wall
+			local _CheckVillager = function(gid, idx, sid)
+				local eid = Squad_GetFirstEntity(sid)	-- ZERO-based index
+				if eid ~= nil then
+					local villagerTargetEntity = Entity_GetStateTreeTargeting_EntityTarget(eid, "statetree_commited_target_type", "COMMITTED_CONSTRUCT")
+					if villagerTargetEntity ~= nil and Entity_IsEBPOfType(Entity_GetBlueprint(villagerTargetEntity), "wall") then
+						SGroup_Add(sg_temp, sid)
+					end
+				end
+			end
+			SGroup_ForEach(sg_allsquads, _CheckVillager)
+			
+			if SGroup_CountSpawned(sg_temp) >= 1 then 
+			
+				SGroup_Single(sg_single, SGroup_GetClosestSquad(sg_temp, pos))
+				EGroup_Single(eg_single, EGroup_GetClosestEntity(eg_allentities, pos))
+				
+				LocalCommand_SquadEntity(context.player, sg_single, SCMD_BuildStructure, eg_single, true)
+				
+			end
+			
+		else
+			-- all walls have been constructed
+			Rule_RemoveMe()
+		end
+	end
+	
+end
+
+
+
+
+
+
+
+
+function BuildStructures_RememberPositionsOfBuildings(egroup, useRebuildPhrasing)
+	
+	local list = {}
+	
+	local _AddBuildingDetails = function(gid, idx, eid)
+		local entry = {
+			egroup = egroup,
+			entityWorldID = Entity_GetID(eid),
+			ebp = Entity_GetBlueprint(eid),
+			position = Entity_GetPosition(eid),
+			heading = Entity_GetHeading(eid),
+			useRebuildPhrasing = useRebuildPhrasing,
+		}
+		table.insert(list, entry)
+	end
+	EGroup_ForEach(egroup, _AddBuildingDetails)	
+		
+	return list 
+	
+end
+
+
+
+function BuildStructures_MonitorConstructionProgress(list, data)
+
+	constructionManifest = {
+		buildings = {},
+		groupHintpoints = {},
+		numberOfHintpoints = 0,
+	}	
+
+	-- find all of the ghost buildings
+	
+	Player_GetAll(player1)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_KEEP)
+	EGroup_Clear(eg_temp)
+	
+	local _CheckEntity = function(gid, idx, eid)
+		
+		local position = Entity_GetPosition(eid)
+		local ebp = Entity_GetBlueprint(eid)
+		
+		for index, item in pairs(list) do 
+			
+			if item.ebp == ebp and Util_GetDistanceSquared(item.position, position) <= 25 then 			-- 5m check (25 = 5m squared)
+			
+				local entry = {
+					entityWorldID = Entity_GetID(eid),
+					entityID = eid,
+					ebp = Entity_GetBlueprint(eid),
+					position = Entity_GetPosition(eid),
+					heading = Entity_GetHeading(eid),
+					useRebuildPhrasing = item.useRebuildPhrasing,
+				}
+				table.insert(constructionManifest.buildings, entry)
+				
+				EGroup_Add(eg_temp, eid)
+				EGroup_Add(item.egroup, eid)
+				EGroup_Add(eg_allPlannedBuildings, eid)
+				
+				Entity_DisableCancelConstructionCommand(eid, true)	-- make it so the player cannot cancel this building
+				
+				break
+				
+			end
+			
+		end
+		
+	end
+	EGroup_ForEach(eg_allentities, _CheckEntity)
+
+	-- add hintpoints to these buildings 
+	for index, building in pairs(constructionManifest.buildings) do 
+		
+		local ebp = building.ebp
+
+		local offset = RebuildMoscow_GetBuildingHeightOffset(ebp, "cost")
+		local templateName = "BuildCostWidgetNoIconTemplate"
+		if ebp == EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS then
+			templateName = "BuildCostWidgetTemplate"
+		end
+		building.hpid_costwidget = HintPoint_Add(building.entityID, true, 0, offset, nil, nil, nil, nil, templateName)			-- cost widget hintpoint (one per entity)		
+
+		if building.hasObjectiveHintpoint ~= true then 																			-- objective hintpoint (one per group of nearby entities, so this is a bit more complicated)
+			
+			building.hasObjectiveHintpoint = true 	
+			
+			local egroup = EGroup_CreateUniqueWithPrefix("Rebuild Moscow HintPoint")
+			EGroup_Add(egroup, building.entityID)
+
+			repeat 			
+				local addedNewItem = false
+				for i, candidate in pairs(constructionManifest.buildings) do 
+					if candidate.hasObjectiveHintpoint ~= true then 
+						EGroup_Single(eg_single, candidate.entityID)
+						if Prox_EGroupEGroup(egroup, eg_single, PROX_SHORTEST) <= 8 then 		-- 8m check 
+							EGroup_Add(egroup, candidate.entityID)
+							candidate.hasObjectiveHintpoint = true
+							addedNewItem = true
+						end
+					end
+				end
+			until addedNewItem == false 
+			
+
+			local pos = Util_GetPosition(egroup)
+			local offset = RebuildMoscow_GetBuildingHeightOffset(ebp, "objective")
+
+			local hpid_objective = Objective_AddUIElements(data.objective, pos, true, RebuildMoscow_GetConstructionHintPointText(ebp, building.useRebuildPhrasing), true, offset)
+			
+			if EGroup_Count(egroup) == 1 then 			-- there was only a single item in the group, so make a hintpoint directly on the entity
+				
+				building.hpid_objective = hpid_objective
+				EGroup_Destroy(egroup) -- not needed any more
+				
+			elseif EGroup_Count(egroup) >= 2 then 		-- there were multiple entities (i.e. a group of wall sections), so add the hintpoint at the middle of the group
+				
+				local entry = {
+					egroup = egroup,
+					hpid_objective = hpid_objective,
+				}
+				table.insert(constructionManifest.groupHintpoints, entry)		
+				
+			end
+
+			constructionManifest.numberOfHintpoints = constructionManifest.numberOfHintpoints + 1
+			
+		end
+	end
+	
+	
+	
+	data.manifest = constructionManifest 
+	
+	Rule_AddInterval(BuildStructures_MonitorConstructionProgress_Check, 0.5, data)
+				
+	return constructionManifest	
+	
+end
+
+
+function BuildStructures_MonitorConstructionProgress_Check(context, data)
+	
+	local manifest = data.manifest
+	local allConstructed = true 
+	
+	for index, entry in pairs(manifest.buildings) do 
+		
+		if entry.constructed ~= true then 
+			
+			allConstructed = false 	
+			
+			if Entity_IsValid(entry.entityWorldID) then 
+				
+				local entity = Entity_FromID(entry.entityWorldID)
+				
+
+				if Entity_GetBuildingProgress(entity) >= 1 then 			-- finished construction
+					
+					if entry.hpid_objective ~= nil then 
+						
+						Objective_RemoveUIElements(data.objective, entry.hpid_objective)
+						entry.hpid_objective = nil 
+
+						if Objective_IsCounterSet(data.objective) then 
+							Objective_IncreaseCounter(data.objective)
+							Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+						end
+						
+					end
+					
+					entry.constructed = true 
+						
+				elseif Entity_IsPlannedStructure(entity) == false then 		-- no longer a planned structure (i.e. player has paid for it)
+					
+					if entry.hpid_costwidget ~= nil then 
+						HintPoint_Remove(entry.hpid_costwidget)
+						entry.hpid_costwidget = nil 
+					end
+					
+				end
+				
+			else
+				
+				-- let's see if there is a new building at this spot (player built a new object at the location)
+				-- NOTE: This may not be relevant once buildings can no longer be stomped
+				
+				Player_GetAllEntitiesNearMarker(player1, eg_temp, entry.position, 5)
+				EGroup_Filter(eg_temp, entry.ebp, FILTER_KEEP)
+				
+				if EGroup_CountSpawned(eg_temp) >= 1 then 
+					local entity = EGroup_GetSpawnedEntityAt(eg_temp, 1)
+					entry.entityWorldID = Entity_GetID(entity)
+					entry.entityID = entity	
+				end
+				
+			end
+			
+		end	
+	end
+
+	for index, entry in pairs(manifest.groupHintpoints) do 
+		
+		if entry.hpid_objective ~= nil then 		
+			
+			local _EntityIsConstructed = function(gid, idx, eid)
+				return Entity_GetBuildingProgress(eid) >= 1
+			end
+			
+			if EGroup_ForEachAllOrAny(entry.egroup, ALL, _EntityIsConstructed) then 
+				
+				Objective_RemoveUIElements(data.objective, entry.hpid_objective)
+				entry.hpid_objective = nil
+				
+				if Objective_IsCounterSet(data.objective) then 
+					Objective_IncreaseCounter(data.objective)
+					Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+				end
+				
+			end
+			
+		end
+		
+	end
+	
+	if allConstructed == true then 
+		Rule_RemoveMe()
+	end					
+			
+end
+
+
+
+
+-- filter the manifest to remove any items that don't need building
+function BuildStructures_FilterManifest(manifest)
+	
+	for index = #manifest, 1, -1 do 
+		
+		local entry = manifest[index]
+
+		if entry.entityWorldID ~= nil then
+			if Entity_IsValid(entry.entityWorldID) == true and Entity_IsAlive(Entity_FromID(entry.entityWorldID)) then
+				table.remove(manifest, index)
+			else
+				entry.entityWorldID = nil 
+			end
+		end
+		
+	end
+	
+end
+
+function BuildStructures_IsManifestComplete(manifest)
+	
+	for index, entry in pairs(manifest.buildings) do 
+		if entry.constructed ~= true then 	
+			return false
+		end		
+	end
+
+	return true 
+	
+end
+
+
+
+
+
+
+--
+-- Gather Wood
+--
+
+function GatherWood_SetupUI()
+	
+	i_lastCheckedWoodAmount = Player_GetResource(player1, RT_Wood)
+	Objective_SetCounter(SOBJ_GatherWood, 0, i_desiredWoodAmount)	
+	
+	if Game_GetSPDifficulty() <= GD_HARD then 
+		hpid_gatherWood = Objective_AddUIElements(SOBJ_GatherWood, mkr_forest_hint, true, "$11201420", true)	
+		Rule_AddInterval(GatherWood_RemoveHint, 1)
+	end
+	
+end
+function GatherWood_RemoveHint()
+
+	if Player_GetNumGatheringSquads(player1, RT_Wood) >= 1 then
+		
+		Objective_RemoveUIElements(SOBJ_GatherWood, hpid_gatherWood)
+		hpid_gatherWood = nil 
+		
+		Rule_RemoveMe()
+		
+	end	
+	
+end
+
+function GatherWood_Start()
+		
+	Rule_Add(GatherWood_Monitor)
+	Rule_AddInterval(GatherWood_PlayerVenturedIntoForest, 2, {timestamp = nil})
+	
+end
+
+function GatherWood_Monitor()
+	
+	local currentWoodAmount = Player_GetResource(player1, RT_Wood)
+	local amountGathered = currentWoodAmount - i_lastCheckedWoodAmount	
+	
+	if amountGathered >= 1 then 
+		
+		Objective_IncreaseCounter(SOBJ_GatherWood, amountGathered)
+		
+		if Objective_GetCounter(SOBJ_GatherWood) >= i_desiredWoodAmount then 
+			Objective_Complete(SOBJ_GatherWood)
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+	i_lastCheckedWoodAmount = currentWoodAmount
+	
+end
+
+function GatherWood_PlayerVenturedIntoForest(context, data)
+
+
+	local result = false	
+	for index, marker in pairs(t_forestMarkers) do 
+		if Prox_ArePlayersNearMarker(player1, marker, ANY) then 
+			result = true
+			break 
+		end
+	end
+	
+	if result == true then 
+		if data.timestamp == nil then 
+			data.timestamp = World_GetGameTime()
+		elseif (World_GetGameTime() - data.timestamp) >= 10 and Event_IsAnyRunning() == false then 
+			
+			Rule_RemoveMe()
+			
+			Util_StartIntel(EVENTS.WarnAboutWolves)
+			Rule_AddInterval(GatherWood_PlayerVenturedIntoForest_ShowBountyHint, 1)
+			
+		end
+	else
+		data.timestamp = nil 
+	end
+	
+end
+
+function GatherWood_PlayerVenturedIntoForest_ShowBountyHint()
+
+	if Event_IsAnyRunning() == false then 
+		Rule_RemoveMe()
+		MissionTutorial_AddHintToHuntingBounties()	
+	end
+	
+end
+
+
+
+--
+-- Gather People
+--
+
+function GatherPeople_SetupUI()
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+	SGroup_AddGroup(sg_countedVillagers, sg_allsquads)
+	
+	Objective_SetCounter(SOBJ_GatherPeople, 0, i_desiredVillagerAmount)
+
+end
+
+function GatherPeople_Start()
+		
+	Rule_AddInterval(GatherPeople_Monitor, 0.5)
+	
+end
+
+function GatherPeople_Monitor()
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+	SGroup_RemoveGroup(sg_allsquads, sg_countedVillagers)
+	
+	local newVillagers = SGroup_CountSpawned(sg_allsquads)
+	
+	if newVillagers >= 1 then 
+		
+		SGroup_AddGroup(sg_countedVillagers, sg_allsquads)		
+		
+		Objective_IncreaseCounter(SOBJ_GatherPeople, newVillagers)
+		
+		if Objective_GetCounter(SOBJ_GatherPeople) >= i_desiredVillagerAmount then 
+			Objective_Complete(SOBJ_GatherPeople)
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+
+	
+end
+
+
+
+
+
+
+
+
+--
+-- Objective Complete
+--
+
+function RebuildMoscow_OnComplete()
+	
+	Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+	
+	ExpandMoscow_TriggerObjective()
+	
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function RebuildMoscow_GetConstructionHintPointText(ebp, useRebuildPhrasing)
+
+	-- useRebuildPhrasing flag indicates that it's rebuilding something that was burned down, so change the hint text accordingly
+	-- (this only affects some building types, as it only applies things in the starting city layout)
+	
+	if ebp == EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS then 
+		return "$11180203" 		-- Build a Wooden Fortress
+	elseif ebp == EBP.RUS.BUILDING_LANDMARK_AGE1_NOVGOROD_KREMLIN_CONTROL_RUS then 
+		return "$11180204" 		-- Build the Kremlin landmark
+	elseif ebp == EBP.RUS.BUILDING_ECON_MARKET_CONTROL_RUS then 
+		return "$11180205" 		-- Build a market
+	elseif ebp == EBP.RUS.BUILDING_UNIT_RANGED_CONTROL_RUS then
+		return "$11180206" 		-- Build an archery range
+	elseif ebp == EBP.RUS.BUILDING_UNIT_INFANTRY_CONTROL_RUS then
+		if useRebuildPhrasing == true then 
+			return "$11180207"	-- Rebuild this barracks
+		else
+			return "$11180208" 	-- Build a barracks
+		end
+	elseif ebp == EBP.RUS.BUILDING_HOUSE_CONTROL_RUS then
+		if useRebuildPhrasing == true then 
+			return "$11180209" 	-- Rebuild this house
+		else
+			return "$11180210" 	-- Build a house
+		end
+	elseif ebp == EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS or ebp == EBP.RUS.BUILDING_DEFENSE_PALISADE_BASTION_RUS then
+		if useRebuildPhrasing == true then 
+			return "$11180211" 	-- Rebuild this Palisade
+		else
+			return "$11180212" 	-- Build a Palisade
+		end
+	end
+	
+	-- default return value, an empty string
+	return "$0"
+	
+end
+
+
+
+function RebuildMoscow_GetBuildingHeightOffset(ebp, hpid_type)
+
+	-- the objective hintpoints are attached to positions, not to entities (can't have two hintpoints on an entity, and the cost widget needs to be on the entity itself)
+	-- this function returns the height offset so the objective hintpoint shows _above_ the building, not over top of it
+
+	if hpid_type == "cost" then 
+		
+		-- cost widget offsets
+		
+		if ebp == EBP.RUS.BUILDING_LANDMARK_AGE1_NOVGOROD_KREMLIN_CONTROL_RUS then 
+			return -4
+		elseif ebp == EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS then 
+			return -2
+		elseif ebp == EBP.RUS.BUILDING_UNIT_INFANTRY_CONTROL_RUS then
+			return -1
+		elseif ebp == EBP.RUS.BUILDING_UNIT_RANGED_CONTROL_RUS then
+			return -1
+		elseif ebp == EBP.RUS.BUILDING_HOUSE_CONTROL_RUS then 
+			return -1
+		elseif ebp == EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS or ebp == EBP.RUS.BUILDING_DEFENSE_PALISADE_BASTION_RUS then 
+			return -0.25
+		elseif ebp == EBP.RUS.BUILDING_ECON_MARKET_CONTROL_RUS then 
+			return -1
+		end
+		
+		return nil	-- default: no offset 
+		
+	else
+		
+		-- objective widget offsets
+		
+		if ebp == EBP.RUS.BUILDING_LANDMARK_AGE1_NOVGOROD_KREMLIN_CONTROL_RUS then 
+			return 13
+		elseif ebp == EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS then 
+			return 12.5
+		elseif ebp == EBP.RUS.BUILDING_UNIT_INFANTRY_CONTROL_RUS then
+			return 9
+		elseif ebp == EBP.RUS.BUILDING_UNIT_RANGED_CONTROL_RUS then
+			return 9
+		elseif ebp == EBP.RUS.BUILDING_HOUSE_CONTROL_RUS then 
+			return 7.5
+		elseif ebp == EBP.RUS.BUILDING_ECON_MARKET_CONTROL_RUS then 
+			return 8.5
+		end
+		
+		return 8
+		
+	end
+	
+end
+
+
+
+

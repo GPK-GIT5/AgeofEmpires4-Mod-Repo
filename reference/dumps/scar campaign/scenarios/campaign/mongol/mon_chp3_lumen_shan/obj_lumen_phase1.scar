@@ -1,0 +1,221 @@
+--
+-- Lumen Shan 1268 - Wall Off Passage - Phase 1
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_lumen_phase2.scar")
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function LumenShan_InitObjectives_Phase1()
+
+	OBJ_ClaimArea = {
+	
+		Title = "$11178733",
+		Type = ObjectiveType_Primary,
+		Intel_Complete = EVENTS.LumenVillage_Complete,
+		PreStart = function()
+			
+			Music_UnlockIntensity()
+			
+			MissionOMatic_Objective_SetupHintpoints(SOBJ_DestroyFort,
+			{
+				{
+					marker = mkr_song_fort,
+					text = "$11178735",
+					blip = true,
+					worldArrow = true,
+				},
+			})
+			
+			AudioTrigger_InitAreaTrigger({
+		         marker = mkr_song_fort,
+		         audioCue = MUSIC_TENSE_RARE,
+		         triggeringPlayer = g_playerMongol,
+		         startAboveUnitCount = 5,
+	        })
+			
+			Rule_AddInterval(Lumen_WatchPlayerPassage, 1)
+			
+		end,
+		
+		OnStart = function()
+			Objective_Start(SOBJ_DestroyFort)
+		end,
+		
+		IsComplete = function()
+			Lumen_DisbandStartingAmbushers()
+			return Objective_IsComplete(SOBJ_DestroyFort)
+		end,
+		
+		OnComplete = function()
+			Objective_Start(OBJ_Blockade)
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(g_playerMongol, sg_allsquads)
+			SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+			return SGroup_Count(sg_allsquads) <= 1
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_DestroyFort = { Title = "$11178736", Type = ObjectiveType_Battle, Parent = OBJ_ClaimArea, 
+		
+		
+		counterMax = 0,
+		Intel_Start = EVENTS.Burn_Song_Garrison,
+	
+		PreStart = function()
+			SOBJ_DestroyFort.counterMax = EGroup_Count(eg_song_military_camp)
+			Objective_SetCounter(SOBJ_DestroyFort, 0, SOBJ_DestroyFort.counterMax)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			local campSizeCount = EGroup_Count(eg_song_military_camp)
+			local buildingsDestroyed = SOBJ_DestroyFort.counterMax - campSizeCount
+			if buildingsDestroyed > Objective_GetCounter(SOBJ_DestroyFort) then
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+			end
+				
+			Objective_SetCounter(SOBJ_DestroyFort, buildingsDestroyed, SOBJ_DestroyFort.counterMax)
+			return campSizeCount <= 0
+		end,
+		
+		PreComplete = function()
+			-- on console, restore the VPS at this point
+			if UI_IsXboxControllerUI() then
+				Game_SetVisibility (VF_XboxUIVillagerPriorities, true)
+			end				
+			 -- Hurray
+			Sound_Play2D(MUS_STING_TRIUMPHANT)
+			
+			-- Bump the pop cap
+			Player_SetPopCapOverride(g_playerMongol, 180)
+			-- Enable the popcap counter
+			UI_SetPlayerDataContext(g_playerMongol, { PopulationCapOn = true })
+			-- Capture Lumen Shan
+			local locationTable = LOCATION("Lumen")
+			Location_SetPlayerOwner(locationTable, g_playerMongol)
+			-- Also add an audio monitor
+			Rule_AddInterval(Lumen_CheckLossLumen, 3)
+			
+			-- Initialize the tutorialization of Liu Zheng's aura
+			local _DistanceChecker = function(squad)
+				local villager = squad
+				local liuZheng = SGroup_GetSquadAt(g_leaderLiuZheng.sgroup, 1)
+				return Util_GetDistanceSquared(villager, liuZheng) < 400
+			end
+		end,
+		
+		OnComplete = function()
+			Player_GetSquadsOnscreen(g_playerMongol, sg_temp)
+			Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+			-- Reveal the area
+			Lumen_RevealAroundLumen()
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_ClaimArea)
+	Objective_Register(SOBJ_DestroyFort)
+	
+end
+
+--? @shortdesc Watches for players leaving starting area
+function Lumen_WatchPlayerPassage(context, data)
+	
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_trigger_liuzheng, Marker_GetProximityRadiusOrDefault(mkr_trigger_liuzheng, 0))
+	SGroup_Filter(sg_temp, BP_GetSquadBlueprint("unit_liu_zheng_cmp_mon"), FILTER_KEEP)
+	if SGroup_Count(sg_temp) >= 1 then
+		Player_GetAllSquadsNearMarker(g_playerSong, sg_allsquads, mkr_trigger_song_starters, Marker_GetProximityRadiusOrDefault(mkr_trigger_song_starters, 0))
+		Cmd_Attack(sg_allsquads, sg_temp)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Lumen_WatchPlayerBreach(context, data)
+	
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_song_fort, Marker_GetProximityRadiusOrDefault(mkr_song_fort, 35))
+	if SGroup_Count(sg_temp) > 3 then
+		Sound_Play2D(MUS_STING_POSITIVE)
+		Sound_PlayWallaEngageOnSGroup(sg_temp)
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Monitors whether the player has lost one of the Chinese villages they've acquired
+function Lumen_CheckLossLumen(context, data)
+
+	EGroup_Clear(eg_temp)
+	EGroup_AddEGroup(eg_temp, eg_village_lumen)
+	EGroup_Filter(eg_temp, { EBP.CHINESE.BUILDING_HOUSE_CONTROL_CHI, EBP.CHINESE.BUILDING_RESOURCE_FARM_CHI }, FILTER_REMOVE)
+	
+	-- Did we lose everything except the houses and farms?
+	if EGroup_Count(eg_temp) <= 0 then
+		--Music_PlayStinger(MUS_STING_NEGATIVE)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Lumen_DisbandStartingAmbushers()
+	
+	-- We want to make sure none of those straggling ambush groups remain to bother the player in the late game
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_song_resist_4, Marker_GetProximityRadiusOrDefault(mkr_song_resist_4, 45))
+	local check1 = SGroup_Count(sg_temp) > 10
+	g_resistanceSwarmed1 = g_resistanceSwarmed1 or false
+	
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_song_fort, Marker_GetProximityRadiusOrDefault(mkr_song_fort, 45))
+	local check2 = SGroup_Count(sg_temp) > 10
+	g_resistanceSwarmed2 = g_resistanceSwarmed2 or false
+	
+	Player_GetAll(g_playerMongol)
+	-- If there are enough of them
+	if (check1 and g_resistanceSwarmed1 == false) or (check2 and g_resistanceSwarmed2 == false) then
+		g_swarmerSong = SGroup_CreateIfNotFound("g_swarmerSong")
+		
+		local modulesToSend = { "SongResist2", "SongResist3", "SongResist4", "SongResist5", }
+		
+		for index, moduleName in pairs(modulesToSend) do
+			local module = MissionOMatic_FindModule(moduleName)
+			if module ~= nil then
+				print(string.format("SGroup to remove has %s", SGroup_Count(module.sgroup)))
+				--SGroup_AddGroup(g_swarmerSong, module.sgroup)
+				Prefab_DoAction(module, "Disband", g_swarmerSong)
+			end
+		end
+		
+		if SGroup_Count(g_swarmerSong) > 0 then
+			Cmd_AttackMove(g_swarmerSong, mkr_song_fort, false)
+		end
+		
+		if g_resistanceSwarmed1 == false then
+			g_resistanceSwarmed1 = check1
+		end
+		
+		if g_resistanceSwarmed2 == false then
+			g_resistanceSwarmed2 = check2
+		end
+	end
+end
+
+function Lumen_RevealAroundLumen()
+	FOW_RevealMarker(mkr_reveal_lumen_1, 0.125)
+	FOW_RevealMarker(mkr_reveal_lumen_2, 0.125)
+	FOW_RevealMarker(mkr_reveal_lumen_3, 0.125)
+end

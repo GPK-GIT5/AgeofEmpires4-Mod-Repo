@@ -1,0 +1,353 @@
+--
+-- Mission-o-Matic - Battalions
+--
+-- Functions for spawning and monitoring battalions. These are groups of units that can be tied to the metagame.
+--
+
+function MissionOMatic_InitializeBattalion(battalion)
+	
+	if scartype(battalion.timeUntilArrival) == ST_NUMBER then
+	
+		-- reinforcements coming in mid-mission, so queue this for the future
+		Rule_AddOneShot(MissionOMatic_SpawnBattalion, battalion.timeUntilArrival, {battalion = battalion})
+		
+	else
+
+		-- spawn this now
+		MissionOMatic_SpawnBattalion(nil, {battalion = battalion})	
+		
+	end
+	
+end
+
+function MissionOMatic_SpawnBattalion(context, data)
+
+	local battalion = data.battalion
+
+	local player = battalion.player
+	local where = nil
+
+	if scartype(battalion.where) == ST_TABLE then
+		
+		if scartype(battalion.where.marker) == ST_MARKER then
+			
+			where = battalion.where.marker
+			
+		elseif scartype(battalion.where.marker) == ST_STRING then
+			
+			where = GetMarkerWithDirection(battalion.where.marker, battalion.where.direction)
+			
+		elseif scartype(battalion.where.markerName) == ST_STRING then
+			
+			where = Marker_FromName(battalion.where.markerName, "")
+			
+		elseif scartype(battalion.where.location) == ST_STRING then
+			
+			local location = LOCATION(battalion.where.location)
+			where = location.position
+			
+		elseif scartype(battalion.where.module) == ST_STRING then
+			
+			local module = MissionOMatic_FindModule(battalion.where.module)
+			
+			where = Prefab_DoAction(module, "GetPosition")
+
+			if where == nil then 
+				print("Mission-O-Matic Battalion: Insertion module of type "..tostring(module.prefabName).." doesn't have a valid location!")
+			end
+			
+		end
+		
+	end
+	
+	battalion.sgroup = SGroup_CreateUnique("MissionOMatic Battalion")
+	battalion.sgroup_gen = SGroup_CreateUnique("MissionOMatic General")
+	
+	local unitOffset = 0
+	local offsetCount = 0
+	if scartype(battalion.units) == ST_TABLE then
+		unitOffset = 1
+		offsetCount = unitOffset
+	end
+	if scartype(battalion.companies) == ST_TABLE then
+		offsetCount = offsetCount + #battalion.companies
+	end
+	local offsetTable = _CreateOffsetsTable(offsetCount)
+	
+	-- spawn any units (TODO: This is to support some legacy stuff - figure out how to add those special "extra" units that don't need to be tracked)
+	if scartype(battalion.units) == ST_TABLE and #battalion.units >= 1 then
+		local spawnPos = _ApplyOffsetToPosition(offsetTable[1], where)
+	 	UnitEntry_DeploySquads(player, battalion.sgroup, battalion.units, spawnPos, nil, 0, options)
+	end
+	
+	-- spawn the companies for this battalion
+	if scartype(battalion.companies) == ST_TABLE then
+		
+		if battalion.source.type == "squad" and battalion.general ~= nil then
+			
+			local data = {
+				player = player,
+				battalion = battalion,
+				sgroup = battalion.sgroup_gen,
+				aura = battalion.general.aura,
+				worldID = battalion.source.worldID,
+				position = where,
+			}
+			
+			MissionOMatic_SpawnGeneral(data)
+			
+		end
+		
+		for index, companyData in pairs(battalion.companies) do	
+			
+			companyData.id = math.tointeger(companyData.id)
+			companyData.sgroup = SGroup_Create("Company ID "..companyData.id)
+			
+			local companyIndex = unitOffset + index
+			local spawnPos = _ApplyOffsetToPosition(offsetTable[companyIndex], where)
+			local options = {
+				zeroPopulation = true,
+			}
+		 	UnitEntry_DeploySquads(player, {battalion.sgroup, companyData.sgroup}, companyData.units, spawnPos, nil, 0, options)
+		 	
+		end
+	end
+	
+	-- reveal FOW around this battalion
+	FOW_PlayerRevealArea(player, Util_GetPosition(where), 100, 0.25)		
+
+	-- add them to whatever manager if necessary
+	MissionOMatic_AddSGroupToModule(battalion.sgroup, battalion)
+	
+	-- mark this as having been spawned
+	battalion.hasBeenSpawned = true	
+		
+	-- Add it to the global list of battalions
+	if t_allBattalions == nil then
+		t_allBattalions = {}
+	end
+	table.insert(t_allBattalions, battalion)
+	
+end
+
+function MissionOMatic_AddSGroupToModule(sgroup, battalion)
+
+	if SGroup_CountSpawned(sgroup) >= 1 then
+		if scartype(battalion.where.location) == ST_STRING then
+			local location = LOCATION(battalion.where.location)
+			Prefab_DoAction(location, "AddSGroup", sgroup)
+		elseif scartype(battalion.where.module) == ST_STRING then
+			local module = MissionOMatic_FindModule(battalion.where.module)
+			Prefab_DoAction(module, "AddSGroup", sgroup)
+		end
+		
+	end
+
+end
+
+function MissionOMatic_SpawnTestGeneral()
+	
+	local data = {
+		player = World_GetPlayerAt(1),
+		sgroup = SGroup_CreateUnique("MissionOMatic Test General"),
+		aura = "combat",
+		worldID = 0,
+		position = Misc_GetMouseOnTerrain(),
+	}
+	
+	MissionOMatic_SpawnGeneral(data)
+	
+end
+
+function MissionOMatic_SpawnGeneral(data)
+	
+	local tag = tostring(data.worldID)
+	local general_unit = {sbp = BP_GetSquadBlueprint("unit_foot_general"), numSquads = 1, tag = tag}
+	local options = {
+		zeroPopulation = true,
+	}	
+	UnitEntry_DeploySquads(data.player, data.sgroup, general_unit, data.position, nil, 0, options)
+	MissionOMatic_AddSGroupToModule(data.sgroup, data.battalion)
+	Rule_AddOneShot(MissionOMatic_InitializeGeneral, 0.25, data)
+
+end
+
+function MissionOMatic_InitializeGeneral(context, data)
+	
+	local sgroup = data.sgroup
+	
+	if SGroup_CountSpawned(sgroup) >= 1 then
+	
+		local squad = SGroup_GetSpawnedSquadAt(sgroup, 1)
+		local entity = Squad_GetFirstEntity(squad)
+		
+		if scartype(data.aura) == ST_STRING then
+			local aura = General_GetAura(data.aura)
+			Entity_AddAbility(entity, aura.ability)
+		end
+		
+		-- guards
+		data.sgroup_guards = SGroup_CreateUnique("MissionOMatic Guards")
+		local guard_unit = {sbp = BP_GetSquadBlueprint("unit_foot_bodyguard"), numSquads = 2}
+		local options = {
+			zeroPopulation = true,
+		}		
+		UnitEntry_DeploySquads(data.player, data.sgroup_guards, guard_unit, data.position, nil, 0, options)
+		
+		Rule_AddOneShot(MissionOMatic_InitializeGuards, 0.25, data)
+		Rule_AddEntityEvent(MissionOMatic_GeneralKilled, entity, GE_EntityKilled, data)
+	end
+end
+
+function MissionOMatic_InitializeGuards(context, data)
+	
+	Cmd_Ability(data.sgroup_guards, BP_GetAbilityBlueprint("guard_follow"), data.sgroup)
+
+end
+
+function MissionOMatic_GeneralKilled(context, data)
+	
+	local sgroup = data.sgroup
+
+	if scartype(context.killer) ~= ST_ENTITY then return end
+	local attacker = Entity_GetPlayerOwner(context.killer)
+	
+	if data.player ~= attacker then
+	
+		if scartype(MissionRecipe.battalions) == ST_TABLE then
+			
+			for index, battalion in pairs(MissionRecipe.battalions) do
+				
+				if battalion.sgroup_gen == sgroup then
+
+					battalion.capturing_player = attacker.descriptor
+				end
+			end
+		end
+	end
+	
+end
+
+--? @shortdesc Looks for a battalion whose player name matches the identifier
+function MissionOMatic_FindBattalion(identifier)
+
+	local result = nil
+
+	if scartype(identifier) == ST_STRING then
+	
+		for index, battalion in pairs(t_allBattalions) do 
+			if battalion.player == identifier then
+				result = battalion
+				break
+			end
+		end
+		
+	end
+	
+	return result
+	
+end
+
+function BATTALION(item)
+
+	if scartype(item) == ST_TABLE then
+
+		for index, battalion in pairs(MissionRecipe.battalions) do 
+			if battalion == item then
+				return battalion
+			end
+		end
+
+	elseif scartype(item) == ST_STRING then
+		
+		for index, battalion in pairs(MissionRecipe.battalions) do 
+			if battalion.descriptor == item then
+				return battalion
+			end
+		end
+	
+	end
+	
+end
+
+function Battalion_GetSGroup(battalion)
+
+	battalion = BATTALION(battalion)
+
+	return battalion.sgroup
+
+end
+
+function Battalion_GetUnits(battalion)
+
+	battalion = BATTALION(battalion)
+
+	return UnitTable_GenerateFromSGroup(battalion.sgroup)
+	
+end
+
+function _CreateOffsetsTable(number)
+
+	local rowSpacing = 1
+	local columnSpacing = 1.5
+	
+	local numberOfRows = math.min(math.ceil(number / 4), 3) 
+	local numberOfColumns = math.ceil(number / numberOfRows)
+	
+	local currentRow = 0
+	local currentColumn = 0
+	local numberOfColumnsInCurrentRow = numberOfColumns - 1
+	
+	local offsets = {}
+	
+	local _GetOffsetPositionFor = function(row, column)
+		local columnOffset = (column - (numberOfColumnsInCurrentRow / 2)) * columnSpacing
+		local rowOffset = (row - (numberOfRows / 2)) * rowSpacing
+		return {x = columnOffset, y = 0, z = rowOffset}
+	end
+	
+	for index = 1, number do 
+	
+		table.insert(offsets, _GetOffsetPositionFor(currentRow, currentColumn))
+		
+		currentColumn = currentColumn + 1
+		
+		if currentColumn == numberOfColumns then 
+			currentRow = currentRow + 1
+			if currentRow == (numberOfRows - 1) then 
+				numberOfColumnsInCurrentRow = (number % numberOfRows)
+			end
+			currentColumn = 0
+		end
+	
+	end
+
+	return offsets
+
+end
+
+function _ApplyOffsetToPosition(offset, position, direction)
+
+	if scartype(position) == ST_MARKER then
+		if direction == nil then 
+			direction = Marker_GetDirection(position)
+		end
+		position = Util_GetPosition(position)
+	end
+	
+	if direction == nil then 
+		direction = World_Pos(0, 0, 1)
+	end
+	
+	local sin = direction.x
+	local cos = direction.z
+	
+	local rotatedOffset = {
+		x = (offset.x * cos) - (offset.z * sin),
+		y = offset.y,
+		z = -((offset.x * sin) + (offset.z * cos)),
+	}
+
+	return World_Pos(position.x + rotatedOffset.x, position.y + rotatedOffset.y, position.z + rotatedOffset.z)
+
+end

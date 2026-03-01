@@ -1,0 +1,769 @@
+--
+-- Mission-o-Matic - Condition Lists
+--
+-- Check to see if a list of conditions is true or false 
+--
+
+--
+-- See: Mission-o-Matic: Conditions and Actions
+--      http://relicwiki/display/CARD/Mission-o-Matic%3A+Conditions+and+Actions	(in the EE, you can Control-click on this link to go there)
+--
+
+CONDITION_LIST_ALL = "all"
+CONDITION_LIST_ANY = "any"
+CONDITION_LIST_NONE = "none"
+
+function ConditionList_Init(list)
+	
+	for index, condition in pairs(list) do
+		
+		-- resolve check function reference
+		if scartype(_G["Condition_"..condition.conditionName.."_Check"]) == ST_FUNCTION then
+			condition.conditionFunction = _G["Condition_"..condition.conditionName.."_Check"]
+		end
+		
+		if scartype(condition.conditionList) == ST_TABLE then	-- if the condition has sub-conditions (as boolean conditions do), then init that list as well
+			ConditionList_Init(condition.conditionList)
+		end
+		
+	end
+
+end
+
+function ConditionList_CheckList(list, context)
+
+	context = context or {}
+	
+	if list[1] == nil then 
+		list = {list}
+	end
+	
+	if #list == 1 then
+	
+		-- single item, so just check that item
+		return ConditionList_CheckItem(list[1], context)
+		
+	else
+		
+		-- multiple items, so generate a parent ALL boolean item to encompass them all
+		local data = {
+			condition = Condition_Boolean_Check,
+			boolean = CONDITION_LIST_ALL,
+			subconditions = list,
+		}
+
+		return ConditionList_CheckItem(data, context)
+		
+	end
+	
+end
+
+-- find and call the function for a particular condition
+function ConditionList_CheckItem(item, context)
+
+	-- if the function reference is a string, try to replace the string with a function
+	if scartype(item.condition) == ST_STRING then
+	
+		local func = _G["Condition_"..item.condition.."_Check"]
+		
+		if scartype(func) == ST_FUNCTION then
+			item.condition = func
+		end
+		
+	end
+
+	-- call the check function
+	if scartype(item.condition) == ST_FUNCTION then
+	
+		local result = item.condition(item, context)
+	
+		if result == true then
+			return true 
+		else
+			return false	-- this makes it so that a check returning nothing is the same as returning false 
+		end
+		
+	end
+	
+end
+
+--
+-- BOOLEAN condition 
+--
+
+function Condition_Boolean_Check(condition, context)
+
+	-- Rather than returning from the function immediately, checking all conditions allows us to debug them effectively
+	-- Otherwise, some conditions may arbitrarily never be checked until others succeed or fail, and they won't print() or view() their data
+	local resultAny = false
+	local resultAll = true
+	local resultNone = true
+	
+	-- If it's not set to anything valid, assume any of them can be true
+	if condition.boolean ~= CONDITION_LIST_ANY and condition.boolean ~= CONDITION_LIST_ALL and condition.boolean ~= CONDITION_LIST_NONE then
+		condition.boolean = CONDITION_LIST_ANY
+	end
+	
+	-- run checks oneach item in the list, use early outs for speed	
+	for index, item in pairs(condition.subconditions) do
+		
+		local result = ConditionList_CheckItem(item)
+		
+		if condition.boolean == CONDITION_LIST_ANY then
+			
+			if result == true then
+				resultAny = true
+			end
+			
+		elseif condition.boolean == CONDITION_LIST_ALL then
+			
+			if result == false then
+				resultAll = false
+			end
+			
+		elseif condition.boolean == CONDITION_LIST_NONE then
+			
+			if result == true then
+				resultNone = false
+			end
+			
+		end
+		
+	end
+	
+	-- we got to the end of the list, so use the "no exception found" result
+	if condition.boolean == CONDITION_LIST_ANY and resultAny == true then
+		return true
+	elseif condition.boolean == CONDITION_LIST_ALL and resultAll == true then
+		return true
+	elseif condition.boolean == CONDITION_LIST_NONE and resultNone == true then
+		return true
+	end
+	
+end
+
+--
+-- GAME TIME condition
+--
+
+function Condition_GameTime_Check(condition, context)
+
+	local gameTime = World_GetGameTime()
+
+	if condition.since ~= nil then
+		
+		local timeStamp = 0		-- TODO... make a time stamping system (an action to create a timestamp, perhaps?)
+		
+		for index = #g_timeStamps, 1, -1 do 
+			local bookmark = g_timeStamps[index]
+			if bookmark.name == condition.since then
+				if scartype(bookmark.timeStamp) == ST_NUMBER then
+					timeStamp = bookmark.timeStamp
+					break
+				end
+			end
+		end
+		
+		gameTime = gameTime - timeStamp
+		
+	end
+	
+	if condition.comparison == nil then
+		condition.comparison = IS_GREATER_THAN_OR_EQUAL
+	end
+	
+	return NumberComparison(gameTime, condition.comparison, condition.seconds)
+	
+end
+
+--
+-- HAS REACHED AGE condition
+--
+
+function Condition_HasReachedAge_Check(condition, context)
+
+	local player = condition.player or World_GetPlayerAt(1)
+	local age = Cardinal_GetPlayerAge(player)
+	local comparison = condition.comparison or IS_GREATER_THAN_OR_EQUAL
+	
+	return NumberComparison(age, comparison, condition.age)
+	
+end
+
+--
+-- HAS RESOURCES condition
+--
+
+function Condition_HasResources_Check(condition, context)
+
+	local player = condition.player or World_GetPlayerAt(1)
+	local resourceAmount = Player_GetResource(player, condition.resourceType)
+	local comparison = condition.comparison or IS_GREATER_THAN_OR_EQUAL
+	
+	return NumberComparison(resourceAmount, comparison, condition.amount)
+	
+end
+
+--
+-- HAS BUILDINGS condition
+--
+
+function Condition_HasBuildings_Check(condition, context)
+
+	--print("Checking for buildings "..tostring(condition.buildingType))
+	--view("Checking for buildings "..tostring(condition.buildingType))
+
+	local buildingAmount = CountBuildings(condition)
+	local comparison = condition.comparison or IS_GREATER_THAN_OR_EQUAL
+	
+	return NumberComparison(buildingAmount, comparison, condition.amount)
+	
+end
+
+
+--
+-- IS OUTNUMBERED condition
+--
+
+function Condition_IsOutnumbered_Check(condition, context)
+
+	if condition.sourcePlayer ~= nil and condition.targetPlayer ~= nil then 
+		
+		Player_GetAll(condition.sourcePlayer)
+		local sourceUnitAmount = SGroup_Count(sg_allsquads)
+		
+		Player_GetAll(condition.targetPlayer)
+		local targetUnitAmount = SGroup_Count(sg_allsquads)
+		
+		return NumberComparison(sourceUnitAmount, IS_LESS_THAN, targetUnitAmount)
+		
+	end
+
+end
+
+
+--
+-- HAS UNITS condition
+--
+
+--? @shortdesc Checks whether a player has a certain number of units, optionally of a certain type
+function Condition_HasUnits_Check(condition, context)
+
+	if condition.tag ~= nil and scartype(condition.tag) == ST_STRING then
+
+		-- looking up units by their TAG
+		local sgroupTagged = MissionOMatic_GetSGroupForTaggedUnit(condition.tag)
+		local unitAmount = SGroup_Count(sgroupTagged)
+		local comparison = condition.comparison or IS_GREATER_THAN_OR_EQUAL
+		return NumberComparison(unitAmount, comparison, condition.amount)
+		
+	elseif scartype(condition.module) == ST_STRING then
+	
+		-- looking up units by module
+		local module = MissionOMatic_FindModule(condition.module)
+		local sgroupModule = Prefab_DoAction(module, "GetSGroup")
+		local unitAmount = SGroup_Count(sgroupModule)
+		local comparison = condition.comparison or IS_GREATER_THAN_OR_EQUAL
+		return NumberComparison(unitAmount, comparison, condition.amount)
+	
+	else
+
+		-- looking up units by player and type
+		local player = condition.player or World_GetPlayerAt(1)
+		
+		Player_GetAll(player)
+	
+		if condition.ignoreStartingUnits == true and sg_startingUnits ~= nil then
+			SGroup_RemoveGroup(sg_allsquads, sg_startingUnits)
+		end
+		
+		if condition.unitType ~= nil then
+			SGroup_Filter(sg_allsquads, condition.unitType, FILTER_KEEP)
+		end
+		
+		if condition.ignoreVillagers == true then
+			SGroup_Filter(sg_allsquads, "scar_villager", FILTER_REMOVE)
+		end
+		
+		local unitAmount = SGroup_Count(sg_allsquads)
+		local comparison = condition.comparison or IS_GREATER_THAN_OR_EQUAL
+		return NumberComparison(unitAmount, comparison, condition.amount)
+	end
+	
+end
+
+--
+-- LOCATION check types
+--
+function Condition_LocationIsHidden_Check(condition, context)
+
+	local player = condition.player or World_GetPlayerAt(1)
+	
+	local markerID = nil
+		
+	if scartype(condition.location) == ST_STRING or scartype(condition.location) == ST_TABLE then
+		markerID = LOCATION(condition.location).marker
+	elseif scartype(condition.marker) == ST_MARKER then
+		markerID = condition.marker
+	elseif scartype(condition.where) == ST_TABLE then
+		markerID = GetMarkerWithDirection(condition.where.marker, condition.where.direction)
+		condition.location = Marker_GetName(markerID)
+	end
+	
+	local position = Util_GetPosition(markerID)
+	
+	return not Player_CanSeePosition(player, position)
+	
+end
+
+function Condition_LocationKilled_Check(condition, context)
+	
+	local location = LOCATION(condition.location)
+	return Location_HasBeenKilled(location)
+	
+end
+
+function Condition_LocationRazed_Check(condition, context)
+	
+	local location = LOCATION(condition.location)
+	return Location_HasBeenRazed(location)
+	
+end
+
+function Condition_LocationCaptured_Check(condition, context)
+	
+	local location = LOCATION(condition.location)
+	return Location_HasBeenCaptured(location)
+	
+end
+
+
+--
+-- MODULE check type
+--
+
+function Condition_ModuleDefeated_Check(condition, context)
+
+	local subjectModule = MissionOMatic_FindModule(condition.moduleName)
+	
+	if scartype(subjectModule) ~= ST_NIL then
+		
+		local checkDefeatFunc = _G[subjectModule.type.."_IsDefeated"]
+		local checkResult = checkDefeatFunc(subjectModule)
+		return checkResult
+		
+	else
+		print("Can't check defeat status of module "..tostring(condition.moduleName))
+	end
+	
+	return true
+	
+end
+
+--
+-- ASK SCAR FUNCTION check type
+--
+
+function Condition_AskScarFunction_Check(condition, context)
+	
+	local func = _G[condition.functionName]
+	
+	if scartype(func) ~= ST_FUNCTION then 	
+		fatal("Objective AskScarFunction Condition - function "..tostring(condition.functionName).." not found")
+	end
+
+	return func(context)		
+
+end
+
+--
+-- UNIT SPOTTED check type
+--
+
+function Condition_UnitsSpotted_Check(condition, context)
+
+	local player = condition.player or World_GetPlayerAt(1)
+
+	local sgroup = nil
+	
+	if scartype(condition.tag) == ST_STRING then
+		sgroup = MissionOMatic_GetSGroupForTaggedUnit(condition.tag)
+	elseif scartype(condition.sgroup) == ST_STRING then
+		sgroup = SGroup_FromName(condition.sgroup)
+	elseif scartype(condition.module) == ST_STRING then
+		local module = MissionOMatic_FindModule(condition.module)
+		sgroup = Prefab_DoAction(module, "GetSGroup")
+	elseif scartype(condition.spottedBattalion) == ST_STRING then
+		local battalion = MissionOMatic_FindBattalion(condition.spottedBattalion)
+		sgroup = battalion.sgroup
+	end
+	
+	local all = condition.all or ANY
+	
+	return Player_CanSeeSGroup(player, sgroup, all)
+	
+end
+
+--
+-- BUILDINGS SPOTTED check type
+--
+
+--? @shortdesc Returns true if a given player has spotted a given set of buildings, either any or all
+function Condition_BuildingsSpotted_Check(condition, context)
+
+	local player = condition.player or World_GetPlayerAt(1)
+	
+	if scartype(condition.egroup) == ST_EGROUP then
+		local all = condition.all or ANY
+		return Player_CanSeeEGroup(player, condition.egroup, all)
+	end
+	
+	return false
+	
+end
+
+
+--
+-- UNIT KILLED check type
+--
+
+function Condition_UnitsKilled_Check(condition, context)
+
+	local sgroup
+	
+	if scartype(condition.tag) == ST_STRING then
+		sgroup = MissionOMatic_GetSGroupForTaggedUnit(condition.tag)
+	elseif scartype(condition.module) == ST_STRING then
+		local module = MissionOMatic_FindModule(condition.module)
+		sgroup = Prefab_DoAction(module, "GetSGroup")
+	end
+	
+	return SGroup_Count(sgroup) == 0
+
+end
+
+function Condition_UpgradeResearched_Check(condition, context)
+	return Player_HasUpgrade(condition.player, condition.upgrade)
+end
+
+function Condition_AgeReached_Check(condition, context)
+	return (Player_GetCurrentAge(condition.player) >= condition.age)
+end
+
+
+--
+-- OBJECTIVE check types
+--
+
+function Condition_ObjectiveIsComplete_Check(condition, context)
+
+	local objective = MissionOMatic_FindObjective(condition.objective)
+	return Objective_IsComplete(objective)
+	
+end
+
+function Condition_ObjectiveIsNotComplete_Check(condition, context)
+
+	local objective = MissionOMatic_FindObjective(condition.objective)
+	return not Objective_IsComplete(objective)
+	
+end
+
+function Condition_ObjectiveIsStarted_Check(condition, context)
+
+	local objective = MissionOMatic_FindObjective(condition.objective)
+	return Objective_IsStarted(objective)
+	
+end
+
+function Condition_ObjectiveIsNotStarted_Check(condition, context)
+
+	local objective = MissionOMatic_FindObjective(condition.objective)
+	return not Objective_IsStarted(objective)
+	
+end
+
+function Condition_SubobjectivesAreComplete_Check(condition, context)
+	
+	local objectiveName = condition.parent or context.objective	
+	local objective = MissionOMatic_FindObjective(objectiveName)
+	
+	local numberOfChildren = 0
+	local numberThatAreComplete = 0
+	
+	for index, obj in pairs(g_missionObjectives) do 
+		if obj.IsSecret == false and obj.Recipe.parent == objective.Recipe.descriptor then
+			numberOfChildren = numberOfChildren + 1
+			if Objective_IsComplete(obj) then
+				numberThatAreComplete = numberThatAreComplete + 1
+			end
+		end
+	end 
+	
+	local desiredNumber = condition.amount or numberOfChildren
+	local comparison = condition.comparison or IS_GREATER_THAN_OR_EQUAL
+	
+	return NumberComparison(numberThatAreComplete, comparison, desiredNumber)
+
+end
+
+function Condition_ObjectiveCounter_Check(condition, context)
+
+	local objectiveName = condition.objective or context.objective
+	local objective = MissionOMatic_FindObjective(objectiveName)	
+	
+	if Objective_IsCounterSet(objective) then
+	
+		local currentValue = Objective_GetCounter(objective)
+		
+		local comparison = condition.comparison
+		if comparison == nil then
+			comparison = IS_GREATER_THAN_OR_EQUAL
+		end
+		
+		local desiredNumber = condition.number
+		if desiredNumber == nil then
+			desiredNumber = Obj_GetCounterMax(objective.ID)
+		end
+		
+		return NumberComparison(currentValue, comparison, desiredNumber)
+		
+	end
+	
+end
+
+function Condition_ObjectiveTimer_Check(condition, context)
+
+	local objectiveName = condition.objective or context.objective
+	local objective = MissionOMatic_FindObjective(objectiveName)
+	
+	if Objective_IsTimerSet(objective) then
+	
+		local currentValue = Objective_GetTimerSeconds(objective) 
+		local comparison = condition.comparison
+		local desiredNumber = condition.seconds or 0
+
+		if comparison == nil then
+		
+			local direction = Obj_GetCounterType(objective.ID)		-- default comparison depends on whether the timer is counting up or down
+			
+			if direction == COUNTER_TimerDecreasing then
+				comparison = IS_LESS_THAN_OR_EQUAL
+			elseif direction == COUNTER_TimerIncreasing then
+				comparison = IS_GREATER_THAN_OR_EQUAL
+			end
+			
+		end
+		
+		return NumberComparison(currentValue, comparison, desiredNumber)
+		
+	end
+	
+end
+
+--? @shortdesc Checks if all units belonging to a player are close enough to a given marker
+--? @result TRUE if present, FALSE otherwise
+function Condition_UnitAtLocation_Check(condition, context)
+
+	local result = false
+	
+	-- Determine the reference position
+	local markerID = nil
+	if scartype(condition.location) == ST_STRING or scartype(condition.location) == ST_TABLE then
+		local location = LOCATION(condition.location)
+		markerID = location.position
+		condition.range = condition.range or location.range
+	elseif scartype(condition.marker) == ST_MARKER then
+		markerID = condition.marker
+		condition.range = condition.range or Marker_GetProximityRadiusOrDefault(condition.marker, 0)
+	elseif scartype(condition.sgroup) == ST_SGROUP then
+		markerID = SGroup_GetPosition(condition.sgroup)
+	end
+	
+	-- This condition only ever works if we have a position to reference
+	if markerID ~= nil then
+		
+		-- If we don't specify whether we want them all, we just take any
+		if condition.all == nil then
+			condition.all = false
+		end
+		
+		-- If we don't specify a range and the marker is just a position, create a default range of 10
+		if condition.range == nil and scartype(markerID) == ST_SCARPOS then 
+			condition.range = 10
+		end
+		
+		-- Get the player
+		local player = condition.player or World_GetPlayerAt(1)
+		Player_GetAll(player)
+		Player_GetAllSquadsNearMarker(player, sg_temp, markerID, condition.range)
+		-- Filter their global and local unit groups by type
+		if condition.unitType ~= nil then
+			SGroup_Filter(sg_allsquads, condition.unitType, FILTER_KEEP)
+			SGroup_Filter(sg_temp, condition.unitType, FILTER_KEEP)
+		end
+		
+		if condition.number ~= nil then
+			-- We want to compare a specific number of units in the area
+			local comparison = condition.comparison or IS_GREATER_THAN_OR_EQUAL
+			result = NumberComparison(SGroup_Count(sg_temp), comparison, condition.number)
+		elseif condition.ratio ~= nil then
+			-- We want to compare a ratio of the player's local to global total units
+			local comparison = condition.comparison or IS_GREATER_THAN_OR_EQUAL
+			result = NumberComparison(SGroup_Count(sg_temp) / SGroup_Count(sg_allsquads), comparison, condition.ratio)
+		elseif condition.all == true then
+			-- We want to see if all the player's units are here, e.g. if the local gruop (sg_temp) matches the global group (sg_allsquads) 
+			result = (SGroup_Count(sg_temp) == SGroup_Count(sg_allsquads))
+		else
+			-- We haven't specified a number, ratio, or ALL, so we just want to know if anybody's here
+			result = SGroup_Count(sg_temp) >= 1
+		end
+		
+		-- If we're checking for NONE, flip whatever the result is
+		if condition.none == true then
+			result = not result
+		end
+		
+	end
+	
+	return result
+
+end
+
+--? @shortdesc Checks if a unit with the condition's tag is at the given marker
+--? @result TRUE if present, FALSE otherwise
+function Condition_TaggedUnitAtLocation_Check(condition, context)
+
+	local result = false
+	local sgroup = MissionOMatic_GetSGroupForTaggedUnit(condition.tag)
+	
+	if SGroup_CountSpawned(sgroup) >= 1 then
+		local markerID = nil
+		
+		if scartype(condition.location) == ST_STRING or scartype(condition.location) == ST_TABLE then
+			local location = LOCATION(condition.location)
+			markerID = location.position
+			condition.range = condition.range or location.range
+		elseif scartype(condition.marker) == ST_MARKER then
+			markerID = condition.marker
+		elseif scartype(condition.sgroup) == ST_SGROUP then
+			if SGroup_CountSpawned(condition.sgroup) >= 1 then
+				markerID = SGroup_GetPosition(condition.sgroup)
+			else
+				return result
+			end
+		end
+		
+		if condition.all == nil then condition.all = false end
+		if condition.none == nil then condition.none = false end
+		if condition.range == nil and scartype(markerID) == ST_SCARPOS then 
+			condition.range = 10
+		end
+
+		if markerID ~= nil and Prox_AreSquadMembersNearMarker(sgroup, markerID, condition.all, condition.range) then
+			result = true
+		end
+	end
+	
+	-- If we're checking for NONE, flip whatever the result is
+	if condition.none == true then
+		result = not result
+	end
+	
+	return result
+	
+end
+
+--? @shortdesc Checks if a given egroup has living members or not
+--? @result TRUE if empty, FALSE otherwise
+function Condition_EGroupEmpty_Check(condition, context)
+
+	local result = false
+
+	if EGroup_GetAvgHealth(condition.egroup) <= 0 then
+		result = true
+	end
+	
+	-- If we're checking whether something is NOT empty, reverse that
+	if condition.notEmpty == true then
+		result = not result
+	end
+	
+	return result
+
+end
+
+function NumberComparison(number, comparison, value)
+	
+	if scartype(comparison) == ST_STRING then
+		comparison = _G[comparison]
+	end
+	
+	if comparison == IS_EQUAL then
+		if number == value then
+			return true
+		end
+	elseif comparison == IS_LESS_THAN then
+		if number < value then
+			return true
+		end
+	elseif comparison == IS_GREATER_THAN then
+		if number > value then
+			return true
+		end
+	elseif comparison == IS_LESS_THAN_OR_EQUAL then
+		if number <= value then
+			return true
+		end
+	elseif comparison == IS_GREATER_THAN_OR_EQUAL then
+		if number >= value then
+			return true
+		end
+	elseif comparison == IS_NOT_EQUAL then
+		if number ~= value then
+			return true
+		end
+	end
+	
+	-- fall through - so NOT what was asked
+	return false
+	
+end
+
+
+
+function CountBuildings(params)
+	
+	if params.location ~= nil then 
+
+		local location = LOCATION(params.location)
+		EGroup_Clear(eg_allentities)
+		EGroup_AddEGroup(eg_allentities, location.egroup)
+		
+	else
+
+		local player = params.player or World_GetPlayerAt(1)
+		Player_GetAll(player)
+		
+	end
+	
+	if params.ignoreStartingBuildings == true and eg_startingBuildings ~= nil then
+		EGroup_RemoveGroup(eg_allentities, eg_startingBuildings)
+	end
+	
+	if params.buildingType ~= nil then
+		EGroup_Filter(eg_allentities, params.buildingType, FILTER_KEEP)
+	end
+	
+	if params.butNotOfType ~= nil then
+		EGroup_Filter(eg_allentities, params.butNotOfType, FILTER_REMOVE)
+	end
+	
+	if params.countBuildingsUnderConstruction ~= true then
+		EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	end
+	
+	return EGroup_Count(eg_allentities)
+	
+end
+

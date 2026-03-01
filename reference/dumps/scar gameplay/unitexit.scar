@@ -1,0 +1,298 @@
+----------------------------------------------------------------------------------------------------------------
+-- Unit Exit system
+-- (c) 2016 Relic Entertainment Inc.
+
+
+EXIT = {}
+
+--? @group scardoc;Util
+
+
+
+
+
+--? @shortdesc High level function to have squad exit the map (despawn) in different ways. Details can be found in UnitExit.scar
+--? @args SGroupID/Table/String/Squad squads, ExitType exitType, Table data, Bool staggered
+--? @extdesc 
+--~ --? SGroupID/Table/String/Squad squads - squad(s) that will be ordered to exit. Should not be nil.
+--~ --? ExitType exitType - enum of the exit type (ex: EXIT.Race_Teleport). EXIT.No_Type can be used to force a despawn / exit with no type
+--~ --? Table data - This includes different parameters based on the exitType - i.e. location, range, delay. Details are listed next to the function callback for each type in UnitExit.scar
+--~ --? Bool staggered - Whether the units should despawn in a staggered fashion or not (one every 0.5 secs). Some despawn methods (i.e. location-based ones) ignore this.
+
+function Util_ExitSquads(squads, exitType, contextDataTable, staggered)
+
+	-- set up basic data if it's missing
+	_UnitExit_IsCompletingImmediately = false
+	if _UnitExit_InProcessExits == nil then
+		_UnitExit_InProcessExits = {}
+	end
+
+	-- default values
+	if scartype(squads) ~= ST_TABLE then
+		squads = {squads}
+	end
+	local staggered = staggered or false
+	local contextDataTable = contextDataTable or {}
+	
+	-- create a new group to copy squads into
+	local sgroup = SGroup_CreateUnique("Util_ExitSquads Temp Group")
+	
+	-- add squads to this group - many different syntaxes, but this normalises everything into a NEW group owned just by this exit system (MUST remember to destroy afterwards)
+	local _AddThing = function(thing)
+		if scartype(thing) == ST_SQUAD then
+			SGroup_Add(sgroup, thing)
+		elseif scartype(thing) == ST_STRING then
+			if SGroup_Exists(thing) then
+				SGroup_AddGroup(sgroup, SGroup_FromName(thing))
+			end
+		elseif scartype(thing) == ST_SGROUP then
+			SGroup_AddGroup(sgroup, thing)
+		end
+	end
+	for index, thing in pairs(squads) do 
+		_AddThing(thing)
+	end
+	
+	
+	
+	
+	if SGroup_CountSpawned(sgroup) >= 1 then
+	
+		local data = {
+			sgroup = sgroup,
+			staggered = staggered,
+			player = Util_GetPlayerOwner(sgroup),
+			context = contextDataTable,
+			exitType = exitType,
+		}
+		
+		if data.exitType.start_func ~= nil then
+			data.exitType.start_func(data)
+		end
+		
+		table.insert(_UnitExit_InProcessExits, data)
+		if Rule_Exists(UnitExit_Manager) == false then
+			Rule_AddInterval(UnitExit_Manager, 0.5)
+		end
+		
+	else
+		
+		SGroup_Destroy(sgroup)
+		
+	end
+	
+end
+
+
+
+
+--
+-- Manager - runs through all in-process exits and despawns units if necessary
+--
+function UnitExit_Manager()
+
+	
+	for index = #_UnitExit_InProcessExits, 1, -1 do 
+	
+		local data = _UnitExit_InProcessExits[index]
+	
+		-- call the manager func
+		if data.exitType.manager_func ~= nil then
+			data.exitType.manager_func(data)
+		end
+		
+		-- despawn units if appropriate
+		if data.despawn_immediately == true then
+			_UnitExit_Despawn(data)
+		elseif data.despawn_time ~= nil and World_GetGameTime() > data.despawn_time then
+			_UnitExit_Despawn(data)
+		elseif data.location ~= nil then
+			_UnitExit_DespawnNearLocation(data)
+		end
+		
+		-- re-iterate move orders if units got stuck
+		if data.location ~= nil then
+			local _CheckMoving = function(gid, idx, sid)
+				if Squad_IsMoving(sid) == false then 
+					SGroup_Single(sg_single, sid)
+					Cmd_Move(sg_single, data.location)
+				end
+			end
+			SGroup_ForEach(data.sgroup, _CheckMoving)
+		end
+		
+		if _UnitExit_CheckDone(data) == true then
+			table.remove(_UnitExit_InProcessExits, index)
+		end
+
+		
+	end
+	
+	if #_UnitExit_InProcessExits == 0 then
+		Rule_Remove(UnitExit_Manager)
+	end
+	
+end
+
+
+
+
+-- generic final despawn function (handles staggered flag)
+function _UnitExit_Despawn(data)
+	
+	if data.staggered == false then
+		_UnitExit_DespawnThing(data.sgroup, data)
+	else
+		if SGroup_CountSpawned(data.sgroup) >= 1 then
+			local squad = SGroup_GetRandomSpawnedSquad(data.sgroup)
+			_UnitExit_DespawnThing(squad, data)
+		end
+	end
+	
+end
+
+function _UnitExit_DespawnNearLocation(data)
+
+	local location = data.location
+	local range = data.range
+	if data.range == nil then
+		range = Marker_GetProximityRadiusOrDefault(data.location, 0)
+	end
+	if range == 0 then
+		range = 5
+	end
+		
+	local _CheckSquad = function(gid, idx, sid)
+		
+		if Util_GetDistance(sid, location) < range then
+			
+			_UnitExit_DespawnThing(sid, data)
+			
+			if data.staggered == true then
+				return true
+			end
+			
+		end
+		
+	end
+	SGroup_ForEach(data.sgroup, _CheckSquad)
+	
+end
+
+function _UnitExit_DespawnThing_PartB(id, data)
+	if Squad_IsValid(data._squadID) then
+		Squad_Destroy(Squad_FromID(data._squadID))	-- and finally nix the unit
+	end
+end
+function _UnitExit_DespawnThing(thing, data)
+
+	local _DespawnSquad = function(gid, idx, sid)
+		
+		if data.exitType.despawn_func ~= nil then		-- call the despawn callback
+			data.exitType.despawn_func(sid, data)
+		end
+		
+		if data.exitType.despawn_fx ~= nil then			-- trigger the despawn FX
+			Squad_SetAnimatorAction(sid, data.exitType.despawn_fx)
+		end
+		
+		Rule_AddOneShot(_UnitExit_DespawnThing_PartB, 0.125, {_squadID = Squad_GetID(sid)})
+
+	end
+	
+	if scartype(thing) == ST_SGROUP then
+		SGroup_ForEach(thing, _DespawnSquad)		-- do the above on everything in the group
+	elseif scartype(thing) == ST_SQUAD then
+		_DespawnSquad(nil, nil, thing)					-- do the above on this single squad
+	end	
+	
+end
+
+function _UnitExit_CheckDone(data)
+
+	if SGroup_CountSpawned(data.sgroup) == 0 then
+		
+		if data.exitType.end_func ~= nil then
+			data.exitType.end_func(data)
+		end
+		
+		SGroup_DestroyAllSquads(data.sgroup)
+		SGroup_Destroy(data.sgroup)
+		
+		return true
+		
+	else
+		
+		return false
+		
+	end
+
+end
+
+--? @shortdesc Forces all in-process exits to complete instantly.
+--? @result Void
+function	UnitExit_CompleteAllImmediately()
+
+	_UnitExit_IsCompletingImmediately = true
+	
+	if _UnitExit_InProcessExits == nil then
+		_UnitExit_InProcessExits = {}
+	end
+	
+	for index = #_UnitExit_InProcessExits, 1, -1 do 
+	
+		local data = _UnitExit_InProcessExits[index]
+	
+		if data.exitType.end_func ~= nil then
+			data.exitType.end_func(data)
+		end
+		
+		SGroup_DestroyAllSquads(data.sgroup)
+		SGroup_Destroy(data.sgroup)
+		
+	end
+	
+	_UnitExit_InProcessExits = {}
+	Rule_Remove(UnitExit_Manager)
+
+	_UnitExit_IsCompletingImmediately = false
+	
+end
+
+function UnitEntry_NoType_StartFunc(data)
+
+	-- required data:
+	-- N/A
+	
+	data.despawn_immediately = true
+	
+end
+
+
+-- run to a location and teleport when you get there
+function UnitExit_MoveToAndDespawn_StartFunc(data)
+
+	-- required data:
+	-- location - Where to run towards
+	-- range - How close you need to get before you despawn
+	
+	data.location = data.context.location
+	data.range = data.context.range
+
+	Cmd_Move(data.sgroup, data.location)	
+	
+end
+
+
+--
+-- Generic exit types
+--
+EXIT.No_Type =
+	{
+		start_func = UnitEntry_NoType_StartFunc,
+	}
+
+EXIT.MoveToAndDespawn =
+	{
+		start_func = UnitExit_MoveToAndDespawn_StartFunc,
+	}

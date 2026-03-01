@@ -1,0 +1,1031 @@
+--
+-- Sample Mission
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("MissionOMatic/MissionOMatic_utility.scar")
+import("missionomatic/missionomatic_artofwar.scar")
+import("training/coretraininggoals.scar")
+import("challenge_agincourt_obj.scar")
+import("challenge_agincourt_wave1.scar")
+import("challenge_agincourt_wave2.scar")
+import("challenge_agincourt_wave3.scar")
+import("challenge_agincourt_counterattack.scar")
+import("challenge_agincourt.events")
+import("cardinal.scar")
+
+function Mission_SetupVariables()
+	
+	-- Bools
+	
+	conquerorModeActivated = false
+	conquerorModeFailed = false
+	agincourtSpawnsActive = true
+	tramecourtSpawnsActive = true
+	agincourtTownAlive = true
+	tramecourtTownAlive = true
+	prison1Freed = false
+	goldMedalFailed = false
+	silverMedalFailed = false
+	earlyReinforcementsAdded = false
+	middleReinforcementsAdded = false
+	goldReinforcementsAdded = false
+	silverReinforcementsAdded = false
+	
+	-- Ints
+	LANE_MAX_WIDTH = 40
+	GOLD_MEDAL_TIME = 16 * 60
+	SILVER_MEDAL_TIME = 20 * 60
+	henryVBonusHealth = 150
+	
+	-- Floats
+	startTime = 0
+	
+	-- Sgroups 
+
+	-- Other
+	sbp_king_lan = SBP.LANCASTER.UNIT_HENRY_5_CMP_LAN
+	
+	--for testing army scripting
+	showDebugObjectives1 = false
+	showDebugObjectives2 = false
+	
+end
+
+function Mission_SetupPlayers()
+	
+	PlayerColour_Enable() -- turn on custom colour configuration for this session
+	
+	-- Set up Players
+	player1 = Missionomatic_InitPlayer(1, { name = "$11265366", currentAge = AGE_FEUDAL, maxAge = AGE_IMPERIAL })--House of Lancaster
+	player2 = Missionomatic_InitPlayer(2, { name = "$11201649", currentAge = AGE_CASTLE, maxAge = AGE_IMPERIAL })--French
+	player3 = Missionomatic_InitPlayer(3, { name = "$11265366", currentAge = AGE_CASTLE, maxAge = AGE_IMPERIAL })
+	player4 = Missionomatic_InitPlayer(4, { name = "$11201649", currentAge = AGE_IMPERIAL, maxAge = AGE_IMPERIAL })
+	player5 = Missionomatic_InitPlayer(5, { name = "$11201649", currentAge = AGE_IMPERIAL, maxAge = AGE_IMPERIAL })
+	player6 = Missionomatic_InitPlayer(6, { name = "$11201649", currentAge = AGE_FEUDAL, maxAge = AGE_IMPERIAL })
+	player7 = Missionomatic_InitPlayer(7, { name = "$11265366", currentAge = AGE_FEUDAL, maxAge = AGE_IMPERIAL })
+	player8 = Missionomatic_InitPlayer(8, { name = "$11201649", currentAge = AGE_FEUDAL, maxAge = AGE_IMPERIAL })
+	
+	-- Create player references
+	localPlayer = World_GetPlayerAt(1) --Player
+	enemyPlayer = World_GetPlayerAt(2) --enemy AI player
+	allyPlayer = World_GetPlayerAt(3) --ally AI player
+	enemyPlayer2 = World_GetPlayerAt(4) --enemy AI player 2 (fully upgraded units)
+	enemyPlayer3 = World_GetPlayerAt(5) --enemy AI player 3 (debuffed units)
+	enemyPatrolPlayer = World_GetPlayerAt(6) --player for the downed player leader
+	capturedUnitsPlayer = World_GetPlayerAt(7)
+	enemyCannonPlayer = World_GetPlayerAt(8)
+	
+	Game_SetPlayerColour(enemyPlayer, COLOR_RED)
+	Game_SetPlayerColour(enemyPlayer2, COLOR_RED)
+	Game_SetPlayerColour(enemyPlayer3, COLOR_RED)
+	Game_SetPlayerColour(enemyPatrolPlayer, COLOR_RED)
+	Game_SetPlayerColour(enemyCannonPlayer, COLOR_RED)
+	
+	
+	--override condensed objectives setting to ensure objectives are visible
+	UI_SetPlayerDataContext(player1, { hide_condensed_objectives_override = true})
+end
+
+function Mission_SetRestrictions()
+	
+	
+	Player_CompleteUpgrade(localPlayer, UPG.LANCASTER.UPGRADE_SYNCHRONIZEDSHOT_LAN)
+	Player_CompleteUpgrade(localPlayer, UPG.LANCASTER.UPGRADE_BILLMEN_LAN)
+	Player_CompleteUpgrade(localPlayer, UPG.COMMON.UPGRADE_UNIT_SPEARMAN_2)
+	Player_CompleteUpgrade(localPlayer, UPG.COMMON.UPGRADE_RANGED_DAMAGE_I)
+	Player_CompleteUpgrade(localPlayer, UPG.COMMON.UPGRADE_MELEE_ARMOR_I)
+	
+	Player_CompleteUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_FELL_RATE_1)
+	Player_CompleteUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_HARVEST_RATE_2)
+	Player_CompleteUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_HARVEST_RATE_3)
+	Player_CompleteUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_HARVEST_RATE_4)
+	
+	Player_SetEntityProductionAvailability(localPlayer, EBP.LANCASTER.BUILDING_DEFENSE_PALISADE_LAN, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.LANCASTER.BUILDING_DEFENSE_PALISADE_GATE_LAN, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.LANCASTER.BUILDING_DEFENSE_WALL_LAN, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.LANCASTER.BUILDING_DEFENSE_WALL_GATE_LAN, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.LANCASTER.BUILDING_DEFENSE_TOWER_LAN, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.LANCASTER.BUILDING_UNIT_DOCK_LAN, ITEM_REMOVED)
+	
+end
+
+
+function ChallengeMission_SetupDiplomacy()
+	
+	
+	Player_SetRelationship(enemyPlayer, allyPlayer, R_ALLY)
+	Player_SetRelationship(allyPlayer, enemyPlayer, R_ENEMY)
+	
+	Player_SetRelationship(enemyPlayer2, allyPlayer, R_ALLY)
+	Player_SetRelationship(allyPlayer, enemyPlayer2, R_ENEMY)
+	
+	
+	Player_SetRelationship(enemyPlayer, capturedUnitsPlayer, R_ALLY)
+	Player_SetRelationship(capturedUnitsPlayer, enemyPlayer, R_ALLY)
+	Player_SetRelationship(enemyPatrolPlayer, capturedUnitsPlayer, R_NEUTRAL)
+	Player_SetRelationship(capturedUnitsPlayer, enemyPatrolPlayer, R_NEUTRAL)
+	Player_SetRelationship(localPlayer, capturedUnitsPlayer, R_ALLY)
+	Player_SetRelationship(capturedUnitsPlayer, localPlayer, R_ALLY)
+	World_EnableSharedLineOfSight(localPlayer, capturedUnitsPlayer, false)
+	
+	
+	Player_SetRelationship(enemyPlayer3, localPlayer, R_ALLY)
+	Player_SetRelationship(localPlayer, enemyPlayer3, R_ENEMY)
+	
+	
+	Player_SetRelationship(enemyCannonPlayer, localPlayer, R_NEUTRAL)
+	Player_SetRelationship(localPlayer, enemyCannonPlayer, R_ENEMY)
+	-----
+	
+end
+
+function Mission_PreInit()
+	
+	
+	Rule_AddGlobalEvent(HC_Agincourt_OnSquadKilled, GE_SquadKilled)
+	Rule_AddGlobalEvent(HC_Agincourt_OnDestruction, GE_EntityKilled)
+	Rule_AddGlobalEvent(HC_Agincourt_OnProjectileFired, GE_ProjectileFired)
+	Rule_AddGlobalEvent(HC_Agincourt_OnAbilityExecuted, GE_AbilityExecuted)
+	
+	
+end
+
+function Mission_Preset()
+	
+	ChallengeMission_SetupDiplomacy()
+	
+end
+
+
+function Mission_Start()
+	
+	startTime = World_GetGameTime()
+	-- Initialize Objectives 
+	HC_Agincourt_InitObjectives()
+	
+
+	Rule_AddInterval(HC_Agincourt_Update, 0.125)
+	
+	
+	-- Set starting resources
+	Player_SetResource(localPlayer, RT_Food, 500)		
+	Player_SetResource(localPlayer, RT_Wood, 600)
+	Player_SetResource(localPlayer, RT_Gold, 300)
+	Player_SetResource(localPlayer, RT_Stone, 300)
+	
+	--set landmarks to be rebuildable
+	Player_SetStateModelBool(localPlayer, "disable_landmark_rebuild", false)
+	
+	
+	if(playerCapital == nil) then
+		playerCapital = EGroup_GetEntityAt(eg_capitalTC, 1)
+	end
+	
+	
+	if(enemyTC1 == nil) then
+		enemyTC1 = EGroup_GetEntityAt(eg_enemyTC1, 1)
+	end
+	if(enemyTC2 == nil) then
+		enemyTC2 = EGroup_GetEntityAt(eg_enemyTC2, 1)
+	end
+	
+	Objective_AddUIElements(SOBJ_Defend, eg_capitalTC, false, "$11268422", true, 3)--Defend Your Capital Town Center
+	
+	-- Re-spawn the French army, with objective setup this time
+	-- Player and Gaia units should already have been spawned for the intro camera
+	HC_Agincourt_SpawnFrenchArmy()
+	
+	HC_Agincourt_InitObjectiveUI()
+	
+	--activate starting units
+	Cmd_Move(sg_playerScout1, mkr_PlayerSpawn5Dest, false)
+	Cmd_Move(sg_playerScout2, mkr_PlayerSpawn6Dest, false)
+	
+	
+	--temp functions for testing
+	--FOW_RevealAll()
+	--Rule_AddOneShot(test_destroyWave1, 10)
+	--Rule_AddOneShot(test_destroyWave2, 20)
+end
+
+function test_destroyWave1()
+	
+	SGroup_Kill(sg_wave1_AllUnits)
+	SGroup_Kill(sg_enemyRow1_leader)
+end
+function test_destroyWave2()
+	
+	SGroup_Kill(sg_wave2_AllUnits)
+	SGroup_Kill(sg_enemyRow2_leader)
+	SGroup_Kill(sg_enemyRow2_leader2)
+end
+
+function GetRecipe()
+	
+	local recipe = {
+		
+		introNIS = EVENTS.Camera_Intro,
+		
+		audioSettings = {
+			campaignName = "lan",
+			missionName = "rts_agincourt",
+		},			
+		
+		locations = {
+		},
+		
+		--
+		-- Modules
+		--
+		modules = {
+		},
+
+		onWin = {
+		},
+		
+		onLose = {
+		},
+	}
+	
+	return recipe
+end
+
+
+function HC_Agincourt_Update()
+	
+	missionTime = World_GetGameTime() - startTime
+	
+	if(sg_enemyRow1_leader ~= nil) then
+		if(SGroup_GetAvgHealth(sg_enemyRow1_leader) == 0) then
+			SGroup_DestroyAllSquads(sg_enemyRow1_leader)
+		end
+	end
+	
+	if(prison1Freed == false and sg_prison1Defenders ~= nil) then
+		if(SGroup_CountSpawned(sg_prison1Defenders) == 0) then
+			SGroup_SetPlayerOwner(sg_captureKnights1, localPlayer)
+			if(EGroup_CountSpawned(eg_prisonWalls1) > 0) then
+				EGroup_SetPlayerOwner(eg_prisonWalls1, allyPlayer)
+			end
+			prison1Freed = true
+		end
+	end
+	
+	if(conquerorModeActivated == false) then
+		--add additional reinforcements after 5 minutes 10 seconds
+		if(earlyReinforcementsAdded == false and missionTime > (60 * 5) + 10) then
+			--add spearmen
+			
+			sg_reinforcementsEarly1 = SGroup_CreateIfNotFound("sg_reinforcementsEarly1")
+			
+			local sbp_spearman_lan = SBP.LANCASTER.UNIT_SPEARMAN_4_LAN
+			local options = { spawnInFormation = true}
+			UnitEntry_DeploySquads(localPlayer, sg_reinforcementsEarly1, {sbp = sbp_spearman_lan, numSquads = 8 }, mkr_ExtraHelpSpawn, nil, nil, options)
+			
+			Cmd_FormationAttackMove(sg_reinforcementsEarly1, mkr_ExtraHelpDest2, true)
+			
+			EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, sg_reinforcementsEarly1, 40, "icons/cta/illustrations/player_reinforcement_arrived")
+			
+			earlyReinforcementsAdded = true
+		end
+		
+		--add additional reinforcements after 10 minutes
+		if(middleReinforcementsAdded == false and missionTime > 60 * 10) then
+			--add crossbowmen
+			
+			sg_reinforcementsMiddle1 = SGroup_CreateIfNotFound("sg_reinforcementsMiddle1")
+			
+			local sbp_crossbowman_lan = SBP.LANCASTER.UNIT_CROSSBOWMAN_3_LAN
+			local options = { spawnInFormation = true}
+			UnitEntry_DeploySquads(localPlayer, sg_reinforcementsMiddle1, {sbp = sbp_crossbowman_lan, numSquads = 10 }, mkr_ExtraHelpSpawn, nil, nil, options)
+			
+			Cmd_FormationAttackMove(sg_reinforcementsMiddle1, mkr_ExtraHelpDest2, true)
+			
+			EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, sg_reinforcementsMiddle1, 40, "icons/cta/illustrations/player_reinforcement_arrived")
+			
+			middleReinforcementsAdded = true
+		end
+		
+		--add additional reinforcements when the player has passed the gold medal time
+		if(goldReinforcementsAdded == false and missionTime > GOLD_MEDAL_TIME + 10) then
+			--add MAA and crossbowmen
+			
+			sg_reinforcementsGold1 = SGroup_CreateIfNotFound("sg_reinforcementsGold1")
+			sg_reinforcementsGold2 = SGroup_CreateIfNotFound("sg_reinforcementsGold2")
+			
+			local sbp_crossbowman_lan = SBP.LANCASTER.UNIT_CROSSBOWMAN_4_LAN
+			local sbp_MAA_lan = SBP.LANCASTER.UNIT_EARLSGUARD_4_LAN
+			local sbp_spearman_lan = SBP.LANCASTER.UNIT_SPEARMAN_4_LAN
+			local options = { spawnInFormation = true}
+			UnitEntry_DeploySquads(localPlayer, sg_reinforcementsGold1, {sbp = sbp_MAA_lan, numSquads = 8 }, mkr_ExtraHelpSpawn, nil, nil, options)
+			UnitEntry_DeploySquads(localPlayer, sg_reinforcementsGold1, {sbp = sbp_crossbowman_lan, numSquads = 12 }, mkr_ExtraHelpSpawn, nil, nil, options)
+			UnitEntry_DeploySquads(localPlayer, sg_reinforcementsGold2, {sbp = sbp_spearman_lan, numSquads = 12 }, mkr_ExtraHelpSpawn, nil, nil, options)
+			
+			Cmd_FormationAttackMove(sg_reinforcementsGold1, mkr_ExtraHelpDest1, true)
+			Cmd_FormationAttackMove(sg_reinforcementsGold1, mkr_ExtraHelpDest2, true)
+			
+			Cmd_FormationAttackMove(sg_reinforcementsGold2, mkr_ExtraHelpDest1, true)
+			
+			EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, sg_reinforcementsGold1, 40, "icons/cta/illustrations/player_reinforcement_arrived")
+			
+			goldReinforcementsAdded = true
+		end
+		
+		--add additional reinforcements just before the player has passed the silver medal time
+		if(silverReinforcementsAdded == false and missionTime > SILVER_MEDAL_TIME - 30) then
+			--add MAA and culverns
+			
+			sg_reinforcementsSilver1 = SGroup_CreateIfNotFound("sg_reinforcementsSilver1")
+			sg_reinforcementsSilver2 = SGroup_CreateIfNotFound("sg_reinforcementsSilver2")
+			
+			local sbp_MAA_lan = SBP.LANCASTER.UNIT_EARLSGUARD_4_LAN
+			local sbp_culvern_lan = SBP.LANCASTER.UNIT_SIEGE_CULVERIN_4_LAN
+			local options = { spawnInFormation = true}
+			UnitEntry_DeploySquads(localPlayer, sg_reinforcementsSilver1, {sbp = sbp_MAA_lan, numSquads = 20 }, mkr_ExtraHelpSpawn, nil, nil, options)
+			UnitEntry_DeploySquads(localPlayer, sg_reinforcementsSilver2, {sbp = sbp_culvern_lan, numSquads = 4 }, mkr_ExtraHelpSpawn, nil, nil, options)
+			
+			Cmd_FormationAttackMove(sg_reinforcementsSilver1, mkr_ExtraHelpDest2, true)
+			
+			Cmd_FormationAttackMove(sg_reinforcementsSilver2, mkr_ExtraHelpDest2, true)
+			
+			EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, sg_reinforcementsSilver2, 40, "icons/cta/illustrations/player_reinforcement_arrived")
+			
+			silverReinforcementsAdded = true
+		end
+	end
+	
+	--check for failure condition
+	if (EGroup_CountSpawned(eg_capitalTC) > 0) then
+		if (EGroup_GetTotalHealth(eg_capitalTC) == 0) then
+			Util_StartIntel(EVENTS.Defeat)
+			Rule_AddOneShot(Mission_Fail, 0)
+			Rule_RemoveMe()
+		end
+	end
+	
+	HC_Agincourt_UpdateObjectiveUI()
+end
+
+
+function HC_Agincourt_SpawnFrenchArmy()
+	
+	HC_Agincourt_SpawnFrenchWave1()
+	HC_Agincourt_SpawnFrenchWave2()
+	HC_Agincourt_SpawnFrenchWave3()
+	
+	
+	sg_agincourtDefenders = SGroup_CreateIfNotFound("sg_agincourtDefenders")
+	sg_tramecourtDefenders = SGroup_CreateIfNotFound("sg_tramecourtDefenders")
+	sg_tramecourtDefenders2 = SGroup_CreateIfNotFound("sg_tramecourtDefenders2")
+	
+	local sbp_spearman_fre = SBP.FRENCH.UNIT_SPEARMAN_2_FRE
+	local sbp_horseman_fre = SBP.FRENCH.UNIT_HORSEMAN_2_FRE
+	local options = {
+		destination = mkr_defenders1_1,
+		destinationFacing = mkr_defendersFacing1,
+	}
+	UnitEntry_DeploySquads(enemyPlayer, sg_agincourtDefenders, {sbp = sbp_spearman_fre, numSquads = 6 }, mkr_defenders1_1, nil, nil, options)
+	options = {
+		destination = mkr_defenders1_2,
+		destinationFacing = mkr_defendersFacing1,
+	}
+	UnitEntry_DeploySquads(enemyPlayer, sg_agincourtDefenders, {sbp = sbp_spearman_fre, numSquads = 6 }, mkr_defenders1_2, nil, nil, options)
+	UnitEntry_DeploySquads(enemyPlayer, sg_agincourtDefenders, {sbp = sbp_horseman_fre, numSquads = 4 }, mkr_defenders1_3)
+	
+	local sbp_crossbow_fre = SBP.FRENCH.UNIT_CROSSBOWMAN_3_FRE
+	options = {
+		destination = mkr_defenders2_1,
+		destinationFacing = mkr_defenders2_1_facing,
+	}
+	UnitEntry_DeploySquads(enemyPlayer, sg_tramecourtDefenders, {sbp = sbp_crossbow_fre, numSquads = 6 }, mkr_defenders2_1, nil, nil, options)
+	options = {
+		destination = mkr_defenders2_2,
+		destinationFacing = mkr_defenders2_1_facing,
+	}
+	UnitEntry_DeploySquads(enemyPlayer, sg_tramecourtDefenders, {sbp = sbp_crossbow_fre, numSquads = 6 }, mkr_defenders2_2, nil, nil, options)
+	options = {
+		destination = mkr_defenders2_3,
+		destinationFacing = mkr_defenders2_1_facing,
+	}
+	UnitEntry_DeploySquads(enemyPlayer, sg_tramecourtDefenders, {sbp = sbp_crossbow_fre, numSquads = 6 }, mkr_defenders2_3, nil, nil, options)
+	options = {
+		destination = mkr_defenders2_4,
+		destinationFacing = mkr_defenders2_4_facing,
+	}
+	UnitEntry_DeploySquads(enemyPlayer, sg_tramecourtDefenders, {sbp = sbp_crossbow_fre, numSquads = 6 }, mkr_defenders2_4, nil, nil, options)
+	options = {
+		destination = mkr_defenders2_5,
+		destinationFacing = mkr_defenders2_1_facing,
+	}
+	UnitEntry_DeploySquads(enemyPlayer, sg_tramecourtDefenders, {sbp = sbp_crossbow_fre, numSquads = 6 }, mkr_defenders2_5, nil, nil, options)
+	options = {
+		destination = mkr_defenders2_6,
+		destinationFacing = mkr_defenders2_4_facing,
+	}
+	UnitEntry_DeploySquads(enemyPlayer, sg_tramecourtDefenders2, {sbp = sbp_spearman_fre, numSquads = 3 }, mkr_defenders2_6, nil, nil, options)
+	
+	sg_woodcutters = SGroup_CreateIfNotFound("sg_woodcutters")
+	local sbp_villager_fre = SBP.FRENCH.UNIT_VILLAGER_1_FRE
+	UnitEntry_DeploySquads(enemyPlayer, sg_woodcutters, {sbp = sbp_villager_fre, numSquads = 10 }, mkr_vills1)
+	AssignVillagersToWood(sg_woodcutters)
+	
+	sg_hiddenArmy = SGroup_CreateIfNotFound("sg_hiddenArmy")
+	local sbp_horseman3_fre = SBP.FRENCH.UNIT_HORSEMAN_3_FRE
+	UnitEntry_DeploySquads(enemyPlayer, sg_hiddenArmy, {sbp = sbp_horseman3_fre, numSquads = 8 }, mkr_counterattack1)
+	
+	sg_camp1Defenders = SGroup_CreateIfNotFound("sg_camp1Defenders")
+	UnitEntry_DeploySquads(enemyPlayer, sg_camp1Defenders, {sbp = sbp_crossbow_fre, numSquads = 8 }, mkr_enemyCamp1)
+	
+	sg_prison1Defenders = SGroup_CreateIfNotFound("sg_prison1Defenders")
+	UnitEntry_DeploySquads(enemyPlayer, sg_prison1Defenders, {sbp = sbp_spearman_fre, numSquads = 6 }, mkr_prisonGuards1)
+	
+	sg_patrolArmy = SGroup_CreateIfNotFound("sg_patrolArmy")
+	UnitEntry_DeploySquads(enemyPatrolPlayer, sg_patrolArmy, {sbp = sbp_horseman3_fre, numSquads = 5 }, mkr_patrol1)
+	
+	army_params = {
+		player = enemyPatrolPlayer,
+		name = "patrolArmy",
+		targets = { mkr_patrol1, mkr_patrol2, mkr_patrol3, mkr_patrol4, mkr_patrol5, mkr_patrol6, mkr_patrol7, mkr_patrol8, mkr_patrol9 },
+		targetOrder = TARGET_ORDER_PATROL,
+		attackMove = true,
+		idleTime = 0,
+		sgroup = sg_patrolArmy
+	}
+	patrolArmy = Army_Init(army_params)
+	
+	--upgrade enemy outposts
+	if(EGroup_CountSpawned(eg_Agincourt_outposts) > 0) then
+		EGroup_CompleteUpgrade(eg_Agincourt_outposts, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	end
+	if(EGroup_CountSpawned(eg_Tramecourt_outposts) > 0) then
+		EGroup_CompleteUpgrade(eg_Tramecourt_outposts, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	end
+	
+	
+	Player_CompleteUpgrade(enemyPlayer2, UPG.FRENCH.UPGRADE_UNIT_KNIGHT_4_FRE)
+	TechTree_GiveAllUpgrades_ByAge(enemyPlayer2, 4, TT_INCLUDE_BOTH)
+	
+end
+
+
+function HC_Agincourt_SpawnPlayerUnits()
+	
+	sg_playerLeader = SGroup_CreateIfNotFound("sg_playerLeader")
+	sg_playerHobelar1 = SGroup_CreateIfNotFound("sg_playerHobelar1")
+	sg_playerScout1 = SGroup_CreateIfNotFound("sg_playerScout1")
+	sg_playerScout2 = SGroup_CreateIfNotFound("sg_playerScout2")
+	sg_playerYeomen1 = SGroup_CreateIfNotFound("sg_playerYeomen1")
+	sg_playerYeomen2 = SGroup_CreateIfNotFound("sg_playerYeomen2")
+	sg_playerSpearmen1 = SGroup_CreateIfNotFound("sg_playerSpearmen1")
+	sg_playerSpearmen2 = SGroup_CreateIfNotFound("sg_playerSpearmen2")
+	sg_playerSpearmen3 = SGroup_CreateIfNotFound("sg_playerSpearmen3")
+	sg_playerSpearmen4 = SGroup_CreateIfNotFound("sg_playerSpearmen4")
+	sg_playerSpearmen5 = SGroup_CreateIfNotFound("sg_playerSpearmen5")
+	
+	local sbp_yeoman_lan = SBP.LANCASTER.UNIT_YEOMAN_4_LAN
+	UnitEntry_DeploySquads(localPlayer, sg_playerYeomen1, {sbp = sbp_yeoman_lan, numSquads = 14 }, mkr_PlayerSpawn1)
+	UnitEntry_DeploySquads(localPlayer, sg_playerYeomen2, {sbp = sbp_yeoman_lan, numSquads = 14 }, mkr_PlayerSpawn1_2)
+	
+	local sbp_spearman_lan = SBP.LANCASTER.UNIT_SPEARMAN_4_LAN
+	UnitEntry_DeploySquads(localPlayer, sg_playerSpearmen1, {sbp = sbp_spearman_lan, numSquads = 14 }, mkr_PlayerSpawn2)
+	UnitEntry_DeploySquads(localPlayer, sg_playerSpearmen2, {sbp = sbp_spearman_lan, numSquads = 1 }, mkr_PlayerSpawn2_2)
+	UnitEntry_DeploySquads(localPlayer, sg_playerSpearmen3, {sbp = sbp_spearman_lan, numSquads = 1 }, mkr_PlayerSpawn2_3)
+	UnitEntry_DeploySquads(localPlayer, sg_playerSpearmen4, {sbp = sbp_spearman_lan, numSquads = 1 }, mkr_PlayerSpawn2_4)
+	UnitEntry_DeploySquads(localPlayer, sg_playerSpearmen5, {sbp = sbp_spearman_lan, numSquads = 1 }, mkr_PlayerSpawn2_5)
+	
+	local sbp_hobelar_lan = SBP.LANCASTER.UNIT_HOBELAR_4_LAN
+	UnitEntry_DeploySquads(localPlayer, sg_playerHobelar1, {sbp = sbp_hobelar_lan, numSquads = 8 }, mkr_PlayerSpawn3)
+	
+	local sbp_scout_lan = SBP.LANCASTER.UNIT_SCOUT_1_LAN
+	UnitEntry_DeploySquads(localPlayer, sg_playerScout1, {sbp = sbp_scout_lan, numSquads = 1 }, mkr_PlayerSpawn5)
+	UnitEntry_DeploySquads(localPlayer, sg_playerScout2, {sbp = sbp_scout_lan, numSquads = 1 }, mkr_PlayerSpawn6)
+	
+	local sbp_villager_lan = SBP.LANCASTER.UNIT_VILLAGER_1_LAN
+	sg_playerVillsWood1 = SGroup_CreateIfNotFound("sg_playerVillsWood1")
+	UnitEntry_DeploySquads(localPlayer, sg_playerVillsWood1, {sbp = sbp_villager_lan, numSquads = 6 }, mkr_PlayerVillsWood1)
+	AssignVillagersToWood(sg_playerVillsWood1)
+	
+	sg_playerVillsSheep1 = SGroup_CreateIfNotFound("sg_playerVillsSheep1")
+	UnitEntry_DeploySquads(localPlayer, sg_playerVillsSheep1, {sbp = sbp_villager_lan, numSquads = 7 }, mkr_PlayerVillsSheep1)
+	AssignVillagersToSheep(sg_playerVillsSheep1)
+	
+	sg_playerVillsFarms1 = SGroup_CreateIfNotFound("sg_playerVillsFarms1")
+	UnitEntry_DeploySquads(localPlayer, sg_playerVillsFarms1, {sbp = sbp_villager_lan, numSquads = 4 }, mkr_PlayerVillsFarms1)
+	AssignVillagersToSheep(sg_playerVillsFarms1)
+	
+	sg_playerVillsGold1 = SGroup_CreateIfNotFound("sg_playerVillsGold1")
+	UnitEntry_DeploySquads(localPlayer, sg_playerVillsGold1, {sbp = sbp_villager_lan, numSquads = 5 }, mkr_PlayerVillsGold1)
+	AssignVillagersToGold(sg_playerVillsGold1)
+	
+	--modify the King Henry V unit that is already placed on the map
+	Modify_EntityMaxHealth(sg_playerLeader, henryVBonusHealth, MUT_Addition)
+	Modify_UnitSpeed(sg_playerLeader, 1.25, -1, MUT_Multiplication)
+	
+	--captured units
+	local sbp_knight_lan = SBP.LANCASTER.UNIT_KNIGHT_4_LAN
+	sg_captureKnights1 = SGroup_CreateIfNotFound("sg_captureKnights1")
+	UnitEntry_DeploySquads(capturedUnitsPlayer, sg_captureKnights1, {sbp = sbp_knight_lan, numSquads = 6 }, mkr_prison1)
+	
+end
+
+
+function HC_Agincourt_SpawnGaiaUnits()
+	
+	sg_gaia_sheep = SGroup_CreateIfNotFound("sg_gaia_sheep")
+	local sbp_sheep = SBP.GAIA.GAIA_HERDABLE_SHEEP
+	
+	UnitEntry_DeploySquads(localPlayer, sg_gaia_sheep, {{sbp = sbp_sheep, numSquads = 1 }}, mkr_SheepSpawn1)
+	UnitEntry_DeploySquads(localPlayer, sg_gaia_sheep, {{sbp = sbp_sheep, numSquads = 1 }}, mkr_SheepSpawn2)
+	UnitEntry_DeploySquads(localPlayer, sg_gaia_sheep, {{sbp = sbp_sheep, numSquads = 1 }}, mkr_SheepSpawn3)
+	UnitEntry_DeploySquads(localPlayer, sg_gaia_sheep, {{sbp = sbp_sheep, numSquads = 1 }}, mkr_SheepSpawn4)
+	UnitEntry_DeploySquads(localPlayer, sg_gaia_sheep, {{sbp = sbp_sheep, numSquads = 1 }}, mkr_SheepSpawn5)
+	UnitEntry_DeploySquads(localPlayer, sg_gaia_sheep, {{sbp = sbp_sheep, numSquads = 1 }}, mkr_SheepSpawn6)
+	UnitEntry_DeploySquads(localPlayer, sg_gaia_sheep, {{sbp = sbp_sheep, numSquads = 1 }}, mkr_SheepSpawn7)
+	UnitEntry_DeploySquads(localPlayer, sg_gaia_sheep, {{sbp = sbp_sheep, numSquads = 1 }}, mkr_SheepSpawn8)
+	
+	SGroup_SetWorldOwned(sg_gaia_sheep)
+	
+end
+
+function HC_Agincourt_OnSquadKilled(context)
+	local victim = context.victim
+	
+	if(World_OwnsSquad(victim) == true) then
+		return
+	end
+	
+	if Squad_GetPlayerOwner(victim) == localPlayer then
+		
+		if(Squad_IsOfType(victim, "leader")) then
+			
+			Rule_AddOneShot(HC_Agincourt_RespawnHenry, 31)
+			
+		end
+	end
+	
+end
+
+function HC_Agincourt_RespawnHenry(context)
+	
+	World_GetAllSquads(sg_playerLeader)
+	SGroup_Filter(sg_playerLeader, SBP.LANCASTER.UNIT_HENRY_5_CMP_LAN, FILTER_KEEP)
+	if(SGroup_CountSpawned(sg_playerLeader) > 0) then
+		
+		--increase Henry's max health every time he respawns up to 250
+		if(henryVBonusHealth <= 225) then
+			henryVBonusHealth = henryVBonusHealth + 25
+		end
+		
+		Modify_EntityMaxHealth(sg_playerLeader, henryVBonusHealth, MUT_Addition)
+		Modify_UnitSpeed(sg_playerLeader, 1.25, -1, MUT_Multiplication)
+		EventCues_CallToAction("$11268427", CTA_CELEBRATE, nil, nil, sg_playerLeader, 30, "icons/cta/illustrations/player_reinforcement_arrived")--King Henry Has Returned!
+	end
+end
+
+-- An entity is destroyed
+function HC_Agincourt_OnDestruction(context)
+	
+	-- If the destroyed building was one of the enemy landmarks
+	if (context.victim == enemyTC1) then
+		agincourtTownAlive = false
+	end
+	if (context.victim == enemyTC2) then
+		tramecourtTownAlive = false
+	end
+end
+
+
+function HC_Agincourt_OnProjectileFired(context)
+	--add extra AoE to cannon when conqueror mode is activated
+	if(context.attacker ~= nil) then
+		if(World_OwnsEntity(context.attacker) == false and Entity_IsBuilding(context.attacker) == false) then
+			local attackerSquad = Entity_GetSquad(context.attacker)
+			
+			local isBuffedCannon = false
+			if(SGroup_ContainsSquad(sg_enemyRow3_cannon3, Squad_GetID(attackerSquad), false) == true) then
+				isBuffedCannon = true
+			end
+			--the left and right cannons only gain the extra damage if conqueror mode is active
+			if(conquerorModeActivated == true) then
+				if(SGroup_ContainsSquad(sg_enemyRow3_cannon1, Squad_GetID(attackerSquad), false) == true) then
+					isBuffedCannon = true
+				end
+				if(SGroup_ContainsSquad(sg_enemyRow3_cannon5, Squad_GetID(attackerSquad), false) == true) then
+					isBuffedCannon = true
+				end
+			end
+			
+			if(isBuffedCannon == true) then
+				if(context.target ~= nil) then
+					local foundValidTarget = false
+					local isRegularUnit = false
+					local bounceCount = 3
+					local targetSquad = nil
+					local cannonStart = nil
+					local type = scartype(context.target)
+					if(type == ST_MARKER or type == ST_SCARPOS) then
+						--if the target is a position, then this is part of the scripted attacks in wave3
+						foundValidTarget = true
+						isRegularUnit = false
+						cannonStart = Util_GetPosition(context.target)
+						bounceCount = 5
+					else
+					--if the target is a regular unit
+						if(Entity_IsBuilding(context.target) == false and Entity_GetHealth(context.target) > 0) then
+							targetSquad = Entity_GetSquad(context.target)
+							cannonStart = Util_GetPosition(targetSquad)
+							foundValidTarget = true
+							isRegularUnit = true
+						end
+					end
+					--if the target is a regular unit
+					if(foundValidTarget == true) then
+						local bounceDirection = Util_GetPosition(attackerSquad)
+						local bounceStart = Util_GetPosition(cannonStart)
+						
+						bounceDirection.x = bounceStart.x - bounceDirection.x
+						bounceDirection.z = bounceStart.z - bounceDirection.z
+						
+						local distToStart = math.sqrt((bounceDirection.x * bounceDirection.x) + (bounceDirection.z * bounceDirection.z))
+						local firstHitDelay = distToStart / 50
+						if(distToStart > 0) then
+							bounceDirection.x = bounceDirection.x / distToStart
+							bounceDirection.z = bounceDirection.z / distToStart
+						end
+						bounceDirection.x = bounceDirection.x * 4
+						bounceDirection.z = bounceDirection.z * 4
+						
+						--add primary hit effect
+						Rule_AddOneShot(HC_Agincourt_SpawnCannonHitEffect, firstHitDelay, {hitPosition = bounceStart})
+						
+						--add secondary bounce hit effects
+						for i = 1, bounceCount do
+							local bouncePosition1 = Util_GetPosition(cannonStart)
+							bouncePosition1.x = bouncePosition1.x + (bounceDirection.x * i)
+							bouncePosition1.z = bouncePosition1.z + (bounceDirection.z * i)
+							Rule_AddOneShot(HC_Agincourt_SpawnBounceHitEffect, (.1 * i) + firstHitDelay, {hitPosition = bouncePosition1})
+						end
+					end
+				end
+			end
+		end
+	end
+	
+end
+
+function HC_Agincourt_SpawnCannonHitEffect(context, data)
+	
+	--add additional visual effect
+	local weaponBP = BP_GetWeaponBlueprint("weapon_naval_fireship_incendiaries")
+	Misc_DoWeaponHitEffectOnPosition(data.hitPosition, weaponBP, true)
+	
+	sg_damageTargets = SGroup_CreateIfNotFound("sg_damageTargets")
+	SGroup_Clear(sg_damageTargets)
+	--add outer ring of damage
+	local cannonExtraDamage = 15
+	Player_GetAllSquadsNearMarker(localPlayer, sg_damageTargets, data.hitPosition, 2)
+	for i = 1, SGroup_CountSpawned(sg_damageTargets) do
+		local squad = SGroup_GetSquadAt(sg_damageTargets, i)
+		local maxHealth = Squad_GetHealthMax(squad)
+		local currentHealth = Squad_GetHealth(squad)
+		if(currentHealth > cannonExtraDamage) then
+			local newHealthPercent = (currentHealth - cannonExtraDamage) / maxHealth
+			Squad_SetHealth(squad, newHealthPercent)
+		else
+			Squad_Kill(squad)
+		end
+	end
+	--add 2nd ring of higher damage
+	SGroup_Clear(sg_damageTargets)
+	Player_GetAllSquadsNearMarker(localPlayer, sg_damageTargets, data.hitPosition, 1.5)
+	for i = 1, SGroup_CountSpawned(sg_damageTargets) do
+		local squad = SGroup_GetSquadAt(sg_damageTargets, i)
+		local maxHealth = Squad_GetHealthMax(squad)
+		local currentHealth = Squad_GetHealth(squad)
+		if(currentHealth > cannonExtraDamage) then
+			local newHealthPercent = (currentHealth - cannonExtraDamage) / maxHealth
+			Squad_SetHealth(squad, newHealthPercent)
+		else
+			Squad_Kill(squad)
+		end
+	end
+end
+
+function HC_Agincourt_SpawnBounceHitEffect(context, data)
+	
+	--add additional visual effect
+	local weaponBP = BP_GetWeaponBlueprint("weapon_cannon_barrage_royal_fre")
+	Misc_DoWeaponHitEffectOnPosition(data.hitPosition, weaponBP, true)
+	
+	sg_damageTargets = SGroup_CreateIfNotFound("sg_damageTargets")
+	SGroup_Clear(sg_damageTargets)
+	--add extra damage
+	local cannonExtraDamage = 10
+	Player_GetAllSquadsNearMarker(localPlayer, sg_damageTargets, data.hitPosition, 1.5)
+	for i = 1, SGroup_CountSpawned(sg_damageTargets) do
+		local squad = SGroup_GetSquadAt(sg_damageTargets, i)
+		local maxHealth = Squad_GetHealthMax(squad)
+		local currentHealth = Squad_GetHealth(squad)
+		if(currentHealth > cannonExtraDamage) then
+			local newHealthPercent = (currentHealth - cannonExtraDamage) / maxHealth
+			Squad_SetHealth(squad, newHealthPercent)
+		else
+			Squad_Kill(squad)
+		end
+	end
+	
+end
+
+function HC_Agincourt_OnAbilityExecuted(context, data)
+	
+	if context.ability == ABILITY.LEADER_RALLY_YEOMEN_CMP_LAN then
+		HC_Agincourt_ResetAbility()
+	end
+	
+end
+
+function HC_Agincourt_ResetAbility()
+	
+	Player_ResetAbilityCooldowns(localPlayer, ABILITY.YEOMAN_SYNCHRONIZED_LAN)
+	
+	
+end
+
+function HC_Agincourt_EndChallenge()
+	
+	
+	-- Provide completion time to Stats system via Data Store
+	if(conquerorModeActivated == true) then
+		Game_StoreTableData("conqueror", {kpi = missionTime})
+	else
+		Game_StoreTableData("trial", {kpi = missionTime})
+	end
+	
+	-- Play dialogue
+	if(conquerorModeActivated == true) then
+		Util_StartIntel(EVENTS.Victory_Conqueror)
+	else
+		Util_StartIntel(EVENTS.Victory)
+	end
+	
+	Mission_Complete()
+	
+end
+
+function HC_Agincourt_IntroSetup()
+	
+	-- We need to spawn these without associated objective logic
+	HC_Agincourt_Wave1_SpawnUnits()
+	HC_Agincourt_Wave2_SpawnUnits()
+	HC_Agincourt_Wave3_SpawnUnits()
+	
+	local advance1Amount = .25
+	HC_Agincourt_Wave1_SendBackToLane(sg_enemyRow1_horsemen1, 1, advance1Amount, true, false)
+	HC_Agincourt_Wave1_SendBackToLane(sg_enemyRow1_knights2, 2, advance1Amount, true, false)
+	HC_Agincourt_Wave1_SendBackToLane(sg_enemyRow1_knights3, 3, advance1Amount, true, false)
+	HC_Agincourt_Wave1_SendBackToLane(sg_enemyRow1_knights4, 4, advance1Amount, true, false)
+	HC_Agincourt_Wave1_SendBackToLane(sg_enemyRow1_horsemen5, 5, advance1Amount, true, false)
+	HC_Agincourt_Wave1_SendBackToLane(sg_enemyRow1_leader, 3, advance1Amount, true, false)
+	
+	
+	local advance2Amount = .08
+	HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_horsemen1Spawn, 1, advance2Amount, true, true)
+	HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_menatarms2Spawn, 2, advance2Amount, true, true)
+	HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_menatarms3Spawn, 3, advance2Amount, true, true)
+	HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_archers4Spawn, 4, advance2Amount, true, true)
+	HC_Agincourt_Wave2_SendBackToLane(sg_enemyRow2_spearmen5Spawn, 5, advance2Amount, true, true)
+	
+	
+	introAdvance3Amount = .19
+	local cannonProgressOffset = .065 -- the distance to offset the cannon and defensive circle behind the wave target
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_army1, 1, .1 - cannonProgressOffset, false, false, false)
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_army3, 3, .1 - cannonProgressOffset, false, false, false)
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_army5, 5, .1 - cannonProgressOffset, false, false, false)
+	
+	Rule_AddOneShot(HC_Agincourt_IntroSetup2, 2)
+	
+	
+	-- These are intro-specific units that aren't needed elsewhere
+	sg_intro_raiders_1 = SGroup_CreateIfNotFound("sg_intro_raiders_1")
+	sg_intro_raiders_2 = SGroup_CreateIfNotFound("sg_intro_raiders_2")
+	
+	local facingPos = Marker_GetPosition(mkr_playerBase)
+	
+	UnitEntry_DeploySquads(enemyPlayer, sg_intro_raiders_1, {sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 6, facing = facingPos }, mkr_intro_raiders_1_spawn, nil, nil)
+	UnitEntry_DeploySquads(enemyPlayer, sg_intro_raiders_2, {sbp = SBP.FRENCH.UNIT_CROSSBOWMAN_3_FRE, numSquads = 6, facing = facingPos }, mkr_intro_raiders_2_spawn, nil, nil)
+	
+	Cmd_FormationMove(sg_intro_raiders_1, mkr_intro_raiders_1_dest, false, false)
+	Cmd_FormationMove(sg_intro_raiders_2, mkr_intro_raiders_2_dest, false, false)
+	
+	Cmd_FormationMove(sg_intro_raiders_1, mkr_intro_raiders_1_dest_2, true, false)
+	Cmd_FormationMove(sg_intro_raiders_2, mkr_intro_raiders_2_dest_2, true, false)
+	
+	Cmd_FormationMove(sg_intro_raiders_1, mkr_ArmyAttack2_2, true, false)
+	Cmd_FormationMove(sg_intro_raiders_2, mkr_ArmyAttack4_2, true, false)
+	
+	
+	--move wave 1 leader
+	Cmd_Move(sg_enemyRow1_leader, mkr_intro_leader_1_dest_1, true, false)
+	Cmd_Move(sg_enemyRow1_leader, mkr_intro_leader_1_dest_2, true, false)
+	Cmd_Move(sg_enemyRow1_leader, mkr_intro_leader_1_dest_3, true, false)
+	
+	--move wave 2 leaders
+	Cmd_Move(sg_enemyRow2_leader, mkr_intro_leader_2_dest_1, true, false, mkr_playerBase)
+	Cmd_Move(sg_enemyRow2_leader2, mkr_intro_leader_2_dest_2, true, false, mkr_playerBase)
+	
+	Cmd_Move(sg_enemyRow2_leader, mkr_intro_leader_2_dest_1_2, true, false, mkr_playerBase)
+	Cmd_Move(sg_enemyRow2_leader2, mkr_intro_leader_2_dest_2_2, true, false, mkr_playerBase)
+	
+	--move wave 3 leader
+	Cmd_Move(sg_enemyRow3_leader, mkr_frenchArmy3_2, true, false, mkr_playerBase)
+	Cmd_Move(sg_enemyRow3_leader, mkr_frenchArmyS2_2, true, false, mkr_playerBase)
+	
+	
+	-- We need to spawn these pre-gameplay, because they will exist at the transition point between intro and gameplay
+	HC_Agincourt_SpawnPlayerUnits()
+	HC_Agincourt_SpawnGaiaUnits()
+	
+	sg_frenchIntroUnits = SGroup_CreateIfNotFound("sg_frenchIntroUnits")
+	Player_GetAll(enemyPlayer, sg_frenchIntroUnits)
+	
+end
+
+
+function HC_Agincourt_IntroSetup2()
+	
+	local cannonProgressOffset = .065 -- the distance to offset the cannon and defensive circle behind the wave target
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_defenders1, 1, introAdvance3Amount - cannonProgressOffset, false, false, true)
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_cannon1, 1, introAdvance3Amount - cannonProgressOffset, true, false)
+	
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_defenders3, 3, introAdvance3Amount - cannonProgressOffset, false, false, true)
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_cannon3, 3, introAdvance3Amount - cannonProgressOffset, true, false)
+	
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_defenders5, 5, introAdvance3Amount - cannonProgressOffset, false, false, true)
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_cannon5, 5, introAdvance3Amount - cannonProgressOffset, true, false)
+	
+	Rule_AddOneShot(HC_Agincourt_IntroSetup_enemy_cheer, 5)
+	Rule_AddOneShot(HC_Agincourt_IntroSetup3, 6)
+end
+
+function HC_Agincourt_IntroSetup_enemy_cheer()
+	
+	SGroup_EnableCheering(sg_enemyRow2_menatarms2Spawn, true, 8, WALLA_CAMP_CELEBRATE_LARGE)
+	SGroup_EnableCheering(sg_enemyRow2_menatarms3Spawn, true, 8, WALLA_CAMP_CELEBRATE_LARGE)
+	SGroup_EnableCheering(sg_enemyRow2_archers4Spawn, true, 8, WALLA_CAMP_CELEBRATE_LARGE)
+	SGroup_EnableCheering(sg_enemyRow2_spearmen5Spawn, true, 8, WALLA_CAMP_CELEBRATE_LARGE)
+end
+
+function HC_Agincourt_IntroSetup3()
+	
+	local cannonProgressOffset = .065 -- the distance to offset the cannon and defensive circle behind the wave target
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_defenders1, 1, introAdvance3Amount - cannonProgressOffset, false, false, false, true)
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_militia1, 1, .075, true, false, false)
+	
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_defenders3, 3, introAdvance3Amount - cannonProgressOffset, false, false, false, true)
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_militia3, 3, .075, true, false, false)
+	
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_defenders5, 5, introAdvance3Amount - cannonProgressOffset, false, false, false, true)
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_militia5, 5, .075, true, false, false)
+	
+	Rule_AddOneShot(HC_Agincourt_IntroSetup4, 3.5)
+end
+
+function HC_Agincourt_IntroSetup4()
+	
+	local cannonProgressOffset = .065 -- the distance to offset the cannon and defensive circle behind the wave target
+	
+	Player_ResetAbilityCooldowns(enemyPlayer, ABILITY.DEPLOY_PAVISE_FRE)
+	
+	for i = 1, SGroup_CountSpawned(sg_enemyRow3_defenders1) do
+		local squad = SGroup_GetSquadAt(sg_enemyRow3_defenders1, i)
+		SGroup_Single(sg_single, squad)
+		if(SGroup_CountSpawned(sg_single) > 0) then
+			local squadPos = Util_GetPosition(sg_single)
+			Cmd_Ability(sg_single, ABILITY.DEPLOY_PAVISE_FRE, squadPos, nil, true)
+		end
+	end
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_cannon1, 1, introAdvance3Amount - cannonProgressOffset, true, true, false, false, true)
+	
+	for i = 1, SGroup_CountSpawned(sg_enemyRow3_defenders3) do
+		local squad = SGroup_GetSquadAt(sg_enemyRow3_defenders3, i)
+		SGroup_Single(sg_single, squad)
+		if(SGroup_CountSpawned(sg_single) > 0) then
+			local squadPos = Util_GetPosition(sg_single)
+			Cmd_Ability(sg_single, ABILITY.DEPLOY_PAVISE_FRE, squadPos, nil, true)
+		end
+	end
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_cannon3, 3, introAdvance3Amount - cannonProgressOffset, true, true, false, false, true)
+	
+	for i = 1, SGroup_CountSpawned(sg_enemyRow3_defenders5) do
+		local squad = SGroup_GetSquadAt(sg_enemyRow3_defenders5, i)
+		SGroup_Single(sg_single, squad)
+		if(SGroup_CountSpawned(sg_single) > 0) then
+			local squadPos = Util_GetPosition(sg_single)
+			Cmd_Ability(sg_single, ABILITY.DEPLOY_PAVISE_FRE, squadPos, nil, true)
+		end
+	end
+	HC_Agincourt_Wave3_SendBackToLane(sg_enemyRow3_cannon5, 5, introAdvance3Amount - cannonProgressOffset, true, true, false, false, true)
+	
+	
+	
+end
+
+
+
+function HC_Agincourt_IntroSetupShot2()
+	
+	Cmd_FormationMove(sg_playerYeomen1, mkr_PlayerDest1, false)
+	Cmd_FormationMove(sg_playerYeomen2, mkr_PlayerDest1_2, false)
+	
+	Cmd_FormationMove(sg_playerSpearmen1, mkr_PlayerSpawn2Dest, false)
+	Cmd_FormationMove(sg_playerSpearmen2, mkr_PlayerSpawn2, false)
+	Cmd_FormationMove(sg_playerSpearmen3, mkr_PlayerSpawn2, false)
+	Cmd_FormationMove(sg_playerSpearmen4, mkr_PlayerSpawn2, false)
+	Cmd_FormationMove(sg_playerSpearmen5, mkr_PlayerSpawn2, false)
+	
+	Cmd_FormationMove(sg_playerSpearmen2, mkr_PlayerSpawn2Dest, true)
+	Cmd_FormationMove(sg_playerSpearmen3, mkr_PlayerSpawn2Dest, true)
+	Cmd_FormationMove(sg_playerSpearmen4, mkr_PlayerSpawn2Dest, true)
+	Cmd_FormationMove(sg_playerSpearmen5, mkr_PlayerSpawn2Dest, true)
+	Cmd_FormationMove(sg_playerHobelar1, mkr_PlayerSpawn3Dest, true)
+	
+	Cmd_Move(sg_playerLeader, mkr_PlayerSpawn4Dest, false)
+	
+	Rule_AddOneShot(HC_Agincourt_IntroSetupShot2_yeomen, 4)
+	Rule_AddOneShot(HC_Agincourt_IntroSetupShot2_yeomen2, 7)
+	
+	Rule_AddOneShot(HC_Agincourt_IntroSetupShot2_spearmen_cheer, 7)
+	Rule_AddOneShot(HC_Agincourt_IntroSetupShot2_yeomen_cheer, 9)
+end
+
+function HC_Agincourt_IntroSetupShot2_yeomen()
+	
+	
+	for i = 1, SGroup_CountSpawned(sg_playerYeomen1) do
+		local squad = SGroup_GetSquadAt(sg_playerYeomen1, i)
+		SGroup_Single(sg_single, squad)
+		local targetPos = Util_GetPosition(mkr_intro_target)
+		Cmd_Ability(sg_single, ABILITY.YEOMAN_SYNCHRONIZED_LAN, targetPos, nil, true)
+	end
+	
+end
+
+function HC_Agincourt_IntroSetupShot2_yeomen2()
+	
+	for i = 1, SGroup_CountSpawned(sg_playerYeomen2) do
+		local squad = SGroup_GetSquadAt(sg_playerYeomen2, i)
+		SGroup_Single(sg_single, squad)
+		local targetPos = Util_GetPosition(mkr_intro_target)
+		Cmd_Ability(sg_single, ABILITY.YEOMAN_SYNCHRONIZED_LAN, targetPos, nil, true)
+	end
+	
+end
+
+function HC_Agincourt_IntroSetupShot2_spearmen_cheer()
+	
+	SGroup_EnableCheering(sg_playerSpearmen1, true, 2, WALLA_CAMP_CELEBRATE_LARGE)
+end
+
+function HC_Agincourt_IntroSetupShot2_yeomen_cheer()
+	
+	SGroup_EnableCheering(sg_playerYeomen1, true, 2, WALLA_CAMP_CELEBRATE_LARGE)
+	SGroup_EnableCheering(sg_playerYeomen2, true, 2, WALLA_CAMP_CELEBRATE_LARGE)
+end
+
+
+function HC_Agincourt_IntroTeardown()
+	
+	-- Get rid of all those units so that gameplay units can be spawned
+	SGroup_DestroyAllSquads(sg_frenchIntroUnits)
+	
+	-- Get rid of SGroups we won't need anymore
+	SGroup_Destroy(sg_frenchIntroUnits)
+	SGroup_Destroy(sg_intro_raiders_1)
+	SGroup_Destroy(sg_intro_raiders_2)
+	
+	--remove reticules
+	if(cannonReticuleID1 ~= nil) then
+		UI_ModalVisual_Destroy(cannonReticuleID1)
+	end
+	if(cannonReticuleID3 ~= nil) then
+		UI_ModalVisual_Destroy(cannonReticuleID3)
+	end
+	if(cannonReticuleID5 ~= nil) then
+		UI_ModalVisual_Destroy(cannonReticuleID5)
+	end
+	
+	--reset ability cooldown
+	Player_ResetAbilityCooldowns(localPlayer, ABILITY.YEOMAN_SYNCHRONIZED_LAN)
+	
+	--remove one shot functions if they haven't been called
+	Rule_Remove(HC_Agincourt_IntroSetup2)
+	Rule_Remove(HC_Agincourt_IntroSetup_enemy_cheer)
+	Rule_Remove(HC_Agincourt_IntroSetup3)
+	Rule_Remove(HC_Agincourt_IntroSetup4)
+	Rule_Remove(HC_Agincourt_IntroSetupShot2)
+	Rule_Remove(HC_Agincourt_IntroSetupShot2_yeomen)
+	Rule_Remove(HC_Agincourt_IntroSetupShot2_yeomen2)
+	Rule_Remove(HC_Agincourt_IntroSetupShot2_spearmen_cheer)
+	Rule_Remove(HC_Agincourt_IntroSetupShot2_yeomen_cheer)
+end

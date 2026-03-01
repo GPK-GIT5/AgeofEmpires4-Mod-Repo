@@ -1,0 +1,287 @@
+-----------------------------------------------------------------------
+--
+-- Mongol Chapter 3 - Lumen Shan
+--
+-- Automated testing script
+--
+-----------------------------------------------------------------------
+
+import("GameScarUtil.scar")
+import("Prefabs.scar")
+import("standard.scar")
+import("scarutil.scar")
+import("team.scar")
+
+import("core.scar")
+
+-- We need to import this for anything to work. We don't need anything else
+import("MissionOMatic/MissionOMatic.scar")
+import("missionomatic/modules/module_rovingarmy.scar")
+
+--enumeration for objective status
+statusTable = {
+	NotRun = 0, 
+	InProgress = 1,
+	Pass = 2,
+	Fail = 3
+}
+
+--Bool verifying if the Campaign Auto Test Agrument is present
+debug_IsCampaignAutoTest = false
+
+player1 = World_GetPlayerAt(1)
+
+-------------------------------------------------------------------------
+-- [[ ONINIT ]]
+-------------------------------------------------------------------------
+
+function AutoTest_OnInit()
+	
+	if Util_GetCommandLineArgument("CampaignAutoTest") then --if command line is present run the following:
+		
+		
+		import("test/common.scar")
+		import("test/standard_test.scar")
+		import("test/test_framework.scar")
+		--import("test/test_framework_cardinal.scar")
+
+		-- Tests using this file are driven by RPC and have no use for the on screen info of the legacy test system.
+		standard_test_on_screen_info.Hide()
+
+		print("CampaignAutoTest parameter detected")
+		debug_IsCampaignAutoTest = true
+		
+		
+		--Checks for the 'NoSwoopy' Arg, and disables the swoopy intro camera on true--
+		if Util_GetCommandLineArgument("NoSwoopy") then
+			Rule_AddInterval(AutoTest_SkipAndStart, 1)
+		else
+			b_introStarted = false
+			AutomatedLumen_RegisterCheckpoints()
+			Rule_AddInterval(AutoTest_PlayIntro, 1)
+		end
+				
+	end
+end
+
+-- Skips the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_SkipAndStart()
+	if Event_IsAnyRunning() then
+		Rule_RemoveMe()
+		Game_SkipAllEvents(false)
+		AutomatedMission_Start() --Starts the autotest scar sequence
+	end
+end
+
+-- Plays the intro camera when starting the mission (See 'NoSwoopy' above)
+function AutoTest_PlayIntro()
+	if b_introStarted == false then
+		if Event_IsAnyRunning() then
+			b_introStarted = true
+		end
+	else
+		if Event_IsAnyRunning() == false then
+			Rule_RemoveMe()
+			FOW_RevealAll()
+			Rule_AddInterval(AutomatedLumen_Phase1_CheckPlayStart, 1)	-- Delays the start of the player scripted control sequence
+		end
+	end
+end
+
+--Script for kicking off the uatomated testing flow
+function AutomatedMission_Start()
+	print("AutomatedMission_Start() called")
+	FOW_RevealAll()
+	AutomatedLumen_RegisterCheckpoints() --Compiles the list of checkpoints
+	Rule_AddInterval(AutomatedLumen_Phase1_CheckPlayStart, 1)	-- Delays the start of the player scripted control sequence
+end
+
+--Compiles the list of checkpoints
+function AutomatedLumen_RegisterCheckpoints()
+	---- All Checkpoints Should be preceeded with Campaign Auto Test 'cat_' --
+	print("AutomatedLumen_RegisterCheckpoints() called")
+
+	--"cat_PlayStart", when play is handed over to the player
+	CampaignAutotest_RegisterCheckpoint("cat_PlayStart", 120)
+	CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["InProgress"])
+	
+	--"cat_EnemyFortDestroyed", the player has destroyed the enemy fort and completed the first objective
+	CampaignAutotest_RegisterCheckpoint("cat_EnemyFortDestroyed", 300)
+	CampaignAutotest_SetCheckpointStatus("cat_EnemyFortDestroyed", statusTable["NotRun"])
+	
+	--"cat_WallBuilt", the player has built a wall and the enemy is blocked
+	CampaignAutotest_RegisterCheckpoint("cat_WallBuilt", 300)
+	CampaignAutotest_SetCheckpointStatus("cat_WallBuilt", statusTable["NotRun"])
+	
+	--"cat_MissionVictory", the mission is complete with victory
+	CampaignAutotest_RegisterCheckpoint("cat_MissionVictory", 1200)
+	CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["NotRun"])
+	
+	
+end
+
+--Check if the intro cine has ended successfully and control has turned over to the player.
+function AutomatedLumen_Phase1_CheckPlayStart()
+	print ("AutomatedLumen_Phase1_CheckPlayStart() called")
+	if Objective_IsStarted(OBJ_ClaimArea) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_PlayStart", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_EnemyFortDestroyed", statusTable["InProgress"])
+		Rule_AddOneShot(AutomatedLumen_Phase2_MovePlayerArmy, 15)
+	end
+	
+	
+	
+end
+
+--Organize the player's military units into groups and move them toward the first location.
+function AutomatedLumen_Phase2_MovePlayerArmy()
+	print ("AutomatedLumen_Phase2_MovePlayerArmy() called")
+	sg_cat_playermilitary = SGroup_CreateIfNotFound("sg_cat_playermilitary")
+	sg_cat_playerarmy1 = SGroup_CreateIfNotFound("sg_cat_playerarmy1")
+	sg_cat_playerarmy2 = SGroup_CreateIfNotFound("sg_cat_playerarmy2")
+	
+	Player_GetAll()
+	sg_cat_playermilitary = Player_GetSquads(player1)
+	SGroup_Duplicate(sg_allsquads, sg_cat_playermilitary)
+	SGroup_Duplicate(sg_allsquads, sg_cat_playerarmy1)
+	Cmd_FormationAttackMove(sg_cat_playermilitary, mkr_song_fort)
+	
+	rule_Army1_Move1 = Rule_AddInterval(_AutomatedLumen_UnitReplenish, 1, {sgroupName = sg_cat_playerarmy1, unitCount = SGroup_CountSpawned(sg_cat_playerarmy1), spawnLocation = mkr_mongol_dest_1, targetLocation = mkr_song_fort})
+	
+	Rule_AddInterval(AutomatedLumen_Phase2_QueryIsComplete, 1)
+end
+
+--Query to see if the first objective complete and player has captured a base.
+function AutomatedLumen_Phase2_QueryIsComplete()
+	if Objective_IsComplete(OBJ_ClaimArea) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_EnemyFortDestroyed", statusTable["Pass"])
+		Rule_AddOneShot(AutomatedLumen_Phase3_BuildWall_1, 6)
+		Rule_RemoveWithID(rule_Army1_Move1)
+		rule_Army1_Move2 = Rule_AddInterval(_AutomatedLumen_UnitReplenish, 1, {sgroupName = sg_cat_playerarmy1, unitCount = SGroup_CountSpawned(sg_cat_playerarmy1), spawnLocation = mkr_song_fort, targetLocation = mkr_cat_wall1_start})
+		Cmd_FormationAttackMove(sg_cat_playermilitary, mkr_cat_wall1_start)
+	else
+		Cmd_FormationAttackMove(sg_cat_playermilitary, mkr_song_fort)
+	end
+end
+
+
+--Organizes villagers into the first wall builder group and sends military defenders with them
+function AutomatedLumen_Phase3_BuildWall_1()
+	print ("AutomatedLumen_Phase3_BuildWall_1() called")
+	CampaignAutotest_SetCheckpointStatus("cat_WallBuilt", statusTable["InProgress"])
+	sg_cat_villagers_1 = SGroup_CreateIfNotFound("sg_cat_villagers_1")
+	UnitEntry_DeploySquads(player1, sg_cat_villagers_1, {{ sbp = SBP.CHINESE.UNIT_VILLAGER_1_CHI, numSquads = 5 }}, mkr_neutral_lumen_villagers)
+	SGroup_SetInvulnerable(sg_cat_villagers_1, true, -1)
+	SGroup_SetTargetingType(sg_cat_villagers_1, Targeting_None)
+	
+	Player_AddResources(player1, {gold = 5000, wood = 10000, food = 5000, stone = 999999,})
+	
+	wallEnt = Entity_Create(EBP.CHINESE.BUILDING_DEFENSE_WALL_CHI, player1, Util_GetPosition(mkr_neutral_mountain_villagers), true)	
+	LocalCommand_PlayerSquadConstructSlottedSpline(player1, sg_cat_villagers_1, EBP.CHINESE.BUILDING_DEFENSE_WALL_CHI, World_GetSpawnablePosition(Util_GetPosition(mkr_cat_wall1_start), wallEnt), World_GetSpawnablePosition(Util_GetPosition(mkr_cat_wall1_end), wallEnt), false)
+	Rule_AddInterval(AutomatedLumen_Phase3_QueryBohekouStarted, 1)
+		
+end
+
+
+--Query if the bohekou objective has started, if so send units over
+function AutomatedLumen_Phase3_QueryBohekouStarted()
+	print ("AutomatedLumen_Phase3_QueryBohekouStarted() called")
+	if Objective_IsStarted(OBJ_Bohekou) then
+		Rule_RemoveMe()
+		UnitEntry_DeploySquads(player1, sg_cat_playerarmy2, {{ type = "scar_knight", numSquads = 50 }}, mkr_reveal_bohekou_2)
+		
+		rule_Army2_Move1 = Rule_AddInterval(_AutomatedLumen_UnitReplenish, 1, {sgroupName = sg_cat_playerarmy2, unitCount = SGroup_CountSpawned(sg_cat_playerarmy1), spawnLocation = mkr_reveal_bohekou_2, targetLocation = mkr_song_path_d})
+		
+		Cmd_FormationAttackMove(sg_cat_playerarmy2, mkr_song_path_d)
+		Rule_AddInterval(AutomatedLumen_Phase3_QueryBohekouCompleted, 1)
+	end
+
+end
+
+--Query if Bohekou has been captured
+function AutomatedLumen_Phase3_QueryBohekouCompleted()
+	if Objective_IsComplete(OBJ_Bohekou) then
+		Rule_RemoveMe()
+		Rule_AddOneShot(AutomatedLumen_Phase3_BuildWall_2, 6)
+		
+		Rule_RemoveWithID(rule_Army2_Move1)
+		rule_Army2_Move2 = Rule_AddInterval(_AutomatedLumen_UnitReplenish, 1, {sgroupName = sg_cat_playerarmy2, unitCount = SGroup_CountSpawned(sg_cat_playerarmy1), spawnLocation = mkr_reveal_bohekou_2, targetLocation = mkr_song_path_a})
+		Cmd_FormationAttackMove(sg_cat_playerarmy2, mkr_song_path_a)
+	end
+end
+
+--Spawns villagers at Bohekou to build the second wall
+function AutomatedLumen_Phase3_BuildWall_2()
+	print ("AutomatedLumen_Phase3_BuildWall_2() called")
+	sg_cat_villagers_2 = SGroup_CreateIfNotFound("sg_cat_villagers_2")
+	UnitEntry_DeploySquads(player1, sg_cat_villagers_2, {{ sbp = SBP.CHINESE.UNIT_VILLAGER_1_CHI, numSquads = 5 }}, mkr_reveal_bohekou_2)
+	SGroup_SetInvulnerable(sg_cat_villagers_2, true, -1)
+	SGroup_SetTargetingType(sg_cat_villagers_2, Targeting_None)
+	
+	Player_AddResources(player1, {gold = 5000, wood = 10000, food = 5000, stone = 999999,})
+	LocalCommand_PlayerSquadConstructSlottedSpline(player1, sg_cat_villagers_2, EBP.CHINESE.BUILDING_DEFENSE_WALL_CHI, World_GetSpawnablePosition(Util_GetPosition(mkr_cat_wall2_start), wallEnt), World_GetSpawnablePosition(Util_GetPosition(mkr_cat_wall2_end), wallEnt), false)
+	
+	Rule_AddInterval(AutomatedLumen_Phase3_QueryWallsComplete,1)
+end
+
+--Queries if both walls are complete and the enemy is blockaded.
+function AutomatedLumen_Phase3_QueryWallsComplete()
+	if Objective_IsComplete(OBJ_Blockade) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_WallBuilt", statusTable["Pass"])
+		CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["InProgress"])
+		Rule_AddInterval(AutomatedLumen_Phase4_DefenseComplete, 0.25)
+	end
+end
+
+
+--Queries if all the attack waves have been defeated
+function AutomatedLumen_Phase4_DefenseComplete()
+	if Objective_IsComplete(OBJ_Defense) then
+		Rule_RemoveMe()
+		CampaignAutotest_SetCheckpointStatus("cat_MissionVictory", statusTable["Pass"])
+	end
+end
+
+--? @args Data table containing, sgroupName, unitCount, spawnLocation, and targetLocation
+--? @shortdesc A rule script to watch select unit groups and replenish them when they get low. SAVE IN AN ID.
+function _AutomatedLumen_UnitReplenish(context, data)
+	local sgroup = data.sgroupName
+	local originalCount = data.unitCount
+	local spawn = data.spawnLocation
+	local target = data.targetLocation
+	local groupLocation = nil
+
+	if SGroup_CountSpawned(sgroup) <= originalCount/2 then
+		local lostUnits = originalCount - SGroup_CountSpawned(sgroup)
+		
+		if SGroup_CountSpawned(sgroup) > 0 then
+			groupLocation = Util_GetPosition(SGroup_GetSquadAt(sgroup, 1))
+		end
+		
+		if groupLocation ~= nil then
+			UnitEntry_DeploySquads(player1, sgroup, {{ type = "scar_manatarms", numSquads = lostUnits }}, groupLocation)
+		else
+			UnitEntry_DeploySquads(player1, sgroup, {{ type = "scar_manatarms", numSquads = lostUnits }}, spawn)
+		end
+		
+		Cmd_FormationAttackMove(sgroup, target, true)
+	end
+end
+
+
+--DEBUG For Future Use--
+function Player_RovingArmy()
+	--AI_Enable(player1, true)
+	
+	local data = {
+		player = player1,
+		spawnLocation = mkr_mongol_dest_1,
+		descriptor = "player_rov1",
+		targets = {mkr_song_fort, mkr_cat_wall1_start},
+		units = {{ type = "scar_manatarms", numSquads = 20 }, { type = "scar_crossbowman", numSquads = 20 }},
+	}
+	RovingArmy_Init(data)
+end

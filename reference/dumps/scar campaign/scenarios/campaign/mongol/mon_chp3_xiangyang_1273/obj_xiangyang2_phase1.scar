@@ -1,0 +1,132 @@
+--
+-- Xiangyang 1273 - Primary Objectives Phase 1
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_xiangyang2_phase2.scar")
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function Xiangyang1273_InitObjectives_Phase1()
+
+	OBJ_Prepare = { Title = "$11198837", Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.HuihuiPao,
+		Intel_Complete = EVENTS.HuihuiPao_Complete,
+		
+		PreStart = function()
+			Music_UnlockIntensity()
+			Misc_SetEGroupSelectable(eg_moat_bridges, false)
+			Rule_AddInterval(Xiangyang1273_ManageRaiders, {delay = 120, interval = g_songRaiderFrequency})
+		end,
+		
+		OnStart = function()
+			Objective_Start(SOBJ_BuildTrebuchet)
+		end,
+		
+		PreComplete = function()
+			Objective_Complete(SOBJ_OptUseFalcon, false, false)
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_BuildTrebuchet)
+		end,
+		
+		OnComplete = function()
+			-- In case it hasn't been completed, clear the objective here
+			if Objective_IsComplete(SOBJ_OptUseSilkRoad) == false and Objective_IsFailed(SOBJ_OptUseSilkRoad) == false then
+				Objective_Complete(SOBJ_OptUseSilkRoad, false, false)
+			end
+			Objective_Start(OBJ_BreachCity)
+		end,
+		
+		IsFailed = Xiangyang1273_IsFailed,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_BuildTrebuchet = { Title = "$11179239", Type = ObjectiveType_Build, Parent = OBJ_Prepare, StartAlongsideParent = true,
+		
+		PreStart = function()
+
+		end,
+		
+		OnStart = function()
+			Objective_Start(OBJ_AlliedTradePartners)
+		end,
+		
+		OnComplete = function()
+			Util_AutoSave()
+		end,
+	}
+	SOBJ_OptUseSilkRoad = { Title = "$11182664", Type = ObjectiveType_Optional, Parent = OBJ_Prepare, StartAlongsideParent = true,
+
+		uiElementID = -1,
+		counterMax = 9,
+		
+		PreStart = function()
+			Objective_SetCounter(SOBJ_OptUseSilkRoad, 0, SOBJ_OptUseSilkRoad.counterMax)
+			Rule_AddInterval(Xiangyang1273_CheckTraders, 1)
+		end,
+		
+		OnStart = function()
+			SOBJ_OptUseSilkRoad.uiElementID = Objective_AddUIElements(SOBJ_OptUseSilkRoad, eg_silk_road_landmark, true, "$11198249", false)
+			Rule_AddOneShot(Xiangyang1273_SilkRoadReminder, 90)
+		end,
+		
+		IsComplete = function()
+			return Objective_GetCounter(SOBJ_OptUseSilkRoad) >= SOBJ_OptUseSilkRoad.counterMax
+		end,
+		
+		OnComplete = function()
+			print("Completed SOBJ_OptUseSilkRoad")
+			Objective_RemoveUIElements(SOBJ_OptUseSilkRoad, SOBJ_OptUseSilkRoad.uiElementID)
+		end,
+		
+		OnFail = function()
+			Objective_RemoveUIElements(SOBJ_OptUseSilkRoad, SOBJ_OptUseSilkRoad.uiElementID)
+		end,
+	}
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Prepare)
+	Objective_Register(SOBJ_BuildTrebuchet)
+	Objective_Register(SOBJ_OptUseSilkRoad)
+	
+end
+
+--? @shortdesc Used to monitor active trader count
+function Xiangyang1273_CheckTraders(context, data)
+	
+	local activeTraderCount = Player_GetActiveTraderCount(g_playerMongol)
+	
+	-- Check whether we're doing better or worse, and play a sound accordingly
+	local oldValue = 0
+	if Objective_IsCounterSet(SOBJ_OptUseSilkRoad) == true then
+		oldValue = Objective_GetCounter(SOBJ_OptUseSilkRoad)
+	end
+	if activeTraderCount > oldValue then
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+	elseif activeTraderCount < oldValue then
+		Sound_Play2D("mus_stinger_campaign_negative")
+	end
+	
+	Objective_SetCounter(SOBJ_OptUseSilkRoad, activeTraderCount, SOBJ_OptUseSilkRoad.counterMax)
+	
+end
+
+function Xiangyang1273_SilkRoadReminder()
+	
+	if not Objective_IsComplete(SOBJ_OptUseSilkRoad) then
+		if not Objective_IsComplete(SOBJ_BuildTrebuchet) then
+			Util_StartIntel(EVENTS.TraderHint)
+		end
+	end
+	
+end

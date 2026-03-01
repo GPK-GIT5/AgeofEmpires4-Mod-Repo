@@ -1,0 +1,65 @@
+--
+-- Mission Title and Date - Objective Capture villages 
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+-- Initialize the objective
+function VisitPagoda_InitObjectives()
+
+	OBJ_VisitPagoda = { Title = "$11179222", Type = ObjectiveType_Optional,
+		
+		OnStart = function()
+			OBJ_VisitPagoda.pagodaUI = Objective_AddUIElements(OBJ_VisitPagoda, mkr_temple, true, "$11179223", true)
+		end,
+		
+		IsComplete = function()
+			--We used to check for the Khan, but without a Khan anymore, we'll just take any unit
+			Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_temple, Marker_GetProximityRadiusOrDefault(mkr_temple, 10))
+			return SGroup_Count(sg_temp) > 0
+		end,
+		
+		OnComplete = function()
+			--Start leashing!
+			Rule_AddInterval(Xiangyang1267_MonkLeashing, 3)
+			--Notify them
+			local duration = 5
+			UI_CreateEventCue("$11180953", Loc_Empty(), "", "", "sfx_ui_event_queue_high_priority_play")
+			UI_CreateMinimapBlip(Marker_GetPosition(mkr_temple), duration, "general")
+			FOW_RevealArea(Marker_GetPosition(mkr_temple), 20, duration)
+		end,
+	}
+	
+	Objective_Register(OBJ_VisitPagoda)
+	Obj_SetVisible(OBJ_VisitPagoda.ID, false)
+	
+end
+
+--? @shortdesc Keeps the monks on a short leash
+function Xiangyang1267_MonkLeashing(context, data)
+	
+	local monkStations = { mkr_monks_1, mkr_monks_2 }
+	
+	-- This function finds wandering monks and sends them home
+	local _MonkLeash = function(gid, idx, sid)
+		local distance = Util_GetDistance(sid, mkr_temple)
+		if distance > 45 then
+			local destination = Table_GetRandomItem(monkStations)
+			SGroup_Single(sg_temp, sid)
+			Cmd_Move(sg_temp, destination)
+		end
+	end
+	
+	-- Only do this if we still have monks
+	if SGroup_Count(sg_neutral_monks) > 0 then
+		SGroup_ForEach(sg_neutral_monks, _MonkLeash)
+	else
+		Rule_RemoveMe()
+	end
+	
+end

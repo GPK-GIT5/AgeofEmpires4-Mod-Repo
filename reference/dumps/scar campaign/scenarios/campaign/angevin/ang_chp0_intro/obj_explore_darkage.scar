@@ -1,0 +1,280 @@
+----
+---- Mission 0 - Intro - Objectives for Exploring the map in the Dark Age
+---
+
+
+function IntroExploreDarkAge_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_ExploreTheMap = {
+		
+		Title = 11192705, --Exploring the map
+		Type = ObjectiveType_Primary,
+		
+		Intel_Complete = EVENTS.GatherGold_IntelComplete,
+		
+		OnStart = function ()
+			Objective_Start(SOBJ_ProduceScouts)
+			Rule_AddInterval(ApproachingMaxPop_Monitor, 5)
+		end,
+		OnComplete = IntroExploring_OnComplete,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete (OBJ_ExploreTheMap, ALL)
+		end,
+		
+		Cheat = Cheat_Explore_DarkAge,
+		
+	}
+	
+	SOBJ_ProduceScouts = {
+		
+		Title = 11192706, -- Produce a scout
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ExploreTheMap,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.ProduceScout_IntelStart,
+		Intel_Complete = EVENTS.ProduceScout_IntelComplete,
+		
+		SetupUI = ProduceScout_UI,
+		
+		PreStart = function()
+			Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_scout_1_eng"), ITEM_DEFAULT)
+			Tutorials_MissionZero_HighlightScout()
+		end,
+		
+		OnStart = ProduceScout_Start,
+
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_ProduceScout) then
+				Objective_Complete(OBJ_Tip_ProduceScout,false,false)
+			end
+		end,
+		
+		OnComplete = ProduceScout_OnComplete,
+	}
+	
+	SOBJ_FindGoldDeposit = {
+		
+		Title = 11192709, -- Find Gold Deposit
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ExploreTheMap,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.FindGoldDeposit_IntelStart,
+		
+		SetupUI = FindGoldDeposit_UI,
+		
+		OnStart = FindGoldDeposit_Start,
+		
+		IsComplete = function ()
+			return b_foundGoldDeposit
+		end,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_FindGoldDeposit) then
+				Objective_Complete(OBJ_Tip_FindGoldDeposit,false,false)
+			end
+		end,
+		
+		OnComplete = FindGoldDeposit_OnComplete,
+	}
+	
+	SOBJ_BuildMine = {
+		
+		Title = 11192715, -- Build a mining camp to gather gold from the gold deposit.
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ExploreTheMap,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.BuildMine_IntelStart,
+		Intel_Complete = EVENTS.BuildMine_IntelComplete,
+		
+		SetupUI = BuildMine_UI,
+		
+		PreStart = function()
+			-- unlock mine econ production
+			Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_ECON_MINING_CAMP_CONTROL_ENG, ITEM_DEFAULT)
+			Tutorials_MissionZero_HighlightMine()
+		end,
+		OnStart = BuildMine_Start,
+
+		IsComplete = function()
+			return (i_built_MiningCamps >= 1)
+		end,
+		
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_BuildMine) then
+				Objective_Complete(OBJ_Tip_BuildMine,false,false)
+			end
+		end,
+
+		OnComplete = BuildMine_OnComplete,
+	}
+	
+	SOBJ_GatherGold = {
+		
+		Title = Loc_FormatText("$11192716",i_desiredGoldAmount), -- Gather 250 additional gold resources
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ExploreTheMap,
+		StartAlongsideParent = false, 
+		
+
+		
+		SetupUI = GatherGold_UI,
+		
+		OnStart = GatherGold_Start,
+
+		PreComplete = function ()
+			if Objective_IsStarted(	OBJ_Tip_GatherGold) then
+				Objective_Complete(OBJ_Tip_GatherGold,false,false)
+			end
+		end,
+		
+		OnComplete = GatherGold_OnComplete,
+	}
+
+	Objective_Register(OBJ_ExploreTheMap)
+	Objective_Register(SOBJ_ProduceScouts)
+	Objective_Register(SOBJ_FindGoldDeposit)
+	Objective_Register(SOBJ_BuildMine)
+	Objective_Register(SOBJ_GatherGold)
+	
+end
+
+function ProduceScout_UI()
+	Objective_SetCounter(SOBJ_ProduceScouts, 0, i_desired_scouts)
+end
+
+function ProduceScout_Start()
+
+	Rule_Add(ProduceScout_Monitor)
+	Rule_AddOneShot(ScoutHint, 3)
+end
+
+function ScoutHint()
+	if not Objective_IsComplete(SOBJ_ProduceScouts) then
+		Objective_Start(OBJ_Tip_ProduceScout, false, false)
+	end
+		
+end
+
+function ProduceScout_Monitor()
+
+	
+	Player_GetAll(World_GetPlayerAt(1))
+	SGroup_Filter(sg_allsquads, "scar_scout", FILTER_KEEP)
+	
+	currentScouts = SGroup_CountSpawned(sg_allsquads)
+	local newScouts = currentScouts - i_lastCheckedScouts	
+
+	if newScouts >= 1 then 
+		
+		Objective_IncreaseCounter(SOBJ_ProduceScouts, newScouts)
+		
+		if Objective_GetCounter(SOBJ_ProduceScouts) >= i_desired_scouts then 
+			Objective_Complete(SOBJ_ProduceScouts)
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+	i_lastCheckedScouts = currentScouts
+end	
+
+function ProduceScout_OnComplete()
+	
+	Objective_Start(SOBJ_FindGoldDeposit,true,true)
+end
+
+function FindGoldDeposit_UI()
+	
+end
+
+function FindGoldDeposit_Start()
+	Rule_AddOneShot (FindGoldTip,3)
+end
+
+function FindGoldTip()
+	if not Objective_IsComplete(SOBJ_FindGoldDeposit) then
+		Objective_Start(OBJ_Tip_FindGoldDeposit, false, false)
+	end
+end
+
+function FindGoldDeposit_OnComplete()
+	Objective_Start (SOBJ_BuildMine)
+end
+
+function BuildMine_UI()
+	
+end
+
+function BuildMine_Start()
+	
+	
+	--Rule_AddGlobalEvent(ProgressAgeFeudal_OnConstructionStart, GE_ConstructionStart)
+
+	Rule_AddOneShot(StartTip_BuildMine,3)
+end
+
+function StartTip_BuildMine()
+	Objective_Start(OBJ_Tip_BuildMine,false,false)
+end
+
+function BuildMine_OnComplete() 
+	
+	Rule_RemoveGlobalEvent(EconDarkAge_OnConstructionComplete)
+	Objective_Start(SOBJ_GatherGold)
+end
+
+function GatherGold_UI()
+	
+	Objective_SetCounter(SOBJ_GatherGold, 0, i_desiredGoldAmount)
+	
+end
+
+function GatherGold_Start()
+	Tutorials_MissionZero_GatherGold()
+	--i_lastCheckedGoldAmount = Player_GetResource(player1, RT_Gold)
+	Rule_AddInterval(GatherGold_Monitor,1)
+	Rule_AddOneShot(GoldTip,3)
+end
+
+function GatherGold_Monitor()
+	
+	local currentGoldAmount = Player_GetResource(player1, RT_Gold)
+	local amountGoldGathered = currentGoldAmount - i_lastCheckedGoldAmount	
+	
+	if amountGoldGathered >= 1 then 
+		b_gotgold = true
+		Objective_IncreaseCounter(SOBJ_GatherGold, amountGoldGathered)
+		
+		if Objective_GetCounter(SOBJ_GatherGold) >= i_desiredGoldAmount then 
+			Objective_Complete(SOBJ_GatherGold)
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+	i_lastCheckedGoldAmount = currentGoldAmount
+end
+
+function GoldTip()
+
+	if not Objective_IsComplete(SOBJ_GatherGold) then
+		Objective_Start(OBJ_Tip_GatherGold, false, false)
+	end
+	
+end
+
+
+function GatherGold_OnComplete()
+	
+	
+end
+
+
+
+function IntroExploring_OnComplete()
+	Objective_Start(OBJ_ProgressFeudalAge)
+end

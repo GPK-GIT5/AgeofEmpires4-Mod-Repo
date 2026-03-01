@@ -1,0 +1,247 @@
+import("missionomatic/missionomatic.scar")
+import('abb_m2_egypt_quadrants.scar')
+
+function Distribute_Enemy_Army(sgroup)
+			
+		local onDeathFreeQuadrant = function(army)
+			army.quadrant.assignedArmyCount = army.quadrant.assignedArmyCount-1
+			Quadrant_ReleaseSlot(army.quadrant, army.layer, army.offset)
+		end
+		
+		local layer, offset = Quadrant_GetSlot(CRUSADERHOME_QUADRANT)
+		local target = Quadrant_GetPositionFromLayerAndSlot(CRUSADERHOME_QUADRANT, layer, offset)
+		
+		local params = {
+			player = player2,
+			name = "crusader_army_"..egypt_crusader_army_ID,
+			spawn = mkr_enemy_unit_spawn,
+			quadrant = CRUSADERHOME_QUADRANT,
+			layer = layer,
+			offset = offset,
+			targets = {target},
+    		targetOrder = TARGET_ORDER_LINEAR,
+			onDeathFunction = onDeathFreeQuadrant,
+			hasQuest = false,
+			timeLastAssigned = 0,
+			onCompleteFunction = onQuestComplete,
+			--onDeathDissolve = true,
+			self_army_ID = egypt_crusader_army_ID,
+			
+		}
+		egypt_crusader_army_ID = egypt_crusader_army_ID+1
+		local armydata = Army_Init(params)
+		Egypt_CleanArmyTable()
+		table.insert(t_enemy_armies, armydata)
+		table.insert(t_enemy_armies_atCamp, armydata)
+		Army_AddSGroup(armydata, sgroup)
+		
+end
+
+function onQuestComplete(army)
+	army.hasQuest = false
+end
+
+function SpawnTypedEnemySquads()
+	local attackGroupSize = t_difficulty.enemyMods.attack_group_size
+	if enemy_reinforcementbudget-attackGroupSize >= attackGroupSize and 
+		Player_GetUnitCount(player2) + attackGroupSize < 300 then
+		
+		local unitType = ENEMY_SQUAD_TYPES.typeList[ENEMY_SQUAD_TYPES.currentInt]
+		local units = {}
+		
+		if unitType == "templars" then	
+			units = {
+				{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 2+math.floor(attackGroupSize/3)},
+				{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU, numSquads = 1},
+			}
+		else
+			units = {type = unitType, numSquads = attackGroupSize}
+		end
+		
+		ENEMY_SQUAD_TYPES.currentInt = ENEMY_SQUAD_TYPES.currentInt+1
+		if ENEMY_SQUAD_TYPES.currentInt > #ENEMY_SQUAD_TYPES.typeList then
+			ENEMY_SQUAD_TYPES.currentInt = 1
+		end
+		
+		local thisSgroup = CreateUnits(player2, units, mkr_enemy_unit_spawn, "Frankish_Army_")
+		enemy_reinforcementbudget = enemy_reinforcementbudget-attackGroupSize
+		ApplyCaptureModifier(thisSgroup)
+		Distribute_Enemy_Army(thisSgroup)
+		
+		--DEBUG--
+		print("Spawning "..unitType.."of attackGroupSize "..attackGroupSize)
+	end
+	
+	Rule_AddOneShot(AssignOldestWaitingArmyToBestTarget, 1)
+end
+
+function Egypt_CleanArmyTable()
+	for i = #t_enemy_armies, 1, -1 do
+		if SGroup_CountSpawned(t_enemy_armies[i].sgroup) < 1 then
+			table.remove(t_enemy_armies, i)
+		end
+	end
+end
+
+function Egypt_GetOldestWaitingArmy()
+	local longestAssignedTime = 0
+	local oldestAssignedArmy = nil
+	Egypt_CleanArmyTable()
+	for i, army in ipairs(t_enemy_armies) do
+		local currentAssignedTime = World_GetGameTime() - army.timeLastAssigned
+		--if army.hasQuest == false then
+			if currentAssignedTime > longestAssignedTime or oldestAssignedArmy == nil then
+				longestAssignedTime = currentAssignedTime
+				oldestAssignedArmy = army
+			end
+		--end
+	end
+	return oldestAssignedArmy
+end
+
+function AssignOldestWaitingArmyToBestTarget()
+	local oldestWaitingArmy = Egypt_GetOldestWaitingArmy()
+	local bestQuadrantTarget = nil
+	
+	if oldestWaitingArmy ~= nil then
+		bestQuadrantTarget = Get_BestControlPointTarget_ForArmy(oldestWaitingArmy)
+		if bestQuadrantTarget == nil then
+			print("No BestTarget")
+		end
+	else
+		print("No Valid Army")
+	end
+	
+	if oldestWaitingArmy ~= nil and bestQuadrantTarget ~= nil then
+		
+		--If Army's current control point is contested, it is the best target.
+		if oldestWaitingArmy.quadrant.controlPoint ~= nil then
+			local aiCaptureProgress = Player_GetStrategicPointCaptureProgress(player2, oldestWaitingArmy.quadrant.controlPoint.entityID)
+			if aiCaptureProgress < 1 and aiCaptureProgress > -1 then
+				bestQuadrantTarget = oldestWaitingArmy.quadrant
+			end
+		end
+		
+		-- If the army's best target is any point other than the one it is on, release the current and assign the new target.
+		if oldestWaitingArmy.quadrant ~= bestQuadrantTarget then
+			--Release Old Quadrant
+			if oldestWaitingArmy.quadrant.assignedArmyCount > 0 then
+				oldestWaitingArmy.quadrant.assignedArmyCount = oldestWaitingArmy.quadrant.assignedArmyCount-1
+			end
+			Quadrant_ReleaseSlot(oldestWaitingArmy.quadrant, oldestWaitingArmy.layer, oldestWaitingArmy.offset)
+			oldestWaitingArmy.quadrant = bestQuadrantTarget
+			oldestWaitingArmy.layer, oldestWaitingArmy.offset = Quadrant_GetSlot(oldestWaitingArmy.quadrant)
+			
+			--Assign New Quadrant
+			local target = {idlePosition = Quadrant_GetPositionFromLayerAndSlot(oldestWaitingArmy.quadrant, oldestWaitingArmy.layer, oldestWaitingArmy.offset), 
+				marker = oldestWaitingArmy.quadrant.marker}
+			Army_SetTarget(oldestWaitingArmy, target)
+			oldestWaitingArmy.quadrant.assignedArmyCount = oldestWaitingArmy.quadrant.assignedArmyCount+1
+			oldestWaitingArmy.hasQuest = true
+			
+			--Put Quadrant on Cooldown
+			--closestArmy.quadrant.time_lastassignment = gameTime
+			
+			print("Army Assigned New Target Success")
+		end
+		
+		oldestWaitingArmy.timeLastAssigned = World_GetGameTime()
+		
+	end
+end
+
+--Evaluates the available unit spawn capaity and spawns units to match.
+function Egypt_ReinforcementWave(player)
+	sg_playerarmy = SGroup_CreateIfNotFound("sg_playerarmy")
+	sg_crusaderarmy = SGroup_CreateIfNotFound("sg_crusaderarmy")
+	
+	local thisSgroup = {}
+	local thisMarker = {}
+	if player == player1 then
+		thisSgroup = sg_playerarmy
+		thisMarker = mkr_player_unit_spawn
+	else
+		thisSgroup = sg_crusaderarmy
+		thisMarker = mkr_enemy_unit_spawn
+	end
+	
+	local wavesize = Egypt_GetReinforcementWaveSize(player)
+	
+	if player == player1 then
+		if wavesize > 0 then
+			local spearCount = 0
+			local archerCount = 0
+			local horsemanCount = 0
+			
+			if wavesize > 2 then
+				spearCount = math.floor(wavesize/3)
+				archerCount = math.floor(wavesize/3)
+				horsemanCount = math.ceil(wavesize/3)
+				
+				while spearCount+archerCount+horsemanCount < wavesize do
+					horsemanCount = horsemanCount+1
+				end
+			else
+				horsemanCount = 2
+			end
+			
+			local units = {
+				{type="scar_spearman", numSquads = spearCount},
+				{type="scar_archer", numSquads = archerCount},
+				{type="scar_horseman", numSquads = horsemanCount},
+			}
+			
+			CreateUnits(player, units, thisMarker, thisSgroup)
+			ApplyCaptureModifier(thisSgroup)
+			
+			if player == player1 and reinforcement_wave_count == 0 then
+				sg_firstwave = SGroup_CreateIfNotFound("sg_firstwave")
+				SGroup_AddGroup(sg_firstwave, thisSgroup)
+			end
+		end
+	elseif player == player2 then
+		enemy_reinforcementbudget = enemy_reinforcementbudget+wavesize
+	end
+	
+end
+
+--Determines the size of the next reinforcement wave based on game conditions for the provided player
+--? @result int Wavesize
+function Egypt_GetReinforcementWaveSize(player)
+		
+	reinforcements_acceleration = reinforcements_acceleration or 0
+	
+	local reinforcements_size = 12+reinforcements_acceleration
+	
+	if player == player2 then
+		reinforcements_size = 12+reinforcements_acceleration+t_difficulty.enemyMods.attack_group_size
+	end	
+	
+	local reinforcement_ramp = 3*reinforcement_wave_count
+	reinforcements_size = reinforcements_size+reinforcement_ramp
+	
+	if Player_GetCurrentPopulation(player, CT_Personnel)+reinforcements_size <= Player_GetMaxPopulationCapOverride(player, CT_Personnel) then
+		return reinforcements_size
+	else
+		return Player_GetMaxPopulationCapOverride(player, CT_Personnel)-Player_GetCurrentPopulation(player, CT_Personnel)
+	end
+end
+
+function Egypt_GetHeldPoints(player)
+	local heldPoints = 0
+	local _GetControlPointOwners = function(gid, index, eid)
+		if World_OwnsEntity(eid) ~= true then
+			if Entity_GetPlayerOwner(eid) == player then
+				heldPoints = heldPoints+1
+			end
+		end
+	end
+	EGroup_ForEach(eg_controlpoints, _GetControlPointOwners)
+	
+	return heldPoints
+end
+
+--Applies a modifiyer that allows location capture by non-monk units.
+function ApplyCaptureModifier(sgroup)
+	Util_ApplyModifier(sgroup, "capture_rate_squad_modifier", true, 1, MUT_Addition, MAT_Squad, true, nil)
+end

@@ -1,0 +1,186 @@
+function MoscowDefense_InitializeObjectives()
+	
+	OBJ_MoscowDefense = {
+	
+		Title = 11176781, --Keep the Mongols out of the city.
+		Type = OT_Information,
+		
+		SetupUI = function()
+			--Objective_AddPing(OBJ_MoscowDefense, mkr_location_moscow)			
+		end,
+		
+		OnStart = MoscowDefense_OnStart,
+			
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	SOBJ_CountdownToFail = {
+		
+		Title = 11192942, --Mongols in the walls! Failure in:
+		Type = OT_Secondary,
+		Parent = OBJ_MoscowDefense,
+		
+		StartAlongsideParent = false,
+	}
+	
+	Objective_Register(OBJ_MoscowDefense)
+	Objective_Register(SOBJ_CountdownToFail)
+
+		
+	--b_MongolBreachInfoPlayed = false
+end
+
+-----------------------
+--OBJECTIVE FUNCTIONS--
+-----------------------
+
+function MoscowDefense_OnStart()
+	b_wallBreachIntelPlayed = false
+	b_MongolsInsideWallsCTACooldown = false
+	Rule_AddInterval(MongolAttacks_BreachedUnits, 1)
+end
+
+function MongolAttacks_CountBuildingsInOuterCity()
+	
+	Player_GetAllEntitiesNearMarker(player1, eg_temp, mkr_outercity_target)
+	EGroup_Filter(eg_temp, "wall", FILTER_REMOVE)
+	
+	return EGroup_CountSpawned(eg_temp)
+	
+end
+
+function MongolAttacks_BreachedUnits() --Searches for Mongols who have entered the inner city.
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_city_area)
+	local sg_breachedunits = SGroup_CreateIfNotFound("sg_breachedunits")
+	
+	local _QueryInCastle = function(gid, idx, sid)
+		if World_GetMetadataLayerBoolean("innercity_triggerLayer", Squad_GetPosition(sid).x, Squad_GetPosition(sid).z) then
+			SGroup_Add(sg_breachedunits, sid)
+			breachCTA_Position = Util_GetPosition(sid)
+		else
+			SGroup_Remove(sg_breachedunits, sid)
+		end
+	end	
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		SGroup_ForEach(sg_temp, _QueryInCastle)
+	end
+	
+	if SGroup_CountSpawned(sg_breachedunits) > 0 then
+		if Objective_IsStarted(SOBJ_CountdownToFail) == false then
+			MongolAttacks_StartCountdownToFailure()
+		end
+	else
+		if Objective_IsStarted(SOBJ_CountdownToFail) then
+			MongolAttacks_StopCountdownToFailure()
+		end
+	end
+end
+ 
+function MongolAttacks_StartCountdownToFailure() --Starts the failure objective countdown.
+	
+	Objective_Start(SOBJ_CountdownToFail, false)
+	Objective_StartTimer(SOBJ_CountdownToFail, COUNT_DOWN, t_difficulty.timeTillFailure, 15)
+	MongolsInsideCTA()
+
+	if Rule_Exists(MongolAttacks_CountdownToFailure) == false then
+		Rule_AddInterval(MongolAttacks_CountdownToFailure, 0.5)
+	end
+end
+
+function MongolAttacks_CountdownToFailure() --If the countdown reaches 0, mission fails.
+
+	if Objective_IsStarted(SOBJ_CountdownToFail) then
+		if Objective_GetTimerSeconds(SOBJ_CountdownToFail) <= 0 then
+			Objective_Fail(OBJ_MoscowDefense)
+		end
+	end
+end
+
+function MongolAttacks_StopCountdownToFailure() --Stops the failure countdown.
+	
+	Objective_StopTimer(SOBJ_CountdownToFail)
+	Objective_Stop(SOBJ_CountdownToFail, true, nil)
+		
+	if Rule_Exists(MongolAttacks_CountdownToFailure) then
+		Rule_Remove(MongolAttacks_CountdownToFailure)
+	end
+end
+
+function MongolsInsideCTA() --The CTA that triggers if Mongols are inside the walls.
+	if b_MongolsInsideWallsCTACooldown == false then
+		local CTA_speech = nil
+		if b_wallBreachIntelPlayed == false then
+			b_wallBreachIntelPlayed = true
+			CTA_speech = EVENTS.StoneWallBreached
+		end
+		
+		b_MongolsInsideWallsCTACooldown = true
+		Rule_AddOneShot(ResetMongolsInsideCTA, 10)
+		UI_CreateEventCue(11176785,	Loc_Empty(), "high_priority", "icons\\event_queue_high_priority_large", "sfx_ui_event_queue_high_priority_play", ECV_Title) --Mongols are inside Moscow!
+		EventCues_CallToAction(11176785, CTA_ALARM, CTA_speech, nil, breachCTA_Position, t_difficulty.timeTillFailure, "icons/cta/illustrations/12_mongols_charging") --Mongols inside the walls!
+		Sound_Play2D("mus_stinger_campaign_warning")
+		Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+	end
+end
+
+function ResetMongolsInsideCTA() -- Keeps the CTA from triggering on a loop.
+	b_MongolsInsideWallsCTACooldown = false
+end
+
+
+--function PathIsClear_Query()
+	--blockadeMongolsCurrent = SGroup_CountSpawned(sg_mongolsblockade_1)+SGroup_CountSpawned(sg_mongolsblockade_2)+SGroup_CountSpawned(sg_mongolsblockade_3)
+	--if blockadeMongolsCurrent <= 0 then
+		--Rule_RemoveMe()
+		----Objective_Complete(SOBJ_MongolBlockade)
+		----Obj_SetProgressVisible(SOBJ_MongolBlockade.ID, false)
+		--Rule_AddOneShot(Music_Stop, 5)
+		--Rule_AddOneShot(RefugeesEscaped, 10)
+		--b_pathIsClear = true
+	----	Objective_RemoveUIElements(OBJ_Refugees, escapeBlockade)
+		--escapeDestination = Objective_AddUIElements(OBJ_Refugees, mkr_outro_departure, true, 11192937, true, 5) --Escape
+		--if SGroup_CountSpawned(sg_refugees) >= 1 then
+			--Cmd_MoveToAndDestroy(sg_refugees, mkr_outro_departure)
+		--end
+	--else
+		--Obj_SetProgress(SOBJ_MongolBlockade.ID, 1-(math.abs(blockadeMongolsCurrent-blockadeMongolsTotal)/blockadeMongolsTotal))
+		----Objective_SetCounter(SOBJ_MongolBlockade, math.abs(blockadeMongolsCurrent-blockadeMongolsTotal), blockadeMongolsTotal)
+	--end
+--end
+
+--function SwitchPriority()
+	----MongolAttack_FleeingCitizens()
+	----MongolAttacks_StopCountdownToFailure()
+	----Rule_Remove(MongolAttacks_BreachedUnits)
+	----Objective_UpdateText(OBJ_MoscowDefense, 11192936) --Protect the people of Moscow
+	----Obj_SetProgressVisible(OBJ_MoscowDefense.ID, true)
+	----Obj_SetProgress(OBJ_MoscowDefense.ID, 1.0)
+		
+	----Rule_AddInterval(relabelVillagerTarget, 0.33)
+	
+	----blockadeMongolsCurrent = SGroup_CountSpawned(sg_mongolsblockade_1)+SGroup_CountSpawned(sg_mongolsblockade_2)+SGroup_CountSpawned(sg_mongolsblockade_3)
+	----blockadeMongolsTotal = blockadeMongolsCurrent
+	
+	----Objective_Start(SOBJ_MongolBlockade, false)
+	----Obj_SetProgressVisible(SOBJ_MongolBlockade.ID, true)
+	----Obj_SetProgress(SOBJ_MongolBlockade.ID, 1.0)
+	----Objective_SetCounter(SOBJ_MongolBlockade, math.abs(blockadeMongolsCurrent-blockadeMongolsTotal), blockadeMongolsTotal)
+	----escapeBlockade = Objective_AddUIElements(SOBJ_MongolBlockade, mkr_mongolblockade_area, true, 11192933, true, 5) --Clear a path for escaping citizens
+	----Rule_AddInterval(PathIsClear_Query, 1)
+--end
+
+--function relabelVillagerTarget()
+	--if SGroup_CountSpawned(sg_refugees) >= 1 then
+		--if refugeeProtect ~= nil then
+			--Objective_RemoveUIElements(OBJ_MoscowDefense, refugeeProtect)
+			--refugeeProtect = Objective_AddUIElements(OBJ_MoscowDefense, Util_GetPosition(sg_refugees), true, LOC("Protect"), true, 5)
+		--else
+			--refugeeProtect = Objective_AddUIElements(OBJ_MoscowDefense, Util_GetPosition(sg_refugees), false, LOC("Protect"), true, 5)
+		--end
+	--end
+--end
+

@@ -1,0 +1,177 @@
+import("MissionOMatic/MissionOMatic.scar")	
+
+function Acre_InitObjectives()
+	
+	OBJ_DefendSiegeCamp = {
+		Title = "$11253737", --Protect your Siege Camp!
+		Type = OT_Information,
+		
+		PreStart = function()
+		end,
+		OnStart = function()
+			Objective_AddUIElements(OBJ_DefendSiegeCamp, mkr_siege_camp, false, "$11253741", true) --Siege Camp
+			if Game_GetSPDifficulty() <= GD_NORMAL then
+				Rule_AddOneShot(Acre_Tutorials_Init, 5)
+			end
+			Rule_AddInterval(_Monitor_SiegeCampHealth, 2)
+		end,
+		IsComplete = function()
+		end,
+		IsFailed = function()
+			if EGroup_CountSpawned(eg_siegecamp) == 0 then
+				return true
+			end
+		end,
+		OnComplete = function()
+			--Mission_Complete()
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	OBJ_DestroyCrusaders = {
+		Title = "$11253738", --Destory the Frankish Keeps
+		Type = ObjectiveType_Primary,
+		
+		PreStart = function()
+			--eg_crusaderkeeps = Player_GetAllEntitiesFromType(player2, "scar_keep")
+			MAX_KEEP_COUNT = EGroup_CountSpawned(eg_crusaderkeeps)
+			lastKeepCount = EGroup_CountSpawned(eg_crusaderkeeps)
+			Objective_SetCounter(OBJ_DestroyCrusaders, 0, MAX_KEEP_COUNT)
+		end,
+		OnStart = function()	
+			Rule_AddInterval(Update_KeepMarkers, 1)
+		end,
+		IsComplete = function()
+			local currentKeepCount = EGroup_CountSpawned(eg_crusaderkeeps)
+			Objective_SetCounter(OBJ_DestroyCrusaders, MAX_KEEP_COUNT-currentKeepCount, MAX_KEEP_COUNT)
+			if currentKeepCount ~= lastKeepCount then
+				lastKeepCount = currentKeepCount
+				Music_PlayStinger(MUS_STING_POSITIVE)
+			end
+			return currentKeepCount < 1
+		end,
+		IsFailed = function()
+		end,
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		OnFail = function()
+		end,
+	}
+	
+	OBJ_Genoese  = {
+		Title = "$11253743", --Genoese Enemy Reinforcments Enroute
+		Type = ObjectiveType_Battle, 
+		
+		PreStart = function()
+		end,
+		OnStart = function()
+			Objective_StartTimer(OBJ_Genoese, COUNT_DOWN, 1291)
+			Rule_AddInterval(_Monitor_Genoese_Timer, 1)
+		end,
+		IsComplete = function()
+			if OBJ_Genoese.bAttackStarted and sg_genoese ~= nil then
+				local currentGenoeseCount = SGroup_CountSpawned(sg_genoese)
+				OBJ_Genoese.maxGenoeseCount = OBJ_Genoese.maxGenoeseCount or currentGenoeseCount
+				Objective_SetCounter(OBJ_Genoese, currentGenoeseCount, OBJ_Genoese.maxGenoeseCount)
+				if currentGenoeseCount <= 0 then
+					return true
+				end
+			end
+		end,
+		IsFailed = function()
+		end,
+		OnComplete = function()
+		end,
+		OnFail = function()
+		end,
+		bAttackStarted = false,
+	}
+	
+	Objective_Register(OBJ_DefendSiegeCamp)
+	Objective_Register(OBJ_DestroyCrusaders)
+	Objective_Register(OBJ_Genoese)
+	
+end
+
+function _Monitor_Genoese_Timer()
+	if Objective_GetTimerSeconds(OBJ_Genoese) <= 0 or debug_bGenoeseSkip == true then
+		Rule_RemoveMe()
+		
+		Objective_StopTimer(OBJ_Genoese)
+		Objective_UpdateText(OBJ_Genoese, "$11253745", nil, true, false) --Repel the Genoese Reinforcments
+		navalLandings = AllMarkers_FromName("mkr_genoese_landing", "")
+		for i, landing in ipairs(navalLandings) do
+			Objective_AddUIElements(OBJ_Genoese, landing, true, "$11253749") --Genoese Reinforcments
+		end
+		Util_StartIntel(EVENTS.EnemyShips)
+		Sound_Play2D("mus_stinger_campaign_alert")
+		Music_LockIntensity(MUSIC_TENSE_RARE, 30)
+		Init_GenoeseAttack()		
+		OBJ_Genoese.bAttackStarted = true
+	end
+end
+
+function Update_KeepMarkers()
+
+	local groupCount = EGroup_CountSpawned(eg_crusaderkeeps)
+	local _AddUI_RemainingKeeps = function(gid, index, eid)
+		AddKeepUIMarker(eid)
+	end
+	
+	if Game_GetSPDifficulty() <= GD_EASY then
+		Rule_RemoveMe()		
+		EGroup_ForEach(eg_crusaderkeeps, _AddUI_RemainingKeeps)
+	elseif groupCount <= 3 then
+		Rule_RemoveMe()		
+		EGroup_ForEach(eg_crusaderkeeps, _AddUI_RemainingKeeps)
+		Util_StartIntel(EVENTS.FinalThreeKeeps)
+	end	
+end
+
+function Monitor_KeepVisbility()
+	local checkdelay = 0
+	local _AddKeepVisChecks = function(gid, index, eid)
+		Rule_AddInterval(_KeepIsVisible, {delay = checkdelay, interval = 1}, {entity = eid})
+		checkdelay = checkdelay+0.125
+	end
+	EGroup_ForEach(eg_crusaderkeeps, _AddKeepVisChecks)
+end
+
+function AddKeepUIMarker(entity)
+	local UIKeep_Marker_ID = Objective_AddUIElements(OBJ_DestroyCrusaders, entity, true, "$11253746", true, 5) --Frankish Keep
+	Rule_AddInterval(_KeepIsDead, 1.5, {entity = entity, UIMarker_ID = UIKeep_Marker_ID})
+	
+	--Play FirstKeepSpotted VO once
+	if VOPlayed_FirstKeepSpotted == false and Game_GetSPDifficulty() >= GD_HARD then
+		Util_StartIntel(EVENTS.FirstKeepSpotted)
+	end
+end
+
+function _KeepIsVisible(context, data)
+	local entity = data.entity
+	if Player_CanSeeEntity(player1, entity) then
+		Rule_RemoveMe()
+		AddKeepUIMarker(entity)
+	end
+end
+
+function _KeepIsDead(context, data)
+	local entity = data.entity
+	local UIMarker_ID = data.UIMarker_ID
+	if Entity_IsAlive(entity) ~= true then
+		Rule_RemoveMe()
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		Objective_RemoveUIElements(OBJ_DestroyCrusaders, UIMarker_ID)
+	end
+end
+
+function _Monitor_SiegeCampHealth()
+	if EGroup_GetAvgHealth(eg_siegecamp) < 0.70 then
+		Rule_RemoveMe()
+		Objective_AddPing(OBJ_DefendSiegeCamp, mkr_siege_camp)
+		Util_StartIntel(EVENTS.SiegeCampInDanger)
+	end
+end

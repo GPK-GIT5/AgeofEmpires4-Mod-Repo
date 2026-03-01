@@ -1,0 +1,298 @@
+--
+-- Mission Retake Normandy and 1448 - Objective Research Cannons
+--
+
+import("obj_research.scar")
+
+function ConditionalInit_OptionalObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_AssistTheBrothers = {
+	
+		Title = "$11196684", --("Help the Bureau Brothers improve the cannons"),
+		Type = ObjectiveType_Optional,
+		
+		--Intel_Start = EVENTS.FirstObjective,
+		Intel_Complete = EVENTS.ResearchObj_AllComplete,
+		OnStart = AssistBrothers_OnStart,
+		--OnComplete = RetakeNormandy_OnComplete,
+		IsComplete = AssistBrothers_IsComplete,
+		
+	}
+	
+	SOBJ_EstablishTradeRoute_Optional = {
+	
+		Title = "$11196661", --("Capture the local trade route"),
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_AssistTheBrothers,
+		StartAlongsideParent = false, 
+		
+		--Intel_Complete = 
+		
+		SetupUI = function()
+			Objective_AddUIElements(SOBJ_EstablishTradeRoute_Optional, mkr_traderoute, true, "$11196577", true) --Trade Route
+		end,
+		
+		OnStart = CaptureTradeRoute_Optional_Start,
+	}
+	
+	--------------------------
+	--sobj_capture_mine.scar--
+	--------------------------
+	--SOBJ_CaptureTheMine = {
+	
+		--Title = LOC("Capture the mine"), --("Capture the mine"),
+		--Type = ObjectiveType_Optional,
+		--Parent = OBJ_ResearchCannons,
+		--StartAlongsideParent = true, 
+		
+		----Intel_Complete = EVENTS.GetCannonsCompleted,
+		
+		----SetupUI = GetCannons_SetUI,
+		
+		--OnStart = CaptureTheMine_Start,
+	--}
+	
+	SOBJ_RaidTheRiverPort_Optional = {
+	
+		Title = "$11196662", --("Raze the River Port"),
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_AssistTheBrothers,
+		StartAlongsideParent = false, 
+		
+		Intel_Complete = EVENTS.ResearchObj_Port,
+		
+		SetupUI = function()
+			riverport_ObjectiveUI = Objective_AddUIElements(SOBJ_RaidTheRiverPort_Optional, mkr_riverport, true, "$11196579", true) --River Port
+		end,
+		
+		OnStart = CaptureTheRiverPort_Optional_Start,
+	}
+	
+	SOBJ_RaidTheRiverPort_Optional_RemainingBuilding = {
+         
+		Title = "$11196668", --River Port Building
+        Type = ObjectiveType_Battle,
+        Parent = SOBJ_RaidTheRiverPort_Optional,
+		StartAlongsideParent = true,
+		IsSecret = true,
+		
+    }
+			
+	
+	Objective_Register(OBJ_AssistTheBrothers)
+	Objective_Register(SOBJ_EstablishTradeRoute_Optional)
+	Objective_Register(SOBJ_RaidTheRiverPort_Optional)
+	Objective_Register(SOBJ_RaidTheRiverPort_Optional_RemainingBuilding)
+	CaptureLocations_InitRouenMine_Optional()
+	
+	--
+	-- any other variable initialization can go in here
+	--	
+	
+	-- Checks for ensuring Trade intel events and banners only trigger once
+	b_TradeRoute_Step1_PlayerProximity_BannerDone = false
+	b_TradeRoute_Step2_ClearDefenders_IntelDone = false	
+	
+end
+
+function AssistBrothers_OnStart()
+	Init_RouenWorkshopUI()
+	
+	--LW - moved these to after the CTA is gone so the panel doesn't overlap with it.
+	--Diplomacy_ShowUI(true)
+	--Diplomacy_ShowDiplomacyUI(true)
+	
+	Rule_AddInterval(Intel_AllBonusResearchComplete, 2)
+	
+end
+
+function AssistBrothers_IsComplete()
+	if OptionalObjective_Data.traderoute.isCompleted == true and 
+		OptionalObjective_Data.riverport.isCompleted == true and
+		OptionalObjective_Data.minecapture.isCompleted == true then
+		return true
+	end
+	return false
+end
+
+function Intel_AllBonusResearchComplete()
+	if b_universityBoonsOn == true and 
+		OptionalObjective_Data.traderoute.isCompleted == true and 
+		OptionalObjective_Data.riverport.isCompleted == true and
+		OptionalObjective_Data.minecapture.isCompleted == true then
+		Rule_RemoveMe()
+		--Util_StartIntel(EVENTS.ResearchObj_AllComplete)
+	elseif Objective_IsComplete(OBJ_ResearchCannons) then
+		Rule_RemoveMe()
+	end	
+end
+
+function CaptureTradeRoute_Optional_Start()
+	--Rule_AddInterval(TradeRoute_Step1_PlayerProximity_Optional, 1)
+	--int_ProgressRate = int_ProgressRate+1
+end
+
+function TradeRoute_Step1_PlayerProximity_Optional()
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_traderoute, 80)
+	if SGroup_CountSpawned(sg_temp) > 0 then 
+		Rule_RemoveMe()
+		StartMain_IfNotStarted()
+		StartTradeRoute_IfNotStarted()
+		
+		-- Check to make sure this only happens once
+		if b_TradeRoute_Step1_PlayerProximity_BannerDone == false then
+			b_TradeRoute_Step1_PlayerProximity_BannerDone = true
+			Objective_UpdateText(SOBJ_EstablishTradeRoute_Optional, "$11196665") --"Clear the english defenders from the trade route."
+		end
+		
+		Obj_SetProgressVisible(SOBJ_EstablishTradeRoute_Optional.ID, true)
+		Obj_SetProgress(SOBJ_EstablishTradeRoute_Optional.ID, 0)
+		Rule_AddInterval(TradeRoute_Step2_ClearDefenders_Optional, 1)
+		tradeRoute_DefenderCount = SGroup_CountSpawned(sg_enemy_traderoute_defenders)
+	end
+end
+
+function TradeRoute_Step2_ClearDefenders_Optional()
+	local killProgess = 1-(SGroup_CountSpawned(sg_enemy_traderoute_defenders)/tradeRoute_DefenderCount)
+	Obj_SetProgress(SOBJ_EstablishTradeRoute_Optional.ID, killProgess)
+	if killProgess >= 1 then
+		Rule_RemoveMe()
+		Obj_SetProgressVisible(SOBJ_EstablishTradeRoute_Optional.ID, false)
+		
+		-- Check to make sure this only happens once
+		if b_TradeRoute_Step2_ClearDefenders_IntelDone == false then
+			b_TradeRoute_Step2_ClearDefenders_IntelDone = true
+			CelebrateOnPosition(mkr_traderoute, 60)
+			Util_StartIntel(EVENTS.ResearchObj_Trade)
+			Objective_UpdateText(SOBJ_EstablishTradeRoute_Optional, "$11196666") --Assign traders to the trade settlement to establish a trade route
+		end
+		
+		Objective_SetCounter(SOBJ_EstablishTradeRoute_Optional, 0, 3)
+		Rule_AddInterval(TradeRoute_Step3_AssignTraders_Optional, 1)
+		print("This twice too?")
+	end
+end
+	
+function TradeRoute_Step3_AssignTraders_Optional()
+	local activeTraderCount = Player_GetActiveTraderCount(player1)
+	
+	-- Check whether we're doing better, play a sound accordingly
+	local oldValue = 0
+	if Objective_IsCounterSet(SOBJ_EstablishTradeRoute_Optional) == true then
+		oldValue = Objective_GetCounter(SOBJ_EstablishTradeRoute_Optional)
+	end
+	if activeTraderCount > oldValue then
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+	elseif activeTraderCount < oldValue then
+		Sound_Play2D("mus_stinger_campaign_negative")
+	end
+
+	Objective_SetCounter(SOBJ_EstablishTradeRoute_Optional, math.min(activeTraderCount,3), 3)
+
+	if activeTraderCount >= 3 then
+		Rule_RemoveMe()
+		Util_AutoSave(true, true)
+		Objective_UpdateText(SOBJ_EstablishTradeRoute_Optional, "$11196661", nil, false) --("Establish a trade route"),
+		Objective_Complete(SOBJ_EstablishTradeRoute_Optional)
+		
+		OptionalObjective_Data.traderoute.isCompleted = true
+		print("DOUBLE TROUBLE?")
+		Player_CompleteUpgrade(player1, BP_GetUpgradeBlueprint("upgrade_reliable_supplies_fre"))
+		t_reinforcementData[1].activated = true
+	end
+end
+
+function CaptureTheRiverPort_Optional_Start()
+	--Rule_AddInterval(RiverPort_Step1_PlayerProximity_Optional, 1)
+	--int_ProgressRate = int_ProgressRate+1
+end
+
+function RiverPort_Step1_PlayerProximity_Optional()
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_riverport, 100)
+	if SGroup_CountSpawned(sg_temp) > 0 then 
+		Rule_RemoveMe()
+		StartMain_IfNotStarted()
+	 	StartRiverPort_IfNotStarted()
+		Objective_UpdateText(SOBJ_RaidTheRiverPort_Optional, "$11196667") --Raze the river port buildings
+		riverportBuildingCount = EGroup_CountSpawned(eg_riverport)
+		Obj_SetProgressVisible(SOBJ_RaidTheRiverPort_Optional.ID, true)
+		Obj_SetProgress(SOBJ_RaidTheRiverPort_Optional.ID, 0)
+		Rule_AddInterval(RiverPort_Step2_BurnBuildings_Optional, 1)
+	end
+end
+
+function RiverPort_Step2_BurnBuildings_Optional()
+	riverport_BuildingsRemaining = EGroup_CountSpawned(eg_riverport)
+	Obj_SetProgress(SOBJ_RaidTheRiverPort_Optional.ID, 1-(riverport_BuildingsRemaining/riverportBuildingCount))
+	
+	if remainingRiverPortUI == nil and EGroup_CountSpawned(eg_riverport) < 4 then
+		--Objective_RemoveUIElements(SOBJ_RaidTheRiverPort_Optional, riverport_ObjectiveUI)
+		remainingRiverPortUI = Objective_AddUIElements(SOBJ_RaidTheRiverPort_Optional_RemainingBuilding, eg_riverport, true, "$11196668", true) --River Port Building
+		riverport_LastUpdate = riverport_BuildingsRemaining
+	end
+	
+	if remainingRiverPortUI ~= nil and riverport_BuildingsRemaining ~= riverport_LastUpdate then
+		riverport_LastUpdate = riverport_BuildingsRemaining
+		Objective_RemoveUIElements(SOBJ_RaidTheRiverPort_Optional_RemainingBuilding, remainingRiverPortUI)
+		if riverport_BuildingsRemaining > 0 then
+			remainingRiverPortUI = Objective_AddUIElements(SOBJ_RaidTheRiverPort_Optional_RemainingBuilding, eg_riverport, true, "$11196668", true) --River Port Building
+		end
+	end
+	
+	if EGroup_CountSpawned(eg_riverport) <= 0 then
+		Rule_RemoveMe()
+		Util_AutoSave(true, true)
+		Objective_UpdateText(SOBJ_RaidTheRiverPort_Optional, "$11196662", nil, false) --("Raze the River Port"),
+		Objective_Complete(SOBJ_RaidTheRiverPort_Optional)
+		Obj_SetProgressVisible(SOBJ_RaidTheRiverPort_Optional.ID, false)
+		
+		CelebrateOnPosition(mkr_riverport, 80)
+		OptionalObjective_Data.riverport.isCompleted = true
+		Player_CompleteUpgrade(player1, BP_GetUpgradeBlueprint("upgrade_shipworthy_timber_fre"))
+		t_reinforcementData[2].activated = true
+	end
+end
+
+function MineCapture_PlayerProx()
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_mine, 80)
+	if SGroup_CountSpawned(sg_temp) > 0 then 
+		Rule_RemoveMe()
+		StartMain_IfNotStarted()
+		CaptureLocations_InitRouenMine_Optional()
+		Objective_Start(SOBJ_CaptureRouenMine_Optional, true)
+	end
+end
+
+function StartMain_IfNotStarted()
+	if Objective_IsStarted(OBJ_AssistTheBrothers) ~= true then
+		Objective_Start(OBJ_AssistTheBrothers, false)
+	end
+end
+
+function StartTradeRoute_IfNotStarted()
+	if Objective_IsStarted(SOBJ_EstablishTradeRoute_Optional) ~= true then
+		Objective_Start(SOBJ_EstablishTradeRoute_Optional, false)
+	end
+end
+
+function StartRiverPort_IfNotStarted()
+	if Objective_IsStarted(SOBJ_RaidTheRiverPort_Optional) ~= true then
+		Objective_Start(SOBJ_RaidTheRiverPort_Optional, false)
+	end
+end
+
+function StartMineCap_IfNotStarted()
+	if Objective_IsStarted(SOBJ_CaptureRouenMine_Optional) ~= true then
+		Objective_Start(SOBJ_CaptureRouenMine_Optional, false)
+	end
+end
+
+function StartOptionals_IfNotStarted()
+	--Rule_Remove(TradeRoute_Step1_PlayerProximity_Optional)
+	--Rule_Remove(RiverPort_Step1_PlayerProximity_Optional)
+	Rule_Remove(MineCapture_PlayerProx)
+	StartMain_IfNotStarted()
+	StartTradeRoute_IfNotStarted()
+	StartRiverPort_IfNotStarted()
+	StartMineCap_IfNotStarted()
+end

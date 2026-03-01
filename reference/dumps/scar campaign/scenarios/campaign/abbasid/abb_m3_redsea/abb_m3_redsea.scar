@@ -1,0 +1,292 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")		
+import("abb_m3_redsea.events")
+import("abb_m3_redsea_automated.scar")
+import("abb_m3_redsea_data.scar")
+import("abb_m3_redsea_objectives.scar")
+import("abb_m3_redsea_raid.scar")
+import("abb_m3_redsea_pirates.scar")
+import("abb_m3_redsea_training.scar")
+import("abb_m3_redsea_trade_convoys.scar")
+
+MissionOMatic_UpdateHolyOrderFlags()
+
+-- This is called very early on in the mission's initialization. So early, in fact, that there 
+-- is very little you can do. You can, however, use it to do simple stuff like gathering player IDs
+function Mission_SetupPlayers()
+	content_pack = CONTENT_PACK_ABBASID_CAMPAIGN
+	
+	player1 = World_GetPlayerAt(1)
+	player2 = World_GetPlayerAt(2)
+	player3 = World_GetPlayerAt(3)
+	player4 = World_GetPlayerAt(4)
+	player5 = World_GetPlayerAt(5)
+	player6 = World_GetPlayerAt(6)
+	
+	Setup_SetPlayerName(player1, "$11253242")
+	-- This also ages them up, so no need to do that manually or in the Player settings
+	EGroup_CompleteUpgrade(eg_houseofwisdom, UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_AYY)
+	Player_SetStateModelBool(player1, "trade_wing_built_abb", true)
+	EGroup_SetAnimatorVariable(eg_houseofwisdom, "trade_wing_build_progress_abb", 1)
+	Modify_EntityMaxHealth(eg_houseofwisdom, 10000, MUT_Addition)
+	Player_SetCurrentAge(player1, AGE_FEUDAL)
+	Player_SetMaximumAge(player1, AGE_CASTLE)
+	TechTree_HideProductionByAge_UsingTypes(player1, AGE_CASTLE)
+	
+	Setup_SetPlayerName(player2, "$11250539") --Franks
+	Player_SetMaximumAge(player2, AGE_CASTLE)
+	
+	Setup_SetPlayerName(player3, "$11252504") 
+	Player_SetMaximumAge(player3, AGE_CASTLE)
+	Player_SetAIResourceBonus(player3, 1.0) -- this is a multiplier - it defaults to 0 for campaign. Set it to 1 so the player gets resources.
+	
+	Setup_SetPlayerName(player4, "$11252506") 
+	Player_SetMaximumAge(player4, AGE_CASTLE)
+	Player_SetAIResourceBonus(player4, 1.0) -- this is a multiplier - it defaults to 0 for campaign. Set it to 1 so the player gets resources.
+	
+	Setup_SetPlayerName(player5, "$11252505") 
+	Player_SetMaximumAge(player5, AGE_CASTLE)
+	Player_SetAIResourceBonus(player5, 1.0) -- this is a multiplier - it defaults to 0 for campaign. Set it to 1 so the player gets resources.
+	
+	Setup_SetPlayerName(player6, "$11252507") 
+	Player_SetMaximumAge(player6, AGE_CASTLE)
+	Player_SetAIResourceBonus(player6, 1.0) -- this is a multiplier - it defaults to 0 for campaign. Set it to 1 so the player gets resources.
+	
+	-- Setup the relationshps for the player team
+	Player_SetMutualRelationships({player1, player4, player5, player6}, R_ALLY)
+	-- Also setup shared vision
+	World_EnableSharedLineOfSight(player1, player4, true)
+	World_EnableSharedLineOfSight(player1, player5, true)
+	World_EnableSharedLineOfSight(player1, player6, true)
+	
+	PlayerColour_Enable()
+	Game_SetPlayerSlotColour(player1, COLOR_BLUE)
+    Game_SetPlayerSlotColour(player2, COLOR_RED)
+	Game_SetPlayerSlotColour(player3, COLOR_PURPLE)
+	Game_SetPlayerSlotColour(player4, COLOR_YELLOW)
+	Game_SetPlayerSlotColour(player5, COLOR_YELLOW)
+	Game_SetPlayerSlotColour(player6, COLOR_YELLOW)
+	
+	Game_SetPlayerUISlotColour(player1, COLOR_BLUE)
+    Game_SetPlayerUISlotColour(player2, COLOR_RED)
+	Game_SetPlayerUISlotColour(player3, COLOR_PURPLE)
+	Game_SetPlayerUISlotColour(player4, COLOR_YELLOW)
+	Game_SetPlayerUISlotColour(player5, COLOR_YELLOW)
+	Game_SetPlayerUISlotColour(player6, COLOR_YELLOW)
+end
+
+function Mission_SetupVariables()
+	RedSea_InitData()
+end
+
+-- This is called right before the swoopy-cam starts, as the game fades up from black 
+function Mission_Preset()
+	print("Playing Mission_Preset!")
+	
+	-- Human Player
+	Player_SetResource(player1, RT_Food, 1000)
+	Player_SetResource(player1, RT_Wood, 1600)
+	Player_SetResource(player1, RT_Gold, 1000)
+	Player_SetResource(player1, RT_Stone, 800)
+	
+	-- Increased health based on difficulty/console status
+	PlayerUpgrades_ApplyHealthBonuses(player1)
+	Player_ModifyAyyubidMilitaryBuildTimes(player1, Util_DifVar({ 0.5, 0.75, 1, 1 }))
+	Player_CompleteUpgrade(player1, UPG.AYYUBID_CMP.UPGRADE_MIL_PARTHIAN_TACTICS_AYY)
+	
+	-- The Military Wing only benefits land units, so it's a trap here - remove it and its upgrades
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_ADD_MILITARY_WING, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_ADD_MILITARY_WING_FEUDAL, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_ADD_MILITARY_WING_CASTLE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_ADD_MILITARY_WING_IMPERIAL, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_MIL_CAMEL_ARCHERS_IMPROVED_WEAPON_ABB, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_MAMELUKE_DAMAGE_ABB, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.ABBASID.UPGRADE_ADD_MILITARY_WING, ITEM_REMOVED)
+	-- We don't want the player using land traders in this mission
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_TRADE_CART_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.ABBASID.UNIT_TRADE_CART_ABB, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.ABBASID_HA_01.UNIT_TRADE_CART_ABB_HA_01, ITEM_REMOVED)
+	-- They shouldn't use the Xebec
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_NAVAL_XEBEC_AYY, ITEM_REMOVED)
+	-- We also want to stop the House of Wisdom from spawning free traders at mission start, which are unique SBPs
+	Player_SetSquadProductionAvailability(player1, SBP.ABBASID.UNIT_TRADE_CART_FREE_2_ABB, ITEM_LOCKED)
+	Player_SetSquadProductionAvailability(player1, SBP.ABBASID.UNIT_TRADE_CART_FREE_3_ABB, ITEM_LOCKED)
+	Player_SetSquadProductionAvailability(player1, SBP.ABBASID.UNIT_TRADE_CART_FREE_4_ABB, ITEM_LOCKED)
+	
+	AssignVillagersToFarms(sg_villagers_farms)
+	AssignVillagersToWood(sg_villagers_wood)
+	AssignVillagersToGold(sg_villagers_gold)
+	
+	-- Crusaders
+	
+	-- Pirates
+	
+	Player_CompleteUpgrade(player3, UPG.COMMON.UPGRADE_RANGED_INCENDIARY)
+	-- Pirate outposts are tough to deal with
+	Cmd_InstantUpgrade(eg_pirate_outposts, t_difficulty.pirateOutpostWeapons)
+	if Game_GetSPDifficulty() > GD_NORMAL then
+		Cmd_InstantUpgrade(eg_pirate_outposts, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	end
+	
+	-- Allies (4, 5, 6)
+	local allies = {player4, player5, player6}
+	for idx, ally in pairs(allies) do
+		Player_GetAll(ally)
+		-- Make allied buildings non-targetable, or else the enemies get stuck attacking them
+		EGroup_SetTargetingType(eg_allentities, Targeting_None)
+		-- Make the docks outright invulnerable so they don't get accidentally damaged, since they are fail conditions later
+		EGroup_Clear(eg_temp)
+		EGroup_Filter(eg_allentities, EBP.AYYUBID_CMP.BUILDING_UNIT_NAVAL_AYY, FILTER_REMOVE, eg_temp)
+		EGroup_SetInvulnerable(eg_temp, true)
+	end
+	
+	-- Players 4 and 5 have some extra defenses
+	Cmd_InstantUpgrade(eg_player4_outpost_sea, UPG.COMMON.UPGRADE_NAVAL_ARROWSLITS)
+	Cmd_InstantUpgrade(eg_player5_outposts, UPG.COMMON.UPGRADE_NAVAL_ARROWSLITS)
+	
+	-- Remove minimap clutter
+	SGroup_EnableMinimapIndicator(sg_mini_pirate_camp, false)
+	EGroup_EnableMinimapIndicator(eg_all_fish, false)
+	FoodReserves_Init()
+	
+	--DEBUG: Auto Test--
+	AutoTest_OnInit()
+end
+
+-- This is run after the swoopy-cam finishes, but before the HUD is revealed and the player is granted control
+function Mission_PreStart()
+	print("Playing Mission_PreStart!")
+	RedSea_RegisterObjectives()
+	
+	-- To make finding enemies easier, increase ship line of sight for player
+	local playerShipSightModifier = 3.0
+	Modify_EntityTypeSightRadius(player1, EBP.AYYUBID_CMP.UNIT_NAVAL_FISHING_BOAT_AYY, playerShipSightModifier)
+	Modify_EntityTypeSightRadius(player1, EBP.AYYUBID_CMP.UNIT_NAVAL_DHOW_AYY, playerShipSightModifier)
+	Modify_EntityTypeSightRadius(player1, EBP.AYYUBID_CMP.UNIT_NAVAL_EXPLOSIVE_DHOW_AYY, playerShipSightModifier)
+	Modify_EntityTypeSightRadius(player1, EBP.AYYUBID_CMP.UNIT_NAVAL_BAGHLAH_AYY, playerShipSightModifier)
+	Modify_EntityTypeSightRadius(player1, EBP.AYYUBID_CMP.UNIT_NAVAL_TRANSPORT_AYY, playerShipSightModifier)
+	-- Allied trade ships move around a lot but have tiny vision cones, so boost the sight on those 
+	local tradeShipSightMultiplier = 5.0
+	Modify_EntityTypeSightRadius(player1, EBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY, tradeShipSightMultiplier)
+	Modify_EntityTypeSightRadius(player4, EBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY, tradeShipSightMultiplier)
+	Modify_EntityTypeSightRadius(player5, EBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY, tradeShipSightMultiplier)
+	Modify_EntityTypeSightRadius(player6, EBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY, tradeShipSightMultiplier)
+	
+	-- Also boost the speed of player warships specifically
+	local playerShipSpeedMultiplier = 1.3
+	local speedModArrowship = Modifier_Create(MAT_EntityType, "speed_maximum_modifier", MUT_Multiplication, false, playerShipSpeedMultiplier, EBP.AYYUBID_CMP.UNIT_NAVAL_DHOW_AYY)
+	Modifier_ApplyToPlayer(speedModArrowship, player1, 0)
+	local speedModBoomship = Modifier_Create(MAT_EntityType, "speed_maximum_modifier", MUT_Multiplication, false, playerShipSpeedMultiplier, EBP.AYYUBID_CMP.UNIT_NAVAL_EXPLOSIVE_DHOW_AYY)
+	Modifier_ApplyToPlayer(speedModBoomship, player1, 0)
+	local speedModSpringaldship = Modifier_Create(MAT_EntityType, "speed_maximum_modifier", MUT_Multiplication, false, playerShipSpeedMultiplier, EBP.AYYUBID_CMP.UNIT_NAVAL_BAGHLAH_AYY)
+	Modifier_ApplyToPlayer(speedModSpringaldship, player1, 0)
+	
+	-- Audio
+	Sound_ResetMusicIntensityMapping();
+	Sound_AddMusicIntensityMappingPoint(50, 200) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(100, 1250) -- point 1 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(150, 2500) -- point 1 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(200, 4000) -- point 1 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(300, 5500) -- point 1 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(400, 7250) -- point 1 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(550, 9999) -- raw value max to scaled value max 
+end
+
+-- This is run after the HUD is revealed and the player is granted control
+function Mission_Start()
+	print("Playing Mission_Start!")
+	TradeConvoys_Init()
+	Pirates_Init()
+	-- Kick off the first objective
+	Objective_Start(OBJ_TutNaval, true, true)
+	-- Starting VO
+	Rule_AddOneShot(VOCue_HistoryAyyubids, 20)
+	-- This is a helper objective for players less likely to have thought of building traders themselves
+	Rule_Add(MonitorTeamGold)
+	Rule_Add(RedSea_CheckForAchievement)
+	Rule_AddGlobalEvent(CheckSquadDeath, GE_SquadKilled)
+	Rule_AddOneShot(MissionTutorial_AddHintToSeaOutpost, 7)
+end
+
+--? @shortdesc Handles events associated with any squad deaths
+function CheckSquadDeath(context)
+	local victim = context.victim
+	local isAllied = Squad_GetPlayerOwner(victim) == player1 or Squad_GetPlayerOwner(victim) == player4 or Squad_GetPlayerOwner(victim) == player5 or Squad_GetPlayerOwner(victim) == player6
+	
+	-- We treat the player and allies similarly if this is a trade ship and we should be tracking unrest
+	if isAllied == true and context.killer ~= nil and Squad_IsOfType(victim, "scar_trade_ship")then
+		local civilUnrestActive = Objective_IsStarted(OBJ_UnrestMeter) == true and Objective_IsComplete(OBJ_UnrestMeter) == false
+		if isAllied == true and civilUnrestActive == true then
+			ModifyCivilUnrest(t_civilUnrest.tickTraderDeath, Util_GetPosition(victim))
+			-- CTA about trade ships being under attack
+			if context.killer ~= nil and RedSea_VOPlayed_TradeUnderAttack == false then
+				RedSea_VOPlayed_TradeUnderAttack = true
+				if Objective_IsComplete(SOBJ_GoldCounter) == false then
+					VOCue_TradeUnderAttack_CTA(Squad_GetPosition(victim), context.killer)
+				end
+			end
+		end
+		
+	-- If this is a Crusader ship, decrease civil unrest
+	elseif Squad_GetPlayerOwner(victim) == player2 then
+		ModifyCivilUnrest(t_civilUnrest.tickRaiderDeath, Util_GetPosition(victim))
+		-- Also spawn loot for the enemy ships in the opening tutorial phase
+		if Objective_IsStarted(OBJ_AllyGold) == false and Objective_IsComplete(OBJ_AllyGold) == false then
+			local position = Squad_GetPosition(victim)
+			-- Pick a kind of loot for this pirate
+			local pickup = BP_GetEntityBlueprint(NAVAL_LOOT_TABLE[g_bootyIndex])
+			Util_CreateEntities(nil, nil, pickup, position, 1, nil, true)
+			-- Update the index
+			g_bootyIndex = g_bootyIndex + 1
+			if g_bootyIndex > #NAVAL_LOOT_TABLE then
+				g_bootyIndex = 1
+			end
+		end
+		
+	-- Furthermore, any naval unit belonging to the pirate player could drop resource pickups
+	-- Don't if it's not a ship or there's no booty left
+	elseif Squad_GetPlayerOwner(victim) == player3 and Squad_IsOfType(victim, "naval_unit") == true and g_pirateBootyCap > 0 then
+		local position = Squad_GetPosition(victim)
+		-- Pick a kind of loot for this pirate
+		local pickup = BP_GetEntityBlueprint(NAVAL_LOOT_TABLE[g_bootyIndex])
+		Util_CreateEntities(nil, nil, pickup, position, 1, nil, true)
+		-- Update the index
+		g_bootyIndex = g_bootyIndex + 1
+		if g_bootyIndex > #NAVAL_LOOT_TABLE then
+			g_bootyIndex = 1
+		end
+		-- Don't spawn pirate booty forever, or the player might farm them
+		if spawnPirateBooty == true then
+			g_pirateBootyCap = g_pirateBootyCap - 1
+		end
+	end
+end
+
+--? @shortdesc Makes docks have massive LOS, effectively revealing most of the map but preserving stealth
+function ActivateDockMegavision()
+	local dockSightMultiplier = 20.0
+	Modify_EntityTypeSightRadius(player1, EBP.AYYUBID_CMP.BUILDING_UNIT_NAVAL_AYY, dockSightMultiplier)
+	Modify_EntityTypeSightRadius(player4, EBP.AYYUBID_CMP.BUILDING_UNIT_NAVAL_AYY, dockSightMultiplier)
+	Modify_EntityTypeSightRadius(player5, EBP.AYYUBID_CMP.BUILDING_UNIT_NAVAL_AYY, dockSightMultiplier)
+	Modify_EntityTypeSightRadius(player6, EBP.AYYUBID_CMP.BUILDING_UNIT_NAVAL_AYY, dockSightMultiplier)
+end
+
+function RedSea_CheckForAchievement(context, data)
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_trade_ship", FILTER_KEEP)
+	local traderCount = 0
+	
+	local _CheckTrading = function(gid, idx, sid)
+		local entity = Squad_GetFirstEntity(sid)
+		if Entity_IsTrading(entity) == true then
+			traderCount = traderCount + 1
+		end
+	end
+	SGroup_ForEach(sg_allsquads, _CheckTrading)
+	
+	if traderCount >= 20 then
+		Game_SendCustomChallengeEvent(player1, CE_ACHIEVACTIVETRADERSREDSEA, 1)
+		Rule_RemoveMe()
+	end
+end

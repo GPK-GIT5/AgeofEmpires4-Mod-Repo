@@ -1,0 +1,255 @@
+import("MissionOMatic/MissionOMatic.scar")	
+
+function Egypt_InitObjectives()
+	
+	OBJ_Alexandria = {
+		Title = "$11253758", --Do not let the Franks gain full control
+		Type = OT_Information,
+		
+		PreStart = function()
+			--uiAlexandria = Objective_AddUIElements(OBJ_Alexandria, mkr_player_base, false, "$11253759") --The Port
+		end,
+		OnStart = function()	
+		end,
+		IsComplete = function()
+		end,
+		IsFailed = function()
+			--local player_base_entity = EGroup_GetEntityAt(eg_alexandria, 1)
+			--if World_OwnsEntity(player_base_entity) or Entity_GetPlayerOwner(player_base_entity) ~= player1 then
+				--return true
+			--end
+			if control_balance <= 0 then
+				return true
+			end
+		end,
+		OnComplete = function()
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	OBJ_ControlPrimary = {
+		Title = "$11253760", -- Hold the area to gain control over time
+		--Description = "$11253761", --Capture Control Points to increase control of the area.
+		Type = ObjectiveType_Primary,
+		
+		PreStart = function()
+		end,
+		OnStart = function()	
+			Util_StartIntel(EVENTS.MissionStart)
+			Objective_Start(OBJ_Alexandria, false)
+		end,
+		IsComplete = function()
+			--local controlString = Loc_FormatText("$11253763", Egypt_GetHeldPoints(player1), Egypt_GetHeldPoints(player2)) --"Gain Control - Sultan: %1%%+ vs Frankish: %2%%+"
+			--Objective_UpdateText(OBJ_ControlPrimary, controlString, nil, false, true)
+			--Objective_SetCounter(OBJ_ControlPrimary, Egypt_GetControlTrend())
+			return Objective_AreSubObjectivesComplete(OBJ_ControlPrimary, true)
+		end,
+		IsFailed = function()
+			--return Objective_AreSubObjectivesFailed(OBJ_ControlPrimary, true)
+		end,
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		OnFail = function()
+			--Mission_Fail()
+		end,
+	}
+	
+	OBJ_Control = {
+		Title = Loc_FormatText("$11255473", 2), -- Sultan: %1COUNT%+
+		Description = Loc_FormatText("$11255474", 2), -- Crusader: %1COUNT%+
+		Type = ObjectiveType_TugOfWar_WithVelocity,
+		Parent = OBJ_ControlPrimary,
+		StartAlongsideParent = true,
+		
+		PreStart = function()
+			Obj_SetProgressVisible(OBJ_Control.ID, true)
+			Obj_SetProgress(OBJ_Control.ID, control_balance)
+		end,
+		OnStart = function()
+			Rule_AddInterval(Egypt_GetControlBalance, 1)
+			Rule_AddInterval(VOCue_ControlUp_Query, 1)
+			Rule_AddInterval(VOCue_ControlDown_Query, 1)
+			Rule_AddInterval(Egypt_RaiseStakesSlow, 600)
+			Rule_AddInterval(Egypt_RaiseStakesFast, 300)
+			Rule_AddOneShot(Egypt_AddTemplars, 300)
+			
+		end,
+		IsComplete = function()
+			local trend = Egypt_GetControlTrend()
+			local titleString = Loc_FormatText("$11255473", Egypt_GetHeldPoints(player1)) -- Sultan: %1COUNT%+
+			local descriptionString = Loc_FormatText("$11255474", Egypt_GetHeldPoints(player2)) -- Crusader: %1COUNT%+
+			Objective_UpdateText(OBJ_Control, titleString, descriptionString, false, true)
+			UI_SetPlayerDataContext(player1, { tug_of_war_velocity = trend })
+			Obj_SetProgress(OBJ_Control.ID, control_balance)
+			if control_balance >= 1 then
+				return true
+			end
+		end,
+		IsFailed = function()
+		end,
+		OnComplete = function()
+		end,
+		OnFail = function()
+		end,
+	}
+	
+	OBJ_Reinforcements = {
+		Title = "$11253769", --Next Reinforcement Wave in
+		Type = ObjectiveType_Primary,
+		--Parent = OBJ_Unrest,
+		--StartAlongsideParent = true,
+		
+		PreStart = function()
+		end,
+		OnStart = function()
+			Objective_StartTimer(OBJ_Reinforcements, COUNT_DOWN, 90)
+			Rule_AddInterval(_Egypt_ReinforcementWaves, 0.5)
+		end,
+		IsComplete = function()
+		end,
+		IsFailed = function()
+		end,
+		OnComplete = function()
+		end,
+		OnFail = function()
+		end,
+	}
+	TOBJ_ControlPointTip = {
+		Title = "$11253770", --Control increases for whomever holds the most control points.
+		Type = ObjectiveType_Tip,
+		Parent = OBJ_Control,
+		StartAlongsideParent = true,
+		
+		PreStart = function()
+		end,
+		OnStart = function()
+		end,
+		IsComplete = function()
+		end,
+		IsFailed = function()
+		end,
+		OnComplete = function()
+		end,
+		OnFail = function()
+		end,
+	}
+
+	Objective_Register(OBJ_ControlPrimary)
+	Objective_Register(OBJ_Control)
+	Objective_Register(OBJ_Alexandria)
+	Objective_Register(OBJ_Reinforcements)
+	Objective_Register(TOBJ_ControlPointTip)
+	--Objective_Register(SOBJ_PlayerWave)
+	--Objective_Register(SOBJ_EnemyWave)
+	
+
+end
+
+function Egypt_GetControlBalance()
+	
+	control_balance = control_balance or 0.3
+	control_acceleration = control_acceleration or 1
+	
+	local trend = Egypt_GetControlTrend()
+	
+	trend = trend/3
+	local ramp_value = math.floor(World_GetGameTime()/300)
+	ramp_value = ramp_value
+	local ramping_change = 1+ramp_value
+	trend = trend*ramping_change*control_acceleration
+	
+	local current_control = control_balance*4000
+	local current_control = current_control+trend
+	
+	control_balance = current_control/4000
+	
+end
+
+function Egypt_GetControlTrend()
+	local player_heldPoints = Egypt_GetHeldPoints(player1)
+	local enemy_heldPoints = Egypt_GetHeldPoints(player2)
+	
+	local trend = player_heldPoints-enemy_heldPoints
+	
+	if player_heldPoints >= 9 then
+		Game_SendCustomChallengeEvent(player1, CE_ACHIEVALLCONTROLPOINTSINTOEGYPT, 1)
+	end
+	
+	return trend
+end
+
+function Egypt_RaiseStakesSlow()
+	VOCue_StakesRaise_OneShot()
+	control_acceleration = control_acceleration+0.5
+	reinforcements_acceleration = reinforcements_acceleration+12
+end
+
+function Egypt_RaiseStakesFast()
+	local New_Attack_Interval = New_Attack_Interval or t_difficulty.enemyMods.ATTACK_INTERVAL
+	if New_Attack_Interval-t_difficulty.enemyMods.ATTACK_ACCELERATION < t_difficulty.enemyMods.ATTACK_INTERVAL_FLOOR then
+		New_Attack_Interval = t_difficulty.enemyMods.ATTACK_INTERVAL_FLOOR
+	else
+		New_Attack_Interval = New_Attack_Interval-t_difficulty.enemyMods.ATTACK_ACCELERATION
+	end
+	
+	local New_Attack_Size = New_Attack_Size or t_difficulty.enemyMods.attack_group_size
+	if New_Attack_Size+t_difficulty.enemyMods.ATTACK_GROUP_SIZE_ACCELERATION > t_difficulty.enemyMods.ATTACK_GROUP_SIZE_CEILING then
+		New_Attack_Size = t_difficulty.enemyMods.ATTACK_GROUP_SIZE_CEILING
+	else
+		New_Attack_Size = New_Attack_Size+t_difficulty.enemyMods.ATTACK_GROUP_SIZE_ACCELERATION
+	end
+	
+	Rule_ChangeInterval(SpawnTypedEnemySquads, New_Attack_Interval)
+	t_difficulty.enemyMods.attack_group_size = New_Attack_Size
+end
+
+function Egypt_AddTemplars()
+	ENEMY_SQUAD_TYPES.typeList = {"scar_archer", "scar_spearman", "scar_horseman", "templars", "scar_militia"}
+
+	local units = {
+			{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, numSquads = 4},
+			{sbp = SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU, numSquads = 1},
+	}
+		
+	local thisSgroup = CreateUnits(player2, units, mkr_enemy_unit_spawn, "Frankish_Army_")
+	ApplyCaptureModifier(thisSgroup)
+	Distribute_Enemy_Army(thisSgroup)		
+	
+	Rule_AddOneShot(AssignOldestWaitingArmyToBestTarget, 1)
+end
+
+function _Egypt_ReinforcementWaves()
+	if Objective_GetTimerSeconds(OBJ_Reinforcements) <= 0 then
+		Objective_StartTimer(OBJ_Reinforcements, COUNT_DOWN, 90)
+		Egypt_ReinforcementWave(player1)
+		Egypt_ReinforcementWave(player2)
+		
+		-- CTAs: Reinforcements 
+		Sound_Play2D("sfx_horn_reinforcements_arrive_egypt")
+		if reinforcement_wave_count == 0 then
+			VOCue_FirstReinforcements()
+		elseif reinforcement_wave_count == 1 then
+			VOCue_SecondReinforcements()
+		end
+		
+		if reinforcement_wave_count > 0 then
+			UI_CreateEventCue("$11253757", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_campaign_high_priority_positive_play", ECV_Title|ECV_Queue)
+			UI_CreateMinimapBlip(mkr_player_unit_spawn, 6, "general")
+		end
+		
+		reinforcement_wave_count = reinforcement_wave_count+1
+		
+		if SGroup_CountSpawned(sg_reinforcement_transports) > 0 then
+			Cmd_FormationMove(sg_reinforcement_transports, mkr_player_boat_spawn, false, true)
+		end
+		
+	elseif Objective_GetTimerSeconds(OBJ_Reinforcements) <= 10 then
+		if SGroup_CountSpawned(sg_reinforcement_transports) <= 0 then
+			CreateUnits(player7, {type = "scar_transport_ship", numSquads = 2}, mkr_player_boat_spawn, sg_reinforcement_transports)
+			Cmd_FormationMove(sg_reinforcement_transports, mkr_player_boat_landing)
+		end
+	end
+end

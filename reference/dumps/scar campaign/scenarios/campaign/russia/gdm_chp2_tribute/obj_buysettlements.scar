@@ -1,0 +1,746 @@
+--
+-- Tribute 1375 - Buy Settlements objective
+--
+
+import("gdm_chp2_tribute.scar")
+
+
+function BuySettlements_InitObjectives()
+
+		
+	OBJ_BuySettlements = {
+	
+		Title = "$11180225", -- Buy settlements to expand Moscow
+		Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.BuySettlements_ObjectiveStart,
+		
+		SetupUI = BuySettlements_SetupUI,
+		
+		OnStart = BuySettlements_OnStart,
+		OnComplete = BuySettlements_OnComplete,
+		
+	}
+	
+	SOBJ_FindMoreSettlements = {
+	
+		Title = "$11183983",	-- Find more settlements in the region
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BuySettlements,
+		
+	}
+
+
+	Objective_Register(OBJ_BuySettlements)
+	Objective_Register(SOBJ_FindMoreSettlements)
+	
+
+	t_settlementData = {
+		{
+			id = "settlement1",
+			displayName = "$11180226", 	-- Clin
+			egroup = eg_settlement1,	-- (top-left, on the road)
+			marker = mkr_settlement1,
+			income = 35,
+			towers = {
+				mkr_settlement1_tower1,					-- locations of the free towers that are built (on EASY mode) when the settlement is purchased
+				mkr_settlement1_tower2,					
+			},
+			Intel_Discover = EVENTS.DiscoverClin,
+			Intel_Purchase = EVENTS.PurchaseClin,
+		},
+		{
+			id = "settlement2",
+			displayName = "$11180227", 	-- Troitskoy
+			egroup = eg_settlement2,	-- (top, on the road)
+			marker = mkr_settlement2,
+			income = 30,
+			towers = {
+				mkr_settlement2_tower1,
+				mkr_settlement2_tower2,	
+			},
+			Intel_Purchase = EVENTS.PurchaseTroitskoy,
+		},
+		{
+			id = "settlement3",
+			displayName = "$11180228", 	-- Pereslaw  
+			egroup = eg_settlement3,	-- (top, hidden in the forest)
+			marker = mkr_settlement3,
+			income = 40,
+			towers = {
+				mkr_settlement3_tower1,
+			},
+			Intel_Discover = EVENTS.DiscoverPereslaw,
+			Intel_Purchase = EVENTS.PurchasePereslaw,
+		},
+		{
+			id = "settlement4",
+			displayName = "$11180229", 	-- Susdal  
+			egroup = eg_settlement4,	-- (top-right corner, on the road)
+			marker = mkr_settlement4,
+			income = 50,
+			towers = {
+				mkr_settlement4_tower1,
+				mkr_settlement4_tower2,	
+			},
+			Intel_Discover = EVENTS.DiscoverSusdal,
+			Intel_Purchase = EVENTS.PurchaseSusdal,
+		},
+		{
+			id = "settlement5",
+			displayName = "$11180230", 	-- Wlodimer  
+			egroup = eg_settlement5,	-- (right hand side, hidden in the forest)
+			marker = mkr_settlement5,
+			income = 60,
+			towers = {
+				mkr_settlement5_tower1,
+			},
+			Intel_Discover = EVENTS.DiscoverWlodimer,
+			Intel_Purchase = EVENTS.PurchaseWlodimer,
+		},
+		{
+			id = "settlement6",
+			displayName = "$11180231", 	-- Kerisler  
+			egroup = eg_settlement6,	-- (bottom-right corner, hidden in the forest)
+			marker = mkr_settlement6,
+			income = 55,
+			towers = {
+				mkr_settlement6_tower1,
+			},
+			Intel_Discover = EVENTS.DiscoverKerisler,
+			Intel_Purchase = EVENTS.PurchaseKerisler,
+		},
+		{
+			id = "settlement7",
+			displayName = "$11180232", 	-- Colunma  
+			egroup = eg_settlement7,	-- (bottom-right corner, on the road)
+			marker = mkr_settlement7,
+			income = 30,
+			towers = {
+				mkr_settlement7_tower1,
+				mkr_settlement7_tower2,	
+			},
+			Intel_Purchase = EVENTS.PurchaseColunma,
+		},
+	}
+	
+	eg_allSettlements = EGroup_CreateIfNotFound("eg_allSettlements")
+	for index, settlement in pairs(t_settlementData) do 
+		EGroup_AddEGroup(eg_allSettlements, settlement.egroup)
+		settlement.tradeAmount = 0
+		settlement.purchased = false
+	end
+	
+	t_tradeCartData = {}
+	t_tradeCartKilled_EventCues = {}
+	
+	i_numSettlementsBought = 0
+	b_settlementIsAvailableToBuy = false 		-- this is set to true when there is a settlement available for the player to buy 
+	timeStamp_lastSettlementPurchase = 0 
+	
+	Rule_AddInterval(CollectTaxes_DiscoverNewSettlements, 1)
+	
+	Rule_AddGlobalEvent(BuySettlements_OnTradeEvent, GE_TradeRouteCompleted)
+	
+	-- consts 
+	BUYSETTLEMENTS_INCOMEINTERVAL = 6		-- calculate the amount due and pay that to the player every X seconds
+	
+	Rule_AddInterval(BuySettlements_Monitor, 0.5)
+	
+	b_enableBuySettlementsUI = false
+	
+end
+
+
+
+
+
+
+
+function BuySettlements_Start()
+	
+	Objective_Start(OBJ_BuySettlements)
+
+	-- swap out the tip objective
+	Objective_Stop(OBJ_TipTradeRouteLengths)
+	Objective_Start(OBJ_TipManageGold)
+	
+end
+
+function BuySettlements_SetupUI()
+	
+	Objective_SetCounter(OBJ_BuySettlements, i_numSettlementsBought, t_difficulty.buySettlements_NumSettlementsNeeded)	
+	
+	-- turn on the Buy panel
+	b_enableBuySettlementsUI = true
+	
+end
+
+
+
+function BuySettlements_OnStart()
+		
+	Rule_AddInterval(BuySettlements_CollectIncome, BUYSETTLEMENTS_INCOMEINTERVAL)
+	
+	MissionTutorial_AddHintToBuySettlements()
+	Rule_AddInterval(BuySettlements_TellPlayerTheyNeedMoreTrade, {delay = 10, interval = 1})
+	
+end
+
+function BuySettlements_OnTradeEvent(context)
+	
+	local settlementA = BuySettlements_FindSettlement(context.tradePostA)
+	if settlementA ~= nil then
+		settlementA.tradeAmount = settlementA.tradeAmount + context.resourcesReceived.gold
+	end
+	
+	local settlementB = BuySettlements_FindSettlement(context.tradePostB)
+	if settlementB ~= nil then
+		settlementB.tradeAmount = settlementB.tradeAmount + context.resourcesReceived.gold
+	end
+end
+
+function BuySettlements_Monitor()
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_trade_cart", FILTER_KEEP)
+
+	for index = #t_tradeCartData, 1, -1 do
+		
+		local cart = t_tradeCartData[index]
+		
+		if Squad_IsValid(cart.worldID) == false then 
+			
+			-- trade cart destroyed 
+			BuySettlements_TradeCartKilled_EventCue(cart)
+			
+			if cart.underAttackThreatID ~= nil then 
+				ThreatArrow_DestroyGroup(cart.underAttackThreatID)
+				cart.underAttackThreatID = nil 
+			end
+			
+			SGroup_Destroy(cart.underAttackThreatSGroup)
+			table.remove(t_tradeCartData, index)
+			
+		else
+			local squad = Squad_FromID(cart.worldID)
+			cart.lastKnownPosition = Util_GetPosition(squad)
+			
+			local entity = Squad_GetMovementLeader(squad)
+			if entity ~= nil then
+				cart.isTrading = Entity_IsTrading(entity)
+			end
+			
+			-- manage threat arrows for this trade cart
+			if Squad_IsUnderAttack(squad, 5) then 
+
+				if cart.underAttackThreatID == nil then 
+					Squad_GetLastAttackers(squad, cart.underAttackThreatSGroup, 5)
+					cart.underAttackThreatID = ThreatArrow_CreateGroup("threat_group", cart.underAttackThreatSGroup)
+				else
+					
+					Squad_GetLastAttackers(squad, sg_temp, 5)
+					
+					local _CheckForSquadNoLongerAttacking = function(gid, idx, sid)
+						if SGroup_ContainsSquad(sg_temp, Squad_GetID(sid), false) == false then 
+							ThreatArrow_Remove(cart.underAttackThreatID, sid)
+							SGroup_Remove(cart.underAttackThreatSGroup, sid)
+						end
+					end
+					SGroup_ForEach(cart.underAttackThreatSGroup, _CheckForSquadNoLongerAttacking)
+					
+					local _CheckForNewAttackingSquad = function(gid, idx, sid)
+						if SGroup_ContainsSquad(cart.underAttackThreatSGroup, Squad_GetID(sid), false) == false then 
+							ThreatArrow_Add(cart.underAttackThreatID, sid)
+							SGroup_Add(cart.underAttackThreatSGroup, sid)
+						end
+					end
+					SGroup_ForEach(sg_temp, _CheckForNewAttackingSquad)
+					
+				end
+				
+				
+			elseif cart.underAttackThreatID ~= nil then 
+				
+				ThreatArrow_DestroyGroup(cart.underAttackThreatID)
+				cart.underAttackThreatID = nil 
+				
+			end
+			
+			SGroup_Remove(sg_allsquads, squad)			
+			
+		end
+		
+	end
+	
+	-- squads in group are the left over trade carts, add a new entry for each of them
+	if SGroup_Count(sg_allsquads) >= 1 then 
+		
+		local _AddCart = function(gid, idx, sid)
+			
+			local entry = {
+				worldID = Squad_GetID(sid),
+				underAttackThreatSGroup = SGroup_CreateUnique("Trade Cart Threats"),
+			}			
+			table.insert(t_tradeCartData, entry)
+			
+		end
+		SGroup_ForEach(sg_allsquads, _AddCart)
+		
+	end
+	
+end
+
+
+function BuySettlements_TradeCartKilled_EventCue(cart)
+	
+	local message = "$11183984"		-- Trader killed
+	local nearbySettlement = nil 
+	
+	local lastPosition = cart.lastKnownPosition
+	
+	for index, settlement in pairs(t_settlementData) do 
+		if Util_GetDistance(lastPosition, settlement.marker) <= 50 then 
+			nearbySettlement = settlement
+			break
+		end
+	end
+
+	if nearbySettlement ~= nil then 
+		message = Loc_FormatText("$11184007", Loc_GetString(nearbySettlement.displayName))		-- Trader killed near %1SETTLEMENTNAME%
+	elseif cart.isTrading then
+		message = "$11184009"
+	end
+	
+	local cue = {
+		id = UI_CreateEventCueClickable(-1, 10, 0, 0, message, 0, "high_priority_negative", "", "sfx_ui_event_queue_campaign_high_priority_negative", 255, 255, 255, 255, ECV_Queue | ECV_Title, BuySettlements_TradeCartKilled_EventCueCallback),
+		position = lastPosition,
+	}
+	Sound_Play2D("mus_stinger_campaign_negative")
+	table.insert(t_tradeCartKilled_EventCues, cue)
+
+end
+
+function BuySettlements_TradeCartKilled_EventCueCallback(id)
+	
+	for index, cue in pairs(t_tradeCartKilled_EventCues) do 
+		if cue.id == id then 
+			Camera_MoveTo(cue.position)
+			FOW_RevealArea(cue.position, 10, 5)
+		end
+	end
+	
+end
+
+
+function BuySettlements_FindSettlement(item)
+		
+	for index, settlement in pairs(t_settlementData) do 
+		
+		if scartype(item) == ST_ENTITY then 
+			if EGroup_ContainsEntity(settlement.egroup, item) then 
+				return settlement 
+			end
+		elseif scartype(item) == ST_NUMBER then
+			if EGroup_ContainsEntityID(settlement.egroup, item) then 
+				return settlement 
+			end
+		elseif scartype(item) == ST_STRING then 
+			if settlement.id == item then 
+				return settlement 
+			end
+		end
+			
+	end
+	return nil		
+end
+	
+function BuySettlements_Purchase(settlement)
+
+	if settlement.purchased ~= true and Player_GetResource(player1, RT_Gold) >= t_difficulty.buySettlements_PurchasePrice then 
+		
+		settlement.purchased = true
+		
+		-- charge the player the purchase price
+		Player_AddResource(player1, RT_Gold, -t_difficulty.buySettlements_PurchasePrice)
+		
+		-- give control of the settlement to the player
+		if EGroup_CountSpawned(settlement.egroup) >= 1 then 
+			
+			local entity = EGroup_GetSpawnedEntityAt(settlement.egroup, 1)
+
+			-- replace
+			local pos = Entity_GetPosition(entity)
+			local facing = Util_GetOffsetPosition(entity, OFFSET_FRONT, 10)
+			local health = Entity_GetHealthPercentage(entity)
+			
+			Entity_Destroy(entity)
+			
+			Util_CreateEntities(player1, settlement.egroup, EBP.RUS.BUILDING_TOWN_CENTER_RUS, pos, 1, facing)
+			Entity_SetHealth(EGroup_GetSpawnedEntityAt(settlement.egroup, 1), health)
+			
+		end
+		
+		EGroup_AddEGroup(eg_importantBuildings, settlement.egroup)		-- add this settlement to the group we monitor in order to fail the mission if they're destroyed
+		
+		
+		-- explore the area around the new TC (a 1-tick reveal accomplishes this) 
+		FOW_RevealArea(Util_GetPosition(settlement.marker), 60, 0.125)
+		
+		-- create villagers (EASY and NORMAL only)
+		if Game_GetSPDifficulty() <= GD_HARD then 
+			
+			SGroup_Clear(sg_temp)
+			
+			local count = 2
+			if scartype(settlement.towers) == ST_TABLE then 						-- increase the count if there are more towers than villagers
+				count = math.max(count, #settlement.towers)	
+			end
+			
+			if Player_GetCurrentPopulation(player1, CT_Personnel) + count <= 200 then 
+				
+				local units = {
+					{type = "scar_villager", numSquads = count},
+				}
+				UnitEntry_DeploySquads(player1, sg_temp, units, Util_GetOffsetPosition(settlement.egroup, OFFSET_LEFT, 5))
+				
+				Mission_AdjustPlayerMaxPopCap(player1, count)						-- increase the player's max population cap by the villager amount
+				
+				
+				-- create towers (EASY only)
+				if Game_GetSPDifficulty() <= GD_NORMAL and SGroup_CountSpawned(sg_temp) >= 1 and scartype(settlement.towers) == ST_TABLE then
+					local delay = 0.5
+					for index, tower in pairs(settlement.towers) do 
+						if SGroup_CountSpawned(sg_temp) >= index then 
+							local squad = SGroup_GetSpawnedSquadAt(sg_temp, index)
+							Rule_AddOneShot(BuySettlements_Purchase_BuildTower, delay, {tower = tower, squadID = Squad_GetID(squad)})	-- needs to be deferred ever so slightly - can't seem to give a construct order on the same frame a villager is spawned
+							delay = delay + 0.5
+						end
+					end
+				end
+				
+			end
+		end
+		
+		
+		-- stop any trade carts on this route
+		
+		
+		
+		-- increase number of settlements bought for objective tracking purposes
+		i_numSettlementsBought = i_numSettlementsBought + 1
+		Objective_SetCounter(OBJ_BuySettlements, i_numSettlementsBought, t_difficulty.buySettlements_NumSettlementsNeeded)
+
+		timeStamp_lastSettlementPurchase = World_GetGameTime()
+		Sound_Play2D("mus_stinger_campaign_positive")			
+		
+		--  snap camera to the settlement when you purchase it (unless it's already on screen)
+		if not Misc_IsPosOnScreen(Marker_GetPosition(settlement.marker), 0.9) then
+			Camera_MoveTo(settlement.marker)
+		end
+		Util_StartIntel(settlement.Intel_Purchase)
+		
+		
+		if i_numSettlementsBought == t_difficulty.buySettlements_NumSettlementsNeeded then
+			
+			Objective_Complete(OBJ_CollectTaxes, false, false)																	-- clear up other objectives (silently)	
+			if Objective_IsStarted(SOBJ_FindMoreSettlements) and Objective_IsComplete(SOBJ_FindMoreSettlements) == false then 
+				Objective_Complete(SOBJ_FindMoreSettlements, false, false)
+			end
+			
+			Objective_Complete(OBJ_BuySettlements)
+			
+			
+		else
+
+			
+			if i_numSettlementsBought == 1 then
+				
+				Rule_AddOneShot(BuySettlements_FirstPurchase_MonitorForConstruction, 45, {settlement = settlement})
+				
+			elseif i_numSettlementsBought == i_numSettlementsFound and Objective_IsStarted(SOBJ_FindMoreSettlements) == false then 
+				
+				Rule_AddOneShot(BuySettlements_StartFindMoreSettlementsObjective, 8)		
+			
+			end	
+			
+		
+		end
+
+		-- queue up hint about reassigning traders
+		local traderCount = BuySettlements_GetActiveTraderCount(settlement)
+		if (traderCount > 0) then
+			--Rule_AddOneShot(MissionTutorial_AddHintToReassignTraders, 10, {settlement = settlement})
+		end		
+	end
+	
+end
+function BuySettlements_Purchase_BuildTower(context, data)
+
+	if Squad_IsValid(data.squadID) then 
+		
+		SGroup_Single(sg_single, Squad_FromID(data.squadID))
+
+		local position = Util_GetPosition(data.tower)
+		local facing = Util_GetOffsetPosition(data.tower, OFFSET_LEFT, 5)
+		LocalCommand_PlayerSquadConstructBuilding(player1, sg_single, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, position, facing, false)
+		
+	end
+	
+end
+
+
+function BuySettlements_FirstPurchase_MonitorForConstruction(context, data)
+	
+	local settlement = data.settlement
+	
+	Player_GetAllEntitiesNearMarker(player1, eg_temp, settlement.marker, Marker_GetProximityRadiusOrDefault(settlement.marker, 0) * 2)
+	EGroup_Filter(eg_temp, {EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, EBP.RUS.BUILDING_DEFENSE_PALISADE_RUS, EBP.RUS.BUILDING_DEFENSE_WALL_RUS}, FILTER_KEEP)
+	
+	if EGroup_CountSpawned(eg_temp) == 0 then 
+			
+		MissionTutorial_AddHintToBuildDefencesAroundSettlement(settlement)
+		
+	end
+	
+end
+
+
+function BuySettlements_StartFindMoreSettlementsObjective()
+	
+	if i_numSettlementsBought == i_numSettlementsFound and Objective_IsStarted(SOBJ_FindMoreSettlements) == false then 
+			
+		Objective_Start(SOBJ_FindMoreSettlements)			
+				
+	end
+	
+end
+
+
+
+function BuySettlements_CollectIncome()
+
+	local totalAmount = 0
+	
+	for index, settlement in pairs(t_settlementData) do 
+		
+		if settlement.purchased == true and EGroup_CountSpawned(settlement.egroup) >= 1 then 
+			totalAmount = totalAmount + settlement.income 
+		end
+		
+	end
+
+	totalAmount = math.floor(totalAmount * (BUYSETTLEMENTS_INCOMEINTERVAL / 60))	-- scale amount (which is defined as per-minute) to per-interval
+	
+	if totalAmount > 0 then 
+		Player_AddResource(player1, RT_Gold, totalAmount, RES_Resourcing)
+	end
+	
+end
+
+
+function BuySettlements_OnComplete()		-- called on objective complete
+	
+	Rule_RemoveGlobalEvent(BuySettlements_OnTradeEvent)
+	Mission_Complete()
+end
+
+
+
+
+function BuySettlements_TellPlayerTheyNeedMoreTrade()
+	
+	if Objective_IsComplete(OBJ_BuySettlements) then 
+		
+		Rule_RemoveMe()
+		
+	elseif Diplomacy_IsPanelOpen() then 
+
+		if Event_IsAnyRunning() == false and b_settlementIsAvailableToBuy == false and b_settlementIsWaitingForTrade == true and (World_GetGameTime() - timeStamp_lastSettlementPurchase) >= 15 then 
+			
+			Rule_RemoveMe()
+		
+			Util_StartIntel(EVENTS.BuySettlements_Interact)	
+			
+			Rule_AddInterval(BuySettlements_TellPlayerTheyNeedMoreTrade_Complete, {delay = 10, interval = 1})
+			
+		end
+		
+	end
+	
+end
+
+function BuySettlements_TellPlayerTheyNeedMoreTrade_Complete()
+	
+	if i_numSettlementsBought >= 1 then
+		
+		Rule_RemoveMe()		-- speech refers to being able to buy your *first* settlement, so if you've already bought one we can nix this ruile
+		
+	elseif b_settlementIsAvailableToBuy == true then 
+		
+		Rule_RemoveMe()
+		
+		Util_StartIntel(EVENTS.BuySettlements_Available)
+		
+	end
+	
+end
+
+function BuySettlements_GetActiveTraderCount(settlement)
+	local activeTradeCarts = 0
+	for i = 1, EGroup_CountSpawned(settlement.egroup) do
+		local settlementEntity = EGroup_GetSpawnedEntityAt(settlement.egroup, i)
+		activeTradeCarts = activeTradeCarts + Entity_GetActiveTraderCount(settlementEntity)
+	end
+	return activeTradeCarts
+end
+
+
+
+--
+-- UI portion
+--
+
+function UI_BuySettlementsPanel_UpdateData()
+	
+	local uiData_BuySettlementsPanel = {
+		Visible = b_enableBuySettlementsUI,
+		TradeGoal = tostring(t_difficulty.buySettlements_TradeAmountNeededToBuy),
+		TotalIncomeVisible = false,
+		TotalIncomeAmount = "",
+		Settlements = {},
+	}
+
+	local numPurchasedSettlements = 0
+	local totalIncome = 0
+	
+	b_settlementIsAvailableToBuy = false 
+	b_settlementIsWaitingForTrade = false
+	
+	for index, settlement in pairs(t_settlementData) do 
+		
+		if settlement.seen == true then 
+			local activeTradeCarts = BuySettlements_GetActiveTraderCount(settlement)
+			
+			local uiData = {
+				Name = Loc_GetString(settlement.displayName),
+				PlayerColour = "#FFBFBFBF",		-- neutral colour
+
+				BuyButtonVisible = false,
+				IncomeVisible = false,	
+				DestroyedSettlementVisible = false,
+				
+				ViewButtonCommand = UI_CreateCommand("UI_BuySettlementsPanel_ViewButtonCallback"),
+				BuyButtonCommand = UI_CreateCommand("UI_BuySettlementsPanel_BuyButtonCallback"),
+				SettlementID = settlement.id,
+
+				TradeAmount = tostring(math.floor(math.min(settlement.tradeAmount, t_difficulty.buySettlements_TradeAmountNeededToBuy))),
+				TradeGoal = tostring(t_difficulty.buySettlements_TradeAmountNeededToBuy),
+				
+				TradersAssigned = tostring(activeTradeCarts),
+				
+				BuyButtonPrice = tostring(t_difficulty.buySettlements_PurchasePrice),
+				BuyButtonEnabled = true,
+				BuyButtonDisabledReason = "",
+				BuyButtonPlayerHasEnoughGold = true,
+				
+				IncomeAmount = tostring(settlement.income),
+				
+				Order = settlement.foundOrder,
+			}		
+			
+			if settlement.purchased == true then 
+				
+				if EGroup_CountSpawned(settlement.egroup) >= 1 then 
+					
+					-- purchased and still alive, so giving income
+					
+					uiData.PlayerColour = UI_GetColourAsString(Player_GetUIColour(player1))
+					uiData.IncomeVisible = true 
+					totalIncome = totalIncome + settlement.income
+					
+				else
+					
+					-- purchased but now destroyed, no income for you (sorry!)
+					
+					uiData.DestroyedSettlementVisible = true
+					
+				end
+				
+				numPurchasedSettlements = numPurchasedSettlements + 1
+					
+			elseif b_enableBuySettlementsUI == true then
+
+				uiData.BuyButtonVisible = true 
+				
+				if Player_GetResource(player1, RT_Gold) < t_difficulty.buySettlements_PurchasePrice then
+						
+					uiData.BuyButtonEnabled = false
+					uiData.BuyButtonDisabledReason = Loc_GetString(38077)		-- "Not enough Resources"
+					
+					uiData.BuyButtonPlayerHasEnoughGold = false
+					
+				end
+
+				if settlement.tradeAmount < t_difficulty.buySettlements_TradeAmountNeededToBuy then
+					
+					b_settlementIsWaitingForTrade = true 
+					
+					uiData.BuyButtonEnabled = false
+					uiData.BuyButtonDisabledReason = Loc_GetString(Loc_FormatText("$11183149", t_difficulty.buySettlements_TradeAmountNeededToBuy))	-- "Requires Traders to have collected %1NUMBER% gold from this settlement before it can be purchased"
+					
+				else 
+					
+					b_settlementIsAvailableToBuy = true 									
+					
+				end
+
+			end
+			
+			table.insert(uiData_BuySettlementsPanel.Settlements, uiData)
+			
+		end
+	end
+	
+	if #uiData_BuySettlementsPanel.Settlements == 0 then 
+		uiData_BuySettlementsPanel.Visible = false 
+	end
+	
+	if numPurchasedSettlements >= 1 then 
+		uiData_BuySettlementsPanel.TotalIncomeVisible = true
+		uiData_BuySettlementsPanel.TotalIncomeAmount = tostring(totalIncome)
+	end
+	
+	table.sort(uiData_BuySettlementsPanel.Settlements, function(a, b) return a.Order < b.Order end)		-- this sorts the settlements into the order they were found
+	
+	_diplomacy.data_context.buySettlements = uiData_BuySettlementsPanel
+	Diplomacy_UpdateUI()
+	
+end
+
+function UI_BuySettlementsPanel_ViewButtonCallback(parameter)	-- called when the player clicks the "view" button on a settlement
+	
+	for index, settlement in pairs(t_settlementData) do 
+	
+		if settlement.id == parameter then 
+			Camera_MoveTo(settlement.marker)
+		end
+		
+	end
+	
+end
+
+function UI_BuySettlementsPanel_BuyButtonCallback(parameter)	-- called when the player clicks the "buy" button on a settlement
+	
+	for index, settlement in pairs(t_settlementData) do 
+	
+		if settlement.id == parameter then 
+			BuySettlements_Purchase(settlement)
+			Diplomacy_UpdateUI()
+		end
+		
+	end
+	
+end
+
+

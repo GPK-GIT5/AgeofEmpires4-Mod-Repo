@@ -1,0 +1,183 @@
+import("cardinal.scar")
+
+function Lanes_Init()
+	lanes = {}
+end
+
+--? @shortdesc Registers a pathway for enemy waves to move along. 'name' is used to find all
+--? the markers for the lane.
+function Lane_Init(name, is_locked, wave_template_validator, boss_sbp)
+	for state_name, state in pairs(states) do
+		state.lane_is_locked[name] = is_locked
+		state.lane_is_prioritized[name] = false
+	end
+	local lane = { name = name, wave_template_validator = wave_template_validator, boss_sbp = boss_sbp }
+	
+	lane.sublanes = {}
+	for _, sublane_name in ipairs(sublane_names) do
+		Sublane_Init(lane, sublane_name)
+	end
+	lanes[lane.name] = lane
+	
+	local ally_block_markers = {}
+	local index = 0
+	while true do
+		index = index + 1
+		if Marker_Exists("mkr_lane_"..name.."_ally_block_"..index, "") then
+			local marker = Marker_FromName("mkr_lane_"..name.."_ally_block_"..index, "")
+			table.insert(ally_block_markers, marker)
+		else
+			break
+		end
+	end
+	lane.ally_block_targets = {}
+	for _, marker in ipairs(ally_block_markers) do
+		table.insert(lane.ally_block_targets, { marker = marker })
+	end
+	if #lane.ally_block_targets > 0 then
+		lane.ally_block_targets[#lane.ally_block_targets].useCustomDirection = true
+	end
+	lane.shortest_time = 999999
+	lane.longest_time = 0
+	for sublane_name, sublane in pairs(lane.sublanes) do
+		if sublane.travel_time < lane.shortest_time then
+			lane.shortest_time = sublane.travel_time
+		end
+		if sublane.travel_time > lane.longest_time then
+			lane.longest_time = sublane.travel_time
+		end
+	end
+	local travel_time_string = "Travel Time: "..math.floor(lane.shortest_time).." / "..math.floor(lane.longest_time)
+	if is_locked then
+		print(name.." Lane - "..travel_time_string.." - locked")
+	else
+		print(name.." Lane - "..travel_time_string)
+	end
+	lane.per_age = {}
+	for age = 1, 4 do
+		lane_age_info = {}
+		table.insert(lane.per_age, lane_age_info)
+		lane_age_info.wave_template_bundles = {}
+		lane_age_info.largest_template_value = 0
+		lane_age_info.lowest_template_value = 999999
+		lane_age_info.unit_type_total_proportions = {}
+		lane_age_info.unit_type_proportion_ratios = {}
+		lane_age_info.unit_type_weight_multipliers = {}
+		for _, unit_name in ipairs(unit_names) do
+			lane_age_info.unit_type_total_proportions[unit_name] = 0
+			lane_age_info.unit_type_proportion_ratios[unit_name] = 0
+			lane_age_info.unit_type_weight_multipliers[unit_name] = 0
+		end
+	end
+end
+
+function Sublane_Init(lane, name)
+	local sublane = { name = name, lane = lane }
+	sublane.positions = {}
+	local index = 0
+	local sublane_complete = false
+	local marker_prefix = "mkr_lane_"..lane.name.."_"..sublane.name
+	while sublane_complete == false do
+		index = index + 1
+		local index_string = tostring(index)
+		if index < 10 then
+			index_string = "0"..index_string
+		end
+		local marker_name = marker_prefix.."_"..index_string
+		
+		if Marker_Exists(marker_name, "") then
+			--print("searching for marker "..marker_name.." found")
+			local marker = Marker_FromName(marker_name, "")
+			table.insert(sublane.positions, Marker_GetPosition(marker))
+			if sublane.spawn_direction == nil then
+				sublane.spawn_direction = Marker_GetDirection(marker)
+			end
+		else
+			--print("searching for marker "..marker_name.." NOT found")
+			sublane_complete = true
+		end
+	end
+	assert(#sublane.positions >= 2, "Sublane "..lane.name.." "..sublane.name.." requires at least 2 markers")
+	table.insert(sublane.positions, wonder_position)
+	local previous_position = nil
+	sublane.distance = 0
+	for i = 2, #sublane.positions do
+		local position = sublane.positions[i]	
+		if previous_position then
+			local distance = Util_GetDistance(previous_position, position)
+			sublane.distance = sublane.distance + distance
+		end
+		previous_position = position
+	end
+	
+	sublane.walking_distance = sublane.distance - ARRIVAL_THRESHOLD_DISTANCE
+	sublane.travel_time = sublane.walking_distance /  WALK_SPEED
+	lane.sublanes[name] = sublane
+	return sublane
+end
+
+function Lanes_Choose(state, number_of_lanes, boss_sbp)
+	local chosen_lanes = {}
+	local remaining_lanes = {}
+	local prioritized_lanes = {}
+	
+	for _, lane in pairs(lanes) do
+		if state.lane_is_locked[lane.name] == false then
+			table.insert(remaining_lanes, lane)
+			if state.lane_is_prioritized[lane.name] then
+				table.insert(prioritized_lanes, lane)
+			end
+		end
+	end
+	
+	local boss_lane
+	if boss_sbp ~= nil then
+		for _, lane in pairs(lanes) do
+			if state.lane_is_locked[lane.name] == false and (boss_sbp == lane.boss_sbp or lane.boss_sbp == nil) then
+				boss_lane = lane
+			end
+		end	
+		assert(boss_lane ~= nil)
+	end
+	
+	assert(number_of_lanes >= 0 and number_of_lanes <= #remaining_lanes, time_string.." Trying to choose "..number_of_lanes.." from "..#remaining_lanes.." unlocked lanes")
+	for i = 1, number_of_lanes do
+		local chosen_lane
+		if boss_lane ~= nil then
+			chosen_lane = boss_lane
+			boss_lane = nil
+		elseif #prioritized_lanes > 0 then
+			chosen_lane = Table_GetRandomItem(prioritized_lanes, 1)
+		else
+			chosen_lane = Table_GetRandomItem(remaining_lanes, 1)
+		end
+		Table_RemoveFirstItem(prioritized_lanes, chosen_lane)
+		Table_RemoveFirstItem(remaining_lanes, chosen_lane)
+		table.insert(chosen_lanes, chosen_lane)
+	end
+	for _, lane in pairs(lanes) do
+		state.lane_is_prioritized[lane.name] = false
+	end
+	return chosen_lanes
+end
+
+
+function Lanes_ChooseOverride(state, lane_names)
+	local chosen_lanes = {}
+	for lane_name, lane in pairs(lanes) do
+		if Table_Contains(lane_names, lane_name) then
+			table.insert(chosen_lanes, lane)
+		end
+	end
+	return chosen_lanes
+end
+
+function Lanes_IdentifyAllyLane()
+	local ally_lanes = {}
+	for lane_name, lane in pairs(lanes) do
+		if states.sim.lane_is_locked[lane_name] == false then
+			table.insert(ally_lanes, lane)
+		end
+	end
+	ally_lane = Table_GetRandomItem(ally_lanes)
+end

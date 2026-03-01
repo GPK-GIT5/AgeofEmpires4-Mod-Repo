@@ -1,0 +1,202 @@
+-----------------------------------------------------------------------
+--
+-- Core Training Goals
+--
+-- (c) Relic Entertainment 2018
+--
+-----------------------------------------------------------------------
+
+import("training.scar")
+import("training/mongoltrainingconditions.scar")
+
+Core_RegisterModule("MongolTrainingGoals")
+
+--local goal_build_outpost = "build_outpost"
+local goal_build_ovoo = "build_ovoo"
+local goal_ovoo_depleted = "ovoo_depleted"
+--local goal_khan_death = "khan_death"
+--local goal_pack_buildings = "pack_buildings"
+
+local training_goals_mongol =
+{
+	--goal_build_outpost,
+	goal_build_ovoo,
+	goal_ovoo_depleted,
+	--goal_khan_death,
+	--goal_pack_buildings,
+}
+
+function TrainingGoal_EnableMongolGoals()
+	for i, goalSequenceID in ipairs(training_goals_mongol) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function TrainingGoal_DisableMongolGoals()
+	for i, goalSequenceID in ipairs(training_goals_mongol) do
+		Training_EnableGoalSequenceByID(goalSequenceID, false)
+	end
+end
+
+function MongolTrainingGoals_OnInit()
+	
+	if Player_GetRaceName(Game_GetLocalPlayer()) ~= "mongol" then
+		return	
+	end
+	
+	sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	eg_currentSelection = EGroup_CreateIfNotFound("eg_currentSelection")
+	eg_nearbyDeposits = EGroup_CreateIfNotFound("eg_nearbyDeposits")
+	
+	training_currentConstructionBlueprint = nil
+	training_currentHoverBlueprint = nil
+	training_previousConstructionBlueprint = nil
+	
+	UI_SetModalConstructionPhaseCallback(OnConstructionPhaseChange)
+	
+	if ( UI_IsXboxControllerUI() ) then -- Controller Hints
+		
+		--------------------- Build an Oovo ---------------------
+		-- Select villager
+		local oovoIntroSelectVillagerGoal = Training_Goal("Squad",
+			{
+				ID = "The Oovo is the centre of a mongol settlement. Press A to select a Villager.",
+				Message = "$1001094", 
+				DataTemplate = "GenericTrainingDataTemplate",
+			}, 
+			UserHasSelectedAVillager)
+		-- Open radial
+		local openRadialMenuGoal = Training_Goal("Squad",
+			{
+				ID = "Press RT to display the Radial Menu",
+				Message = "$999532",
+				DataTemplate = "GenericTrainingDataTemplate",
+			},
+			UserHasOpenedContextualRadial)
+		-- Select Oovo button
+		local selectOvooGoal = Training_Goal("PBG",
+			{
+				ID = "Lstick to oovo and press a to select",
+				Message = "$1001095", 
+				DataTemplate = "RadialTrainingDataTemplate",
+			}, 
+			UserIsGoingToBuildAnOvoo)
+		-- Build Oovo on stone deposit
+		local buildOvooGoal = Training_Goal("Entity",
+			{
+				ID = "Press A on stone deposit",
+				Message = "$1001096", 
+				DataTemplate = "GenericTrainingDataTemplate",
+			}, 
+			UserHasStartedToBuildAnOvoo)
+		
+		-- Create sequence
+		local buildOvooSequence = Training_GoalSequence(goal_build_ovoo, 
+			1, 0, 
+			Controller_TimeHasPassedWithoutBuildingAnOvoo, 
+			Controller_UserCannotBuildOvoo, --ignore
+			nil, 
+			UserHasStartedToBuildAnOvoo,
+			true, 
+			{oovoIntroSelectVillagerGoal, openRadialMenuGoal, selectOvooGoal, buildOvooGoal})
+		Training_AddGoalSequence(buildOvooSequence)
+		
+	else -- PC/KBM Hints
+		
+		local selectVillagerGoal = Training_Goal("Squad", 
+			{ID= "LEFT CLICK to select a Villager.", Message= 11180986, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasSelectedAVillager)
+		local openEconomicTabGoal = Training_Goal("EconomicCommandCardTab",
+			{ID= "Open the economic tab", Message= 1001507, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasEconomicCommandCardTabOpen)
+		
+		-- Build a House
+		--local selectOutpostGoal = Training_Goal("Cursor",
+		--{ID= "Outposts grant speed bonuses to nearby Mongol Cavalry and Traders.", Message= 11184850, 
+		--DataTemplate="GenericTrainingDataTemplate"}, 
+		--UserHasStartedToBuildAnOutpost)
+		--local buildHouseSequence = Training_GoalSequence(goal_build_outpost, 
+		--1, 0, 
+		--UserIsBuildingAnOutpost, 
+		--NotUserIsBuildingAnOutpost,
+		--nil, 
+		--UserHasStartedToBuildAnOutpost,
+		--true, 
+		--{selectOutpostGoal})
+		--Training_AddGoalSequence(buildHouseSequence)
+		
+		-- Build an Ovoo
+		local selectOvooGoal = Training_Goal("PBG",
+			{ID= "LEFT CLICK the Ovoo icon to select an Ovoo.", Message= 11181004, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			UserIsGoingToBuildAnOvoo)
+		local buildOvooGoal = Training_Goal("Entity",
+			{ID= "LEFT CLICK on a Stone Deposit to start construction.", Message= 11181005, 
+			DataTemplate="LeftClickTrainingDataTemplate"}, 
+			UserHasStartedToBuildAnOvoo)
+		
+		local buildOvooSequenceGoals = {selectVillagerGoal, selectOvooGoal, buildOvooGoal}
+		if(UI_IsXboxKBMUI()) then
+			buildOvooSequenceGoals = {selectVillagerGoal, openEconomicTabGoal, selectOvooGoal, buildOvooGoal}
+		end
+		
+		local buildOvooSequence = Training_GoalSequence(goal_build_ovoo, 
+			1, 0, 
+			TimeHasPassedWithoutBuildingAnOvoo, 
+			UserCannotBuildOvoo, --ignore
+			nil, 
+			UserHasStartedToBuildAnOvoo,
+			true, 
+			buildOvooSequenceGoals)
+		Training_AddGoalSequence(buildOvooSequence)
+		
+		-- Ovoo depleted
+		local ovooDepleted = Training_Goal("Entity",
+			{ID= "The Ovoo has depleted this Stone Deposit, build on a new deposit.", Message= 11181006, 
+			DataTemplate="GenericTrainingDataTemplate"},
+			TimeHasPassedSinceLessonStarted)
+		local ovooDepletedSequence = Training_GoalSequence(goal_ovoo_depleted,
+			1, 0,
+			OvooHasDepletedAllStone,
+			nil,
+			nil,
+			nil,
+			true,
+			{ovooDepleted})
+		Training_AddGoalSequence(ovooDepletedSequence)
+		
+		---- Khan Death
+		--local khanDeath = Training_Goal("UniqueRespawningSquadButton",
+		--{ID= "Your Khan has died, a new Khan will spawn after a short period.", Message= 11181001, 
+		--DataTemplate="GenericTrainingDataTemplate"},
+		--KhanHasRespawned)
+		--local khanDeathSequence = Training_GoalSequence(goal_khan_death,
+		--1, 0,
+		--KhanHasDied,
+		--nil,
+		--nil,
+		--nil,
+		--true,
+		--{khanDeath})
+		--Training_AddGoalSequence(khanDeathSequence)
+		
+		---- Khan Death
+		--local noBuildingsNearOvoo = Training_Goal("Entity",
+		--{ID= "Move buildings into range of this Ovoo to benefit from it.", Message= 11181002, 
+		--DataTemplate="GenericTrainingDataTemplate"},
+		--OvooHasNearbyBuildings)
+		--local packBuildingSequence = Training_GoalSequence(goal_pack_buildings,
+		--1, 0,
+		--OvooWithoutBuildingsBuilt,
+		--nil,
+		--nil,
+		--nil,
+		--true,
+		--{noBuildingsNearOvoo})
+		--Training_AddGoalSequence(packBuildingSequence)
+		
+	end
+	
+end
+
+function CoreTrainingGoals_OnGameOver()
+end

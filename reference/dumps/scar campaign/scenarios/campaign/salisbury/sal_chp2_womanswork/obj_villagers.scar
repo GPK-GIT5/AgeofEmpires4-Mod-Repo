@@ -1,0 +1,465 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+
+
+function VillagersWork_InitObjectives()
+
+	OBJ_VillagersWork = {
+		Title = "$999525", --Get your Villagers to Work
+		Type = ObjectiveType_Build,
+		Intel_Start = EVENTS.SelectVillagerStart,
+
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_VillagersWork, ALL)
+		end,
+		OnComplete = VillagersWork_CheckForNextObjective,
+	}
+
+	SOBJ_SelectVillager = {
+		Title = "$999526", --Select a Villager
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_VillagersWork,
+		StartAlongsideParent = true,
+		SetupUI = SelectVillager_UI,
+		PreStart = SelectVillager_PreStart,
+		OnStart = function()
+			Goals_SelectVillager() -- wait for objective to populate before triggering selection hint
+		end,
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_GatherFood, false, true)
+		end
+	}
+
+	SOBJ_GatherFood = {
+		Title = "$999528", --Gather 10 Food
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_VillagersWork,
+		StartAlongsideParent = false,
+		SetupUI = GatherFood_UI,
+		PreStart = GatherFood_PreStart,
+		OnStart = GatherFood_Start,
+		Intel_Start = EVENTS.GatherFoodStart,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_VillagerCommand, false, true)
+		end
+	}
+	
+	SOBJ_VillagerCommand = {
+		Title = "$999548", -- Make 2 Villagers using the Radial Menu
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_VillagersWork,
+		StartAlongsideParent = false,
+		SetupUI = VillagerCommand_UI,
+		PreStart = VillagerCommand_PreStart,
+		OnStart = VillagerCommand_Start,
+		Intel_Start = EVENTS.VillagerQuickStart,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_BuildMill, false, true)
+		end
+	}
+
+	SOBJ_BuildMill = {
+		Title = "$999530", --Build a Mill
+		Type = ObjectiveType_Build,
+		Parent = OBJ_VillagersWork,
+		StartAlongsideParent = false,
+		SetupUI = BuildMill_UI,
+		PreStart = BuildMill_PreStart,
+		OnStart = BuildMill_Start,
+		Intel_Start = EVENTS.BuildMillStart,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_BuildLumber, false, true)
+		end
+	}
+
+	SOBJ_BuildLumber = {
+		Title = "$999536", --Build a Lumber Camp
+		Type = ObjectiveType_Build,
+		Parent = OBJ_VillagersWork,
+		StartAlongsideParent = false,
+		SetupUI = BuildLumber_UI,
+		PreStart = BuildLumber_PreStart,
+		Intel_Start = EVENTS.BuildLumberStart,
+		OnStart = BuildLumber_Start,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_Make5Villagers, false, true)
+		end
+	}
+
+	SOBJ_Make5Villagers = {
+		Title = "$999552", --Make 5 Villagers using LT
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_VillagersWork,
+		StartAlongsideParent = false,
+		PreStart = Make5Villagers_PreStart,
+		Intel_Start = EVENTS.Produce5VillagersStart,
+		OnStart = Make5Villagers_Start,
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		end
+	}
+	
+	SOBJ_BuildHouses = {
+		Title = "$999554", -- Build 2 Houses
+		Parent = OBJ_VillagersWork,
+		StartAlongsideParent = false,
+		Type = ObjectiveType_Build,
+		SetupUI = BuildHouses_UI,
+		PreStart = BuildHouses_PreStart,
+		Intel_Start = EVENTS.BuildHousesStart,
+		OnStart = BuildHouses_Start,
+		
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		end
+	}
+
+	
+	-- Register all objectives
+	Objective_Register(OBJ_VillagersWork)
+	Objective_Register(SOBJ_SelectVillager)
+	Objective_Register(SOBJ_GatherFood)
+	Objective_Register(SOBJ_VillagerCommand)
+	Objective_Register(SOBJ_BuildMill)
+	Objective_Register(SOBJ_BuildLumber)
+	Objective_Register(SOBJ_Make5Villagers)
+	Objective_Register(SOBJ_BuildHouses)
+end
+
+-- ///// SelectVillager //////////////////////////////////////////////
+function SelectVillager_UI()
+	
+end
+
+function SelectVillager_PreStart()
+	-- for some reason these commands are not "sticking" when done in Mission_Start in this mission, so putting them
+	-- in the prestart of the very first objective
+	-- these ensure the site menu is disabled and quick commands are enabled
+	Game_SetVisibility(VF_XboxUISiteMenu, false)
+	Game_SetVisibility(VF_XboxUIQuickCommands, true)
+	Rule_Add(SelectVillager_Monitor)
+end
+
+function SelectVillager_Monitor()
+
+	if  Misc_IsSGroupSelected(sg_starting_villagers, false)  then
+		Objective_Complete(SOBJ_SelectVillager, false, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+-- ///// GatherFood //////////////////////////////////////////////
+function GatherFood_UI()
+
+end
+
+function GatherFood_PreStart()
+	starting_food = Player_GetResource(player1, RT_Food)
+	Objective_SetCounter(SOBJ_GatherFood, 0, 10)
+	Rule_Add(GatherFood_Monitor)
+end
+function GatherFood_Start()
+	Goals_GatherFood()
+end
+
+function GatherFood_Monitor()
+	local target_food = starting_food + 10
+	local current_food = Player_GetResource(player1, RT_Food)
+	
+	Objective_SetCounter(SOBJ_GatherFood, current_food - starting_food, 10)
+	
+	if current_food >= target_food then
+		Objective_Complete(SOBJ_GatherFood, false, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+-- ///// VillagerCommand //////////////////////////////////////////////
+function VillagerCommand_UI()
+	
+
+end
+
+function VillagerCommand_PreStart()
+
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_VILLAGER_1_FRE, ITEM_UNLOCKED)
+	Objective_SetCounter(SOBJ_VillagerCommand, 0, 2)
+	Rule_AddGlobalEvent(Villagers_OnSquadBuilt, GE_BuildItemComplete)
+	
+end
+
+function VillagerCommand_Start()
+
+	Goals_VillagerCommand()
+	
+end
+
+
+function Villagers_OnSquadBuilt(context)
+	
+	if Squad_GetPlayerOwner(context.spawnedSquad) == player1 then
+		-- track produced villagers
+		if Squad_GetBlueprint(context.spawnedSquad) == SBP.FRENCH.UNIT_VILLAGER_1_FRE then
+			produced_villagers = produced_villagers + 1
+		end
+		-- if we are in the first objective to produce villagers, then increment that
+		if Objective_IsStarted(SOBJ_VillagerCommand) and (Objective_IsComplete(SOBJ_VillagerCommand) == false) then
+			if produced_villagers >= 2 then --first check to see if we are completing the objective
+				Objective_Complete(SOBJ_VillagerCommand, false)
+			else --if not, play stinger and increment
+				Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+				Objective_SetCounter(SOBJ_VillagerCommand, produced_villagers, 2)
+			end
+		end
+		-- if we are in the second objective to produce villagers, then increment that
+		if Objective_IsStarted(SOBJ_Make5Villagers) and (Objective_IsComplete(SOBJ_Make5Villagers) == false) then
+			local count = Objective_GetCounter(SOBJ_Make5Villagers) or 0 -- get the counter
+			count = count + 1 -- increment
+			if count >= 5 then -- check to see if we can complete
+				Objective_Complete(SOBJ_Make5Villagers, false)
+			else -- if not, play stinger and update the counter
+				Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+				Objective_SetCounter(SOBJ_Make5Villagers, count, 5) 
+			end
+		end
+		
+		-- if we are housed and the House objective isn't started, then start it
+		if Objective_IsStarted(SOBJ_BuildHouses) == false then
+			local currentPop = Player_GetCurrentPopulation(player1, CT_Personnel)
+			local currentMaxPop = Player_GetCurrentPopulationCap(player1, CT_Personnel)
+			if(currentPop >= currentMaxPop) then
+				Objective_Start(SOBJ_BuildHouses, false, true)
+			end
+		end
+		
+		-- if all of the above are complete then we can kill this rule
+		if Objective_IsComplete(SOBJ_VillagerCommand) and Objective_IsComplete(SOBJ_Make5Villagers) and Objective_IsComplete(SOBJ_BuildHouses) then
+			Rule_RemoveMe()
+		end
+		
+		
+	end
+	
+	
+	
+end
+
+function Make2Villagers_CheckTrainingUI()
+	
+	if(Objective_IsComplete(SOBJ_VillagerCommand) == true) then
+		return true
+	end
+	
+	local countQueue = Entity_GetProductionQueueSize(EGroup_GetEntityAt(eg_player_tc, 1)) + produced_villagers
+	Player_GetAll(player1)
+	local count = SGroup_CountSpawned(sg_allsquads)
+	count = count - 5 
+	if count + countQueue >= 2 then
+		return true
+	end
+	return false
+end
+
+-- ///// BuildMill //////////////////////////////////////////////
+function BuildMill_UI()
+	
+
+	-- Add UI Elements to Mill target location
+	Objective_AddGroundReticule(SOBJ_BuildMill, mkr_place_mill, Marker_GetProximityRadiusOrDefault(mkr_place_mill, 2), BP_GetReticuleBlueprint("aura_ring"), false)
+	Objective_AddUIElements(SOBJ_BuildMill, mkr_place_mill, false,  "$999530", true, 10)
+	
+end
+
+function BuildMill_PreStart()
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_ECON_FOOD_CONTROL_FRE, ITEM_UNLOCKED)
+	Rule_AddGlobalEvent(BuildMillStarted_Monitor, GE_ConstructionStart)
+	Rule_AddGlobalEvent(BuildMill_Monitor, GE_ConstructionComplete)
+
+end
+
+function BuildMill_Start()
+	
+	--Player_GetAll(player1)
+	--SGroup_Filter(sg_allsquads,"villager",FILTER_KEEP)
+	--sg_villagers = SGroup_CreateIfNotFound("sg_villagers")
+	--SGroup_AddGroup(sg_villagers, sg_allsquads)
+	
+	Goals_BuildMill()
+end
+function BuildMillStarted_Monitor(context)
+
+	local building_owner = Entity_GetPlayerOwner(context.entity)
+	if building_owner == player1  and Entity_IsOfType(context.entity, "mill") then
+		EGroup_Clear(eg_temp)
+		EGroup_Add(eg_temp, context.entity)
+		-- if the player placed the Mill in the right place (near berries), play the VO that says that
+		if Prox_AreEntitiesNearMarker(eg_temp, mkr_place_mill, ANY, Marker_GetProximityRadiusOrDefault(mkr_place_mill, 10)) then
+			Util_StartIntel(EVENTS.BuildMillEnd)
+		end
+		-- even if they put it somewhere else, resolve the training (and later the objective)
+		training_mill_placed = true
+		Rule_RemoveMe()
+	end
+
+end
+
+function BuildMill_Monitor(context)
+
+	local building_owner = Entity_GetPlayerOwner(context.entity)
+	if building_owner == player1  and Entity_IsOfType(context.entity, "mill") then
+		
+		eg_mill = EGroup_CreateIfNotFound("eg_mill")
+		EGroup_Add(eg_mill, context.entity)
+
+		Objective_Complete(SOBJ_BuildMill, false, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+
+-- ///// BuildLumber //////////////////////////////////////////////
+function BuildLumber_UI()
+	
+	Objective_AddGroundReticule(SOBJ_BuildLumber, mkr_place_lumber_camp, Marker_GetProximityRadiusOrDefault(mkr_place_lumber_camp, 2), BP_GetReticuleBlueprint("aura_ring"), false)
+	
+	-- Add UI Elements to Lumber Camp target location
+	Objective_AddUIElements(SOBJ_BuildLumber, mkr_place_lumber_camp, false,  "$999536", true, 10)
+	
+end
+
+function BuildLumber_PreStart()
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_ECON_WOOD_CONTROL_FRE, ITEM_UNLOCKED)
+	Rule_AddGlobalEvent(BuildLumberStarted_Monitor, GE_ConstructionStart)
+	Rule_AddGlobalEvent(BuildLumber_Monitor, GE_ConstructionComplete)
+
+end
+
+function BuildLumber_Start()
+	Goals_BuildLumber()
+end
+
+function BuildLumber_Monitor(context)
+
+	local building_owner = Entity_GetPlayerOwner(context.entity)
+	if building_owner == player1  and Entity_IsOfType(context.entity, "lumber_camp") then
+
+		eg_lumber = EGroup_CreateIfNotFound("eg_lumber")
+		EGroup_Add(eg_lumber, context.entity)
+		
+		Objective_Complete(SOBJ_BuildLumber, false, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+function BuildLumberStarted_Monitor(context)
+
+	local building_owner = Entity_GetPlayerOwner(context.entity)
+	if building_owner == player1  and Entity_IsOfType(context.entity, "lumber_camp") then
+		
+		training_lumber_placed = true
+		Rule_RemoveMe()
+	end
+
+end
+
+-- ///// Make5Villagers //////////////////////////////////////////////
+function Make5Villagers_PreStart()
+	
+	Objective_SetCounter(SOBJ_Make5Villagers, 0, 5)
+end
+
+function Make5Villagers_Start()
+	Goals_Make5Villagers()
+end
+
+function Make5Villagers_CheckTrainingUI()
+	
+	if(Objective_IsComplete(SOBJ_Make5Villagers) == true) then
+		return true
+	end
+	
+	local countQueue = Entity_GetProductionQueueSize(EGroup_GetEntityAt(eg_player_tc, 1)) + produced_villagers - 2
+	SGroup_Clear(sg_temp)
+	sg_temp = Player_GetSquads(player1)
+	--subtract starting unit count
+	count = SGroup_CountSpawned(sg_temp) - 7
+	
+	if count + countQueue >= 5 then
+		return true
+	end
+	return false
+end
+
+-- ///// BuildHouses //////////////////////////////////////////////
+function BuildHouses_UI()
+	
+	Objective_AddGroundReticule(SOBJ_BuildHouses, mkr_house1, 10, BP_GetReticuleBlueprint("aura_ring"))
+	Objective_AddUIElements(SOBJ_BuildHouses, mkr_house1, false,  "$999554", true, 10)
+	
+end
+
+function BuildHouses_PreStart()
+
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE, ITEM_UNLOCKED)
+	Objective_SetCounter(SOBJ_BuildHouses, 0, num_houses)
+	Rule_AddGlobalEvent(BuildHouses_Monitor, GE_ConstructionComplete)
+	training_houses_started = 0
+	Rule_AddGlobalEvent(BuildHousesStart_Monitor, GE_ConstructionStart)
+end
+
+function BuildHouses_Start()
+	Goals_BuildHouses()
+end
+
+function BuildHouses_Monitor(context)
+
+	local building_owner = Entity_GetPlayerOwner(context.entity)
+	if building_owner == player1  and Entity_IsOfType(context.entity, "house") then
+
+		Objective_IncreaseCounter(SOBJ_BuildHouses, 1)
+		if Objective_GetCounter(SOBJ_BuildHouses) == num_houses then
+			Objective_Complete(SOBJ_BuildHouses, false, true)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+-- Used for advancing training hints
+function BuildHousesStart_Monitor(context)
+
+	local building_owner = Entity_GetPlayerOwner(context.entity)
+	if building_owner == player1  and Entity_IsOfType(context.entity, "house") then
+		
+		training_houses_started = training_houses_started + 1
+		if training_houses_started >= num_houses then
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function VillagersWork_CheckForNextObjective()
+	-- if the player has already harvested half the sheep, we can skip the scout objective since the player clearly knows what's what
+	if SGroup_Count(sg_sheep) <= (starting_sheep * 0.5) then
+		Objective_Start(OBJ_GrowTown, true, true)
+	else
+		Objective_Start(OBJ_Scout, true, true)
+	end
+end

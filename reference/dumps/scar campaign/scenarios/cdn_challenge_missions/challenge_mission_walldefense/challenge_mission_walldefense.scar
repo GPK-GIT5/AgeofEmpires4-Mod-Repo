@@ -1,0 +1,1359 @@
+--
+-- Art of War - Wall Defense
+--
+-- Challenge Mission
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("MissionOMatic/MissionOMatic_utility.scar")
+import("missionomatic/missionomatic_artofwar.scar")
+import("challenge_mission_walldefense_preintro.scar")
+import("challenge_mission_walldefense.events")
+import("training/coretraininggoals.scar")
+
+function Mission_SetupVariables()
+	
+	-- Bools
+	bool_CTACooldown = false	
+	-- Ints
+	waveDuration = 900
+	bronzeTime = 300
+	silverTime = 600
+	goldTime = waveDuration
+	waveSpawnInterval = math.floor((waveDuration - 200) / 23) -- Split waves across the wave duration, minus a fudge factor to account for travel time
+	
+	
+	medalWaveCount = 0
+	waveSentCount = 0
+	waveSpawnedCount = 0
+	
+	trickleIncomeMult = 1
+	goldIncome = 500
+	foodIncome = 500
+	woodIncome = 500
+	stoneIncome = 300
+	
+	-- Floats
+	
+	lastWaveTime = 0
+	
+	lastEventTime = 0
+	eventCD = 30
+	resourceReminderTime = 0
+	resourceReminderCD = 60
+	
+	-- Sgroups
+	sg_player_villagers = SGroup_CreateIfNotFound("sg_player_villagers")
+	sg_player_traders = SGroup_CreateIfNotFound("sg_player_traders")
+	sg_player_officials = SGroup_CreateIfNotFound("sg_player_officials")
+
+	-- EGroups
+	eg_enemy_outposts = SGroup_CreateIfNotFound("eg_enemy_outposts")
+	eg_infantrytargets = SGroup_CreateIfNotFound("eg_infantrytargets")
+	
+	-- Tables
+	waveModuleTable = {}
+	waveSGroups = {}
+	unitList = {
+		bronze = {
+			--Bronze Waves
+			{ -- Wave 1
+				{type = "scar_ram", numSquads = 1},
+			},
+			{ -- Wave 2
+				{type = "scar_spearman", numSquads = 4},
+				{type = "scar_ram", numSquads = 1},
+			},
+			{ -- Wave 3
+				{type = "scar_spearman", numSquads = 4},
+				{type = "scar_manatarms", numSquads = 2},
+			},
+			{ -- Wave 4
+				{type = "scar_spearman", numSquads = 4},
+				{type = "scar_manatarms", numSquads = 2},			
+			},
+			{ -- Wave 5
+				{type = "scar_spearman", numSquads = 8},
+				{type = "scar_ram", numSquads = 1},
+			},
+			{ -- Wave 6
+				{type = "scar_spearman", numSquads = 4},
+				{type = "scar_springald", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+			},
+			{ -- Wave 7
+				{type = "scar_spearman", numSquads = 8},
+				{type = "scar_springald", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+			},
+			{ -- Wave 8
+				{type = "scar_spearman", numSquads = 8},
+				{type = "scar_manatarms", numSquads = 4},
+				{type = "scar_ram", numSquads = 2},
+				{type = "scar_trebuchet_traction", numSquads = 1},
+			},
+		},
+		silver = {
+			-- Silver Waves
+			{ -- Wave 9
+				{type = "scar_siege_tower", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 8},
+			},
+			{ -- Wave 10
+				{type = "scar_siege_tower", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 8},
+				{type = "scar_archer", numSquads = 4},
+			},
+			{ -- Wave 11
+				{type = "scar_mangonel", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 8},
+			},
+			{ -- Wave 12
+				{type = "scar_mangonel", numSquads = 2},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 8},
+				{type = "scar_spearman", numSquads = 3},
+			},
+			{ -- Wave 13
+				{type = "scar_mangonel", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_springald", numSquads = 1},
+				{type = "scar_spearman", numSquads = 8},
+			},
+			{ -- Wave 14
+				{type = "scar_mangonel", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_siege_tower", numSquads = 1},
+				{type = "scar_spearman", numSquads = 8},
+				{type = "scar_manatarms", numSquads = 4},
+			},
+			{ -- Wave 15
+				{type = "scar_trebuchet_traction", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 4},
+				{type = "scar_spearman", numSquads = 8},
+			},
+			{ -- Wave 16
+				{type = "scar_trebuchet_traction", numSquads = 2},
+				{type = "scar_manatarms", numSquads = 4},
+				{type = "scar_spearman", numSquads = 8},
+			},
+		},
+		gold= {
+			-- Gold Waves
+			{ -- Wave 17
+				{type = "scar_ram", numSquads = 2},
+				{type = "scar_mangonel", numSquads = 1},
+				{type = "scar_springald", numSquads = 1},
+			},
+			{ -- Wave 18
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_bombard", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 4},
+				{type = "scar_spearman", numSquads = 8},
+			},
+			{ -- Wave 19
+				{type = "scar_mangonel", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_bombard", numSquads = 1},
+				{type = "scar_spearman", numSquads = 8},
+				{type = "scar_handcannon", numSquads = 4},
+			},
+			{ -- Wave 20
+				{type = "scar_mangonel", numSquads = 1},
+				{type = "scar_springald", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_bombard", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 4},
+				{type = "scar_handcannon", numSquads = 8},
+			},
+			{ -- Wave 21
+				{type = "scar_bombard", numSquads = 2},
+				{type = "scar_trebuchet_traction", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_siege_tower", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 4},
+				{type = "scar_spearman", numSquads = 8},
+			},
+			{ -- Wave 22
+				{type = "scar_bombard", numSquads = 2},
+				{type = "scar_trebuchet_traction", numSquads = 1},
+				{type = "scar_mangonel", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 4},
+				{type = "scar_spearman", numSquads = 8},
+				{type = "scar_springald", numSquads = 1},
+			},
+			{ -- Wave 23
+				{type = "scar_bombard", numSquads = 2},
+				{type = "scar_trebuchet_traction", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 4},
+				{type = "scar_spearman", numSquads = 8},
+				{type = "scar_springald", numSquads = 1},
+			},
+			{ -- Wave 24
+				{type = "scar_bombard", numSquads = 1},
+				{type = "scar_mangonel", numSquads = 1},
+				{type = "scar_trebuchet_traction", numSquads = 1},
+				{type = "scar_ram", numSquads = 1},
+				{type = "scar_siege_tower", numSquads = 1},
+				{type = "scar_manatarms", numSquads = 8},
+				{type = "scar_spearman", numSquads = 8},
+				{type = "scar_archer", numSquads = 8},
+				{type = "scar_springald", numSquads = 1},
+			},
+		}
+	}
+	
+	patrolWaveUnits = {
+		{ -- Wave 1
+			{type = "scar_horseman", numSquads = 6},
+		},
+		{ -- Wave 2
+			{type = "scar_horseman", numSquads = 6},
+		},
+		{ -- Wave 3
+			{type = "scar_crossbowman", numSquads = 6},
+		},
+		{ -- Wave 4
+			{type = "scar_knight", numSquads = 4},
+		},
+		{ -- Wave 5
+			{type = "scar_horsearcher", numSquads = 6},
+		},
+		{ -- Wave 6
+			{type = "scar_horseman", numSquads = 6},
+			{type = "scar_knight", numSquads = 6},
+		},
+		{ -- Wave 7
+			{type = "scar_handcannon", numSquads = 6},
+		},
+		{ -- Wave 8
+			{type = "scar_horsearcher", numSquads = 6},
+			{type = "scar_knight", numSquads = 6},
+		},
+		{ -- Wave 9
+			{type = "scar_archer", numSquads = 8},
+			{type = "scar_handcannon", numSquads = 6},
+		},
+		{ -- Wave 10
+			{type = "scar_horsearcher", numSquads = 8},
+			{type = "scar_knight", numSquads = 8},
+		},
+		{ -- Wave 11
+			{type = "scar_crossbowman", numSquads = 8},
+			{type = "scar_handcannon", numSquads = 6},
+		},
+		{ -- Wave 12
+			{type = "scar_horsearcher", numSquads = 8},
+			{type = "scar_horseman", numSquads = 8},
+			{type = "scar_knight", numSquads = 8},
+		},
+	}
+	
+	targets_horsepatrols = {
+		mkr_mongol_horse_patrol_1,
+		mkr_mongol_horse_patrol_2,
+		mkr_mongol_horse_patrol_3,
+	}
+	
+	rangedWaveUnits = {
+		{ -- Wave 1
+			{type = "scar_archer", numSquads = 8},
+		},
+		{ -- Wave 2
+			{type = "scar_archer", numSquads = 8},
+			{type = "scar_mangonel", numSquads = 1},
+		},
+		{ -- Wave 3
+			{type = "scar_crossbowman", numSquads = 8},
+			{type = "scar_mangonel", numSquads = 1},
+		},
+		{ -- Wave 4
+			{type = "scar_crossbowman", numSquads = 8},
+			{type = "scar_springald", numSquads = 1},
+		},
+		{ -- Wave 5
+			{type = "scar_archer", numSquads = 12},
+			{type = "scar_mangonel", numSquads = 1},
+		},
+		{ -- Wave 6
+			{type = "scar_archer", numSquads = 12},
+			{type = "scar_mangonel", numSquads = 1},
+		},
+		{ -- Wave 7
+			{type = "scar_crossbowman", numSquads = 12},
+			{type = "scar_springald", numSquads = 1},
+		},
+		{ -- Wave 8
+			{type = "scar_crossbowman", numSquads = 12},
+			{type = "scar_springald", numSquads = 1},
+		},
+		{ -- Wave 9
+			{type = "scar_archer", numSquads = 16},
+			{type = "scar_mangonel", numSquads = 1},
+		},
+		{ -- Wave 10
+			{type = "scar_crossbowman", numSquads = 16},
+			{type = "scar_mangonel", numSquads = 1},
+		},
+		{ -- Wave 11
+			{type = "scar_crossbowman", numSquads = 16},
+			{type = "scar_springald", numSquads = 1},
+			{type = "scar_mangonel", numSquads = 1},
+		},
+		{ -- Wave 12
+			{type = "scar_archer", numSquads = 16},
+			{type = "scar_springald", numSquads = 1},
+			{type = "scar_mangonel", numSquads = 1},
+		},
+	}
+	
+	--Custom Attack Plans	
+	attackMoveEnRoute_targetWonder = {
+		name = "attackMoveEnRoute_targetWonder",
+		scanRange = 30,
+		attackBuildings = false,
+		allowAttackMove = false,
+		excludedBuildings = {"house", "farm", "settlement", "wall", "production_building", "economy_building", "research_building", "defensive_structure"},
+		formationCoordinatorEnRoute = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_challenge_attack_wonder_only") --("ai_formation_coordinator_attack_wonder_enroute"),
+	}
+	attackMoveAtTarget_targetWonder = {
+		name = "attackMoveAtTarget_targetWonder",
+		scanRange = 30,	-- requires nearby scanning in order to detect the wonder
+		attackBuildings = true,	-- requires destroying all building targets (i.e. the wonder) to end the encounter
+		allowAttackMove = false,	-- don't want attackers distracted to other targets due to attackMove auto-targeting
+		excludedBuildings = {"house", "farm", "settlement", "wall", "production_building", "economy_building", "research_building", "defensive_structure"},
+		formationCoordinatorAtTarget = BP_GetAIFormationCoordinatorBlueprint("ai_formation_coordinator_challenge_attack_wonder_only"),
+	}	
+	attackMoveStyle_targetWonder = {	
+		name = "attackMoveStyle_targetWonder",
+		enRoute = attackMoveEnRoute_targetWonder,
+		atTarget = attackMoveAtTarget_targetWonder,
+	}
+	
+	-- Initialize Objectives 
+	WallD_InitObjectives()
+	
+end
+
+function Mission_SetupPlayers()
+	
+	-- Set up Players
+	player1 = Missionomatic_InitPlayer(1, { name = "$11183528", currentAge = AGE_IMPERIAL})
+	player2 = Missionomatic_InitPlayer(2, { name = "$11143414", currentAge = AGE_IMPERIAL })
+	player3 = Missionomatic_InitPlayer(3, { name = "$11183528", currentAge = AGE_IMPERIAL})
+	
+	--Enable Player Colours
+	PlayerColour_Enable()
+	
+	Game_SetPlayerSlotColour(player1, 1)
+    Game_SetPlayerUISlotColour(player1, 1)
+	Game_SetPlayerSlotColour(player2, 2)
+    Game_SetPlayerUISlotColour(player2, 2)
+	Game_SetPlayerSlotColour(player3, 1)
+    Game_SetPlayerUISlotColour(player3, 1)	
+	
+	--Player relationships
+	
+	--Shared LOS
+		
+	-- Player Upgrades
+end
+
+function Mission_SetRestrictions()
+
+end
+
+
+function Mission_PreInit()
+	
+end
+
+function Mission_Preset()
+	
+	-- Enable player colours
+	PlayerColour_Enable()
+	
+	--Player Upgrades
+	local playerUpgradeList = {
+				
+		UPG.COMMON.UPGRADE_UNIT_SPEARMAN_2,
+		UPG.COMMON.UPGRADE_UNIT_SPEARMAN_3,
+		UPG.COMMON.UPGRADE_UNIT_MANATARMS_4,
+		UPG.COMMON.UPGRADE_UNIT_ARCHER_3,
+		UPG.COMMON.UPGRADE_UNIT_HORSEMAN_3,
+		UPG.COMMON.UPGRADE_UNIT_HORSEARCHER_3,
+		UPG.COMMON.UPGRADE_UNIT_SPEARMAN_4,
+		UPG.COMMON.UPGRADE_UNIT_ARCHER_4,
+		UPG.COMMON.UPGRADE_UNIT_KNIGHT_4,
+		UPG.COMMON.UPGRADE_UNIT_HORSEMAN_4,
+		UPG.COMMON.UPGRADE_UNIT_CROSSBOWMAN_4,
+		UPG.CHINESE.UPGRADE_UNIT_FIRELANCER_4_CHI,
+		UPG.CHINESE.UPGRADE_UNIT_REPEATER_CROSSBOW_4_CHI
+	}
+	
+	for i, bp in ipairs(playerUpgradeList) do
+		Player_CompleteUpgrade(player1, bp)
+	end
+	
+	--Player Upgrades
+	local enemyUpgradeList = {
+		
+		UPG.MONGOL.UPGRADE_UNIT_HORSEMAN_2_MON,
+		UPG.MONGOL.UPGRADE_UNIT_SPEARMAN_2_MON,
+		UPG.MONGOL.UPGRADE_UNIT_SPEARMAN_3_MON,
+		UPG.MONGOL.UPGRADE_UNIT_ARCHER_3_MON,
+		UPG.MONGOL.UPGRADE_UNIT_KNIGHT_3_MON,
+		UPG.MONGOL.UPGRADE_UNIT_HORSEMAN_3_MON,
+		UPG.MONGOL.UPGRADE_UNIT_HORSEARCHER_3_MON,
+		UPG.MONGOL.UPGRADE_UNIT_SPEARMAN_4_MON,
+		UPG.MONGOL.UPGRADE_UNIT_ARCHER_4_MON,
+		UPG.MONGOL.UPGRADE_UNIT_MANATARMS_4_MON,
+		UPG.MONGOL.UPGRADE_UNIT_HORSEMAN_4_MON,
+		UPG.MONGOL.UPGRADE_UNIT_HORSEARCHER_4_MON,
+		UPG.MONGOL.UPGRADE_UNIT_CROSSBOWMAN_4_MON,
+		UPG.MONGOL.UPGRADE_UNIT_KNIGHT_4_MON,
+		UPG.MONGOL.UPGRADE_UNIT_SCORPION_4_MON,
+		UPG.MONGOL.UPGRADE_UNIT_MANGONEL_4_MON,
+		UPG.COMMON.UPGRADE_SIEGE_ENGINEERS,
+		UPG.MONGOL.UPGRADE_SIEGE_WORKS_MON,
+		UPG.MONGOL.UPGRADE_SIEGE_WORKS_IMPROVED_MON,
+	}
+	
+	for i, bp in ipairs(enemyUpgradeList) do
+		Player_CompleteUpgrade(player2, bp)
+	end
+	
+	--Remove irrelevant production and tech
+	local upgradeList = {
+		UPG.COMMON.UPGRADE_UNIT_RELIGIOUS_TITHE_BARN_4,
+		UPG.COMMON.UPGRADE_TECH_MILITARY_ACADEMY,
+		UPG.CHINESE.UPGRADE_WALL_REPAIR_CHI,
+	}
+	local entityProductionList = {
+		EBP.CHINESE.BUILDING_ECON_FOOD_CONTROL_CHI,
+		EBP.CHINESE.BUILDING_ECON_WOOD_CONTROL_CHI,
+		EBP.CHINESE.BUILDING_ECON_MINING_CAMP_CONTROL_CHI,
+		EBP.CHINESE.BUILDING_RESOURCE_FARM_CHI,
+		EBP.CHINESE.BUILDING_UNIT_NAVAL_CHI,
+		EBP.CHINESE.BUILDING_TOWN_CENTER_CHI,
+		EBP.CHINESE.BUILDING_TOWN_CENTER_CAPITAL_CHI,
+		EBP.CHINESE.BUILDING_DYNASTY_GRANARY_CONTROL_CHI,
+		EBP.CHINESE.BUILDING_DYNASTY_PAGODA_CONTROL_CHI,
+	}
+	local squadProductionList = {
+		SBP.CHINESE.UNIT_TRADE_CART_CHI,
+	}
+	for i, bp in ipairs(entityProductionList) do
+		Player_SetEntityProductionAvailability(player1, bp, ITEM_REMOVED)
+	end
+	for i, bp in ipairs(squadProductionList) do
+		Player_SetSquadProductionAvailability(player1, bp, ITEM_REMOVED)
+	end
+	for i, bp in ipairs(upgradeList) do 
+		Player_SetUpgradeAvailability(player1, bp, ITEM_REMOVED)
+	end
+	
+	--Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("age_up_imperial"), ITEM_REMOVED)
+	
+	Player_SetPopCapOverride(player1, 200)
+	WallD_SpawnPlayerUnits()
+	EGroup_DestroyAllEntities(eg_player_tc)
+	
+	eg_enemy_outposts = Player_GetAllEntities(player2)
+	EGroup_Filter(eg_enemy_outposts, EBP.MONGOL.BUILDING_DEFENSE_OUTPOST_MON, FILTER_KEEP)
+	Cmd_InstantUpgrade(eg_enemy_outposts, UPG.MONGOL.UPGRADE_OUTPOST_CANNON_MON)
+	
+end
+
+cinematicFinished = false
+-- Checks if intro Event is running
+function MissionOMatic_PreStart_IntroNISFinished() --override
+	if(cinematicFinished == true) then
+		if Event_IsAnyRunning() == false then
+			
+			Rule_RemoveMe()
+			StartMission_ReleaseHold()
+		end
+	end
+end
+
+--toggle auto collect then disable the ability
+function Walld_Disable_Tax()
+	Cmd_Ability(sg_player_officials, BP_GetAbilityBlueprint("official_auto_collect_tax_toggle_chi"), nil, nil, true, false)
+	SGroup_RemoveAbility(sg_player_officials, BP_GetAbilityBlueprint("official_auto_collect_tax_toggle_chi"))
+	Cmd_Move(sg_player_officials, mkr_player_officials, false)
+end
+
+
+function Mission_Start()
+	
+	WallD_HealWalls()
+	Objective_Start(OBJ_ConstructWonder)
+	Objective_Start(SOBJ_SpendResources)
+	Objective_Start(SOBJ_QuickBuild)
+	Player_SetResource( player2, RT_Wood, 	100000000)
+	Rule_AddSGroupEvent(_WallD_QueueVillagerRespawn, sg_player_villagers, GE_SquadKilled, data)
+	SGroup_RemoveAbility(sg_player_villagers, BP_GetAbilityBlueprint("core_unit_death"))
+	
+	
+	SGroup_RemoveAbility(sg_player_officials, BP_GetAbilityBlueprint("core_unit_death"))
+	SGroup_RemoveAbility(sg_player_officials, BP_GetAbilityBlueprint("official_collect_tax_target_chi"))
+	SGroup_RemoveAbility(sg_player_officials, BP_GetAbilityBlueprint("official_drop_off_tax_target_chi"))
+	
+	FOW_PlayerRevealAll(player2)
+	
+	hint_wonderWarning = HintPoint_Add(mkr_player_wonder, true, "$11220635", 5) --"Prepare Defenses before Completing the Wonder"
+	hint_gatehint_left = HintPoint_Add(mkr_gatehint_left, true, "$11220636", 5) --"Enemies will attack this gate!"
+	hint_gatehint_right = HintPoint_Add(mkr_gatehint_right, true, "$11220636", 5) --"Enemies will attack this gate!"
+
+	--group to hold archers attacking the walls and not currently in a rovingArmy
+	sg_idleRanged = SGroup_CreateIfNotFound("sg_idleRanged")
+	
+	Rule_AddInterval(WallD_CheckArchersBlocked, 1)
+	
+end
+		
+function GetRecipe()
+	
+	local recipe = {
+	
+		--enableShroud = true,
+		
+		victory_message = "$39257",
+		introNIS = EVENTS.PreIntro,
+		--outroNIS = EVENTS.Victory,
+		
+		locations = {
+		},  -- end of LOCATIONS table
+		
+		--
+		-- Modules
+		--
+		modules = {
+		},
+
+		onWin = {
+		},
+		
+		onLose = {
+		},
+	}
+	
+	return recipe
+end
+
+function WallD_InitObjectives()
+	
+	OBJ_ConstructWonder = {
+		
+		Title = "$11220626",
+		Type = ObjectiveType_Battle,
+		
+		PreStart = function()
+			Player_SetResource( player1, RT_Food, 	3000)
+			Player_SetResource( player1, RT_Wood, 	2400)
+			Player_SetResource( player1, RT_Gold, 	2400)
+			Player_SetResource( player1, RT_Stone, 	600)
+			
+			player_speedProduction = Modify_PlayerProductionRate(player1, 1000)
+		end,
+		OnStart = function()			
+		end,
+		IsComplete = function()
+						
+			return EGroup_GetAvgHealth(eg_player_wonder) == 1.0
+		end,
+		OnComplete = function()
+			
+			Modifier_Remove(player_speedProduction)
+			WallD_StartBronze()
+			Objective_Start(OBJ_Victory)
+			Rule_AddInterval(WallD_TraderLoop, 10)
+			Objective_Complete(SOBJ_SpendResources)
+			Objective_Complete(SOBJ_QuickBuild)
+			
+			HintPoint_Remove(hint_wonderWarning)
+			HintPoint_Remove(hint_gatehint_left)
+			HintPoint_Remove(hint_gatehint_right)
+			
+		end,
+	}
+	
+	
+	SOBJ_SpendResources = {
+		
+		Title = "$11220633", --Spend your resources on your defenses, traders will deliver more after the Wonder is completed.
+		Type = ObjectiveType_Tip,
+		--Parent = OBJ_ConstructWonder,
+		StartAlongsideParent = true,
+		showTitle = false,
+	}
+	SOBJ_QuickBuild= {
+		
+		Title = "$11220634", --Units and technology will instantly complete until the Wonder is built.
+		Type = ObjectiveType_Tip,
+		--Parent = OBJ_ConstructWonder,
+		StartAlongsideParent = true,
+		showTitle = false,
+	}
+	
+	OBJ_Victory = {
+		
+		Title = "$11220625",
+		Type = ObjectiveType_Battle,
+		
+		PreStart = function()
+		end,
+		OnStart = function()
+			Objective_StartTimer(OBJ_Victory, COUNT_DOWN, waveDuration, 0)
+			Rule_AddInterval(WallD_TrickleResources, 5)
+			Rule_AddOneShot(WallD_BronzeComplete, bronzeTime)
+			Rule_AddOneShot(WallD_SilverComplete, silverTime)
+			Rule_AddOneShot(WallD_TimerComplete, waveDuration)
+			Missionomatic_ChallengeInit({ kpiType = "countDown", goalBronze = bronzeTime, goalSilver = silverTime, goalGold = goldTime })
+		end,
+		IsComplete = function()
+			return EGroup_IsEmpty(eg_player_wonder)
+		end,
+		OnComplete = function()
+			Mission_Complete()
+		end,
+	}
+	Objective_Register(OBJ_ConstructWonder)
+	Objective_Register(SOBJ_SpendResources)
+	Objective_Register(SOBJ_QuickBuild)
+	Objective_Register(OBJ_Victory)
+	
+end
+
+function WallD_SpawnPlayerUnits()
+	
+	UnitEntry_DeploySquads(player1, sg_player_villagers, { type = "scar_villager", numSquads = 4 }, mkr_playervillagers1)
+	UnitEntry_DeploySquads(player1, sg_player_villagers, { type = "scar_villager", numSquads = 4 }, mkr_playervillagers2)
+
+	UnitEntry_DeploySquads(player1, sg_player_officials, { type = "scar_official", numSquads = 3 }, mkr_player_officials)
+	
+	--this needs to be called on the next frame
+	Rule_AddOneShot(Walld_Disable_Tax, 0)
+	
+end
+
+function WallD_SpawnWaves(unitList)
+	waveSGroups = {}	
+	
+	-- Spawn sgroups from unit list
+	for k, v in ipairs(unitList) do
+		local spawnLocation = {
+			{
+				mkr_mongol_spawnnorth1,
+				mkr_mongol_spawnnorth2,
+				mkr_mongol_spawnnorth3,
+				mkr_mongol_spawnnorth4,
+			},
+			{
+				mkr_mongol_spawnsouth1,
+				mkr_mongol_spawnsouth2,
+				mkr_mongol_spawnsouth3,
+				mkr_mongol_spawnsouth4,
+			}
+		}
+		
+		-- Alternate north/south spawns
+		
+			-- Alternate north/south routes
+		local numLanes = 2
+		
+		local routeIndex = (k % numLanes)+1
+		
+		local spawnRoute = spawnLocation[routeIndex]
+		
+		local spawnNumber = math.floor((k/2)+0.5)
+		
+		local newSGroup = SGroup_CreateUnique()
+		
+		UnitEntry_DeploySquads(player2, newSGroup, v, spawnRoute[spawnNumber])
+		FOW_PlayerRevealSGroup(player1, newSGroup, 20, -1)
+			
+		table.insert(waveSGroups, newSGroup)
+		
+		waveSpawnedCount = waveSpawnedCount + 1
+	end	
+	
+	Rule_AddInterval(WallD_SendWave, waveSpawnInterval)
+end
+
+function WallD_SendWave() -- Send spawned sgroups in a new roving module
+	
+	local early_routeList = {
+		{
+			mkr_mongol_rallynorth,
+			mkr_player_gatenorth,	
+		},
+		{
+			mkr_mongol_rallysouth,
+			mkr_player_gatesouth,
+		},		
+	}
+	
+		local late_routeList = {
+		{
+			mkr_mongol_rallynorth,
+			mkr_mongol_north_alt_left,
+			mkr_mongol_north_alt_gate,
+			mkr_player_gatenorth,
+
+		},
+		{
+			mkr_mongol_rallysouth,
+			mkr_mongol_south_alt_left,
+			mkr_mongol_south_alt_gate,
+			mkr_player_gatesouth,
+
+		},
+		{
+			mkr_mongol_rallynorth,
+			mkr_mongol_north_alt_right,
+			mkr_mongol_north_alt_gate,
+			mkr_player_gatenorth,
+
+		},
+		{
+			mkr_mongol_rallysouth,
+			mkr_mongol_south_alt_right,
+			mkr_mongol_south_alt_gate,
+			mkr_player_gatesouth,
+
+		},		
+	}
+	
+	local routeList = {
+		
+	}
+	
+	-- Alternate north/south routes
+	local choosenRouteList = early_routeList
+	local numLanes = 2
+	if waveSentCount > 16 then
+		numLanes = 4
+		choosenRouteList = late_routeList
+	end
+	
+	local routeIndex = (waveSentCount % numLanes)+1
+		
+	-- Initialize a new module, and add the next sgroup
+	local moduleData = {
+		descriptor = "Wave" .. tostring(waveSentCount), 				
+		type = "RovingArmy",
+		player = player2,
+		targetingType = ARMY_TARGETING_DISCARD,
+		onlyAtTargetForFinal = true,
+		attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+		attackMoveAtTarget = attackMoveStyle_targetWonder,		
+		targets = choosenRouteList[routeIndex],
+	}		
+	local newModule = RovingArmy_Init(moduleData)
+	RovingArmy_AddSGroup(newModule, waveSGroups[1], true)
+	
+	--set group to use spread formation
+	if scartype(newModule.sgroup) == ST_SGROUP and SGroup_CountSpawned(newModule.sgroup) > 0 then
+		Cmd_Ability(newModule.sgroup, BP_GetAbilityBlueprint("core_formation_spread"))
+		
+	end
+	
+	table.insert(waveModuleTable, newModule)
+	table.remove(waveSGroups, 1)
+	
+	if medalWaveCount == 1 then
+		EventCues_CallToAction("$11220627", CTA_ALARM, EVENTS.WaveStart, nil, waveModuleTable[1].sgroup, 20) -- Enemy attacks have begun to approach
+	end
+	
+	print("Sending wave " .. waveSentCount)
+	
+	
+	if waveSentCount == 1 then -- Add hooks for contextual vo events
+		Rule_AddInterval(WallD_RamCheck, 4)
+		Rule_AddInterval(WallD_WallsDamagedCheck, 4)
+		Rule_AddInterval(WallD_TowerCheck, 4)
+		Rule_AddInterval(WallD_MangonelCheck, 4)
+		Rule_AddInterval(WallD_TrebuchetCheck, 4)
+	end	
+	
+	WallD_PatrolWaves()	
+	WallD_RangedWaves()	
+	
+	-- Increment wavecount, and kill Rule if we've launched the last wave
+	waveSentCount = waveSentCount + 1
+	medalWaveCount = medalWaveCount + 1
+				
+	if #waveSGroups == 0 then
+		Rule_RemoveMe()
+	end
+end
+
+--NO REFS CAN DELETE IF NOT REUSED/REINSTATED--
+----Generates minimap paths
+--function Generate_EnemyPaths()
+	--PATH_ATTACKERS_1 = 0
+	--AIPlayer_RequestHighPath(player2, PATH_ATTACKERS_1, Util_GetPosition(mkr_mongol_rallynorth), Util_GetPosition(mkr_player_gatenorth), EBP.MONGOL.UNIT_RAM_3_MON, true)
+	--local pointList = AIPlayer_GetCachedPathPoints(player2, PATH_ATTACKERS_1)
+	--MarkerPaths_GenerateIcons("walld_path_1", pointList, "military_route_enemy", 30)
+	
+	--PATH_ATTACKERS_2 = 1
+	--AIPlayer_RequestHighPath(player2, PATH_ATTACKERS_2, Util_GetPosition(mkr_mongol_rallysouth), Util_GetPosition(mkr_player_gatesouth), EBP.MONGOL.UNIT_RAM_3_MON, true)
+	--local pointList = AIPlayer_GetCachedPathPoints(player2, PATH_ATTACKERS_2)
+	--MarkerPaths_GenerateIcons("walld_path_2", pointList, "military_route_enemy", 30)
+--end
+
+function WallD_PatrolWaves()
+	
+	local moduleData = {}
+	
+	int_halfWave = math.floor(waveSentCount/2)
+	
+	if waveSentCount % 2 or waveSentCount == 0 then 
+		local units = patrolWaveUnits[int_halfWave]
+		local target = {}
+		
+		target = {mkr_mongol_horse_patrol_2}
+		if waveSentCount % 4 or waveSentCount == 0 then
+			target = {mkr_mongol_horse_patrol_3}
+		end
+		
+		target = {mkr_mongol_horse_patrol_2}
+		if waveSentCount % 4 or waveSentCount == 0 then
+			target = {mkr_mongol_horse_patrol_3}
+		end
+		
+		local patrolName = "PatrolWave_" .. math.floor(waveSentCount/2)
+		
+		--add a custom onBlockedFunction to prevent archers from building rams
+		moduleData = {
+			descriptor = patrolName, 				
+			type = "RovingArmy",
+			player = player2,
+			targetingType = ARMY_TARGETING_DISCARD,
+			attackMove = attackMoveStyle_attackEverything,
+			targets = target,
+			spawnLocation = mkr_mongol_horse_patrol_spawn,
+			onDeathDissolve = true,
+			units = units,
+		}
+		
+		local newModule = RovingArmy_Init(moduleData)
+		FOW_PlayerRevealSGroup(player1, newModule.sgroup, 20, -1)
+		
+		
+		--set group to use spread formation
+		if scartype(newModule.sgroup) == ST_SGROUP and SGroup_CountSpawned(newModule.sgroup) > 0 then
+			Cmd_Ability(newModule.sgroup, BP_GetAbilityBlueprint("core_formation_spread"))
+		end
+	
+	end	
+end
+
+function WallD_RangedWaves()
+	
+	local moduleData = {}
+	
+	int_halfWave = math.floor(waveSentCount/2)
+	
+	if waveSentCount % 2 or waveSentCount == 0 then 
+		local units = rangedWaveUnits[int_halfWave]
+		local target = {}
+		
+		local routeIndex = (waveSentCount % 2)+1
+		
+		local rangedSpawn = mkr_mongol_ranged_spawn1
+		target = {mkr_ranged_path_1_1, mkr_ranged_path_1_2}
+		if routeIndex == 1 then
+			target = {mkr_ranged_path_2_1, mkr_ranged_path_2_2}
+			rangedSpawn = mkr_mongol_ranged_spawn2
+		end
+		
+		local patrolName = "RangedWave_" .. math.floor(waveSentCount/2)
+		
+		
+		--add a custom onBlockedFunction to prevent archers from building rams
+		moduleData = {
+			descriptor = patrolName, 				
+			type = "RovingArmy",
+			player = player2,
+			targetingType = ARMY_TARGETING_DISCARD,
+			attackMove = attackMoveStyle_attackEverything,
+			targets = target,
+			spawnLocation = rangedSpawn,
+			onDeathDissolve = true,
+			units = units,
+			cavalryCanBuildRams = false,
+			onBlockedFunction = WallD_ArchersBlocked,
+		}
+		
+		local newModule = RovingArmy_Init(moduleData)
+		FOW_PlayerRevealSGroup(player1, newModule.sgroup, 20, -1)
+		
+		
+		--set group to use spread formation
+		if scartype(newModule.sgroup) == ST_SGROUP and SGroup_CountSpawned(newModule.sgroup) > 0 then
+			Cmd_Ability(newModule.sgroup, BP_GetAbilityBlueprint("core_formation_spread"))
+		end
+		
+		newModule.onBlockedFunction = WallD_ArchersBlocked
+		if newModule.onBlockedFunction == nil then
+			newModule.onBlockedFunction = WallD_ArchersBlocked
+		end
+	end
+end
+
+function WallD_CheckRangedName(currentArmyName)
+	
+	for i=1,24 do
+		local localName = "RangedWave_" .. math.floor(i/2)
+		if(currentArmyName == localName) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+wallDArcherSplitTime = 0
+function WallD_CheckArchersBlocked()
+	
+	-- Next, go through existing modules
+	-- We need to copy this table, or else we'll be removing stuff from t_allModules while iterating through it
+	local allModules = Clone(t_allModules, false)
+	-- Extract everyone not in the Return module from their modules
+	local moduleCount = 0
+	
+	for index, module in pairs(allModules) do
+		moduleCount = moduleCount + 1
+	end
+	
+	local splitUnits = false
+	
+	
+	
+	if(moduleCount > 1) then
+		for i=1,moduleCount do
+			local moduleA = allModules[i]
+			local isRangedModule = WallD_CheckRangedName(moduleA.descriptor)
+			if moduleA.player == player2 and isRangedModule == true then
+				if scartype(moduleA.sgroup) == ST_SGROUP and SGroup_CountSpawned(moduleA.sgroup) > 0 then
+					
+					local unitsInCombat2 = false
+					local unitsMoving = false
+					local unitsAttacking = false
+					for i2 = 1, SGroup_CountSpawned(moduleA.sgroup) do
+						local squad2 = SGroup_GetSquadAt(moduleA.sgroup, i2)	
+						if(Squad_IsUnderAttack(squad2, 3)) then
+							unitsInCombat2 = true
+						end
+						if(Squad_IsMoving(squad2) == true) then
+							unitsMoving = true
+						end
+						if(Squad_IsAttacking(squad2, 5) == true) then
+							unitsAttacking = true
+						end
+					end
+					
+					
+					if(unitsInCombat2 == true and unitsMoving == false) then
+						--actually split the units away from the roving army
+						WallD_ArchersBlocked(moduleA)
+						splitUnits = true
+					end
+					
+				end
+			end
+		end
+	end
+	
+	--delay merging back idle ranged units if any have just split off
+	if(splitUnits == true) then
+		wallDArcherSplitTime = World_GetGameTime() + 3
+	end
+	
+	
+	
+	WallD_CheckIdleRanged()
+	
+end
+
+
+function WallD_CheckIdleRanged()
+	local foundValidTarget = false
+	local hasMergedRanged = false
+	local anyUnitsIdle = true
+	local anyUnitsAttacking = false
+	if(SGroup_CountSpawned(sg_idleRanged) > 0) then
+		
+		local unitsInCombat = false
+		for i = 1, SGroup_CountSpawned(sg_idleRanged) do
+			local squad = SGroup_GetSquadAt(sg_idleRanged, i)	
+			if(Squad_IsUnderAttack(squad, 3)) then
+				unitsInCombat = true
+			end
+		end
+		
+		if(unitsInCombat == true) then
+			
+			-- Create SGroups
+			local sg_attackers = SGroup_CreateIfNotFound("sg_attackers")
+			local sg_attackersAll = SGroup_CreateIfNotFound("sg_attackersAll")
+			local sg_single2 = SGroup_CreateIfNotFound("sg_single2")
+			
+			Player_GetAllSquadsNearMarker(player1, sg_attackers, SGroup_GetPosition(sg_idleRanged), 50)
+			Player_GetAllSquadsNearMarker(player1, sg_attackersAll, SGroup_GetPosition(sg_idleRanged), 50)
+			
+			--prefer to attack ranged units
+			SGroup_Filter(sg_attackers, "ranged", FILTER_KEEP)
+			
+			for i = SGroup_CountSpawned(sg_idleRanged), 1, -1 do
+				local squad = SGroup_GetSquadAt(sg_idleRanged, i)
+				local attackSearchRange = 50
+				if(Squad_IsMoving(squad) == true) then
+					anyUnitsIdle = false
+				end
+				local isAttacking = false
+				if(Squad_IsAttacking(squad, 5) == true) then
+					anyUnitsAttacking = true
+					isAttacking = true
+				end
+				
+				local sg_attackTargetGroup = SGroup_CreateIfNotFound("sg_attackTargetGroup")
+				Squad_GetAttackTargets(squad, sg_attackTargetGroup)
+				if(SGroup_CountSpawned(sg_attackTargetGroup) == 0) then
+					isAttacking = false
+				end
+				
+				if(Squad_IsMoving(squad) == false and isAttacking == false) then
+					SGroup_Single(sg_single, squad)
+					
+					--try prefered targets
+					if (SGroup_Count(sg_attackers) > 0) then
+						local s_closest_attacker = SGroup_GetClosestSquad(sg_attackers, Util_GetPosition(squad))
+						if s_closest_attacker ~= nil then	
+							--only attack if the unit is close enough
+							if(Util_GetDistance(s_closest_attacker, Util_GetPosition(squad)) < attackSearchRange) then
+								
+								SGroup_Single(sg_single2, s_closest_attacker)
+								Cmd_Attack(sg_single, sg_single2, false)
+								foundValidTarget = true
+							end
+						end
+					end
+					--try all nearby targets
+					if (foundValidTarget == false and SGroup_Count(sg_attackersAll) > 0) then
+						local s_closest_attacker = SGroup_GetClosestSquad(sg_attackersAll, Util_GetPosition(squad))
+						if s_closest_attacker ~= nil then	
+							--only attack if the unit is close enough
+							if(Util_GetDistance(s_closest_attacker, Util_GetPosition(squad)) < attackSearchRange) then
+								
+								SGroup_Single(sg_single2, s_closest_attacker)
+								Cmd_Attack(sg_single, sg_single2, false)
+								foundValidTarget = true
+							end
+						end
+					end
+					--attack move if no valid targets
+					if(foundValidTarget == false) then
+						Cmd_AttackMove(sg_single, mkr_player_wonder, false)
+					end
+					
+					
+				end
+			end
+			
+			
+		end
+		
+		local patrolName = "RangedWave_0"
+		--if no targets are found, merge squad back into a roving army
+		if(foundValidTarget == false and anyUnitsAttacking == false and anyUnitsIdle == true) then
+			--only merge if enough time has passed
+			if(World_GetGameTime() > wallDArcherSplitTime) then
+				--RovingArmy_AddSGroup(MissionOMatic_FindModule(patrolName), sg_idleRanged)
+				hasMergedRanged = true
+				
+				--now remove from idle group
+				--SGroup_Clear(sg_idleRanged)
+			end
+		end
+	end
+	
+	if(hasMergedRanged == true) then
+		wallDArcherSplitTime = World_GetGameTime() + 3
+	end
+end
+
+--? @shortdesc A function invoked when raiders become blocked
+function WallD_ArchersBlocked(module)
+	
+		
+	if scartype(module.sgroup) == ST_SGROUP and SGroup_CountSpawned(module.sgroup) > 0 then
+		--
+		SGroup_AddGroup(sg_idleRanged, module.sgroup)
+		--RovingArmy_Disband(module)
+		RovingArmy_RemoveSGroup(module, module.sgroup)
+		--
+	end
+	
+	
+end
+
+function WallD_TimerComplete()
+	Objective_Complete(OBJ_Victory, true)
+end
+
+function WallD_WonderTimerComplete() --Temp until we hook up the Wonder ghost
+	Objective_Complete(OBJ_ConstructWonder)
+end
+
+function WallD_AwardResources()
+	Player_AddResource(player1, RT_Food,  1200)
+	Player_AddResource(player1, RT_Wood,  1000)
+	Player_AddResource(player1, RT_Gold,  1000)
+	Player_AddResource(player1, RT_Stone, 500)
+	--EventCues_CallToAction("$11216449", CTA_CELEBRATE, nil, nil, mkr_player_wonder, 20) -- Addtional resources have been awarded
+end
+
+function WallD_StartBronze()
+	medalWaveCount = 1
+	waveSentCount = 1
+	waveSpawnedCount = 1
+	WallD_SpawnWaves(unitList.bronze)	
+	WallD_SendWave()
+	
+end
+
+function WallD_StartSilver()
+	medalWaveCount = 1
+	WallD_SpawnWaves(unitList.silver)		
+end
+function WallD_StartGold()
+	medalWaveCount = 1
+	WallD_SpawnWaves(unitList.gold)		
+end
+
+function WallD_BronzeComplete()
+	--WallD_AwardResources()
+	--EventCues_CallToAction("$11216449", CTA_CELEBRATE, nil, nil, mkr_player_wonder, 20) -- Addtional resources have been awarded
+	Util_StartIntel(EVENTS.BronzeComplete)
+	resourceReminderTime = World_GetGameTime()
+	Rule_AddInterval(WallD_SpendResources1, { delay = 60, interval = 1})
+	WallD_StartSilver()
+	trickleIncomeMult = 2
+end
+
+function WallD_SilverComplete()
+	--WallD_AwardResources()
+	--EventCues_CallToAction("$11216449", CTA_CELEBRATE, nil, nil, mkr_player_wonder, 20) -- Addtional resources have been awarded
+	Util_StartIntel(EVENTS.SilverComplete)
+	resourceReminderTime = World_GetGameTime()
+	Rule_AddInterval(WallD_SpendResources2, { delay = 60, interval = 1})
+	WallD_StartGold()
+	trickleIncomeMult = 3
+end
+
+function WallD_HealWalls()
+	
+	eg_player_walls = Player_GetAllEntities(player3)
+	EGroup_Filter(eg_player_walls, "wall", FILTER_KEEP)
+	
+	if EGroup_IsEmpty(eg_player_walls) ~= true then
+		EGroup_SetPlayerOwner(eg_player_walls, player1)
+	end
+	
+	EGroup_Clear(eg_temp)
+	eg_temp = Player_GetAllEntities(player1)
+	EGroup_Filter(eg_temp, "wall", FILTER_KEEP)
+	
+	EGroup_SetAvgHealth(eg_temp, 1)
+
+end
+
+function WallD_WallsDamagedCheck()
+	eg_temp = Player_GetAllEntities(player1)
+	EGroup_Filter(eg_temp, "wall", FILTER_KEEP)
+	
+	if (EGroup_GetAvgHealth(eg_temp) < 0.995) then
+		
+		Util_StartIntel(EVENTS.WallsDamaged)
+		
+		Rule_RemoveMe()
+	end
+end
+
+function WallD_ApproachingWaveContains(bp)
+	sg_northgate = SGroup_CreateIfNotFound("sg_northgate")
+	sg_southgate = SGroup_CreateIfNotFound("sg_southgate")
+	
+	World_GetSquadsNearMarker(player2, sg_northgate, mkr_player_gatenorth, OT_Player) 
+	World_GetSquadsNearMarker(player2, sg_southgate, mkr_player_gatesouth, OT_Player) 
+	
+	SGroup_AddGroup(sg_northgate, sg_southgate)
+	
+	return SGroup_ContainsBlueprints(sg_northgate, bp, ANY)
+end
+
+--Gives the player resources periodically after the challenge has started
+function WallD_TrickleResources()
+		
+		Player_AddResource(player1, RT_Gold, math.floor(200/12)*trickleIncomeMult, RES_Resourcing)
+		Player_AddResource(player1, RT_Food, math.floor(200/12)*trickleIncomeMult, RES_Resourcing)
+		Player_AddResource(player1, RT_Wood, math.floor(150/12)*trickleIncomeMult, RES_Resourcing)
+		Player_AddResource(player1, RT_Stone, math.floor(150/12)*trickleIncomeMult, RES_Resourcing)
+end
+
+function _WallD_QueueVillagerRespawn(context, data)
+	Rule_AddOneShot(WallD_VillagerRespawn, 30)
+end
+
+function WallD_VillagerRespawn()
+	if SGroup_CountSpawned(sg_player_villagers) < 8 then 		
+		if Player_GetPopulationPercentage(player1, CT_Personnel) < 1 then
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player1, sg_player_villagers, {{type = "scar_villager", numSquads = 1, sgroup = sg_temp}}, mkr_playervillagerrespawn)
+			Rule_AddSGroupEvent(_WallD_QueueVillagerRespawn, sg_temp, GE_SquadKilled, data)
+			SGroup_RemoveAbility(sg_temp, BP_GetAbilityBlueprint("core_unit_death"))			
+			if bool_CTACooldown == false then
+				bool_CTACooldown = true
+				EventCues_CallToAction("$11220632", CTA_CELEBRATE, nil, nil,   mkr_playervillagerrespawn, 20) --Villagers have returned!
+				Rule_AddOneShot(WallD_ResetVillagerCTA, 60)
+			end			
+		else
+			int_unspawnedVillagers = int_unspawnedVillagers or 0
+			int_unspawnedVillagers = int_unspawnedVillagers+1
+			
+			if Rule_Exists(WallD_SpawnUnspawnedVillagers) ~= true then
+				Rule_AddInterval(WallD_SpawnUnspawnedVillagers, 2)
+			end
+		end		
+	end
+end
+
+function WallD_SpawnUnspawnedVillagers()
+	if Player_GetPopulationPercentage(player1, CT_Personnel) < 1 then 
+		if int_unspawnedVillagers > 0 and SGroup_CountSpawned(sg_player_villagers) ~= 8 then
+			local int_availablePop = Player_GetCurrentPopulationCap(player1, CT_Personnel) - Player_GetCurrentPopulation(player1, CT_Personnel)
+			local int_spawnableVillagers = int_unspawnedVillagers
+			if int_availablePop < int_spawnableVillagers then
+				int_spawnableVillagers = int_unspawnedVillagers - int_availablePop
+			end
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player1, sg_player_villagers, {{type = "scar_villager", numSquads = int_spawnableVillagers, sgroup = sg_temp}}, mkr_playervillagerrespawn)
+			Rule_AddSGroupEvent(_WallD_QueueVillagerRespawn, sg_temp, GE_SquadKilled, data)
+			SGroup_RemoveAbility(sg_temp, BP_GetAbilityBlueprint("core_unit_death"))
+			if int_spawnableVillagers > 0 and bool_CTACooldown == false then
+				bool_CTACooldown = true
+				EventCues_CallToAction("$11220632", CTA_CELEBRATE, nil, nil,   mkr_playervillagerrespawn, 12) --Villagers have returned!
+				Rule_AddOneShot(WallD_ResetVillagerCTA, 60)
+			end
+			int_unspawnedVillagers = int_unspawnedVillagers - int_spawnableVillagers
+		else 
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function WallD_ResetVillagerCTA()
+	bool_CTACooldown = false
+end
+
+function WallD_TraderLoop()
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player3, sg_player_traders, {{type = "scar_trade_cart", numSquads = 1, sgroup = sg_temp}}, mkr_playertrader_spawn)
+	Cmd_Move(sg_temp, mkr_playertraders_target)
+	Rule_AddOneShot(_WallD_DelayTraderDepart, 8, {squad = SGroup_GetSquadAt(sg_temp, 1)})
+end
+
+function _WallD_DelayTraderDepart(context, data)
+	SGroup_Clear(sg_single)
+	SGroup_Single(sg_single, data.squad)
+	Cmd_MoveToAndDestroy(sg_single, mkr_playertrader_spawn, true)
+end
+
+------------------------
+-- VO Reminder functions
+------------------------
+
+function WallD_RamCheck()
+	
+	if World_GetGameTime() > lastEventTime + eventCD then
+		if WallD_ApproachingWaveContains(SBP.MONGOL.UNIT_RAM_3_MON) then
+			Util_StartIntel(EVENTS.Rams)
+			
+			lastEventTime = World_GetGameTime()
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function WallD_TowerCheck()
+	
+	if World_GetGameTime() > lastEventTime + eventCD then
+		if WallD_ApproachingWaveContains(SBP.MONGOL.UNIT_SIEGE_TOWER_3_MON) then
+			Util_StartIntel(EVENTS.SiegeTowers)
+			
+			lastEventTime = World_GetGameTime()
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function WallD_MangonelCheck()
+	
+	if World_GetGameTime() > lastEventTime + eventCD then
+		if WallD_ApproachingWaveContains(SBP.MONGOL.UNIT_MANGONEL_3_MON) then
+			Util_StartIntel(EVENTS.Mangonels)
+			
+			lastEventTime = World_GetGameTime()
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function WallD_TrebuchetCheck()
+	
+	if World_GetGameTime() > lastEventTime + eventCD then
+		if WallD_ApproachingWaveContains(SBP.MONGOL.UNIT_TREBUCHET_4_CW_MON) or WallD_ApproachingWaveContains(SBP.MONGOL.UNIT_BOMBARD_4_MON) then
+			Util_StartIntel(EVENTS.Trebuchets)
+			
+			lastEventTime = World_GetGameTime()
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function WallD_SpendResources1()
+	
+	if World_GetGameTime() > lastEventTime + eventCD then
+		if World_GetGameTime() > resourceReminderTime + resourceReminderCD then
+			if Player_GetResource(player1, RT_Food) > 500 and Player_GetResource(player1, RT_Wood) > 500 and Player_GetResource(player1, RT_Gold) > 500 then
+				Util_StartIntel(EVENTS.SpendResources1)
+				
+				lastEventTime = World_GetGameTime()
+				resourceReminderTime = World_GetGameTime()
+				Rule_RemoveMe()
+			end
+		end
+	end	
+end
+
+function WallD_SpendResources2()
+	
+	if World_GetGameTime() > lastEventTime + eventCD then
+		if World_GetGameTime() > resourceReminderTime + resourceReminderCD then
+			if Player_GetResource(player1, RT_Food) > 500 and Player_GetResource(player1, RT_Wood) > 500 and Player_GetResource(player1, RT_Gold) > 500 then
+				Util_StartIntel(EVENTS.SpendResources2)
+				
+				lastEventTime = World_GetGameTime()
+				resourceReminderTime = World_GetGameTime()
+				Rule_RemoveMe()
+			end
+		end
+	end	
+end

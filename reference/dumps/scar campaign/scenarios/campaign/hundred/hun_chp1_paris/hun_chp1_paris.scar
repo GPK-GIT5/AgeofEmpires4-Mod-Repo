@@ -1,0 +1,862 @@
+import("MissionOMatic/MissionOMatic.scar")	
+import("hun_chp1_paris_data.scar")
+import("hun_chp1_paris_objectives.scar")
+import("hun_chp1_paris_training.scar")
+
+function Mission_SetupPlayers()
+	player1 = World_GetPlayerAt(1)
+	player2 = World_GetPlayerAt(2)
+	
+	Setup_SetPlayerName(player1, Loc_GetString(11180077))  -- Paris
+	Player_SetCurrentAge(player1, AGE_CASTLE)
+	Player_SetMaximumAge(player1, AGE_CASTLE)
+
+
+	Setup_SetPlayerName(player2, Loc_GetString(11180078))  -- England
+	Player_SetCurrentAge(player2, AGE_CASTLE)
+	Player_SetMaximumAge(player2, AGE_CASTLE)
+	
+	Player_SetRelationship(player1, player2, R_ENEMY)
+	Player_SetRelationship(player2, player1, R_ENEMY)
+	
+	PlayerColour_Enable()
+	Game_SetPlayerSlotColour(player1, 1)   
+    Game_SetPlayerUISlotColour(player1, 1) 
+	Game_SetPlayerSlotColour(player2, 2)   
+    Game_SetPlayerUISlotColour(player2, 2) 
+end
+
+function Mission_SetupVariables()
+	Paris_InitData1()
+end
+
+function Mission_Preset()
+	Paris_SetupWaves()
+	Paris_InitData2()
+	
+	--Sound_SetForceMusic(true)
+	
+	PlayerUpgrades_Auto(player1, false)
+	Player_SetUpgradeAvailability(player1, UPG.FRENCH.UPGRADE_RANGED_INCENDIARY_FRE, ITEM_REMOVED)
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.FRENCH.BUILDING_DEFENSE_OUTPOST_FRE, FILTER_KEEP)
+	Cmd_InstantUpgrade(eg_allentities, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	Cmd_InstantUpgrade(eg_stone, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	Modify_WeaponEnabled(eg_disable_weapon, "hardpoint_01", false)
+	
+	PlayerUpgrades_Auto(player2, false, { UPG.COMMON.UPGRADE_RANGED_ARCHER_SILKSTRING, UPG.FRENCH.UPGRADE_RANGED_INCENDIARY_FRE })
+	Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_SIEGE_WEAPON_SPEED)
+	local treb_range_nerf = Modifier_Create(MAT_WeaponType, "range_weapon_modifier", MUT_Multiplication, false, 0.8, BP_GetWeaponBlueprint("weapon_trebuchet_4_counterweight"))
+	Modifier_ApplyToPlayer(treb_range_nerf, player2, 0)
+	local archer_speed_buff = Modifier_Create(MAT_EntityType, "speed_maximum_modifier", MUT_Multiplication, false, 1.13, EBP.ENGLISH.UNIT_ARCHER_3_ENG)
+	Modifier_ApplyToPlayer(archer_speed_buff , player2, 0)
+	FOW_RevealMarker(mkr_outpost_vision, -1)
+	
+	for i, sgroup in ipairs({ sg_paris_farm_1, sg_paris_farm_2, sg_paris_farm_3, sg_paris_farm_4, sg_paris_farm_5, sg_paris_farm_6, sg_paris_farm_7}) do
+		AssignVillagersToFarms(sgroup)	
+	end
+	for i, sgroup in ipairs({ sg_paris_wood_1, sg_paris_wood_2, sg_paris_wood_3, sg_paris_wood_4, sg_paris_wood_5 }) do
+		AssignVillagersToWood(sgroup)	
+	end
+	for i, sgroup in ipairs({ sg_paris_gold_1, sg_paris_gold_2 }) do
+		AssignVillagersToGold(sgroup)	
+	end
+	for i, sgroup in ipairs({ sg_paris_stone_1, sg_paris_stone_2 }) do
+		AssignVillagersToStone(sgroup)	
+	end
+	
+	SGroup_AddGroups(sg_retreat, { sg_paris_farm_2, sg_paris_farm_3, sg_paris_farm_4, sg_paris_farm_5, sg_paris_farm_6,
+			sg_paris_wood_2, sg_paris_wood_3, sg_paris_wood_4, sg_paris_wood_5, sg_paris_gold_2, sg_paris_stone_2})
+	SGroup_AddGroup(sg_retreat_original, sg_retreat)
+	retreat_count = 0
+	retreat_count_max = SGroup_CountSpawned(sg_retreat)
+	
+	Rule_AddOneShot(Paris_MoveIntroUnits, 0.25)
+	
+	Paris_InitObjectives()
+end
+
+function Mission_Start()
+	if Game_GetSPDifficulty() == GD_EASY then
+		Player_SetResource(player1, RT_Food, 400)
+		Player_SetResource(player1, RT_Wood, 400)
+		Player_SetResource(player1, RT_Stone,400)
+		Player_SetResource(player1, RT_Gold, 400)
+	elseif Game_GetSPDifficulty() == GD_NORMAL then
+		Player_SetResource(player1, RT_Food, 300)
+		Player_SetResource(player1, RT_Wood, 300)
+		Player_SetResource(player1, RT_Stone,300)
+		Player_SetResource(player1, RT_Gold, 300)
+	elseif Game_GetSPDifficulty() == GD_HARD then
+		Player_SetResource(player1, RT_Food, 200)
+		Player_SetResource(player1, RT_Wood, 200)
+		Player_SetResource(player1, RT_Stone,200)
+		Player_SetResource(player1, RT_Gold, 200)
+	else
+		Player_SetResource(player1, RT_Food, 100)
+		Player_SetResource(player1, RT_Wood, 100)
+		Player_SetResource(player1, RT_Stone,100)
+		Player_SetResource(player1, RT_Gold, 100)
+	end
+	
+	Objective_Start(OBJ_Defend, true, true)
+	Objective_Start(OBJ_Prepare, false, false)
+	Rule_AddInterval(Paris_MonitorReinforcements, 1)
+	Rule_AddInterval(Paris_MainLoop, 1)
+	Rule_AddEGroupEvent(LandmarkUnderAttack, eg_landmarks, GE_DamageReceived)
+	Rule_AddEGroupEvent(WallsBreached, eg_paris_walls, GE_EntityKilled)
+	
+	Rule_AddOneShot(Paris_InvasionStart, 20)
+	Rule_AddOneShot(Paris_StrongerInvaders, 200)
+	Rule_AddOneShot(Paris_StrongerInvaders, 400)
+	Rule_AddOneShot(Paris_StrongerInvaders, 600)
+	Paris_AddHintToRepair()
+end
+
+function Paris_MainLoop(context)
+	paris_seconds[1] = paris_seconds[1] + 1
+end
+
+function Paris_StrongerInvaders(context)
+	UnitTable_AddUnitsByType(invader_units, "scar_ram", 1)
+	UnitTable_AddUnitsByType(standby_units[1], "scar_ram", 1)
+	UnitTable_AddUnitsByType(standby_units[2], "scar_ram", 1)
+	UnitTable_AddUnitsByType(standby_units[3], "scar_ram", 1)
+end
+
+function Paris_InvasionStart(context)
+	if invasion_started == false then
+		print("invasion started")
+		invasion_started = true
+		Rule_AddOneShot(Paris_InvasionStartLane, INVASION_DELAY_1, { lane = 1 })
+		Rule_AddOneShot(Paris_InvasionStartLane, INVASION_DELAY_2, { lane = 2 })
+		Rule_AddOneShot(Paris_InvasionStartLane, INVASION_DELAY_3, { lane = 3 })
+		Objective_Start(OBJ_Retreat, true, true)
+	end
+end
+
+function Paris_InvasionStartLane(context, data)
+	local lane = data.lane
+	invasions_started = invasions_started + 1
+	if lane_is_started[lane] == false then
+		lane_is_started[lane] = true
+		print("lane "..lane.." started at "..paris_seconds[1])
+		local invader = MissionOMatic_FindModule("invader_"..lane)
+		RovingArmy_SetTargets(invader, invader_targets[lane])	
+	end
+	if invasions_started == 2 then
+		Util_StartIntel(EVENTS.EnglishAppear)
+	end
+end
+
+function Paris_InvasionStartStone(context)
+	--print("stone attack spawned at "..paris_seconds[1])
+	SpawnUnitsToModule(invader_units_stone_gold, invader_stone)
+	invader_stone.ideal_composition = Table_Copy(invader_units_stone_gold)
+	invader_stone.ideal_composition_count = UnitTable_CountUnits(invader_units_stone_gold)
+end
+
+function Paris_InvasionStartGold(context)
+	--print("gold attack spawned at "..paris_seconds[1])
+	SpawnUnitsToModule(invader_units_stone_gold, invader_gold)
+	invader_gold.ideal_composition = Table_Copy(invader_units_stone_gold)
+	invader_gold.ideal_composition_count = UnitTable_CountUnits(invader_units_stone_gold)
+end
+
+function Paris_LaneHalfComplete(lane)
+	if invasion_half_complete == false then
+		print("lane "..lane.." half complete at "..paris_seconds[1])
+		lane_is_half[lane] = true
+		lanes_half = lanes_half + 1
+		local delay = 1
+		--spawn gold or stone
+		if invader_gold.lane == lane then
+			Rule_AddOneShot(Paris_InvasionStartGold, delay)
+			delay = delay + 6
+		elseif invader_stone.lane == lane then
+			Rule_AddOneShot(Paris_InvasionStartStone, delay)
+			delay = delay + 6
+		end
+		--spawn standby
+		Rule_AddOneShot(Paris_StartReinforcingStandby, delay, {standby = standby_modules[lane]})
+		local defender_start = ((lane - 1) * 5)
+		--spawn defenders
+		for i = 1, 5 do
+			delay = delay + 6
+			local defender = MissionOMatic_FindModule("siege_defend_"..defender_start + i)
+			Rule_AddOneShot(Paris_SpawnDefender, delay, { module = defender })
+		end
+		--spawn assault waves
+		local wave_number = assault_lane_order[lane]
+		delay = delay + 6
+		Rule_AddOneShot(Paris_PrepareIntroWave, delay, { wave_number = wave_number, lane = lane })
+	end
+end
+
+function Paris_StartReinforcingStandby(context, data)
+	local standby = data.standby
+	local lane = standby.lane
+	standby.ideal_composition = Table_Copy(standby_units[lane])
+	standby.ideal_composition_count = UnitTable_CountUnits(standby_units[lane])
+	Paris_ReinforceFromMapEdge(standby, 0.2)
+end
+
+function Paris_SpawnDefender(context, data)
+	local module = data.module
+	SpawnUnitsToModule(siege_defender_units, module, module.spawnLocation)
+	Reinforcement_SetIdealComposition(module, siege_defender_units)
+end
+
+function Paris_PrepareIntroWave(context, data)
+	local lane = data.lane
+	local wave_number = data.wave_number
+	waves_prepared = waves_prepared + 1
+	local units = Paris_GetWaveUnits(wave_number)
+	local wave = paris_waves[lane]
+	Wave_SetUnits(wave, units)
+	local queued_wave = Wave_Prepare(wave)
+	local staging_module = queued_wave.staging_module
+	wave_info[wave_number].main_lane = lane
+	wave_info[wave_number].is_spawned = true
+	staging_module.wave_number = wave_number
+	RovingArmy_AddTarget(staging_module, { marker = Marker_FromName("mkr_staging_half_"..lane, ""), useCustomDirection = true })
+	SGroup_AddGroup(wave_info[wave_number].sgroup, staging_module.sgroup)
+	SGroup_Filter(wave_info[wave_number].sgroup, "scar_siege_tower", FILTER_REMOVE)
+	wave_info[wave_number].units_spawned = SGroup_CountSpawned(wave_info[wave_number].sgroup)
+end
+
+function Paris_LaneComplete(lane)
+	print("lane "..lane.." complete at "..paris_seconds[1])
+	lanes_complete = lanes_complete + 1
+	if lanes_complete == 3 then
+		Paris_InvasionComplete()
+	end
+end
+
+function Paris_InvasionComplete()
+	print("invasion complete at "..paris_seconds[1])
+	invasion_complete = true
+	
+	Paris_MoveUpDefenders()
+	Paris_MoveUpStaging()
+	
+	Rule_AddOneShot(Paris_StartNewObjective, INVASION_UNTIL_OBJECTIVE_DELAY)
+	Rule_AddOneShot(Paris_StartSiege, INVASION_UNTIL_SIEGE_DELAY)
+	print("new objective in "..INVASION_UNTIL_OBJECTIVE_DELAY.." seconds")
+	print("siege starting in "..INVASION_UNTIL_SIEGE_DELAY.." seconds")
+end
+
+function Paris_MoveUpDefenders()
+	for i = 1, 15, 1 do
+		local module = MissionOMatic_FindModule("siege_defend_"..i)
+		local marker = Marker_FromName("mkr_siege_defend_"..i, "")
+		local target = { marker = marker, useCustomDirection = true }
+		RovingArmy_AddTarget(module, target)
+	end	
+end
+
+function Paris_MoveUpStaging()
+	for i = 1, 3, 1 do
+		local wave = Wave_FindWave("wave_"..i)
+		local module = wave.queued_waves[1].staging_module
+		RovingArmy_AddTargets(module, staging_targets_final[i])
+		for j, target in ipairs(staging_targets_final[i]) do
+			table.insert(wave.staging_module_data.targets, target)
+		end
+	end	
+end
+
+function Paris_StartNewObjective(context)
+	Objective_Complete(OBJ_Prepare, false, true)
+end
+
+function Paris_StartSiege()
+	print("siege started at "..paris_seconds[1])
+	local wave_number = nil
+	siege_started = true
+	--first 3 waves require no prepare
+	for lane = 1, 3, 1 do
+		wave_number = assault_lane_order[lane]
+		Rule_AddOneShot(Paris_Launch, WAVE_INTERVALS[wave_number], { lane = lane })
+	end
+	--waves 4-6
+	assault_lane_order = Table_Shuffle({ 4, 5, 6})
+	for lane = 1, 3, 1 do
+		wave_number = assault_lane_order[lane]
+		Rule_AddOneShot(Paris_Prepare, WAVE_INTERVALS[wave_number] - PREPARE_TIME, { lane = lane })
+		Rule_AddOneShot(Paris_Launch, WAVE_INTERVALS[wave_number], { lane = lane })
+	end
+	--waves 7-9
+	--assault_lane_order = Table_Shuffle({ 7, 8, 9})
+	--for lane = 1, 3, 1 do
+		--wave_number = assault_lane_order[lane]
+		--Rule_AddOneShot(Paris_Prepare, WAVE_INTERVALS[wave_number] - PREPARE_TIME, { lane = lane })
+		--Rule_AddOneShot(Paris_Launch, WAVE_INTERVALS[wave_number], { lane = lane })
+	--end
+	assault_lane_order = Table_Shuffle({ 7, 8, nil })
+	for lane = 1, 3, 1 do
+		wave_number = assault_lane_order[lane]
+		if wave_number ~= nil then
+			Rule_AddOneShot(Paris_Prepare, WAVE_INTERVALS[wave_number] - PREPARE_TIME, { lane = lane })
+			Rule_AddOneShot(Paris_Launch, WAVE_INTERVALS[wave_number], { lane = lane })
+		end
+	end
+
+	
+	----wave 10
+	--lane = World_GetRand(1, 3)
+	--wave_number = 10
+	--Rule_AddOneShot(Paris_Prepare, WAVE_INTERVALS[wave_number] - PREPARE_TIME, { lane = lane })
+	--Rule_AddOneShot(Paris_Launch, WAVE_INTERVALS[wave_number], { lane = lane })
+	
+	Util_StartIntel(EVENTS.FirstAssault)
+	Rule_AddInterval(Paris_MonitorWaves, 1)
+end
+
+--prepare the main wave, and order the preparation of bonus waves if applicable
+function Paris_Prepare(context, data)
+	if waves_prepared < 8 then
+		local lane = data.lane
+		local bonus_lane = nil
+		local wave = paris_waves[lane]
+		waves_prepared = waves_prepared + 1
+		print("wave "..waves_prepared.." prepared at "..paris_seconds[1].." - lane "..lane)
+		Wave_SetUnits(wave, Paris_GetWaveUnits(waves_prepared))
+		local queued_wave = Wave_Prepare(wave)
+		queued_wave.staging_module.wave_number = waves_prepared
+		SGroup_AddGroup(wave_info[waves_prepared].sgroup, queued_wave.staging_module.sgroup)
+		
+		wave_info[waves_prepared].is_spawned = true
+		wave_info[waves_prepared].main_lane = lane
+
+		--prepare bonus lanes if they exist
+		if wave_units_bonus[waves_prepared] ~= nil then
+			local other_lanes = Table_Shuffle({1,2,3})
+			Table_RemoveFirstItem(other_lanes, lane)
+			--prepare bonus lane 1
+			bonus_lane = other_lanes[1]
+			table.remove(other_lanes, 1)
+			Paris_PrepareBonus(1, bonus_lane)
+			wave_info[waves_prepared].bonus_lane_1 = bonus_lane
+			if wave_units_bonus[waves_prepared][2] ~= nil then
+				bonus_lane = other_lanes[1]
+				table.remove(other_lanes, 1)
+				Paris_PrepareBonus(2, bonus_lane)
+				wave_info[waves_prepared].bonus_lane_2 = bonus_lane
+			end
+		end
+		SGroup_Filter(wave_info[waves_prepared].sgroup, "scar_siege_tower", FILTER_REMOVE)
+		wave_info[waves_prepared].units_spawned = SGroup_CountSpawned(wave_info[waves_prepared].sgroup)
+	end
+end
+
+function Paris_PrepareBonus(bonus_index, bonus_lane)
+	print("bonus wave "..bonus_index.." prepared at "..paris_seconds[1].." - lane "..bonus_lane)
+	local units = Paris_GetWaveUnitsBonus(waves_prepared, bonus_index)
+	local wave = paris_waves[bonus_lane]
+	Wave_SetUnits(wave, units)
+	local queued_wave = Wave_Prepare(wave)
+	SGroup_AddGroup(wave_info[waves_prepared].sgroup, queued_wave.staging_module.sgroup)
+end
+
+function Paris_Launch(context, data)
+	waves_launched = waves_launched + 1
+	wave_info[waves_launched].is_launched = true
+	local lane = wave_info[waves_launched].main_lane
+	local bonus_lane = nil
+	local wave = paris_waves[lane]
+	
+	local module = Wave_Launch(wave)
+	local sg_threat_arrow = SGroup_CreateIfNotFound(SGroup_GetName(module.sgroup).."_threat_arrow")
+	SGroup_Duplicate(module.sgroup, sg_threat_arrow)
+	SGroup_Filter(sg_threat_arrow, "scar_siege_tower", FILTER_REMOVE)
+	if SGroup_CountSpawned(sg_threat_arrow) > 0 then
+		Rule_AddOneShot(Paris_AddWaveUI, 5, { sgroup = sg_threat_arrow })
+		print("wave "..waves_launched.." launched at "..paris_seconds[1].." - lane "..lane)
+	else
+		print("wave "..waves_launched.." could NOT launch because dead at "..paris_seconds[1].." - lane "..lane)
+	end
+	--launch bonus lanes
+	bonus_lane = wave_info[waves_launched].bonus_lane_1
+	if bonus_lane ~= nil then
+		Paris_LaunchBonus(bonus_lane)
+	end
+	bonus_lane = wave_info[waves_launched].bonus_lane_2
+	if bonus_lane ~= nil then
+		Paris_LaunchBonus(bonus_lane)
+	end
+	
+	if waves_launched == 4 or waves_launched == 7 then
+		Rule_AddOneShot(Paris_AutoSave, 6)
+	end
+end
+
+function Paris_AutoSave(context, data)
+	Util_AutoSave(true)
+end
+
+function Paris_LaunchBonus(lane)
+	local wave = paris_waves[lane]
+	local module = Wave_Launch(wave)
+	local sg_threat_arrow = SGroup_CreateIfNotFound(SGroup_GetName(module.sgroup).."_threat_arrow")
+	SGroup_Duplicate(module.sgroup, sg_threat_arrow)
+	SGroup_Filter(sg_threat_arrow, "scar_siege_tower", FILTER_REMOVE)
+	if SGroup_CountSpawned(sg_threat_arrow) then
+		Rule_AddOneShot(Paris_AddWaveUI, 5, { sgroup = sg_threat_arrow })
+		print("bonus wave "..waves_launched.." launched at "..paris_seconds[1].." - lane "..lane)
+	else
+		print("bonus wave "..waves_launched.." could NOT launch because dead at "..paris_seconds[1].." - lane "..lane)
+	end
+end
+
+function Paris_MonitorWaves(context, data)
+	Paris_CalculateUnitsKilled()
+	for i = 1, 8, 1 do
+		if wave_info[i].is_spawned then
+			if wave_info[i].is_dead == false then
+				if SGroup_CountSpawned(wave_info[i].sgroup) == 0 then
+					print("wave "..i.." killed at "..paris_seconds[1])
+					wave_info[i].is_dead = true
+					waves_killed = waves_killed + 1
+					--Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+					--Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")	
+					if waves_killed == 1 then
+						Util_StartIntel(EVENTS.Wave1_Complete)	
+					elseif waves_killed == 4 then
+						Util_StartIntel(EVENTS.Wave4_Complete)	
+					elseif waves_killed == 6 then
+						Util_StartIntel(EVENTS.Wave6_Complete)
+					elseif waves_killed == 8 then
+						Objective_Complete(OBJ_Defeat, true, true)
+						Objective_Complete(OBJ_Defend, false, false)
+					end
+				end
+			end
+		end
+	end
+end
+
+function Paris_CalculateUnitsKilled()
+	local wave_units_killed_total = 0
+	for i = 1, 8, 1 do
+		if wave_info[i].is_spawned then
+			wave_info[i].units_killed = wave_info[i].units_spawned - SGroup_CountSpawned(wave_info[i].sgroup) 
+			wave_units_killed_total = wave_units_killed_total + wave_info[i].units_killed	
+		end
+	end
+	Obj_SetProgress(OBJ_Defeat.ID, wave_units_killed_total / wave_units_total)
+end
+
+-------------------------------------------------------------------
+------------------------- Reinforcements --------------------------
+-------------------------------------------------------------------
+function Paris_MonitorReinforcements()
+	reinforced_modules_index = reinforced_modules_index + 1
+	if reinforced_modules_index > #reinforced_modules then
+		reinforced_modules_index = 1
+	end
+	local module = reinforced_modules[reinforced_modules_index]
+	if module.reinforce_dynamically == true then
+		Paris_ReinforceDynamically(module, 0.2)
+	elseif module.reinforce_from_map_edge == true then
+		Paris_ReinforceFromMapEdge(module, 0.2)
+	else
+		fatal(module.descriptor.." has invalid reinforce parameters")
+	end
+end
+
+function Paris_ContainsRams(units)
+	for i, unitRow in ipairs(units) do
+		if unitRow.type == "scar_ram" and unitRow.numSquads > 0 then
+			return true
+		end
+	end
+	return false
+end
+
+--module requires: ideal_composition, ideal_composition_count, reinforcement_index, lane
+function Paris_ReinforceFromMapEdge(module, threshold)
+	if module.reinforcements_incoming ~= true and module.ideal_composition ~= nil then
+		local missing_units = Table_Copy(module.ideal_composition)
+		local current_units = UnitTable_GenerateFromSGroup(module.sgroup)
+		UnitTable_RemoveUnits(missing_units, current_units)
+		local missing_unit_count = UnitTable_CountUnits(missing_units)
+		if missing_unit_count > (module.ideal_composition_count * threshold) or Paris_ContainsRams(missing_units) then
+			module.reinforcements_incoming = true
+			module.reinforcement_index = module.reinforcement_index + 1
+			local reinforcement_data = {
+				type = "RovingArmy",
+				descriptor = module.descriptor.."_reinforcement_"..module.reinforcement_index,
+				targetModule = module,
+				player = player2,
+				targets = Table_Copy(module.reinforcement_targets),
+				spawnLocation = enemy_spawns[module.lane],
+				onCompleteFunction = Paris_OnCompleteMapEdgeReinforcements,
+				onDeathFunction = Paris_OnDeathMapEdgeReinforcements,
+				onDeathDissolve = true,
+				units = missing_units,
+				lane = module.lane,
+			}
+			local reinforcements = RovingArmy_Init(reinforcement_data)
+			module.reinforcement_module = reinforcements	
+			if debug_reinforcements then 
+				print(module.descriptor.." summoned "..missing_unit_count.." units from map edge")
+			end
+		end
+	end
+end
+
+function Paris_OnCompleteMapEdgeReinforcements(reinforcements)
+	local module = reinforcements.targetModule
+	if debug_reinforcements then 
+		print(module.descriptor.." was reinforced from map edge")
+	end
+	DissolveModuleIntoModule(reinforcements, module)
+	module.reinforcements_incoming = false
+end
+
+function Paris_OnDeathMapEdgeReinforcements(reinforcements)
+	local module = reinforcements.targetModule
+	if debug_reinforcements then 
+		print(module.descriptor.." had its reinforcements die enroute")
+	end
+	module.reinforcements_incoming = false
+	module.reinforcement_module = nil
+end
+
+--module requires: standby_module, ideal_composition, ideal_composition_count, reinforcement_index, lane
+function Paris_ReinforceDynamically(module, threshold)
+	local lane = module.lane
+	assert(scartype(module) == ST_TABLE and module.type == "RovingArmy", "module is not valid")
+	if module.reinforcements_incoming ~= true and module.ideal_composition ~= nil then
+		local missing_units = Table_Copy(module.ideal_composition)
+		local current_units = UnitTable_GenerateFromSGroup(module.sgroup)
+		UnitTable_RemoveUnits(missing_units, current_units)
+		local missing_unit_count = UnitTable_CountUnits(missing_units)
+		if missing_unit_count > (module.ideal_composition_count * threshold) or Paris_ContainsRams(missing_units) then
+			if invader_has_withdrawn == false then
+				invader_has_withdrawn = true
+				Util_StartIntel(EVENTS.EnglishSlowed)	
+			end
+			if lane_has_standby[lane] == true then --summon from standby
+				local standby_module = module.standby_module
+				SGroup_Duplicate(standby_module.sgroup, sg_temp)
+				local available_unit_count = SGroup_CountSpawned(sg_temp)
+				if available_unit_count > 0 then
+					module.reinforcements_incoming = true
+					module.reinforcement_index = module.reinforcement_index + 1
+					local target = module.lastKnownPosition
+					local reinforcement_data = {
+						type = "RovingArmy",
+						descriptor = module.descriptor.."_reinforcement_"..module.reinforcement_index,
+						targetModule = module,
+						player = player2,
+						targets = { target },
+						spawnLocation = standby_module.spawnLocation,--irrelevant
+						onCompleteFunction = Paris_OnCompleteDynamicReinforcements,
+						onDeathFunction = Paris_OnDeathDynamicReinforcements,
+						onDeathDissolve = true,
+						units = {},
+						lane = module.lane,
+					}
+					local reinforcements = RovingArmy_Init(reinforcement_data)
+					reinforcements.reinforcement_monitor_id = Rule_AddInterval(MonitorDynamicReinforcements, 4, { reinforcements = reinforcements })
+					module.reinforcement_module = reinforcements	
+					local reinforcement_count = math.min(available_unit_count, missing_unit_count)
+					SGroup_FilterCount(sg_temp, reinforcement_count)
+					RovingArmy_RemoveSGroup(standby_module, sg_temp)
+					RovingArmy_AddSGroup(reinforcements, sg_temp)
+					if debug_reinforcements then 
+						print(module.descriptor.." summoned "..reinforcement_count.." units from standby")
+					end
+				end
+			else --summon from map edge
+				module.reinforcements_incoming = true					
+				module.reinforcement_index = module.reinforcement_index + 1
+				local target = module.lastKnownPosition
+				local reinforcement_data = {
+					type = "RovingArmy",
+					descriptor = module.descriptor.."_reinforcement_"..module.reinforcement_index,
+					targetModule = module,
+					player = player2,
+					targets = { target },
+					spawnLocation = enemy_spawns[module.lane],
+					onCompleteFunction = Paris_OnCompleteDynamicReinforcements,
+					onDeathFunction = Paris_OnDeathDynamicReinforcements,
+					onDeathDissolve = true,
+					units = missing_units,
+					lane = module.lane,
+				}
+				local reinforcements = RovingArmy_Init(reinforcement_data)
+				reinforcements.reinforcement_monitor_id = Rule_AddInterval(MonitorDynamicReinforcements, 4, { reinforcements = reinforcements })
+				module.reinforcement_module = reinforcements	
+				if debug_reinforcements then 
+					print(module.descriptor.." summoned "..missing_unit_count.." units from map edge")
+				end
+			end	
+		end
+	end
+end
+
+function MonitorDynamicReinforcements(context, data)
+	local reinforcements = data.reinforcements
+	local module = reinforcements.targetModule
+	if debug_reinforcements then
+		--print(reinforcements.descriptor.." is monitoring")
+	end
+	local should_join_now = false
+	if SGroup_CountSpawned(module.sgroup) == 0 then
+		should_join_now = true
+		if debug_reinforcements then
+			print(module.descriptor.." was replaced prematurely via monitor")
+		end
+	elseif World_DistanceSquaredPointToPoint(reinforcements.lastKnownPosition, module.lastKnownPosition) <= 400 then
+		should_join_now = true
+		if debug_reinforcements then
+			print(module.descriptor.." was reinforced prematurely via monitor")
+		end
+	end
+	if should_join_now then
+		reinforcements.onDeathFunction = nil
+		DissolveModuleIntoModule(reinforcements, module)
+		module.reinforcements_incoming = false
+		module.reinforcement_module = nil
+		Rule_RemoveWithID(reinforcements.reinforcement_monitor_id)
+	end
+end
+
+function Paris_OnCompleteDynamicReinforcements(reinforcements)
+	local module = reinforcements.targetModule
+	local should_join_now = false
+	if SGroup_CountSpawned(module.sgroup) == 0 then
+		should_join_now = true
+		if debug_reinforcements then 
+			print(module.descriptor.." was replaced via onComplete") 
+		end	
+	else 
+		if World_DistanceSquaredPointToPoint(reinforcements.lastKnownPosition, module.lastKnownPosition) <= 400 then
+			should_join_now = true
+			if debug_reinforcements then 
+				print(module.descriptor.." was reinforced via onComplete") 
+			end
+		else
+			if debug_reinforcements then 
+				print(module.descriptor.." was chased by reinforcements") 
+			end
+			local target = module.lastKnownPosition
+			RovingArmy_SetTarget(reinforcements, target)
+		end
+	end
+	if should_join_now then
+		DissolveModuleIntoModule(reinforcements, module)
+		module.reinforcements_incoming = false
+		module.reinforcement_module = nil
+	end
+end
+
+function Paris_OnDeathDynamicReinforcements(reinforcements)
+	local module = reinforcements.targetModule
+	if debug_reinforcements then 
+		print(module.descriptor.." had its reinforcements die enroute")
+	end
+	module.reinforcements_incoming = false
+	module.reinforcement_module = nil
+	Rule_RemoveWithID(reinforcements.reinforcement_monitor_id)
+end
+-------------------------------------------------------------------
+--------------------------- Callbacks -----------------------------
+-------------------------------------------------------------------
+function Paris_PreVictoryInvader(module)
+	lane = module.lane
+	lane_victories_total = lane_victories_total + 1
+	lane_victories[lane] = lane_victories[lane] + 1
+	--print("lane "..lane.." victory at "..paris_seconds[1].." - "..lane_victories_total.."/"..LANE_VICTORIES_REQUIRED_TOTAL)
+	if lane_victories[lane] == LANE_VICTORIES_REQUIRED_HALF[lane] then
+		Paris_LaneHalfComplete(lane)
+	end
+	if lane_victories[lane] == LANE_VICTORIES_REQUIRED_STANDBY[lane] then
+		lane_has_standby[lane] = true
+	end
+	if lane_victories[lane] == LANE_VICTORIES_REQUIRED_COMPLETE[lane] then
+		Paris_LaneComplete(lane)
+	end
+	if lane_victories_total == 2 then
+		Util_StartIntel(EVENTS.Village_Destroyed)
+	end
+	if lane_victories_total == LANE_VICTORIES_REQUIRED_TOTAL - 1 then
+		Util_StartIntel(EVENTS.Village_Remains)	
+	end
+end
+
+function Paris_OnCompleteInvader(module)
+	local lane = module.lane
+	--print("invader "..lane.." switching to patrol")
+	module.targetingType = ARMY_TARGETING_REVERSE
+	module.idleTime = 8
+	module.preVictoryFunction = nil
+	RovingArmy_SetTargets(module, patrol_targets[module.lane])
+end
+
+function Paris_OnCompleteStone(module)
+	module.targetingType = ARMY_TARGETING_REVERSE
+	RovingArmy_AddTarget(module, mkr_invasion_stone_2)
+end
+
+function Paris_OnCompleteGold(module)
+	module.targetingType = ARMY_TARGETING_REVERSE
+	RovingArmy_AddTarget(module, mkr_invasion_gold_2)
+end
+
+function Paris_OnCompleteStaging(module)
+	if siege_started == true then
+		print("wave "..module.wave_number.." in position")
+	end
+end
+-------------------------------------------------------------------
+---------------------------- UTILITY ------------------------------
+-------------------------------------------------------------------
+function Paris_GetWaveUnits(wave_number)
+	return wave_units[wave_number]
+end
+
+function Paris_GetWaveUnitsBonus(wave_number, index)
+	return wave_units_bonus[wave_number][index]
+end
+
+function Paris_GetDefenderTargets(lane, defend_number)
+	local targets = Table_Copy(road_targets[lane])
+	table.insert(targets, { marker = Marker_FromName("mkr_siege_half_"..defend_number, ""), useCustomDirection = true })
+	return targets
+end
+
+function Paris_MoveIntroUnits()
+	--villagers
+	Cmd_FormationMove(sg_idle_villagers, mkr_villagers_idle_dest, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_villagers_idle_dest), Marker_GetDirection(mkr_villagers_idle_dest)))
+	
+	UnitEntry_DeploySquads(player1, sg_intro_fake_villager_1, {type = "scar_villager", numSquads = 1}, mkr_intro_fake_villager_1)
+	Modify_UnitSpeed(sg_intro_fake_villager_1, 0.5)
+	Cmd_FormationMove(sg_intro_fake_villager_1, mkr_intro_fake_villager_1_dest)
+	
+	UnitEntry_DeploySquads(player1, sg_intro_fake_villager_2, {type = "scar_villager", numSquads = 2}, mkr_intro_fake_villager_2)
+	Modify_UnitSpeed(sg_intro_fake_villager_2, 0.5)
+	Cmd_FormationMove(sg_intro_fake_villager_2, mkr_intro_fake_villager_2_dest, true)
+	--military
+	Cmd_FormationMove(sg_intro_archer_1, mkr_french_wall_1, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_1), Marker_GetDirection(mkr_french_wall_1)))
+	Cmd_FormationMove(sg_intro_archer_2, mkr_french_wall_2, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_2), Marker_GetDirection(mkr_french_wall_2)))
+	--Cmd_FormationMove(sg_intro_archer_3, mkr_french_wall_3, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_3), Marker_GetDirection(mkr_french_wall_3)))
+	--Cmd_FormationMove(sg_intro_archer_4, mkr_french_wall_4, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_4), Marker_GetDirection(mkr_french_wall_4)))
+	Cmd_FormationMove(sg_intro_archer_5, mkr_french_wall_5, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_5), Marker_GetDirection(mkr_french_wall_5)))
+	Cmd_FormationMove(sg_intro_archer_6, mkr_french_wall_6, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_6), Marker_GetDirection(mkr_french_wall_6)))
+	Cmd_FormationMove(sg_intro_archer_7, mkr_french_wall_7, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_7), Marker_GetDirection(mkr_french_wall_7)))
+	Cmd_FormationMove(sg_intro_archer_8, mkr_french_wall_8, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_8), Marker_GetDirection(mkr_french_wall_8)))
+	Cmd_FormationMove(sg_intro_crossbow_1, mkr_crossbow_dest_1, false, false)
+	Cmd_FormationMove(sg_intro_infantry_1, mkr_infantry_dest_1, false, false)
+	Cmd_FormationMove(sg_intro_knight_1, mkr_knight_dest_1, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_knight_dest_1), Marker_GetDirection(mkr_knight_dest_1)))
+	
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_horsemen_mid01, false)
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_horsemen_mid02, true)
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_horsemen_mid03, true)
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_horsemen_mid04, true)
+	Cmd_FormationMove(sg_intro_horsemen, mkr_intro_horsemen_dest, true, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_intro_horsemen_dest), Marker_GetDirection(mkr_intro_horsemen_dest)))
+	
+	Rule_AddInterval(Paris_MoveGateArchers, 0.5)
+end
+
+function Paris_MoveGateArchers()
+	if Prox_AreSquadsNearMarker(sg_intro_horsemen, mkr_intro_horsemen_dest, ANY) then
+		Cmd_FormationMove(sg_intro_archer_3, mkr_french_wall_3, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_3), Marker_GetDirection(mkr_french_wall_3)))
+		Cmd_FormationMove(sg_intro_archer_4, mkr_french_wall_4, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_french_wall_4), Marker_GetDirection(mkr_french_wall_4)))
+		Rule_RemoveMe()
+	end
+end
+
+function Paris_InitOutro()
+	sg_outro_units1 = SGroup_CreateIfNotFound("sg_outro_units1")
+	sg_outro_units2 = SGroup_CreateIfNotFound("sg_outro_units2")
+	sg_outro_units3 = SGroup_CreateIfNotFound("sg_outro_units3")
+	sg_outro_units3a = SGroup_CreateIfNotFound("sg_outro_units3a")
+
+	sg_outro_frenchunits3 = SGroup_CreateIfNotFound("sg_outro_frenchunits3")
+	sg_outro_frenchunits4 = SGroup_CreateIfNotFound("sg_outro_frenchunits4")	
+	
+	sg_outro_wallunits01 = SGroup_CreateIfNotFound("sg_outro_wallunits01")
+	sg_outro_wallunits02 = SGroup_CreateIfNotFound("sg_outro_wallunits02")
+	sg_outro_wallunits03 = SGroup_CreateIfNotFound("sg_outro_wallunits03")
+	sg_outro_wallunits04 = SGroup_CreateIfNotFound("sg_outro_wallunits04")
+	sg_outro_wallunits05 = SGroup_CreateIfNotFound("sg_outro_wallunits05")
+	sg_outro_wallunits06 = SGroup_CreateIfNotFound("sg_outro_wallunits06")
+	sg_outro_wallunits07 = SGroup_CreateIfNotFound("sg_outro_wallunits07")
+	
+	sg_outro_lancer01 = SGroup_CreateIfNotFound("sg_outro_lancer01")
+	sg_outro_lancer02 = SGroup_CreateIfNotFound("sg_outro_lancer02")
+	sg_outro_lancer03 = SGroup_CreateIfNotFound("sg_outro_lancer03")
+	sg_outro_lancer04 = SGroup_CreateIfNotFound("sg_outro_lancer04")
+	
+	sg_outro_cheer01 = SGroup_CreateIfNotFound("sg_outro_cheer01")
+	
+	UnitEntry_DeploySquads(player2, sg_outro_units1, {{ type = "scar_spearman", numSquads = 5 }, { type = "scar_archer", numSquads = 5 }, { type = "scar_knight", numSquads = 5 }}, mkr_english_outro1 )
+	UnitEntry_DeploySquads(player2, sg_outro_units2, {{ type = "scar_archer", numSquads = 5 }, { type = "scar_knight", numSquads = 5 }, { type = "scar_spearman", numSquads = 5 }}, mkr_english_outro2 )
+	UnitEntry_DeploySquads(player2, sg_outro_units3, {{ type = "scar_knight", numSquads = 5 }, { type = "scar_spearman", numSquads = 5 }, { type = "scar_archer", numSquads = 5 }}, mkr_english_outro3 )
+	
+	UnitEntry_DeploySquads(player2, sg_outro_units3a, {{ type = "scar_knight", numSquads = 8 }, { type = "scar_archer", numSquads = 7 }}, mkr_english_outro3a )
+	
+	UnitEntry_DeploySquads(player1, sg_outro_frenchunits3, { type = "scar_archer", numSquads = 10 }, mkr_french_outro3 )
+	UnitEntry_DeploySquads(player1, sg_outro_frenchunits4, { type = "scar_spearman", numSquads = 10 }, mkr_french_outro4 )
+	UnitEntry_DeploySquads(player1, sg_outro_cheer01, { type = "scar_manatarms", numSquads = 10 }, mkr_french_cheer01 )
+	
+	--Outro Wall units
+	UnitEntry_DeploySquads(player1, sg_outro_wallunits01, { type = "scar_crossbowman", numSquads = 2 }, mkr_outro_wallunits01 )
+	UnitEntry_DeploySquads(player1, sg_outro_wallunits02, { type = "scar_spearman", numSquads = 2 }, mkr_outro_wallunits02 )
+	UnitEntry_DeploySquads(player1, sg_outro_wallunits03, { type = "scar_crossbowman", numSquads = 2 }, mkr_outro_wallunits03 )
+	UnitEntry_DeploySquads(player1, sg_outro_wallunits04, { type = "scar_archer", numSquads = 2 }, mkr_outro_wallunits04 )
+	UnitEntry_DeploySquads(player1, sg_outro_wallunits05, { type = "scar_crossbowman", numSquads = 3 }, mkr_outro_wallunits05 )
+	UnitEntry_DeploySquads(player1, sg_outro_wallunits06, { type = "scar_archer", numSquads = 3 }, mkr_outro_wallunits06 )
+	UnitEntry_DeploySquads(player1, sg_outro_wallunits07, { type = "scar_spearman", numSquads = 1 }, mkr_outro_wallunits07 )
+	
+	--Outro Lancer units
+	UnitEntry_DeploySquads(player1, sg_outro_lancer01, { type = "scar_knight", numSquads = 2 }, mkr_outro_lancer01 )
+	UnitEntry_DeploySquads(player1, sg_outro_lancer02, { type = "scar_knight", numSquads = 2 }, mkr_outro_lancer02 )
+	UnitEntry_DeploySquads(player1, sg_outro_lancer03, { type = "scar_knight", numSquads = 2 }, mkr_outro_lancer03 )
+	UnitEntry_DeploySquads(player1, sg_outro_lancer04, { type = "scar_knight", numSquads = 2 }, mkr_outro_lancer04 )
+	
+	Cmd_HoldPosition(sg_outro_wallunits01)
+	Cmd_HoldPosition(sg_outro_wallunits02)
+	Cmd_HoldPosition(sg_outro_wallunits03)
+	Cmd_HoldPosition(sg_outro_wallunits04)
+	Cmd_HoldPosition(sg_outro_wallunits05)
+	Cmd_HoldPosition(sg_outro_wallunits06)
+	
+	Cmd_Move(sg_outro_units2, mkr_english_outro_destination)
+	Cmd_Move(sg_outro_units1, mkr_english_outro_destination)
+	Cmd_Move(sg_outro_units3, mkr_english_outro_destination)
+	Cmd_Move(sg_outro_units3a, mkr_english_outro_destination)
+	
+	for i = 1, 15, 1 do
+		local ra = MissionOMatic_FindModule("siege_defend_"..i)
+		ra.attackMove = attackMoveStyle_retreat
+		RovingArmy_SetTarget(ra, mkr_outro_target)
+	end	
+end
+
+-------------------------------------------------------------------
+---------------------------- UI -----------------------------------
+-------------------------------------------------------------------
+function Paris_AddWaveUI(context, data)
+	if SGroup_CountSpawned(data.sgroup) > 0 then
+		ThreatArrow_CreateGroup("attack wave", data.sgroup)
+		Sound_PlayWallaChargeOnSGroup(data.sgroup)
+	end
+end
+
+function WallsBreached(context)
+	if wallsBreachedStingerHasPlayer ~= true then
+		wallsBreachedStingerHasPlayer = true
+		Util_StartIntel(EVENTS.WallsBreached)
+		Rule_RemoveEGroupEvent(WallsBreached, eg_paris_walls)
+	end
+end
+
+function LandmarkUnderAttack(context)
+	Util_StartIntel(EVENTS.LandmarkAttack)
+	Rule_RemoveEGroupEvent(LandmarkUnderAttack, eg_landmarks)
+end

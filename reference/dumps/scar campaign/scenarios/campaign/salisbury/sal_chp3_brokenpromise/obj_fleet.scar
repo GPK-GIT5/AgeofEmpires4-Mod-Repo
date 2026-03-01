@@ -1,0 +1,129 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("sal_chp3_brokenpromise.scar")  
+
+function BuildFleet_InitObjectives()
+
+	OBJ_BuildFleet = {
+		Title = "$999666", -- BUILD A FLEET
+		Type = ObjectiveType_Primary,
+
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_BuildFleet, ALL)
+		end
+	}
+
+	SOBJ_Build2Docks = {
+		Title = "$999667", -- Build 2 Docks
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BuildFleet,
+		StartAlongsideParent = true,
+		SetupUI = Build2Docks_UI,
+		PreStart = Build2Docks_PreStart,
+		OnStart = Build2Docks_Start,
+
+		OnComplete = function()
+			Objective_Start(SOBJ_Build3TransportShips, false, true)
+		end
+	}
+
+	SOBJ_Build3TransportShips = {
+		Title = "$999670", -- Build 3 Transport Ships
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BuildFleet,
+		StartAlongsideParent = false,
+		SetupUI = Build3TransportShips_UI,
+		OnStart = Build3TransportShips_Start,
+
+		OnComplete = function()
+			Rule_AddInterval(MonitorPlayerShips, 1)
+			Objective_Start(OBJ_LoadTroops, true, true)
+		end
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_BuildFleet)
+	Objective_Register(SOBJ_Build2Docks)
+	Objective_Register(SOBJ_Build3TransportShips)
+	
+	-- LoadTroops //////////////////////////////////////////////////////
+
+	OBJ_LoadTroops = {
+		Title = "$999672", -- BOARD THE TRANSPORT SHIPS
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.LoadTroops,
+		SetupUI = LoadTroops_UI,
+		OnStart = LoadTroops_Start,
+		
+		OnComplete = function()
+			World_SetInteractionStage(1)
+			Init_PevenseyDefenders()
+			Objective_Start(OBJ_BeginInvasion, true, true)
+		end
+	}
+	
+	Objective_Register(OBJ_LoadTroops)
+end
+
+-- ///// Build2Docks //////////////////////////////////////////////
+function Build2Docks_UI()
+	
+	Objective_SetCounter(SOBJ_Build2Docks, 0, 2)
+end
+
+function Build2Docks_PreStart()
+	
+	Util_StartIntel(EVENTS.Build2DocksObjectiveStarted)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_NAVAL_FRE, ITEM_UNLOCKED)
+	
+end
+
+function Build2Docks_Start()
+	
+	sg_army = SGroup_CreateIfNotFound("sg_army")
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, {"scar_horseman", "scar_spearman", "scar_archer", "scar_scout"}, FILTER_KEEP)
+	SGroup_AddGroup(sg_army, sg_allsquads)
+	SGroup_AddGroup(sg_army, sg_william)
+
+	Goals_Docks()
+	Rule_AddOneShot(ProduceBuildingsObjectiveTracker, 0, {objective = SOBJ_Build2Docks, building_type = "scar_dock", desired_amount = 2})
+end
+
+-- ///// Build3TransportShips //////////////////////////////////////////////
+function Build3TransportShips_UI()
+	
+	Objective_SetCounter(SOBJ_Build3TransportShips, 0, 3)
+end
+
+function Build3TransportShips_Start()
+
+	
+	Rule_AddOneShot(ProduceUnitsObjectiveTracker, 0, {objective = SOBJ_Build3TransportShips, unit_type = SBP.FRENCH.UNIT_NAVAL_TRANSPORT_SHIP_2_FRE, desired_amount = 3})
+	Goals_TransportShips()
+end
+
+-- ///// LoadTroops //////////////////////////////////////////////
+function LoadTroops_UI()
+	
+	
+end
+
+function LoadTroops_Start()
+
+	Goals_LoadTroops()
+	Rule_Add(LoadTroops_Monitor)
+	
+end
+
+function LoadTroops_Monitor()
+	
+	if GetTroopsEmbarked(sg_ships) >= 48 then
+
+		Music_LockIntensity(MUSIC_TENSE_COMBAT) --Raise Music Intensity
+		Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("naval_hold_unload"), ITEM_REMOVED)
+		Objective_Complete(OBJ_LoadTroops, true, true)
+		Rule_RemoveMe()
+	end
+
+end

@@ -1,0 +1,114 @@
+--import("training.scar")
+import("training/campaigntraininggoals.scar")
+
+local goal_sequence_send_gold = "send_gold"
+local goal_sequence_pickup_gold = "pickup_gold"
+
+function UserHasOpenedTheDiplomacyMenu()
+	if not _userHasOpenedDiplomacyMenu and _diplomacy ~= nil and _diplomacy.data_context ~= nil then
+		_userHasOpenedDiplomacyMenu = _diplomacy.data_context.is_ui_expanded
+	end	
+	return _userHasOpenedDiplomacyMenu
+end
+
+function ShouldPromptUserToSendGold(goalSequence)
+	
+	if _diplomacy ~= nil and _diplomacy.data_context ~= nil and Player_GetResource(playerHuman, RT_Gold) > 0 then
+		return _diplomacy.data_context.is_ui_visible and not UserHasOpenedTheDiplomacyMenu()
+	end
+	return false
+end
+
+function UserHasGold(goalSequence)
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		if Player_GetResource(playerHuman, RT_Gold) > 0 then
+			return true
+		end	
+		return false
+	end
+end
+
+function UserHasGoldOrReinforcements(goalSequence)
+	if reinforcements_called == true or UserHasGold(goalSequence) == true then
+		return true
+	end
+	return false
+end
+
+function NoGoldPickupsRemain()
+	
+	if eg_gold == nil then
+		return true	
+	end
+	
+	if EGroup_CountSpawned(eg_gold) == 0 then
+		return true	
+	end
+
+	return false
+end
+
+
+function HasGoldInSight(goalSequence)
+	
+	local localPlayer = Game_GetLocalPlayer()
+	
+	for i = 1, EGroup_Count(eg_gold) do
+		local entity = EGroup_GetEntityAt(eg_gold, i)
+		
+		if entity ~= nil then
+			if Player_CanSeeEntity(localPlayer, entity) and Misc_IsEntityOnScreen(entity, 100) then
+				
+				goalSequence.goals[1].key = Entity_GetID(entity)
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+function TrainingGoal_AddPickupGold()
+	local pickup_gold_goal = Training_Goal("Entity",
+		{Message = UI_PickIDForInputMode(11191743, 11255902), DataTemplate="RightClickTrainingDataTemplate"}, 
+		UserHasGoldOrReinforcements)
+	local pickup_gold_sequence = Training_GoalSequence(goal_sequence_pickup_gold,
+		1, 0, 
+		HasGoldInSight, -- trigger
+		UserHasGoldOrReinforcements, -- ignore
+		nil, -- remind
+		NoGoldPickupsRemain, -- bypass
+		true, 
+		{pickup_gold_goal})
+	Training_AddGoalSequence(pickup_gold_sequence)
+	Rule_AddOneShot(TrainingGoal_EnablePickupGold, 2)
+end
+
+function TrainingGoal_EnablePickupGold()
+	Training_EnableGoalSequenceByID(goal_sequence_pickup_gold, true)
+end
+
+function TrainingGoal_AddSendGold()
+	local send_gold_goal = Training_Goal("DiplomacyButton",
+		{Message = 11191744, DataTemplate="LeftClickTrainingDataTemplate"}, 
+		UserHasOpenedTheDiplomacyMenu)
+	local send_gold_sequence = Training_GoalSequence(goal_sequence_send_gold,
+		1, 0, 
+		ShouldPromptUserToSendGold, -- trigger
+		CampaignTraining_TimeoutIgnorePredicate, -- ignore
+		nil, -- remind
+		UserHasOpenedTheDiplomacyMenu, -- bypass
+		true, 
+		{send_gold_goal})
+	Training_AddGoalSequence(send_gold_sequence)
+end
+
+function TrainingGoal_EnableSendGold()
+	Training_EnableGoalSequenceByID(goal_sequence_send_gold, true)
+end
+
+function TrainingGoal_DisableSendGold()
+	Training_EnableGoalSequenceByID(goal_sequence_send_gold, false)
+end

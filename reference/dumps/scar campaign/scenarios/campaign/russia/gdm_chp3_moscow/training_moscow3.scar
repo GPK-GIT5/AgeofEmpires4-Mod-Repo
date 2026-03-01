@@ -1,0 +1,191 @@
+--
+-- Hastings 1066 - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+
+--
+--Template Refrences--
+--"LeftClickTrainingDataTemplate"
+--"RightClickTrainingDataTemplate"
+--"GenericTrainingDataTemplate"
+--
+
+local goal_reinforce = "reinforce"
+local goal_woodtower = "woodtower"
+local goal_selectall = "selectall"
+
+
+function Moscow3_Tutorials_Init()
+	MissionTutorial_Reinforce()
+	MissionTutorial_WoodTower()
+end
+
+
+function MissionTutorial_Init()	-- called from the mission's Mission_Start() function, so post-intro
+	
+	-- this enables the tutorial system, regardless of preferences
+	
+	--Training_Init()
+	--Training_ForceGoalsActive()	
+	
+	--if Rule_Exists(Training_Update) == false then -- if it hasn't already been started up...
+		--Rule_AddInterval( Training_Update, 0.5)
+	--end
+	
+end
+
+function _DelayShortTimeElapsed(goal)
+	local currentTime = Timer_GetElapsed(goal.timerID)
+	
+	if currentTime >= __t_trainingShortInterval then
+		return true
+	end
+end
+
+--------------------------------------------------------------
+-- Reinforcement training hints
+--------------------------------------------------------------
+
+function MissionTutorial_Reinforce()
+	
+	local openReinforce = Training_Goal("DiplomacyButton", {Message=11192917, DataTemplate="LeftClickTrainingDataTemplate"}, Predicate_UserHasOpenedTheDiplomacyMenu) --This mission features unique diplomacy options. Open the diplomacy menu to see your vassals.
+
+	reinforceSequence = Training_GoalSequence(goal_reinforce, 1, 0, AShortPeriodOfTimeHasPassed, CampaignTraining_TimeoutIgnorePredicate, nil, Predicate_UserHasOpenedTheDiplomacyMenu, false, {openReinforce})
+	
+	Training_AddGoalSequence(reinforceSequence)
+	Training_EnableGoalSequenceByID(reinforceSequence, true)
+end
+
+function Predicate_UserHasOpenedTheDiplomacyMenu(goalSequence)
+	if not _userHasOpenedDiplomacyMenu and _diplomacy ~= nil and _diplomacy.data_context ~= nil then
+		_userHasOpenedDiplomacyMenu = _diplomacy.data_context.is_ui_expanded
+	end	
+	return _userHasOpenedDiplomacyMenu
+end
+
+--------------------------------------------------------------
+-- Wooden towers training hints
+--------------------------------------------------------------
+
+function MissionTutorial_WoodTower()
+	
+	--"Wooden Fortresses do not fire at enemies if they are not garrisoned. LEFT CLICK / Press (A) to select an idle Villager."
+	local selectIdleVillager = Training_Goal("Squad", {Message=UI_PickIDForInputMode(11192930, 1000613), DataTemplate="LeftClickTrainingDataTemplate"}, WoodTower_VillagerIsSelected)
+	
+	--"RIGHT CLICK / Press (A) to garrison the Villager in the Wooden Fortress."
+	local garrisonTower = Training_Goal("Entity", {Message=UI_PickIDForInputMode(11192931, 1000614), DataTemplate="RightClickTrainingDataTemplate"}, WoodTower_TowerIsGarrisoned)
+
+	woodTowerSequence = Training_GoalSequence(goal_woodtower, 1, 0, WoodTower_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, nil, false, {selectIdleVillager, garrisonTower})
+	
+	Training_AddGoalSequence(woodTowerSequence)
+	Training_EnableGoalSequenceByID(woodTowerSequence, true)
+end
+
+function WoodTower_TriggerPredicate(goalSequence)
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	local _IsIdle = function(gid, index, sid)
+		if Squad_IsIdle(sid) then
+			goalSequence.goals[1].key = sid
+			return true
+		end
+	end
+	
+	local _IsNotHoldingUnits = function(gid, index, eid)
+		if not Entity_IsHoldingAny(eid) then
+			goalSequence.goals[2].key = eid
+			return true
+		end
+	end
+
+	if SGroup_ForEachAllOrAny(sg_allsquads, ANY, _IsIdle) and EGroup_ForEachAllOrAny(eg_allentities, ANY, _IsNotHoldingUnits) then
+		return true
+	end
+	
+	return false
+end
+
+function WoodTower_BypassPredicate(goalSequence)
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	local _IsHoldingUnits = function(gid, index, eid)
+		if Entity_IsHoldingAny(eid) then
+			return true
+		end
+	end
+	
+	return EGroup_ForEachAllOrAny(eg_allentities, ANY, _IsHoldingUnits)
+end
+
+
+function WoodTower_VillagerIsSelected(goal)
+	
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Filter(sg_currentSelection, "scar_villager", FILTER_KEEP)
+	
+	local _IsIdle = function(gid, index, sid)
+		if Squad_IsIdle(sid) then
+			return true
+		end
+	end
+	
+	return SGroup_ForEachAllOrAny(sg_currentSelection, ANY, _IsIdle)
+end
+
+function WoodTower_TowerIsGarrisoned(goal)
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	local _IsHoldingUnits = function(gid, index, eid)
+		if Entity_IsHoldingAny(eid) then
+			return true
+		end
+	end
+	
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		return EGroup_ForEachAllOrAny(eg_allentities, ANY, _IsHoldingUnits)
+	else
+		return false
+	end
+end
+
+--------------------------------------------------------------
+-- Select All
+--------------------------------------------------------------
+
+function MissionTutorial_SelectAll()
+	
+	local selectAll = Training_Goal("Cursor", {Message=11192932, DataTemplate="GenericTrainingDataTemplate"}, SelectAll_UserHasSelectedAll) --"PRESS CTRL+SHIFT+A to select all your units."
+
+	selectAllSequence = Training_GoalSequence(goal_selectall, 1, 0, SelectAll_PredicateStart, CampaignTraining_TimeoutIgnorePredicate, nil, nil, false, {selectAll})
+	
+	Training_AddGoalSequence(selectAllSequence)
+	Training_EnableGoalSequenceByID(selectAllSequence, true)
+end
+
+function SelectAll_PredicateStart(goalSequence)
+	return true
+end
+
+function SelectAll_UserHasSelectedAll(goal)
+	local currentTime = Timer_GetElapsed(goal.timerID)
+	
+	if currentTime >= __t_trainingModerateInterval then
+		return true
+	else
+		Misc_GetSelectedSquads(sg_temp, false)
+		Player_GetAll(player1)
+		if SGroup_CountSpawned(sg_temp) >= SGroup_CountSpawned(sg_allsquads) then
+			return true
+		else
+			return false
+		end
+	end
+end

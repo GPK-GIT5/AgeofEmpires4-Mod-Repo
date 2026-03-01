@@ -1,0 +1,145 @@
+--
+-- Tribute 1375 - Build Hunting Cabins optional objective
+--
+
+
+
+
+function BuildCabins_InitObjectives()
+	
+	i_numCabinsRequired = 3
+	i_numCabinsBuilt = 0
+
+	OBJ_BuildCabins = {
+		
+		Title = Loc_FormatText("$11201473", Loc_FormatNumber(i_numCabinsRequired, 0)),		-- Optional: Build %1AMOUNT% Hunting Cabins amongst the forest to earn gold
+		Type = ObjectiveType_Optional,
+		
+		SetupUI = BuildCabins_SetupUI,
+		OnStart = BuildCabins_Start,
+			
+	}
+	
+
+	Objective_Register(OBJ_BuildCabins)
+
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_HUNTING_CABIN_RUS, FILTER_KEEP)
+	EGroup_AddEGroup(eg_huntingCabinsAlreadyCounted, eg_allentities)
+	
+end
+
+
+function BuildCabins_TriggerObjective()
+	
+	if Game_GetSPDifficulty() <= GD_NORMAL then 
+		Objective_Start(OBJ_BuildCabins)
+	end
+	
+end
+
+
+function BuildCabins_SetupUI()
+	
+	Objective_SetCounter(OBJ_BuildCabins, i_numCabinsBuilt, i_numCabinsRequired)
+	
+end
+
+
+function BuildCabins_Start()
+
+	Rule_AddInterval(BuildCabins_Monitor, 1)
+	
+end
+
+
+function BuildCabins_Monitor()
+	
+	if Objective_IsComplete(OBJ_BuildCabins) then 
+		
+		Rule_RemoveMe()
+		
+	else
+		
+		-- find all cabins on the map
+		Player_GetAll(player1)
+		EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_HUNTING_CABIN_RUS, FILTER_KEEP)
+		EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+		
+		-- now remove the ones we already counted - any left are NEW cabins
+		EGroup_RemoveGroup(eg_allentities, eg_huntingCabinsAlreadyCounted)	
+		
+		-- add a delayed rule for each new cabin (need to give it a moment to figure out how many trees it's near)
+		local _CheckCabin = function(gid, idx, eid) 
+			Rule_AddOneShot(BuildCabins_NewCabinBuilt, 1, {worldID = Entity_GetID(eid)})
+		end
+		EGroup_ForEach(eg_allentities, _CheckCabin)
+		
+		EGroup_AddEGroup(eg_huntingCabinsAlreadyCounted, eg_allentities)
+		
+	end
+	
+end
+
+function BuildCabins_NewCabinBuilt(context, data)
+
+	if Entity_IsValid(data.worldID) then 
+		
+		local entity = Entity_FromID(data.worldID)
+		local gatherRate = Entity_GetStateModelFloat(entity, "hunting_cabin_rate_display_rus")
+
+		if gatherRate <= 0 then 
+			
+			local tag = {
+				ID = "Hunting Cabins need to be built amongst trees and away from other buildings in order to generate gold.", 
+				Message = Loc_GetString("$11201474"), 
+				DataTemplate = "GenericTrainingDataTemplate",
+			}
+			UI_CreateTagForUID(data.worldID, tag)
+			
+			Rule_AddInterval(BuildCabins_ClearHintPoint, {delay = 5.5, interval = 0.5}, {worldID = data.worldID, timeStamp = World_GetGameTime(), tag = tag})
+			
+		else
+			
+			if b_haveShownPositiveCabinHint ~= true then 			-- if this is the first successfully placed cabin, explain why it was successful
+				
+				local tag = {
+					ID = "This Hunting Cabin will generate gold/minute from the surrounding forest.", 
+					Message = Loc_FormatText("$11201475", Loc_FormatNumber(math.ceil(gatherRate), 0)), 
+					DataTemplate = "GenericTrainingDataTemplate",
+				}
+				UI_CreateTagForUID(data.worldID, tag)
+
+				Rule_AddInterval(BuildCabins_ClearHintPoint, {delay = 5.5, interval = 0.5}, {worldID = data.worldID, timeStamp = World_GetGameTime(), tag = tag})
+					
+				b_haveShownPositiveCabinHint = true 
+				
+			end
+			
+			i_numCabinsBuilt = i_numCabinsBuilt + 1
+			Objective_SetCounter(OBJ_BuildCabins, i_numCabinsBuilt, i_numCabinsRequired)
+			
+			if i_numCabinsBuilt >= i_numCabinsRequired then 
+				Objective_Complete(OBJ_BuildCabins)
+			end
+			
+		end
+		
+	end
+	
+end
+
+function BuildCabins_ClearHintPoint(context, data)
+
+	if Entity_IsValid(data.worldID) == false or Misc_IsEntitySelected(Entity_FromID(data.worldID)) or World_GetGameTime() - data.timeStamp >= 60 then 
+
+		if data.tag ~= nil then 
+			UI_DestroyTagForUID(data.worldID)
+		end
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+

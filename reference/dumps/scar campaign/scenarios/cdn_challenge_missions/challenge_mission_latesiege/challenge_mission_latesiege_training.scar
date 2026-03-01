@@ -1,0 +1,1285 @@
+-------------------------------------------------------------------------
+---- CHALLENGE MISSION: LATE SIEGE - TUTORIAL ELEMENTS
+-------------------------------------------------------------------------
+
+import("training/coretrainingconditions.scar")
+import("training/coretraininggoals.scar")
+
+Core_RegisterModule("LateSiegeTrainingGoals")
+
+local goal_sequence_siege_tower = "build_siege_tower"
+local goal_sequence_garrison_siege_tower = "garrison_siege_tower"
+local goal_sequence_unload_siege_tower = "unload_siege_tower"
+
+local goal_sequence_battering_ram = "build_battering_ram"
+local goal_sequence_siege_tower_intro = "build_siege_tower_intro"
+local goal_sequence_springald = "build_springald"
+local goal_sequence_mangonel = "build_mangonel"
+local goal_sequence_trebuchet = "build_trebuchet"
+local goal_sequence_bombard = "build_bombard"
+
+local training_goals_late_siege =
+{
+	goal_sequence_siege_tower,
+	goal_sequence_garrison_siege_tower,
+	goal_sequence_unload_siege_tower,
+	goal_sequence_battering_ram,
+	goal_sequence_siege_tower_intro,
+	goal_sequence_springald,
+	goal_sequence_mangonel,
+	goal_sequence_trebuchet,
+	goal_sequence_bombard
+}
+
+function TrainingGoal_EnableLateSiegeGoals()
+	for i, goalSequenceID in ipairs(training_goals_late_siege) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function TrainingGoal_DisableLateSiegeGoals()
+	for i, goalSequenceID in ipairs(training_goals_late_siege) do
+		Training_EnableGoalSequenceByID(goalSequenceID, false)
+	end
+end
+
+function LateSiegeTrainingGoals_InitBuildSiegeTowerHint_Xbox()
+	
+	local selectSiegeEngineerGoal = Training_Goal("Entity",
+		{ID= "Select a military unit to build a Siege Tower.", Message= "$11202714", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedSiegeEngineer)
+	
+	local openRadialGoal = Training_Goal("Squad",
+		{ID= "Press RT to open the radial menu.", Message= "$1000968", DataTemplate="GenericTrainingDataTemplate"}, 
+		UserHasOpenedContextualRadial)
+	
+	local selectSiegeTowerGoal = Training_Goal("PBG",
+		{ID= "Select this option to build a Siege Tower.", Message= "$11249167", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserIsBuildingSiegeTower)
+	
+	local siegeTowerSequence = Training_GoalSequence(goal_sequence_siege_tower,
+		-1, 0, 
+		CanBuildSiegeTowerPredicate_Xbox, 
+		nil, 
+		nil,
+		UserHasBuiltSiegeTower,
+		false, 
+		{selectSiegeEngineerGoal, openRadialGoal, selectSiegeTowerGoal})
+	Training_AddGoalSequence(siegeTowerSequence)
+end
+
+function LateSiegeTrainingGoals_InitBuildSiegeTowerHint()
+	
+	local selectSiegeEngineerGoal = Training_Goal("Entity",
+		{ID= "Select a military unit to build a Siege Tower.", Message= "$11202714", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedSiegeEngineer)
+	local openMilitaryTabGoal = Training_Goal("MilitaryCommandCardTab",
+		{ID= "Open the Military tab", Message= 1001508, DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasMilitaryCommandCardTabOpen)
+	local selectSiegeTowerGoal = Training_Goal("PBG",
+		{ID= "Click here to build a Siege Tower.", Message= "$11202715", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserIsBuildingSiegeTower)
+	local buildSiegeTowerGoal = Training_Goal("Cursor",
+		{ID= "Click a valid location to start construction.", Message= "$11202716", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasBuiltSiegeTower)
+	
+	local siegeTowerSequenceGoals = {selectSiegeEngineerGoal, selectSiegeTowerGoal, buildSiegeTowerGoal}
+	if(UI_IsXboxKBMUI()) then
+		siegeTowerSequenceGoals = {selectSiegeEngineerGoal, openMilitaryTabGoal, selectSiegeTowerGoal, buildSiegeTowerGoal}
+	end
+	
+	local siegeTowerSequence = Training_GoalSequence(goal_sequence_siege_tower,
+		-1, 0, 
+		CanBuildSiegeTowerPredicate, 
+		nil, 
+		nil,
+		UserHasBuiltSiegeTower,
+		false, 
+		siegeTowerSequenceGoals)
+	Training_AddGoalSequence(siegeTowerSequence)
+end
+
+function LateSiegeTrainingGoals_OnInit()
+	
+	-- Disable core training goals for testing purposes
+	TrainingGoal_DisableCoreControlGoals()
+	TrainingGoal_DisableCoreEconGoals()
+	
+	-------------------------------------------------------------------------
+	---- Goal Sequences
+	-------------------------------------------------------------------------
+	
+	-- Build a Siege Tower
+	if UI_IsXboxControllerUI() then
+		LateSiegeTrainingGoals_InitBuildSiegeTowerHint_Xbox()
+	else
+		LateSiegeTrainingGoals_InitBuildSiegeTowerHint()
+	end
+	
+	-- Garrison a Siege Tower
+	local selectSiegeTowerForGarrisonGoal = Training_Goal("Entity",
+		{ID= "Siege Towers can be garrisoned and used to scale enemy stone walls.", Message= "$11202484", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedSiegeTowerForGarrison)
+	local selectUnitsToGarrisonGoal = Training_Goal("PBG",
+		{ID= "Select several military units to enter the Siege Tower.", Message= "$11202717", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedMilitaryUnitsForGarrison)
+	local garrisonUnitsGoal = Training_Goal("Cursor",
+		{ID= "Right-click / Press A on the Siege Tower to garrison units.", Message= UI_PickIDForInputMode(11202718, 11249169), DataTemplate="RightClickTrainingDataTemplate"},
+		UserHasGarrisonedSiegeTower)
+	local garrisonSiegeTowerSequence = Training_GoalSequence(goal_sequence_garrison_siege_tower,
+		-1, 0, 
+		HasSiegeTowerPredicateForGarrison, 
+		nil, 
+		nil,
+		UserHasGarrisonedSiegeTower,
+		false, 
+		{selectSiegeTowerForGarrisonGoal, selectUnitsToGarrisonGoal, garrisonUnitsGoal})
+	Training_AddGoalSequence(garrisonSiegeTowerSequence)
+	
+	-- Unload a Garrisoned Siege Tower 
+	local selectSiegeTowerForUnloadGoal = Training_Goal("Entity",
+		{ID= "Select a garrisoned Siege Tower to scale enemy walls.", Message= "$11202719", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedSiegeTowerForUnload)
+	local unloadUnitsOnWallGoal = Training_Goal("Cursor",
+		{ID= "RIGHT CLICK / Press A on enemy walls to unload garrisoned units.", Message= UI_PickIDForInputMode(11202720, 1000592), DataTemplate="RightClickTrainingDataTemplate"},
+		UserHasUnloadedSiegeTower)
+	local unloadSiegeTowerSequence = Training_GoalSequence(goal_sequence_unload_siege_tower,
+		-1, 0, 
+		HasGarrisonedSiegeTowerNearWallPredicate, 
+		nil, 
+		nil,
+		UserHasUnloadedSiegeTower,  -- Was nil
+		false, 
+		{selectSiegeTowerForUnloadGoal, unloadUnitsOnWallGoal})
+	Training_AddGoalSequence(unloadSiegeTowerSequence)
+	
+	----
+	
+	--player built a battering ram
+	local builtBatteringRamGoal = Training_Goal("Entity",
+		{ID= "Battering Rams are strong against walls and buildings, but do not have the benefit of long range.", Message= "$11202485", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedBatteringRam)
+	local builtBatteringRamSequence = Training_GoalSequence(goal_sequence_battering_ram,
+		-1, 0, 
+		RamBuiltPredicate, 
+		UserHasSelectedBatteringRam,
+		nil, 
+		nil,
+		true, 
+		{builtBatteringRamGoal})
+	Training_AddGoalSequence(builtBatteringRamSequence)
+	
+	----
+	
+	--player built a springald
+	local builtSpringaldGoal = Training_Goal("Entity",
+		{ID= "Springalds are strong against units, but will not make much of a dent in walls.", Message= "$11202483", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedSpringald)
+	local builtSpringaldSequence = Training_GoalSequence(goal_sequence_springald,
+		-1, 0, 
+		SpringaldBuiltPredicate, 
+		nil, 
+		nil,
+		UserHasSelectedSpringald,
+		true, 
+		{builtSpringaldGoal})
+	Training_AddGoalSequence(builtSpringaldSequence)
+	
+	----
+	
+	
+	-- Player built a mangonel
+	local builtMangonelGoal = Training_Goal("Entity",
+		{ID= "Mangonels are strong against groups of units, but weak against walls and buildings.", Message= "$11202486", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedMangonel)
+	local builtMangonelSequence = Training_GoalSequence(goal_sequence_mangonel,
+		-1, 0, 
+		MangonelBuiltPredicate, 
+		nil, 
+		nil,
+		UserHasSelectedMangonel,
+		true, 
+		{builtMangonelGoal})
+	Training_AddGoalSequence(builtMangonelSequence)
+	
+	----
+	
+	
+	-- Player built a trebuchet
+	--Trebuchets have extremely long range and are strong against walls and buildings. They fire in an arc, making them capable of targeting assets behind walls but less effective against enemy units. 
+	local builtTrebuchetGoal = Training_Goal("Entity",
+		{ID= "Trebuchets have very long range, fire in an arc, and are strong against walls and buildings.", Message= "$11202487", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedTrebuchet)
+	local builtTrebuchetSequence = Training_GoalSequence(goal_sequence_trebuchet,
+		-1, 0, 
+		TrebuchetBuiltPredicate, 
+		nil, 
+		nil,
+		UserHasSelectedTrebuchet,
+		true, 
+		{builtTrebuchetGoal})
+	Training_AddGoalSequence(builtTrebuchetSequence)
+	
+	----
+	
+	
+	-- Player built a bombard
+	--Bombards are excellent at taking out walls and buildings from a distance. Their linear trajectory of fire makes them unable to hit objects behind walls, but devastating against enemy units.
+	local builtBombardGoal = Training_Goal("Entity",
+		{ID= "Bombards have long range, fire on a linear trajectory, and are strong against walls, buildings, and units.", Message= "$11202488", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedBombard)
+	local builtBombardSequence = Training_GoalSequence(goal_sequence_bombard,
+		-1, 0, 
+		BombardBuiltPredicate, 
+		nil, 
+		nil,
+		UserHasSelectedBombard,
+		true, 
+		{builtBombardGoal})
+	Training_AddGoalSequence(builtBombardSequence)
+	
+	----
+end
+
+selectSiegeEngineersActive = false
+selectSiegeEngineersCount = 0
+selectSiegeEngineersMax = 1
+selectSiegeEngineersTowerBuilt = false
+siegeTowerBuitStartTime = -1
+--
+
+garrisonSiegeTowerActive = false
+garrisonSiegeTowerCount = 0
+garrisonSiegeTowerMax = 1
+garrisonSiegeTowerStartTime = -1
+--
+
+unloadSiegeTowerActive = false
+unloadSiegeTowerCount = 0
+unloadSiegeTowerMax = 1
+siegeUnloadStartTime = -1
+--
+
+selectRamActive = false
+selectRamCount = 0
+selectRamMax = 1
+selectRamCreated = false
+
+selectSpringaldActive = false
+selectSpringaldCount = 0
+selectSpringaldMax = 1
+
+selectMangonelActive = false
+selectMangonelCount = 0
+selectMangonelMax = 1
+
+selectTrebuchetActive = false
+selectTrebuchetCount = 0
+selectTrebuchetMax = 1
+
+selectBombardActive = false
+selectBombardCount = 0
+selectBombardMax = 1
+
+-----------------------------------------------------------------------
+-- Functions, Goals, & Predicates
+-----------------------------------------------------------------------
+
+-- Build Siege Tower Predicate
+function CanBuildSiegeTowerPredicate_Xbox(goalSequence)
+	
+	if(selectSiegeEngineersCount >= selectSiegeEngineersMax) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+	
+	local hasFoundSquad = false
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		if(hasFoundSquad == false) then
+			local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+			-- Check for idle infantry on screen
+			if Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) and Squad_IsOfType(squad, "infantry") then
+				
+				
+				local siegeTowerBP = BP_GetSquadBlueprint("unit_siege_tower_3")
+				local siegeTowerCost = Player_GetSquadBPCost(localPlayer, siegeTowerBP)
+				-- Check if player has enough resources to build Siege Tower
+				if Player_GetResource(localPlayer, RT_Wood) >= siegeTowerCost.wood then
+					
+					-- Assign key to idle spearman that has access to Siege Engineering upgrade
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[2].key = Squad_GetID(squad)
+					--prefer non-archers
+					if(Squad_IsOfType(squad, "archer") == false) then
+						hasFoundSquad = true
+					end
+				end
+			end
+		end
+	end
+	
+	-- Check if a key was found for unit before continuing
+	if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+		return false
+	end
+	
+	-- Check if Siege Tower can be constructed
+	local siegeTowerBP = Cardinal_ConvertTypeToEntityBlueprint("siege_tower", localPlayer)
+	
+	if siegeTowerBP ~= nil and training_currentConstructionBlueprint == nil and Player_CanConstruct(localPlayer, siegeTowerBP) then
+		
+		-- Assign key to Siege Tower icon
+		goalSequence.goals[3].key = siegeTowerBP
+		return true
+	end
+	
+	-- End function
+	return false
+	
+end
+
+function CanBuildSiegeTowerPredicate(goalSequence)
+	
+	if(selectSiegeEngineersCount >= selectSiegeEngineersMax) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+	
+	local goalOffset = 0
+	if(UI_IsXboxKBMUI()) then
+		goalOffset = 1
+	end
+	
+	local hasFoundSquad = false
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		if(hasFoundSquad == false) then
+			local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+			-- Check for idle infantry on screen
+			if Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) and Squad_IsOfType(squad, "infantry") then
+				
+				
+				local siegeTowerBP = BP_GetSquadBlueprint("unit_siege_tower_3")
+				local siegeTowerCost = Player_GetSquadBPCost(localPlayer, siegeTowerBP)
+				-- Check if player has enough resources to build Siege Tower
+				if Player_GetResource(localPlayer, RT_Wood) >= siegeTowerCost.wood then
+					
+					-- Assign key to idle spearman that has access to Siege Engineering upgrade
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					--prefer non-archers
+					if(Squad_IsOfType(squad, "archer") == false) then
+						hasFoundSquad = true
+					end
+				end
+			end
+		end
+	end
+	
+	-- Check if a key was found for unit before continuing
+	if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+		return false
+	end
+	
+	-- Check if Siege Tower can be constructed
+	local siegeTowerBP = Cardinal_ConvertTypeToEntityBlueprint("siege_tower", localPlayer)
+	
+	if siegeTowerBP ~= nil and training_currentConstructionBlueprint == nil and Player_CanConstruct(localPlayer, siegeTowerBP) then
+		
+		-- Assign key to Siege Tower icon
+		goalSequence.goals[2 + goalOffset].key = siegeTowerBP
+		return true
+	end
+	
+	-- End function
+	return false
+	
+end
+
+-- Player has selected a Siege Engineer
+function UserHasSelectedSiegeEngineer(goal)
+	
+	if(selectSiegeEngineersCount >= selectSiegeEngineersMax) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	
+	local siegeTowerBP = BP_GetSquadBlueprint("unit_siege_tower_3")
+	local siegeTowerCost = Player_GetSquadBPCost(localPlayer, siegeTowerBP)
+	-- Check if player has enough resources to build Siege Tower
+	if Player_GetResource(localPlayer, RT_Wood) < siegeTowerCost.wood then -- This isn't working anymore?
+		
+		return true
+	end
+	
+	
+	----
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is spearman
+		if Squad_IsOfType(squad, "infantry") then 
+			
+			
+			if(selectSiegeEngineersActive == false) then
+				selectSiegeEngineersActive = true
+				selectSiegeEngineersCount = selectSiegeEngineersCount + 1
+			end
+			-- Player has selected a infantry
+			return true
+			
+		end
+	end
+	if(selectSiegeEngineersActive == false and selectSiegeEngineersCount >= selectSiegeEngineersMax) then
+		Training_RemoveGoalSequence(goalSequence)
+		return false
+	end
+	selectSiegeEngineersActive = false
+	return false
+end
+
+--Player has clicked Siege Tower icon in command card
+function UserIsBuildingSiegeTower(goalSequence)
+	if(selectSiegeEngineersCount >= selectSiegeEngineersMax) then
+		local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+		Misc_GetSelectedSquads(sg_currentSelection, false)
+		local hasEngineersSelected = false
+		-- Check player units
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			
+			-- Check that unit is spearman
+			if Squad_IsOfType(squad, "infantry") then 
+				
+				
+				if(selectSiegeEngineersActive == false) then
+					selectSiegeEngineersActive = true
+					selectSiegeEngineersCount = selectSiegeEngineersCount + 1
+				end
+				-- Player has selected a infantry
+				hasEngineersSelected = true
+				
+			end
+		end
+		if(hasEngineersSelected == false) then
+			selectSiegeEngineersCount = selectSiegeEngineersMax + 1
+			return true
+		end
+	end
+	
+	local siegeTowerBP = BP_GetSquadBlueprint("unit_siege_tower_3")
+	local siegeTowerCost = Player_GetSquadBPCost(localPlayer, siegeTowerBP)
+	-- Check if player has enough resources to build Siege Tower
+	if Player_GetResource(localPlayer, RT_Wood) < siegeTowerCost.wood then -- This isn't working anymore?
+		--Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	
+    return UserIsGoingToBuildBuildingType("siege_tower")
+end
+
+-- Player has begun constructing Siege Tower
+function UserHasBuiltSiegeTower(goalSequence)
+	
+	local currentWorldTime = World_GetGameTime()
+	if(siegeTowerBuitStartTime >= 0) then
+		if currentWorldTime > siegeTowerBuitStartTime + __t_trainingShortInterval then
+			
+			selectSiegeEngineersTowerBuilt = true
+			selectSiegeEngineersCount = selectSiegeEngineersMax + 1
+			return true
+		end
+	end
+	
+	if(selectSiegeEngineersCount >= selectSiegeEngineersMax) then
+		local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+		Misc_GetSelectedSquads(sg_currentSelection, false)
+		local hasEngineersSelected = false
+		-- Check player units
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			
+			-- Check that unit is spearman
+			if Squad_IsOfType(squad, "infantry") then 
+				
+				
+				if(selectSiegeEngineersActive == false) then
+					selectSiegeEngineersActive = true
+					selectSiegeEngineersCount = selectSiegeEngineersCount + 1
+				end
+				-- Player has selected a infantry
+				hasEngineersSelected = true
+				
+			end
+		end
+		if(hasEngineersSelected == false) then
+			selectSiegeEngineersCount = selectSiegeEngineersMax + 1
+			return true
+		end
+	end
+	
+	local siegeTowerBP = BP_GetSquadBlueprint("unit_siege_tower_3")
+	local siegeTowerCost = Player_GetSquadBPCost(localPlayer, siegeTowerBP)
+	-- Check if player has enough resources to build Siege Tower
+	if Player_GetResource(localPlayer, RT_Wood) < siegeTowerCost.wood then
+		selectSiegeEngineersTowerBuilt = true
+		return true
+	end
+	
+	if(UserHasStartedToBuildABuilding("siege_tower") == true) then
+		siegeTowerBuitStartTime = World_GetGameTime()
+		return true
+	else
+		return false
+	end
+	
+end
+
+-----------------------------------------------------------------------
+--Goal sequence for garrisoning a siege tower
+
+-- Garrison Siege Tower Predicate
+function HasSiegeTowerPredicateForGarrison(goalSequence)
+	
+	if(selectSiegeEngineersTowerBuilt == false) then
+		return false
+	end
+	
+	if(garrisonSiegeTowerCount >= garrisonSiegeTowerMax) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_siege_units = Player_GetSquads(localPlayer)
+	
+	-- Only look at Siege Towers
+	SGroup_Filter(sg_player_siege_units, "siege_tower", FILTER_KEEP)
+
+	
+	if sg_player_siege_units ~= nil then
+		
+		for i = 1, SGroup_CountSpawned(sg_player_siege_units) do
+			
+			local squad = SGroup_GetSpawnedSquadAt(sg_player_siege_units, i)
+			
+			-- Check if on screen
+			if Misc_IsSquadOnScreen(squad, 100) then
+				
+				-- Create UI tag for Siege Tower position
+				local pos_siege_tower = Squad_GetPosition(squad)
+				local sg_player_infantry_units = Player_GetSquads(localPlayer)
+				local distanceThreshold = 20
+				
+				-- Check player infantry
+				SGroup_Filter(sg_player_infantry_units, "infantry", FILTER_KEEP)
+				--remove archers
+				SGroup_Filter(sg_player_infantry_units, "archer", FILTER_REMOVE)
+				
+				-- Check if player infantry is near Siege Tower
+				SGroup_FilterByProximity(sg_player_infantry_units, pos_siege_tower, FILTER_KEEP, distanceThreshold)
+				
+				-- If units are nearby to Siege Tower
+				local nearbyUnits = SGroup_CountSpawned(sg_player_infantry_units)
+
+				if nearbyUnits > 0 then
+					
+					-- Assign key to Siege Tower
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[3].key = Squad_GetID(squad)
+					
+					-- Assign key to first nearby infantry unit
+					for i = 1, SGroup_CountSpawned(sg_player_infantry_units) do
+						
+						local garrisonSquad = SGroup_GetSpawnedSquadAt(sg_player_infantry_units, i)
+						
+						goalSequence.goals[2].key = Squad_GetID(garrisonSquad)
+						
+					end
+					
+					return true
+					
+				end
+			end
+		end
+	end
+	
+	-- End function
+	return false
+	
+end
+
+-- Player has selected a Siege Tower
+function UserHasSelectedSiegeTowerForGarrison(goal)
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local siegeTowerBP = Cardinal_ConvertTypeToSquadBlueprint("siege_tower", localPlayer)
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		--check that unit is a siege tower
+		if Squad_GetBlueprint(squad) == siegeTowerBP then
+			
+			return true
+		end
+	end
+	
+	return false	
+end
+
+
+-- Player has selected infantry
+function UserHasSelectedMilitaryUnitsForGarrison(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is an infantry squad
+		if Squad_IsOfType(squad, "infantry") then 
+			
+			garrisonSiegeTowerStartTime = World_GetGameTime()
+			-- Player has selected an infantry squad
+			return true
+			
+		end
+	end
+	
+	return false
+end
+
+-- Player has garrisoned units inside of a Siege Tower
+function UserHasGarrisonedSiegeTower(goal)
+	
+	if(selectSiegeEngineersTowerBuilt == false) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+	
+	-- Only look at infantry that can garrison
+	SGroup_Filter(sg_player_units, "infantry", FILTER_KEEP)
+	
+	-- Check if any units are garrisoned
+	if SGroup_IsInHoldSquad(sg_player_units, ANY) then
+		
+		for i = 1, SGroup_Count(sg_player_units) do
+			
+			local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+			-- Check if each unit is garrisoned
+			if Squad_IsInHoldSquad(squad) then
+				
+				-- For garrisoned unit, get garrisoned vehicle
+				local garrisonedVehicle = Squad_GetHoldSquad(squad)
+				
+				-- Check if garrisoned vehicle is a Siege Tower
+				if Squad_IsOfType(garrisonedVehicle, "siege_tower") then
+					
+					if(garrisonSiegeTowerActive == false) then
+						garrisonSiegeTowerActive = true
+						garrisonSiegeTowerCount = garrisonSiegeTowerCount + 1
+					end
+					return true
+					
+				end	
+			end
+		end
+	end
+	
+	--remove training hint after enough time has passed
+	local currentWorldTime = World_GetGameTime()
+	if(garrisonSiegeTowerStartTime >= 0) then
+		if currentWorldTime > garrisonSiegeTowerStartTime + __t_trainingShortInterval then
+			garrisonSiegeTowerCount = garrisonSiegeTowerMax
+			return true
+		end
+	end
+	
+	if(garrisonSiegeTowerActive == true) then
+		garrisonSiegeTowerCount = garrisonSiegeTowerCount + 1
+	end
+	garrisonSiegeTowerActive = false
+	return false
+end
+
+-----------------------------------------------------------------------
+--Goal sequence for unloading units on the enemy walls
+
+-- Player has selected a Siege Tower
+function UserHasSelectedSiegeTowerForUnload()
+	
+	if(unloadSiegeTowerCount >= unloadSiegeTowerMax) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local siegeTowerBP = Cardinal_ConvertTypeToSquadBlueprint("siege_tower", localPlayer)
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		--check that unit is a siege tower
+		if Squad_GetBlueprint(squad) == siegeTowerBP then
+			
+			return true
+		end
+	end
+	
+	return false	
+end
+
+
+-- Unload a Garrisoned Siege Tower Predicate
+function HasGarrisonedSiegeTowerNearWallPredicate(goalSequence)
+	
+	
+	if(unloadSiegeTowerCount >= unloadSiegeTowerMax) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_siege_units = Player_GetSquads(localPlayer)
+	
+	-- Only look at Siege Towers
+	SGroup_Filter(sg_player_siege_units, "siege_tower", FILTER_KEEP)
+
+	
+	if sg_player_siege_units ~= nil then
+		
+		for i = 1, SGroup_Count(sg_player_siege_units) do
+			
+			local squad = SGroup_GetSquadAt(sg_player_siege_units, i)
+			
+			-- Check if on screen
+			if Misc_IsSquadOnScreen(squad, 100) then
+				
+				-- Declare variables
+				local pos_siege_tower = Squad_GetPosition(squad)
+				local enemyPlayer = Player_FindFirstEnemyPlayer(localPlayer)
+				local eg_enemy_walls = Player_GetAllEntities(enemyPlayer)
+				local distanceThreshold = 20
+				
+				-- Check if enemy entities are near Siege Tower
+				Player_GetAllEntitiesNearMarker(enemyPlayer, eg_enemy_walls, pos_siege_tower, distanceThreshold)
+				
+				-- Check if any entities are a Stone Wall
+				EGroup_Filter(eg_enemy_walls, "stone_wall", FILTER_KEEP)
+				
+				-- If Stone Walls are nearby to Siege Tower
+				local nearbyUnits = EGroup_Count(eg_enemy_walls)
+
+				if nearbyUnits > 0 then
+					
+					-- Add additional check if Siege Tower is garrisoned
+					if Squad_IsHoldingAny(squad) then
+						
+						-- Assign key to Siege Tower
+						goalSequence.goals[1].key = Squad_GetID(squad)
+						
+						local closestWallIndex = 1
+						local closestWallDist = -1
+						-- Assign key to closest nearby Stone Wall
+						for i = 1, EGroup_Count(eg_enemy_walls) do
+							
+							
+							local stoneWall = EGroup_GetEntityAt(eg_enemy_walls, i)
+							if(stoneWall ~= nil and squad ~= nil) then
+								local currentWallDist = Util_GetDistance(stoneWall, squad)
+								if(currentWallDist < closestWallDist or closestWallDist == -1) then
+									closestWallIndex = i
+									closestWallDist = currentWallDist
+								end
+							end
+						end
+						if(closestWallDist > 0)then
+							local stoneWall = EGroup_GetEntityAt(eg_enemy_walls, closestWallIndex)
+							
+							goalSequence.goals[2].key = Entity_GetID(stoneWall)
+							
+							
+							siegeUnloadStartTime = World_GetGameTime()
+							return true
+						end
+						
+					end
+				end
+			end
+		end
+	end
+	
+	-- End function
+	return false
+	
+end
+
+-- User has ungarrisoned a Siege Tower on top of a wall
+function UserHasUnloadedSiegeTower(goal)
+	
+	if(unloadSiegeTowerCount >= unloadSiegeTowerMax) then
+		return true
+	end
+	
+	--remove training hint after enough time has passed
+	local currentWorldTime = World_GetGameTime()
+	if(siegeUnloadStartTime >= 0) then
+		if currentWorldTime > siegeUnloadStartTime + __t_trainingShortInterval then
+			unloadSiegeTowerCount = unloadSiegeTowerMax
+			return true
+		end
+	end
+		
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+	
+	-- Only look at infantry that can garrison
+	SGroup_Filter(sg_player_units, "infantry", FILTER_KEEP)
+	
+	-- Check if any units are garrisoned
+	if SGroup_IsInHoldSquad(sg_player_units, ANY) then
+		
+		for i = 1, SGroup_Count(sg_player_units) do
+			
+			local squad = SGroup_GetSquadAt(sg_player_units, i)
+			
+			-- Check if each unit is garrisoned
+			if Squad_IsInHoldSquad(squad) then
+				
+				-- For garrisoned unit, get garrisoned vehicle
+				local garrisonedVehicle = Squad_GetHoldSquad(squad)
+				
+				-- Check if garrisoned vehicle is a Siege Tower
+				if Squad_IsOfType(garrisonedVehicle, "siege_tower") then
+					
+					local abilBP = BP_GetAbilityBlueprint("siege_tower_unload_on_wall")
+					
+					-- If player has seen Siege Tower unloading on wall
+					if Squad_IsDoingAbility(garrisonedVehicle, abilBP) and Misc_IsSquadOnScreen(garrisonedVehicle, 100) then
+						
+						if(unloadSiegeTowerActive == false) then
+							unloadSiegeTowerActive = true
+							unloadSiegeTowerCount = unloadSiegeTowerCount + 1
+						end
+						
+						return true
+						
+					end
+				end	
+			end
+		end
+	end
+	
+	if(unloadSiegeTowerActive == true) then
+		unloadSiegeTowerCount = unloadSiegeTowerMax
+		return true
+	end
+	
+	return false
+end
+
+-----------------------------------------------------------------------
+
+-- Ram Built Predicate
+function RamBuiltPredicate(goalSequence)
+	if(selectRamCount >= selectRamMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+		
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		if(squad ~= nil) then
+			-- Check for unit on screen
+			if Squad_IsOfType(squad, "ram") then
+				
+				local isInCinematicArea = false
+				if(Util_GetDistance(squad, mkr_preintro_base_area) < 90) then
+					isInCinematicArea = true
+				end
+				
+				local healthPercent = Squad_GetHealthPercentage(squad, false)
+				if(healthPercent == 1 and isInCinematicArea == false) then
+					
+					--only pass predicate if no rams are selected
+					local hasRamSelected = false
+					for i = 1, SGroup_Count(sg_currentSelection) do
+						local squad2 = SGroup_GetSquadAt(sg_currentSelection, i)
+						if(squad2 ~= nil) then
+							-- Check for unit on screen
+							if Squad_IsOfType(squad2, "ram") then
+								hasRamSelected = true
+							end
+						end
+					end
+					
+					if(hasRamSelected == false) then
+						-- Assign key to ram
+						goalSequence.goals[1].key = Squad_GetID(squad)
+						-- Check if a key was found for unit before continuing
+						if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+							return false
+						end
+						
+						selectRamCreated = true
+						
+						return true
+					end
+				end
+				
+			end
+		end
+	end
+	
+	
+	-- End function
+	return false
+end
+
+-- Player has selected a Battering Ram
+function UserHasSelectedBatteringRam(goal)
+	if(selectRamCount >= selectRamMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	if(selectRamCreated == true) then
+		
+		Misc_GetSelectedSquads(sg_currentSelection, false)
+		
+		-- Check player units
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			
+			-- Check that unit is a battering ram
+			if Squad_IsOfType(squad, "ram") then 
+				
+				if(selectRamActive == false) then
+					selectRamActive = true
+					selectRamCount = selectRamCount + 1
+				end
+				-- Player has selected the battering ram
+				return true
+				
+			end
+		end
+	end
+	selectRamActive = false
+	return false
+end
+
+
+
+-----------------------------------------------------------------------
+
+-- Springald Built Predicate
+function SpringaldBuiltPredicate(goalSequence)
+	if(selectSpringaldCount >= selectSpringaldMax) then
+		return true
+	end
+
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+		
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		
+		-- Check for unit on screen
+		if Squad_IsOfType(squad, "springald") then
+			
+			-- Assign key to springald
+			goalSequence.goals[1].key = Squad_GetID(squad)
+			-- Check if a key was found for unit before continuing
+			if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+				return false
+			end
+	
+			return true
+		end
+	end
+	
+	
+	-- End function
+	return false
+end
+
+-- Player has selected a springald
+function UserHasSelectedSpringald(goal)
+	if(selectSpringaldCount >= selectSpringaldMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is a springald
+		if Squad_IsOfType(squad, "springald") then 
+			
+			if(selectSpringaldActive == false) then
+				selectSpringaldActive = true
+				selectSpringaldCount = selectSpringaldCount + 1
+			end
+			-- Player has selected the springald
+			return true
+			
+		end
+	end
+	
+	selectSpringaldActive = false
+	return false
+end
+
+-----------------------------------------------------------------------
+
+-- Mangonel Built Predicate
+function MangonelBuiltPredicate(goalSequence)
+	if(selectMangonelCount >= selectMangonelMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+		
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		
+		-- Check for unit on screen
+		if Squad_IsOfType(squad, "mangonel") then
+			
+			-- Assign key to unit
+			goalSequence.goals[1].key = Squad_GetID(squad)
+			-- Check if a key was found for unit before continuing
+			if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+				return false
+			end
+	
+			return true
+		end
+	end
+	
+	
+	-- End function
+	return false
+end
+
+-- Player has selected a mangonel
+function UserHasSelectedMangonel(goal)
+	if(selectMangonelCount >= selectMangonelMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is a mangonel
+		if Squad_IsOfType(squad, "mangonel") then 
+			
+			if(selectMangonelActive == false) then
+				selectMangonelActive = true
+				selectMangonelCount = selectMangonelCount + 1
+			end
+			-- Player has selected the mangonel
+			return true
+			
+		end
+	end
+	
+	selectMangonelActive = false
+	return false
+end
+
+-----------------------------------------------------------------------
+
+-- trebuchet Built Predicate
+function TrebuchetBuiltPredicate(goalSequence)
+	if(selectTrebuchetCount >= selectTrebuchetMax) then
+		return true
+	end
+
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+		
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		
+		-- Check for unit on screen
+		if Squad_IsOfType(squad, "trebuchet_counterweight") then
+			
+			-- Assign key to unit
+			goalSequence.goals[1].key = Squad_GetID(squad)
+			-- Check if a key was found for unit before continuing
+			if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+				return false
+			end
+	
+			return true
+		end
+		-- Check for unit on screen
+		if Squad_IsOfType(squad, "trebuchet_traction") then
+			
+			-- Assign key to unit
+			goalSequence.goals[1].key = Squad_GetID(squad)
+			-- Check if a key was found for unit before continuing
+			if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+				return false
+			end
+	
+			return true
+		end
+	end
+	
+	
+	-- End function
+	return false
+end
+
+-- Player has selected a trebuchet
+function UserHasSelectedTrebuchet(goal)
+	if(selectTrebuchetCount >= selectTrebuchetMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is a trebuchet
+		if Squad_IsOfType(squad, "trebuchet_counterweight") then 
+			
+			if(selectTrebuchetActive == false) then
+				selectTrebuchetActive = true
+				selectTrebuchetCount = selectTrebuchetCount + 1
+			end
+			-- Player has selected the trebuchet
+			return true
+		end
+		-- Check that unit is a trebuchet
+		if Squad_IsOfType(squad, "trebuchet_traction") then 
+			
+			if(selectTrebuchetActive == false) then
+				selectTrebuchetActive = true
+				selectTrebuchetCount = selectTrebuchetCount + 1
+			end
+			-- Player has selected the trebuchet
+			return true
+		end
+	end
+	
+	selectTrebuchetActive = false
+	return false
+end
+
+-----------------------------------------------------------------------
+
+-- bombard Built Predicate
+function BombardBuiltPredicate(goalSequence)
+	if(selectBombardCount >= selectBombardMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_player_units = Player_GetSquads(localPlayer)
+		
+	-- Check player units
+	for i = 1, SGroup_Count(sg_player_units) do
+		
+		local squad = SGroup_GetSquadAt(sg_player_units, i)
+		
+		-- Check for unit on screen
+		if Squad_IsOfType(squad, "bombard") then
+			
+			-- Assign key to unit
+			goalSequence.goals[1].key = Squad_GetID(squad)
+			-- Check if a key was found for unit before continuing
+			if goalSequence.goals[1].key == nil or scartype(goalSequence.goals[1].key) ~= ST_NUMBER then
+				return false
+			end
+	
+			return true
+		end
+	end
+	
+	
+	-- End function
+	return false
+end
+
+-- Player has selected a bombard
+function UserHasSelectedBombard(goal)
+	if(selectBombardCount >= selectBombardMax) then
+		return true
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	-- Check player units
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		
+		-- Check that unit is a bombard
+		if Squad_IsOfType(squad, "bombard") then 
+			
+			if(selectBombardActive == false) then
+				selectBombardActive = true
+				selectBombardCount = selectBombardCount + 1
+			end
+			-- Player has selected the bombard
+			return true
+		end
+	end
+	
+	selectBombardActive = false
+	return false
+end

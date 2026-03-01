@@ -1,0 +1,242 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+function SpawnCampInvaders()
+	invaders_spawned = true
+	for i = 1, INVASIONS_IN_THE_FIELD do
+		local invasion = Invasion_Init()
+		table.insert(pending_invasions, invasion)
+		if i == 1 then
+			Camp_SpawnUnitsIntoMuster(invasion.id, invasion.round.units, invasion.sgroup)
+			Invasion_CreateArmyFromSGroup(invasion)
+			invasion.is_mustered = true
+		else
+			Camp_SpawnUnitsIntoPools(invasion.id, invasion.round.units, invasion.sgroup)
+		end
+	end
+end
+
+function GetNextRound()
+	round_index = round_index or 0
+	round_index = round_index + 1
+	if round_index > #rounds then
+		round_index = round_index - ROUNDS_REPEATED
+	end
+	return rounds[round_index]
+end
+
+function Invasion_Init()
+	invasion_index = invasion_index or 0
+	invasion_index = invasion_index + 1
+	local invasion = {
+		id = invasion_index,
+		name = "invasion_"..invasion_index,
+		round = GetNextRound(),
+		--lane = Table_GetRandomItem(all_lanes),
+		lane = Invasion_GetLane(),
+		sgroup = SGroup_CreateUniqueWithPrefix("sg_invasion_"..invasion_index),
+	}
+	return invasion
+end
+
+function Invasion_CreateArmyFromSGroup(invasion)
+	local params = {
+		name = "army_attack_"..invasion.id,
+		player = player2,
+		sgroup = invasion.sgroup,
+		targets = { mkr_muster },
+		ramsBuiltWhenBlocked = 0,
+		ramPassengerCount = 0,
+		onBlockedFunction = Invasion_OnArmyBlocked,
+	}
+	invasion.army = Army_Init(params)
+	invasion.army.invasion = invasion
+end
+
+function Invasion_QueueAndLaunch()
+	if invasion_delay_pending then
+		Rule_AddOneShot(Invasion_QueueAndLaunch, 180)
+		invasion_delay_pending = false
+		return
+	end
+	if invaders_spawned then
+		local queued_invasion = Invasion_Init()
+		local units = UnitTable_Clone(queued_invasion.round.units)
+		Invasion_LimitMaxUnits(units)
+		Camp_SpawnUnitsFromMapEdge(queued_invasion.id, units, 0, queued_invasion.sgroup, nil, true)
+		table.insert(pending_invasions, queued_invasion)
+		
+		local launched_invasion = pending_invasions[1]
+		Invasion_Launch(launched_invasion)
+		table.remove(pending_invasions, 1)
+		table.insert(active_invasions, launched_invasion)
+		Rule_AddOneShot(Invasion_Muster, INVASION_INTERVAL - INVASION_MUSTER_DURATION)
+		Rule_AddOneShot(Invasion_QueueAndLaunch, INVASION_INTERVAL)
+	end
+end
+
+function UnitTable_GetNonSiegeResourceCost(units, player)
+	local total_cost = 0
+	for _, unitRow in ipairs(units) do
+		if Table_Contains(anti_wall_unit_types, unitRow.type) == false then
+			local sbp
+			if unitRow.type then
+				sbp = Cardinal_ConvertTypeToSquadBlueprint(unitRow.type, player)
+			else
+				sbp = unitRow.sbp
+			end
+			local squad_cost = Player_GetSquadBPCost(player, sbp)
+			local numSquads = unitRow.numSquads or 1
+			total_cost = total_cost + (squad_cost.wood + squad_cost.food + squad_cost.gold + squad_cost.stone) * numSquads
+		end
+	end
+	return total_cost
+end
+
+function Invasion_LimitMaxUnits(units)
+	local unit_string = "Initial: "..UnitTable_CountUnits(units)
+	local requested_unit_cost = UnitTable_GetNonSiegeResourceCost(units, player2)
+	local active_threshold_upper = requested_unit_cost * 2.0
+	local active_threshold_lower = requested_unit_cost * 1.0
+	local active_threshold_diff = active_threshold_upper - active_threshold_lower
+	local internal_string = "Lower: "..active_threshold_lower.."   Upper: "..active_threshold_upper
+	
+	local sg_active = SGroup_CreateUniqueWithPrefix("sg_active)")
+	for i = #active_invasions, 1, -1 do
+		local invasion = active_invasions[i]
+		if SGroup_CountSpawned(invasion.sgroup) == 0 then
+			table.remove(active_invasions, i)
+		else
+			SGroup_AddGroup(sg_active, invasion.sgroup)
+		end
+	end
+	SGroup_AddGroup(sg_active, army_blocked.sgroup)
+	SGroup_Filter(sg_active, anti_wall_unit_types, FILTER_REMOVE)
+	local active_cost = SGroup_GetResourceCost(sg_active)
+	local factor = (active_threshold_upper - active_cost) / active_threshold_diff
+	factor = math.min(factor, 1)
+	factor = math.max(factor, 0)
+	internal_string = internal_string.."   Active: "..active_cost.."   Factor: "..factor
+	print(internal_string)
+	for i = #units, 1, -1 do
+		local unitRow = units[i]
+		if unitRow.numSquads == nil then
+			unitRow.numSquads = 1
+		end
+		if Table_Contains(anti_wall_unit_types, unitRow.type) == false then
+			unitRow.numSquads = unitRow.numSquads * factor
+			unitRow.numSquads = math.floor(unitRow.numSquads + 0.5)
+			if unitRow.numSquads == 0 then
+				table.remove(units, i)
+			end
+		end
+	end
+	unit_string = unit_string.."   Final: "..UnitTable_CountUnits(units)
+	print(unit_string)
+end
+
+function Invasion_Muster()
+	local invasion = pending_invasions[1] 
+	Camp_MusterCohort(invasion.id, invasion.sgroup)
+	Invasion_CreateArmyFromSGroup(invasion)
+	invasion.is_mustered = true
+end
+
+function Invasion_Launch(invasion)
+	TransferArmyIntoArmy(army_blocked, invasion.army)
+	SGroup_AddGroup(invasion.sgroup, invasion.army.sgroup)
+	Rule_AddOneShot(Invasion_AdjustFormation, 1, { army = invasion.army, marker = mkr_muster })
+	Rule_AddOneShot(Invasion_AddTargets, 5, { invasion = invasion })
+	Rule_AddInterval(Invasion_MonitorIncomingInvasion, 1, { invasion = invasion })
+end
+
+function Invasion_AddTargets(context, data)
+	local invasion = data.invasion
+	--print(invasion.name.." launched")
+	local round = invasion.round
+	Army_AddTargets(invasion.army, invasion.lane.targets)
+end
+
+function Invasion_MonitorIncomingInvasion(context, data)
+	local invasion = data.invasion
+	local sgroup = invasion.sgroup
+	if SGroup_CountSpawned(sgroup) == 0 then
+		Rule_RemoveMe()
+		return
+	end
+	if Marker_InProximity(invasion.lane.arrive, SGroup_GetPosition(sgroup)) then
+		Rule_RemoveMe()
+		UI_CreateMinimapBlip(sgroup, 14, "general")
+		invasion.UI_element = Objective_AddUIElements(OBJ_DummyBattle, sgroup, true, "test", false)
+		Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_high")
+		--Music_LockIntensity (MUSIC_RARE, 30)  LIN NOTE - CURRENTLY THIS IS BROKEN, WILL ADD ONCE ITs FIXED
+		FOW_PlayerRevealSGroup(player1, sgroup, 10, -1)
+		
+		-- Play VO once on first attack
+		if VOCue_Played_History_Humilitations == false then
+			VOCue_Played_History_Humilitations = true
+			Util_StartIntel(EVENTS.History_Humilitations)
+		end
+	end
+end
+
+function Invasion_OnArmyBlocked(army)
+	--print(army.name.." blocked")
+	local invasion = army.invasion
+	local lane = invasion.lane
+	
+	invasion.is_blocked = true
+	if invasion.UI_element then
+		Objective_RemoveUIElements(OBJ_DummyBattle, invasion.UI_element)
+	end
+	FOW_PlayerUnRevealSGroup(player1, invasion.sgroup)
+	invasion.army = nil
+	Army_Dissolve(army)
+	local queued = false
+	for _, fallback in ipairs(lane.fallbacks) do
+		SGroup_Move(invasion.sgroup, fallback, queued)
+		queued = true
+	end
+	Rule_AddInterval(Invasion_MonitorRetreatingInvasion, 0.5, { invasion = invasion })
+end
+
+function Invasion_MonitorRetreatingInvasion(context, data)
+	local invasion = data.invasion
+	local lane = invasion.lane
+	--print("invasion "..invasion.id.." still retreating")
+	if SGroup_CountSpawned(invasion.sgroup) == 0 then
+		Rule_RemoveMe()
+		return
+	end
+	if World_DistanceSquaredPointToPoint(SGroup_GetAvgPosition(invasion.sgroup), Marker_GetPosition(mkr_retreat)) <= 900 then
+		Invasion_RetreatComplete(invasion)
+		Rule_RemoveMe()
+		return
+	end
+end
+
+function Invasion_RetreatComplete(invasion)
+	Army_AddSGroup(army_blocked, invasion.sgroup)
+	Table_RemoveFirstItem(active_invasions, invasion)
+	Rule_AddOneShot(Invasion_AdjustFormation, 1, { army = army_blocked, marker = mkr_retreat })
+end
+
+function Invasion_AdjustFormation(context, data)
+	local army = data.army
+	local marker = data.marker
+	--print(army.name.." adjust formation")
+	if army.sgroup and SGroup_CountSpawned(army.sgroup) > 0 then
+		SGroup_AttackMove(army.sgroup, marker, true)
+		SGroup_MoveAndFace(army.sgroup, marker, nil, nil, true)
+	end
+end
+
+function Invasion_GetLane()
+	if #all_lanes == 0 then
+		all_lanes = { lanes.west, lanes.north, lanes.east }	
+	end
+	local index = World_GetRand(1, #all_lanes)
+	local lane = all_lanes[index]
+	table.remove(all_lanes, index)
+	return lane
+end

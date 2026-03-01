@@ -1,0 +1,344 @@
+---------------------------------------------------------------------------------------------------
+-- Description:
+-- This function ages up the player every set minutes
+---------------------------------------------------------------------------------------------------
+
+_autoage = {
+	module = "AutoAge",
+	objective_main_title = "$f5a005650ae44d2b8e05306aa891f90c:277", -- "Time remaining until next Age unlocked"
+	objective_secondary_title = "$999578", -- "Place a landmark"
+	objective_secondary_requirement = 4,
+	options = {},
+	icons = {
+		objective = "icons\\races\\common\\victory_conditions\\victory_condition_conquest",
+	},
+}
+
+CBA_AUTO_AGE_AUTOAGE_MODULE = "CBA_AutoAge"
+
+---------------------------------------------------------------------------------------------------
+-- Delegates:
+---------------------------------------------------------------------------------------------------
+
+Core_RegisterModule(CBA_AUTO_AGE_AUTOAGE_MODULE)	
+
+function CBA_AutoAge_UpdateModuleSettings()
+	AGS_Print("CBA_AutoAge_UpdateModuleSettings")
+	if AGS_GLOBAL_SETTINGS.AutoAge == 0 or AGS_GLOBAL_SETTINGS.StartingAge == AGS_GS_AGE_IMPERIAL then
+		Core_UnregisterModule(CBA_AUTO_AGE_AUTOAGE_MODULE)
+	end
+end
+
+function CBA_AutoAge_PresetFinalize()
+	AGS_Print("CBA_AutoAge_PresetFinalize")
+	
+	-- Functions
+	CBA_AutoAge_SetMaxAge()
+	CBA_AutoAge_SetupObjective()
+	CBA_Auto_Age()
+	-- Rules
+	Rule_AddInterval(CBA_AutoAge_UpdateTimer, 1)
+	Rule_AddGlobalEvent(CBA_AutoAge_ConstructionComplete, GE_ConstructionComplete)
+	
+end
+
+---------------------------------------------------------------------------------------------------
+-- Functions:
+---------------------------------------------------------------------------------------------------
+
+-- This function creates the objective UI that appears in the top-left corner of each player's screen
+function CBA_AutoAge_SetupObjective()
+	
+	-- Main Objective
+	-- Sets up the Automatic Age up timer
+	if _autoage.objective_main == nil then 
+
+		-- Create and store objective in the global table created at the start of this script
+		_autoage.objective_main = Obj_Create(localPlayer.id, _autoage.objective_main_title, Loc_Empty(), _autoage.icons.objective, "WonderObjectiveTemplate", localPlayer.raceName, OT_Primary, 0, "wonderObj")		
+		
+		-- Sets the objective's state to complete (for UI popup)
+		Obj_SetState(_autoage.objective_main, OS_Complete)
+		-- Sets the objective to visible so players can see it
+		Obj_SetVisible(_autoage.objective_main, true)
+		-- Sets the progress element of the objective to visible so players can see it
+		Obj_SetProgressVisible(_autoage.objective_main, false)
+		-- Sets the objective progress type to a counter
+		Obj_SetCounterType(_autoage.objective_main, COUNTER_TimerDecreasing)
+		-- Set the starting objective timer
+		Obj_SetCounterTimerSeconds(_autoage.objective_main, AGS_GLOBAL_SETTINGS.AutoAge)
+		-- Set the objective progress bar percentage value
+		Obj_SetProgress(_autoage.objective_main, 0)
+		-- Start the timer
+		Timer_Start(_autoage.objective_main, AGS_GLOBAL_SETTINGS.AutoAge)
+	end
+
+	-- Secondary Objective
+	-- Checks for a build landmark and increases objective counter, this counter will be used at the end of each cycle to check if forced age up is required
+	if _autoage.objective_secondary == nil then 
+		
+		-- Create and store objective in the global table created at the start of this script
+		_autoage.objective_secondary = Obj_Create(localPlayer.id, _autoage.objective_secondary_title, Loc_Empty(), _autoage.icons.objective, "HolySiteSecondaryObjectiveDataTemplate", localPlayer.raceName, OT_Secondary, _autoage.objective_main, "holySiteObj")
+		
+		for i, player in pairs(PLAYERS) do				
+			player.obj_build_count = AGS_GLOBAL_SETTINGS.StartingAge
+		end
+		
+		local obj_build_count = AGS_GLOBAL_SETTINGS.StartingAge
+		for _, player in pairs(PLAYERS) do
+			if player.id == localPlayer.id then
+				obj_build_count = player.obj_build_count
+			end
+		end
+		
+		-- Sets the objective's state to incomplete
+		Obj_SetState(_autoage.objective_secondary, OS_Incomplete)
+		-- Sets the objective to visible so players can see it
+		Obj_SetVisible(_autoage.objective_secondary, true)
+		-- Sets the progress element of the objective to visible so players can see it
+		Obj_SetProgressVisible(_autoage.objective_secondary, true)
+		-- Sets the objective progress type to a counter
+		Obj_SetCounterType(_autoage.objective_secondary, COUNTER_CountUpTo)
+		-- Set the starting objective progress to Starting Age value
+		Obj_SetCounterCount(_autoage.objective_secondary, AGS_GLOBAL_SETTINGS.StartingAge)
+		
+		-- Set the maximum objective progress
+		Obj_SetCounterMax(_autoage.objective_secondary,  _autoage.objective_secondary_requirement)
+		-- Set the objective progress bar percentage value
+		--Obj_SetProgress(_autoage.objective_secondary, AGS_GLOBAL_SETTINGS.StartingAge / _autoage.objective_secondary_requirement)
+		Obj_SetProgress(_autoage.objective_secondary, obj_build_count / _autoage.objective_secondary_requirement)
+	end
+end
+
+function CBA_AutoAge_UpdateTimer()
+	-- Get the player's current objective progress
+		local obj_progress_current = Obj_GetCounterCount(_autoage.objective_secondary)
+	
+	-- Update the timer
+	Obj_SetCounterTimerSeconds(_autoage.objective_main, Timer_GetRemaining(_autoage.objective_main))
+	-- Revive the timer
+	if Timer_GetRemaining(_autoage.objective_main) == 0 and obj_progress_current <= 3 then
+		Timer_Start(_autoage.objective_main, AGS_GLOBAL_SETTINGS.AutoAge)
+	end
+end
+
+-- Check landmark for age up
+function CBA_AutoAge_ConstructionComplete(context)
+
+	-- Store the player who constructed the building
+	local builder = Core_GetPlayersTableEntry(context.player)
+	
+	-- Check to see if there was a builder (just in case the building was constructed via script or some other means) and that the builder has not been eliminated yet
+	if builder ~= nil and not builder.isEliminated then
+		
+		-- Landmark built / Feudal 
+		if Entity_IsEBPOfType(context.pbg, "wonder_dark_age") then
+
+			-- Objective setup
+			if builder.obj_build_count == 1 then
+				
+				-- Since the player constructed a landmark, calculate their new progress
+				builder.obj_build_count = builder.obj_build_count + 1
+				
+				-- Check if the builder is the local player, we only want to run the below code for the local player as only their objective UI needs to be updated
+				if builder.isLocal then
+					
+					-- Update their objective progress UI
+					Obj_SetCounterCount(_autoage.objective_secondary, builder.obj_build_count)
+					Obj_SetProgress(_autoage.objective_secondary, builder.obj_build_count / _autoage.objective_secondary_requirement)
+				end
+			end
+			
+			--[[ Check maximum/current age & Force age up if conditions are met
+				if Player_GetMaximumAge(builder) >= 2  and Player_GetCurrentAge(builder) == 1 then
+					Player_SetCurrentAge(builder, AGE_FEUDAL)
+				end	
+				]]
+			
+			-- Landmark built / Castle
+		elseif Entity_IsEBPOfType(context.pbg, "wonder_feudal_age") then
+
+			-- Objective setup
+			if builder.obj_build_count == 2 then
+				
+				-- Since the player constructed a landmark, calculate their new progress
+				builder.obj_build_count = builder.obj_build_count + 1
+				
+				-- Check if the builder is the local player, we only want to run the below code for the local player as only their objective UI needs to be updated
+				if builder.isLocal then
+					
+					-- Update their objective progress UI
+					Obj_SetCounterCount(_autoage.objective_secondary, builder.obj_build_count)
+					Obj_SetProgress(_autoage.objective_secondary, builder.obj_build_count / _autoage.objective_secondary_requirement)
+				end
+			end
+
+			
+			-- Landmark built / Imperial
+		elseif Entity_IsEBPOfType(context.pbg, "wonder_castle_age") then
+			
+			-- Objective setup
+			if builder.obj_build_count == 3 then
+				
+				-- Since the player constructed a landmark, calculate their new progress
+				builder.obj_build_count = builder.obj_build_count + 1
+				
+				-- Check if the builder is the local player, we only want to run the below code for the local player as only their objective UI needs to be updated
+				if builder.isLocal then
+					
+					-- Update their objective progress UI
+					Obj_SetCounterCount(_autoage.objective_secondary, builder.obj_build_count)
+					Obj_SetProgress(_autoage.objective_secondary, builder.obj_build_count / _autoage.objective_secondary_requirement)
+				end
+			end
+
+		end
+
+		
+
+	end
+end
+
+-- Check starting age / Setup restrictions
+function CBA_AutoAge_SetMaxAge()
+	for i, player in pairs(PLAYERS) do
+		local player_civ = Player_GetRaceName(player.id)
+		
+		if player_civ == "malian" or player_civ == "ottoman" then
+			
+			-- Ban Malian/Ottoman landmarks / Player_SetMaximumAge not working as expected with these factions
+			Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprintsWithType("wonder_dark_age"), ITEM_LOCKED)
+			Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprintsWithType("wonder_feudal_age"), ITEM_LOCKED)
+			Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprintsWithType("wonder_castle_age"), ITEM_LOCKED)
+			
+			else
+			
+			if AGS_GLOBAL_SETTINGS.StartingAge == AGS_GS_AGE_DARK then 
+				Player_SetMaximumAge(player.id, AGE_DARK)
+			elseif AGS_GLOBAL_SETTINGS.StartingAge == AGS_GS_AGE_FEUDAL then 
+				Player_SetMaximumAge(player.id, AGE_FEUDAL)
+			elseif AGS_GLOBAL_SETTINGS.StartingAge == AGS_GS_AGE_CASTLE then 
+				Player_SetMaximumAge(player.id, AGE_CASTLE)
+			end
+		end
+		
+		if player_civ == "abbasid" then
+			Player_SetEntityProductionAvailability(player.id, EBP.ABBASID.BUILDING_HOUSE_OF_WISDOM_CONTROL_ABB, ITEM_LOCKED)
+		end
+		
+	end
+end
+
+-- Select stage
+function CBA_Auto_Age()
+	if AGS_GLOBAL_SETTINGS.StartingAge == AGS_GS_AGE_DARK then
+		Rule_AddOneShot(CBA_Auto_Age_1, AGS_GLOBAL_SETTINGS.AutoAge)
+	elseif AGS_GLOBAL_SETTINGS.StartingAge == AGS_GS_AGE_FEUDAL then
+		Rule_AddOneShot(CBA_Auto_Age_2, AGS_GLOBAL_SETTINGS.AutoAge)
+	elseif AGS_GLOBAL_SETTINGS.StartingAge == AGS_GS_AGE_CASTLE then
+		Rule_AddOneShot(CBA_Auto_Age_3, AGS_GLOBAL_SETTINGS.AutoAge)		
+	end
+end
+
+-- Age up stages
+function CBA_Auto_Age_1()
+	for _, player in pairs(PLAYERS) do
+		local age = Player_GetCurrentAge(player.id)
+		local player_civ = Player_GetRaceName(player.id)
+		
+		-- Setup age
+		if age < 2 then
+			if player_civ == "malian" or player_civ == "ottoman" then
+				Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprintsWithType("wonder_dark_age"), ITEM_DEFAULT)
+			else
+				Player_SetMaximumAge(player.id, AGE_FEUDAL)
+			end
+			
+			if player_civ == "abbasid" then
+				Player_SetCurrentAge(player.id, age + 1)
+			end
+
+			
+			-- Force age up, when landmark is completed
+			if player.obj_build_count == 2 then
+				Player_SetCurrentAge(player.id, age + 1)
+				
+				-- Check if the builder is the local player, we only want to run the below code for the local player as only their objective UI needs to be updated
+				if player.isLocal then
+					-- Objective UI 
+					Obj_CreatePopup(_autoage.objective_main, _autoage.objective_main_title)
+				end
+			end
+		end
+	end
+	
+	-- Enable Archery/Stable @ Dark Age
+	-- CBA_Options_DarkAge_Unlocks()
+
+	-- Setup next function
+	Rule_AddOneShot(CBA_Auto_Age_2, AGS_GLOBAL_SETTINGS.AutoAge)
+end
+
+function CBA_Auto_Age_2()
+	for _, player in pairs(PLAYERS) do
+		local age = Player_GetCurrentAge(player.id)
+		local player_civ = Player_GetRaceName(player.id)
+		
+		-- Setup age
+		if age < 3 then
+			if player_civ == "malian" or player_civ == "ottoman" then
+				Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprintsWithType("wonder_feudal_age"), ITEM_DEFAULT)
+			else
+				Player_SetMaximumAge(player.id, AGE_CASTLE)
+			end
+			if player_civ == "abbasid" then
+				Player_SetCurrentAge(player.id, age + 1)
+			end
+
+			
+			-- Force age up, when landmark is completed
+			if player.obj_build_count == 3 then
+				Player_SetCurrentAge(player.id, age + 1)
+				
+				-- Check if the builder is the local player, we only want to run the below code for the local player as only their objective UI needs to be updated
+				if player.isLocal then
+					-- Objective UI 
+					Obj_CreatePopup(_autoage.objective_main, _autoage.objective_main_title)
+				end
+			end
+		end
+	end
+	
+	-- Setup next function
+	Rule_AddOneShot(CBA_Auto_Age_3, AGS_GLOBAL_SETTINGS.AutoAge)
+end
+
+function CBA_Auto_Age_3()	
+	for _, player in pairs(PLAYERS) do
+		local age = Player_GetCurrentAge(player.id)
+		local player_civ = Player_GetRaceName(player.id)
+		
+		-- Setup age
+		if age < 4 then
+			if player_civ == "malian" or player_civ == "ottoman" then
+				Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprintsWithType("wonder_castle_age"), ITEM_DEFAULT)
+			else
+				Player_SetMaximumAge(player.id, AGE_IMPERIAL)
+			end
+			if player_civ == "abbasid" then
+				Player_SetCurrentAge(player.id, age + 1)
+				Player_SetEntityProductionAvailability(player.id, EBP.ABBASID.BUILDING_HOUSE_OF_WISDOM_CONTROL_ABB, ITEM_UNLOCKED)
+			end
+			
+			-- Force age up, when landmark is completed
+			if player.obj_build_count == 4 then
+				Player_SetCurrentAge(player.id, age + 1)
+				
+				-- Check if the builder is the local player, we only want to run the below code for the local player as only their objective UI needs to be updated
+				if player.isLocal then
+					-- Objective UI 
+					Obj_CreatePopup(_autoage.objective_main, _autoage.objective_main_title)
+				end
+			end
+		end
+	end
+end

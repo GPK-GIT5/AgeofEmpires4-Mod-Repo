@@ -1,0 +1,623 @@
+--
+-- Battle of Liegnitz 1241
+--
+
+function DestroyPoles_InitObjectives()
+	
+	OBJ_BohemianTimer = {
+		Title = "$11176014", -- Bohemians will reinforce the Polish army in 
+		Type = ObjectiveType_Information,
+		
+		SetupUI = function()
+			Objective_StartTimer(OBJ_BohemianTimer, COUNT_DOWN, t_difficulty.bohemian_timer, 60)
+		end,
+		
+		OnStart = function()
+			Rule_AddOneShot(DestroyPoles_BohemiaWarningTimer, t_difficulty.bohemian_timer / 2)
+		end,
+		
+		IsComplete = function()
+			if Objective_IsComplete(OBJ_DestroyPolishArmy) then
+				OBJ_BohemianTimer.showTitle = false
+				Game_SendCustomChallengeEvent(player1, CE_DEFEATPOLISHFASTLIEGNITZ, 1)  --for challenge completion
+				return true
+			end
+			return false
+		end,
+		
+		IsFailed = function()
+			if Objective_GetTimerSeconds(OBJ_BohemianTimer) <= 0 and not Objective_IsComplete(OBJ_DestroyPolishArmy) then
+				return true
+			else 
+				return false
+			end
+		end,
+		
+		PreFail = function()
+			Objective_Start(OBJ_DestroyBohemianArmy)
+		end,
+		
+	}
+	
+	OBJ_DestroyPolishArmy = {
+		
+		Title = "$11176013", -- Destroy the Polish army
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.Destroy_PolishArmy,
+		
+		SetupUI = function()
+			--Check all of the polish modules to see if they are all withdrawn or dead, and then add a minimap ping to it
+			for i in pairs(polish_modules) do
+				if not (polish_modules[i].isWithdrawn or polish_modules[i].status == "Dissolved") then
+					polish_modules[i].uiElement = Objective_AddUIElements(OBJ_DestroyPolishArmy, polish_modules[i].sgroup, true)
+				end
+			end
+			
+			Obj_SetProgressVisible(OBJ_DestroyPolishArmy.ID, true)
+			Obj_SetProgress(OBJ_DestroyPolishArmy.ID, 0)
+			
+			Objective_Start(OBJ_BohemianTimer, false)
+		end,
+		
+		OnStart = function()
+			Rule_AddGlobalEvent(DestroyPoles_OnSquadKilled, GE_SquadKilled)
+			Rule_AddOneShot(DestroyPoles_BurnFieldsReminder, 8)
+			Rule_AddInterval(DestroyPoles_FarmAttacked, 1)
+			Rule_AddInterval(DestroyPoles_BeesReminder, 0.5)
+			
+			Rule_AddGlobalEvent(DestroyPoles_BeesAttackCheck, GE_DamageReceived)
+			Rule_AddEventFilter_EntityBlueprint(DestroyPoles_BeesAttackCheck, FC_Attacker, FO_AND, { EBP.CHINESE.UNIT_NEST_OF_BEES_4_CHI }, { })
+
+			Sound_SetMinimumMusicCombatIntensity(801,0)
+			
+			Rule_AddInterval(DestroyPoles_CanPlayerSeeSGroups, 1, {objective = SOBJ_DefeatRemainingField, modules = {field_defend_left, field_defend_center, field_defend_right, field_patrol}})
+			Rule_AddInterval(DestroyPoles_CanPlayerSeeSGroups, 1, {objective = SOBJ_DefeatRemainingRidge, modules = {ridge_defend_left,	ridge_defend_center, ridge_defend_right, ridge_patrol}})
+			Rule_AddInterval(DestroyPoles_CanPlayerSeeSGroups, 1, {objective = SOBJ_DefeatRemainingValley, modules = {valley_defend_front, valley_defend_center, valley_defend_back, valley_defend_left, valley_defend_right, valley_patrol}})
+			Rule_AddInterval(DestroyPoles_CanPlayerSeeSGroups, 1, {objective = SOBJ_DefeatRemainingPatrol, modules = {roving_templars}})
+		end,
+		
+		IsComplete = function()	
+			
+			--Update the progress bar
+			DestroyPoles_UpdateObjectiveProgress(OBJ_DestroyPolishArmy.ID, polish_modules)
+			
+			----Check all of the enemy modules to see if they are all withdrawn or dead			
+			--for i in pairs(polish_modules) do
+				--if not (polish_modules[i].isWithdrawn or polish_modules[i].status == "Dissolved") then
+					--return false
+				--end
+			--end
+			
+			----The other conditions aren't blocking it from completion, so return true
+			--return true
+			
+			return Objective_AreSubObjectivesComplete(OBJ_DestroyPolishArmy, ALL)
+		end,
+		
+		OnComplete = function()
+			if not Objective_IsFailed(OBJ_BohemianTimer) or Objective_IsComplete(OBJ_DestroyBohemianArmy) then
+				Mission_Complete()
+			end
+		end,
+		
+		IsFailed = DestroyPoles_CheckPlayerStatus,
+		
+		OnFail = function()
+			if not Objective_IsComplete(OBJ_DestroyPolishArmy) then
+				Mission_Fail()
+			end
+		end,
+	}
+	
+	SOBJ_DefeatRemainingField = {
+		Title = "$11201423",
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyPolishArmy,
+		
+		PreStart = function()
+			SOBJ_DefeatRemainingField.modules = {
+				field_defend_left,
+				field_defend_center,
+				field_defend_right,
+				field_patrol}
+			
+			DestroyPoles_UpdateObjectiveCounter(SOBJ_DefeatRemainingField)
+		end,
+		
+		IsComplete = function()
+			return DestroyPoles_UpdateObjectiveCounter(SOBJ_DefeatRemainingField)
+		end,
+	}
+	
+	SOBJ_DefeatRemainingRidge = {
+		Title = "$11201424",
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyPolishArmy,
+		
+		PreStart = function()
+			SOBJ_DefeatRemainingRidge.modules = {
+				ridge_defend_left,
+				ridge_defend_center,
+				ridge_defend_right,
+				ridge_patrol}
+			
+			DestroyPoles_UpdateObjectiveCounter(SOBJ_DefeatRemainingRidge)
+		end,
+		
+		IsComplete = function()
+			return DestroyPoles_UpdateObjectiveCounter(SOBJ_DefeatRemainingRidge)
+		end,
+	}
+	
+	SOBJ_DefeatRemainingValley = {
+		Title = "$11201425",
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyPolishArmy,
+		
+		PreStart = function()
+			SOBJ_DefeatRemainingValley.modules = {
+				valley_defend_front,
+				valley_defend_center,
+				valley_defend_back,
+				valley_defend_left,
+				valley_defend_right,
+				valley_patrol}
+			
+			DestroyPoles_UpdateObjectiveCounter(SOBJ_DefeatRemainingValley)
+		end,
+		
+		IsComplete = function()
+			return DestroyPoles_UpdateObjectiveCounter(SOBJ_DefeatRemainingValley)
+		end,
+	}
+	
+	SOBJ_DefeatRemainingPatrol = {
+		Title = "$11201426",
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyPolishArmy,
+		
+		PreStart = function()
+			SOBJ_DefeatRemainingPatrol.modules = {roving_templars}
+			
+			DestroyPoles_UpdateObjectiveCounter(SOBJ_DefeatRemainingPatrol)
+		end,
+		
+		IsComplete = function()
+			return DestroyPoles_UpdateObjectiveCounter(SOBJ_DefeatRemainingPatrol)
+		end,
+	}
+	
+	OBJ_DestroyBohemianArmy = {
+		Title = "$11176016", -- Destroy both of the Polish and Bohemian armies
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.Destroy_PolishArmy_Failed,
+		
+		SetupUI = function()
+			bohemians_ui_id = Objective_AddUIElements(OBJ_DestroyBohemianArmy, roving_bohemians.sgroup, true)
+			
+			Obj_SetProgressVisible(OBJ_DestroyBohemianArmy.ID, true)
+			Obj_SetProgress(OBJ_DestroyBohemianArmy.ID, 0)
+		end,
+		
+		PreStart = function()
+			DestroyPoles_BohemiaAttack()
+			RovingArmy_SetTargets(field_defend_left, {mkr_bohemia_6, mkr_field_left} )
+			RovingArmy_SetTargets(field_defend_center, {mkr_bohemia_6, mkr_field_center} )
+			RovingArmy_SetTargets(field_defend_right, {mkr_bohemia_6, mkr_field_right} )
+			RovingArmy_SetTargets(field_patrol, {mkr_bohemia_6, mkr_field_patrol_4, mkr_field_patrol_5, mkr_field_patrol_6, mkr_field_patrol_1, mkr_field_patrol_2} )
+			
+			RovingArmy_SetTargets(ridge_defend_left, {mkr_bohemia_6, mkr_ridge_left} )
+			RovingArmy_SetTargets(ridge_defend_center, {mkr_bohemia_6, mkr_ridge} )
+			RovingArmy_SetTargets(ridge_defend_right, {mkr_bohemia_6, mkr_ridge_right} )
+			RovingArmy_SetTargets(ridge_patrol, {mkr_village_tl_4, mkr_bohemia_6, mkr_village_tl_4, mkr_ridge_patrol_2, mkr_ridge_patrol_3, mkr_ridge_patrol_4, mkr_ridge_patrol_5, mkr_ridge_patrol_1} )
+			
+			RovingArmy_SetTargets(valley_defend_front, {mkr_bohemia_6, mkr_valley_front} )
+			RovingArmy_SetTargets(valley_defend_center, {mkr_bohemia_6, mkr_valley_center} )
+			RovingArmy_SetTargets(valley_defend_back, {mkr_bohemia_6, mkr_valley_back} )
+			RovingArmy_SetTargets(valley_defend_left, {mkr_bohemia_6, mkr_valley_left} )
+			RovingArmy_SetTargets(valley_defend_right, {mkr_bohemia_6, mkr_valley_right} )
+			RovingArmy_SetTargets(valley_patrol, {mkr_bohemia_6, mkr_valley_patrol_4, mkr_valley_patrol_5, mkr_valley_patrol_1, mkr_valley_patrol_2} )
+			
+			RovingArmy_SetTargets(roving_templars, {
+					mkr_bohemia_6,
+					mkr_templar_10,
+					mkr_templar_11,
+					mkr_templar_12,
+					mkr_templar_13,
+					mkr_templar_14,
+					mkr_templar_15,
+					mkr_templar_2,
+					mkr_templar_3,
+					mkr_templar_4,
+					mkr_templar_5,
+					mkr_templar_6})
+			
+		end,
+		
+		OnStart = function()
+			Rule_AddOneShot(DestroyPoles_DelayStartBohemianArmyUI, 1)
+			EventCues_CallToAction("$11199699", CTA_UNIQUE_STAKES, nil, nil, sg_bohemian_units, 20)
+			FOW_PlayerRevealSGroup(player1, roving_bohemians.sgroup, 15, 12)
+			
+			Rule_AddInterval(DestroyPoles_FindHiddenStables, 5)
+		end,
+		
+		IsComplete = function()
+			--Update objective progress
+			DestroyPoles_UpdateObjectiveProgress(OBJ_DestroyBohemianArmy.ID, bohemian_modules)
+			
+			--Check all of the enemy modules to see if they are all withdrawn or dead
+			for i in pairs(bohemian_modules) do
+				if not (bohemian_modules[i].isWithdrawn or bohemian_modules[i].status == "Dissolved") then
+					return false
+				end
+			end
+			return true
+		end,
+		
+		OnComplete = function()
+			if Objective_IsComplete(OBJ_DestroyPolishArmy) then
+				Mission_Complete()
+			elseif not Objective_IsFailed(OBJ_DestroyPolishArmy) and not Objective_IsFailed(OBJ_DestroyBohemianArmy) then
+				Util_StartIntel(EVENTS.Bohemians_Defeated_Before_Poles)
+			end
+		end,
+		
+		IsFailed = DestroyPoles_CheckPlayerStatus,
+		
+		OnFail = function()
+			if not Objective_IsComplete(OBJ_DestroyBohemianArmy) then
+				Mission_Fail()
+			end
+		end,
+	}
+	
+	SOBJ_RovingKnights = {
+		Title = "$11176015", -- Defeat the Elite Knights
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DestroyPolishArmy,
+		
+		Intel_Start = EVENTS.Polish_Cavalry,
+		
+		SetupUI = function()
+			
+		end,
+		
+		IsComplete = function()
+			return roving_templars.isWithdrawn or roving_templars.status == "Dissolved"
+		end,
+	}
+	
+	OBJ_ArmySurvive = {
+		Title = "$11176017", -- Your army must survive
+		Type = OT_Information,
+		
+		PreStart = function()
+			Music_PlayStinger(MUS_STINGER_WARNING)
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(player1, sg_player_units)
+			return SGroup_CountSpawned(sg_player_units) <= 0
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	OBJ_RaidSettlements = {
+		Title = "$11191314",
+		Type = ObjectiveType_Optional,
+		
+		counterTarget = 2000,
+		counterCurrent = 0,
+		
+		Intel_Start = EVENTS.Burn_Farms_Hint,
+		
+		PreStart = function()
+			local current_res = Player_GetResources(player1)
+			
+			player_res = {
+				food = current_res.food,
+				wood = current_res.wood,
+				gold = current_res.gold,
+				stone = current_res.stone }
+			
+			Objective_SetCounter(OBJ_RaidSettlements, OBJ_RaidSettlements.counterCurrent, OBJ_RaidSettlements.counterTarget)
+		end,
+		
+		IsComplete = function()
+			
+			--Check and update minimum player resources
+			local current_res = Player_GetResources(player1)
+			
+			if player_res.gold < current_res.gold then
+				local gold_difference = current_res.gold - player_res.gold
+				OBJ_RaidSettlements.counterCurrent = OBJ_RaidSettlements.counterCurrent + gold_difference
+				player_res.gold = current_res.gold
+			elseif player_res.gold > current_res.gold then
+				player_res.gold = current_res.gold
+			end
+			
+			--Update the counter and check if player has gathered enough resources.
+			Objective_SetCounter(OBJ_RaidSettlements, OBJ_RaidSettlements.counterCurrent, OBJ_RaidSettlements.counterTarget)
+			
+			if OBJ_RaidSettlements.counterCurrent >= OBJ_RaidSettlements.counterTarget then
+				return true
+			end
+			
+			return false
+		end,
+	}
+	
+	OBJ_DebugComplete = {
+		Title = LOC("Debug Complete"),
+		Type = OT_Primary,
+		showTitle = false,
+		Cheat = function()
+			Rule_RemoveAll()
+			Player_GetAll(player2)
+			SGroup_DestroyAllSquads(sg_allsquads)
+			EGroup_SetPlayerOwner(eg_allentities, player1)
+			Mission_Complete()
+		end,
+	}
+	
+	--Objective_Register(OBJ_ArmySurvive)
+	Objective_Register(OBJ_BohemianTimer)
+	Objective_Register(OBJ_DestroyPolishArmy)
+	Objective_Register(SOBJ_DefeatRemainingField)
+	Objective_Register(SOBJ_DefeatRemainingRidge)
+	Objective_Register(SOBJ_DefeatRemainingValley)
+	Objective_Register(SOBJ_DefeatRemainingPatrol)
+	Objective_Register(OBJ_DestroyBohemianArmy)
+	Objective_Register(OBJ_RaidSettlements)
+	Objective_Register(OBJ_DebugComplete)
+	
+end
+
+function DestroyPoles_CheckPlayerStatus()	-- check for fail conditions
+	
+	local playerHasNoUnits = Player_GetUnitCount(player1) == 0
+	
+	if playerHasNoUnits == true then 
+		
+		local _CheckProductionQueueIsEmpty = function(gid, idx, eid)		
+			if Entity_HasProductionQueue(eid) == false then
+				return true 
+			else
+				return Entity_GetProductionQueueSize(eid) == 0
+			end
+		end
+		
+		local playerHasNoProductionBuildings = EGroup_IsEmpty(eg_player_production_structures)
+		local playerHasNoUnitsInProduction = EGroup_ForEachAllOrAny(eg_player_production_structures, ALL, _CheckProductionQueueIsEmpty)
+		local playerHasNoResources = Player_GetResource(player1, RT_Food) < 110 or (Player_GetResource(player1, RT_Wood) < 10 and Player_GetResource(player1, RT_Gold) < 50)
+		
+		return playerHasNoProductionBuildings or (playerHasNoResources and playerHasNoUnitsInProduction)
+		
+	end
+	 
+end
+
+function DestroyPoles_UpdateObjectiveProgress(objectiveID, modules)
+	
+	local maximum_allowable_deaths = 0
+	local current_cumulative_deaths = 0
+	
+	for i, module in ipairs(modules) do
+		maximum_allowable_deaths = maximum_allowable_deaths + ( module.highestUnitCount - (module.highestUnitCount * module.withdrawThreshold) )
+		
+		if SGroup_CountSpawned(module.sgroup) <= (module.highestUnitCount * module.withdrawThreshold) then
+			current_cumulative_deaths = current_cumulative_deaths + ( module.highestUnitCount - (module.highestUnitCount * module.withdrawThreshold))
+		else
+			current_cumulative_deaths = current_cumulative_deaths + (module.highestUnitCount - SGroup_CountSpawned(module.sgroup))
+		end
+	end
+	
+	Obj_SetProgress(objectiveID, current_cumulative_deaths / maximum_allowable_deaths)
+	
+end
+
+function DestroyPoles_CanPlayerSeeSGroups(context, data)
+	
+	for i in pairs(data.modules) do
+		if Player_CanSeeSGroup(player1, data.modules[i].sgroup, ANY) then
+			Objective_Start(data.objective, not Objective_IsFailed(OBJ_BohemianTimer))
+			Rule_RemoveMe()
+			break
+		end
+	end
+
+end
+
+function DestroyPoles_UpdateObjectiveCounter(objectiveID)
+	
+	local maximum_allowable_deaths = 0
+	local current_cumulative_deaths = 0
+	
+	for i, module in ipairs(objectiveID.modules) do
+		maximum_allowable_deaths = maximum_allowable_deaths + ( module.highestUnitCount - (module.highestUnitCount * module.withdrawThreshold) )
+		
+		if SGroup_CountSpawned(module.sgroup) <= (module.withdrawThreshold * module.highestUnitCount) then
+			current_cumulative_deaths = current_cumulative_deaths + ( module.highestUnitCount - (module.highestUnitCount * module.withdrawThreshold))
+		else
+			current_cumulative_deaths = current_cumulative_deaths + (module.highestUnitCount - SGroup_CountSpawned(module.sgroup))
+		end
+	end
+	
+	Objective_SetCounter(objectiveID, current_cumulative_deaths, maximum_allowable_deaths)
+	
+	return current_cumulative_deaths >= maximum_allowable_deaths
+	
+end
+
+function DestroyPoles_UpdateHintpoints(context, data)
+	
+	--Check that the objective the hintpoints are tied to is still valid and the hintpoints down if they aren't.
+	if Objective_IsComplete(data.objective) or Objective_IsFailed(data.objective) then
+		if data.hpid ~= nil then 
+			Objective_RemoveUIElements(data.objective, data.hpid)
+			data.hpid = nil
+		end
+		Rule_RemoveMe()
+	else
+		
+		--Check that all modules provided to check are not withdrawn or dissolved. Disable the hintpoint and stop the rule if they are.
+		local module_isActive = false
+		for i, module in ipairs(data.modules) do
+			if not (module.isWithdrawn or module.status == "Dissolved") then
+				module_isActive = true
+				break
+			end
+		end
+		
+		if not module_isActive then
+			if data.hpid ~= nil then 
+				Objective_RemoveUIElements(data.objective, data.hpid)
+				data.hpid = nil
+			end
+			Rule_RemoveMe()
+		end
+	end
+	
+end
+
+function DestroyPoles_StartKnightsOBJ()
+	Objective_Start(SOBJ_RovingKnights)
+end
+
+function DestroyPoles_BohemiaAttack()
+	local units = {
+		{ squad = sg_bohemian_units, sbp = SBP.HRE.UNIT_KNIGHT_3_HRE, 	numSquads = Util_DifVar({6, 7, 10, 14}) }, 
+		{ squad = sg_bohemian_units, sbp = SBP.HRE.UNIT_HORSEMAN_3_HRE, 	numSquads = Util_DifVar({6, 7, 10, 14}) }, 
+		{ squad = sg_bohemian_units, sbp = SBP.HRE.UNIT_ARCHER_3_HRE, 	numSquads = Util_DifVar({6, 7, 10, 14}) }, 
+		{ squad = sg_bohemian_units, sbp = SBP.HRE.UNIT_MANATARMS_3_HRE, 	numSquads = Util_DifVar({6, 7, 10, 14}) }, 
+	}
+
+	SpawnUnitsToModule(units, "roving_bohemians", mkr_bohemia_start)
+end
+
+function DestroyPoles_DelayStartBohemianArmyUI()
+	--Objective_AddUIElements(OBJ_DestroyBohemianArmy, sg_bohemian_units, true, 11176011, false)
+	ThreatArrow_CreateGroup("Bohemian army", sg_bohemian_units)
+end
+
+function DestroyPoles_BohemiaWarningTimer()
+	
+	if not Objective_IsComplete(OBJ_BohemianTimer) then
+		Util_StartIntel(EVENTS.Bohemian_Army)
+		
+	end
+	
+end
+
+function DestroyPoles_OnSquadKilled(context)
+	
+	local victim = context.victim
+	
+	if Player_OwnsSquad(player2, victim) or Player_OwnsSquad(player3, victim) then
+		last_killed_position = Squad_GetPosition(victim)
+	end
+	
+end
+
+function DestroyPoles_BurnFieldsReminder(context)
+	--This is called after an initial delay, should only be called once.
+	--if b_fieldsWereBurned ~= true then
+	Objective_Start(OBJ_RaidSettlements)
+	--end
+end
+
+function DestroyPoles_FarmAttacked(context)
+	--This is called on an interval of 1 second.
+	Player_GetAll(player2)
+	--EGroup_Filter(eg_allentities, EBP.HRE.BUILDING_RESOURCE_FARM_HRE, FILTER_KEEP)
+	if EGroup_IsBurning(eg_allentities, ANY) then
+		Util_StartIntel(EVENTS.Burn_Farms_Complete)
+		b_fieldsWereBurned = true
+		Rule_RemoveMe()
+	end
+end
+
+function DestroyPoles_BeesReminder(context)
+	--This is called on an interval and checks if the bees are selected before playing the VO
+	if b_BeesHaveKilledBeforeAndWillDoItAgain ~= true and Misc_IsSGroupSelected(sg_rocketsiege, ANY) then
+		Util_StartIntel(EVENTS.Bees_Interact)
+		Rule_AddOneShot(Liegnitz_InitializeBeesTrainingHints, 17)
+		Rule_RemoveMe()
+	end
+end
+
+function DestroyPoles_BeesAttackCheck(context)
+	--This is called whenever something is damaged, it looks for military units that have been attacked by the nests of bees.
+	if context.victimSquad ~= nil and context.attacker ~= nil then
+		if Entity_GetBlueprint(context.attacker) == EBP.CHINESE.UNIT_NEST_OF_BEES_4_CHI then
+			if Entity_IsOfType(context.victim, "military") and Squad_GetPlayerOwner(context.victimSquad) == player2 then
+				b_BeesHaveKilledBeforeAndWillDoItAgain = true
+				print("THE BEES HAVE CLAIMED ANOTHER VICTIM")
+				--Util_StartIntel(EVENTS.Bees_Damage) --This VO line has been removed as the AI doesn't look like they cower in fear
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+function DestroyPoles_AddDelayedUIElement(context, data)
+	Objective_AddUIElements(data.objective, data.module.sgroup, true)
+end
+
+function DestroyPoles_FindHiddenStables(context, data)
+	if not EGroup_IsEmpty(eg_player_production_structures) then
+		local new_stable_position = Entity_GetPosition(EGroup_GetEntityAt(eg_player_production_structures, 1))
+		if new_stable_position ~= stable_position then
+			stable_position = new_stable_position
+			
+			--Apply new stable position target to modules
+			RovingArmy_SetTargets(field_defend_left, {stable_position, mkr_field_left} )
+			RovingArmy_SetTargets(field_defend_center, {stable_position, mkr_field_center} )
+			RovingArmy_SetTargets(field_defend_right, {stable_position, mkr_field_right} )
+			RovingArmy_SetTargets(field_patrol, {stable_position, mkr_field_patrol_4, mkr_field_patrol_5, mkr_field_patrol_6, mkr_field_patrol_1, mkr_field_patrol_2} )
+			
+			RovingArmy_SetTargets(ridge_defend_left, {stable_position, mkr_ridge_left} )
+			RovingArmy_SetTargets(ridge_defend_center, {stable_position, mkr_ridge} )
+			RovingArmy_SetTargets(ridge_defend_right, {stable_position, mkr_ridge_right} )
+			RovingArmy_SetTargets(ridge_patrol, {mkr_village_tl_4, stable_position, mkr_village_tl_4, mkr_ridge_patrol_2, mkr_ridge_patrol_3, mkr_ridge_patrol_4, mkr_ridge_patrol_5, mkr_ridge_patrol_1} )
+			
+			RovingArmy_SetTargets(valley_defend_front, {stable_position, mkr_valley_front} )
+			RovingArmy_SetTargets(valley_defend_center, {stable_position, mkr_valley_center} )
+			RovingArmy_SetTargets(valley_defend_back, {stable_position, mkr_valley_back} )
+			RovingArmy_SetTargets(valley_defend_left, {stable_position, mkr_valley_left} )
+			RovingArmy_SetTargets(valley_defend_right, {stable_position, mkr_valley_right} )
+			RovingArmy_SetTargets(valley_patrol, {stable_position, mkr_valley_patrol_4, mkr_valley_patrol_5, mkr_valley_patrol_1, mkr_valley_patrol_2} )
+			
+			RovingArmy_SetTargets(roving_templars, {
+					stable_position,
+					mkr_templar_10,
+					mkr_templar_11,
+					mkr_templar_12,
+					mkr_templar_13,
+					mkr_templar_14,
+					mkr_templar_15,
+					mkr_templar_2,
+					mkr_templar_3,
+					mkr_templar_4,
+					mkr_templar_5,
+				mkr_templar_6})
+			
+			RovingArmy_SetTargets(roving_bohemians, {
+					stable_position,
+					mkr_bohemia_1,
+					mkr_bohemia_2,
+					mkr_bohemia_3,
+					mkr_bohemia_4,
+					mkr_bohemia_5,
+				mkr_bohemia_6})
+		end
+	else
+		Rule_RemoveMe()
+	end
+end

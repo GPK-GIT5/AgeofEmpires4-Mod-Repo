@@ -1,0 +1,241 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+function AbbBonus_SetupAttackersData()
+	currentUnitIndex = 1
+	
+	rule_p2_econ = nil
+	rule_p2_constraints1 = nil
+	rule_p2_monitor1 = nil
+	
+	--rule_p2_constraints2 = nil
+	--rule_p2_monitor2 = nil
+	--rule_p2_constraints3 = nil
+	--rule_p2_monitor3 = nil
+end
+
+
+function AbbBonus_StartAttackersP2()
+	
+	rule_p2_econ = Rule_AddInterval(AbbBonus_UpdateEcon, 60, { player_data = player2_data })
+	
+	rule_p2_constraints1 = Rule_AddInterval(AbbBonus_UpdateConstraints, 120, { attackers = p2_attackers1, player_data = player2_data })
+	rule_p2_monitor1 = Rule_AddInterval(AbbBonus_MonitorAttackers, 5, { attackers = p2_attackers1, player_data = player2_data })
+	
+end
+
+function AbbBonus_StopAttackersP2()
+	player2_data.isActive = false
+	
+	Rule_RemoveWithID(rule_p2_econ)
+	Rule_RemoveWithID(rule_p2_constraints1)
+	Rule_RemoveWithID(rule_p2_monitor1)
+end
+
+function AbbBonus_InitVillagerCountP2()
+	Player_GetAll(player2)
+	local sg_villagers = SGroup_CreateIfNotFound("sg_villagers")
+	SGroup_Clear(sg_villagers)
+	SGroup_Filter(sg_allsquads, {"scar_villager", "scar_fishing_ship"}, FILTER_REMOVE, sg_villagers)
+	player2_data.initVillagerCount = SGroup_CountSpawned(sg_villagers)
+end
+
+
+function AbbBonus_UpdateEcon(context, data)
+	
+	local player_data = data.player_data
+	
+	if player_data.isActive == false then
+		return
+	end
+	
+	local gameTime = World_GetGameTime()
+	
+	Player_GetAll(player_data.player)
+	local sg_villagers = SGroup_CreateIfNotFound("sg_villagers")
+	SGroup_Clear(sg_villagers)
+	SGroup_Filter(sg_allsquads, {"scar_villager", "scar_fishing_ship"}, FILTER_REMOVE, sg_villagers)
+	
+	local villagerCount = SGroup_CountSpawned(sg_villagers) 
+	local villagerMod = villagerCount / player_data.initVillagerCount
+	
+	player_data.econStrength = player_data.econStrengthMin + (gameTime * player_data.econMod * villagerMod)
+	
+	if player_data.econStrength > player_data.econStrengthMax then
+		player_data.econStrength = player_data.econStrengthMax
+	end
+	
+	player_data.resourcePool = player_data.econStrength
+	
+end
+
+function AbbBonus_UpdateConstraints(context, data)
+	
+	local attackers = data.attackers
+	local player_data = data.player_data
+	
+	if player_data.isActive == false then
+		return
+	end
+	
+	--consider strength of target player
+	local sg_target = SGroup_CreateIfNotFound("sg_target")
+	local target_player = player1
+	
+	if attackers.capture_target ~= nil then
+		local owner = Util_GetPlayerOwner(attackers.capture_target)
+		if owner ~= nil then
+			target_player = owner
+		end
+	end
+		
+	if attackers.attacksPlayerBase == true then
+		local sg_p1_all = SGroup_CreateIfNotFound("sg_p1_all")
+		Player_GetAll(player1, sg_p1_all)
+		SGroup_Filter(sg_p1_all, {"scar_villager", "scar_trade_cart", "naval_unit"}, FILTER_REMOVE)
+		attackers.targetCount = SGroup_CountSpawned(sg_p1_all) * 0.3
+		
+		if attackers.targetCountMin < attackers.targetCountMax then
+			attackers.targetCountMin = attackers.targetCountMin + 1
+		end
+	else
+		World_GetSquadsNearPoint(target_player, sg_target, Marker_GetPosition(attackers.end_target), 60, OT_Player)
+		SGroup_Filter(sg_target, {"scar_villager", "scar_trade_cart", "naval_unit"}, FILTER_REMOVE)
+		attackers.targetCount = SGroup_CountSpawned(sg_target)
+	end
+	
+	
+	if attackers.targetCount < attackers.targetCountMin then
+		attackers.targetCount = attackers.targetCountMin
+	end
+	
+	if attackers.targetCount > attackers.targetCountMax then
+		attackers.targetCount = attackers.targetCountMax
+	end
+	
+	
+	local gameTime = World_GetGameTime()
+	
+	if gameTime > 2400 then
+		attackers.unitMixIndex = 7
+	elseif gameTime > 2000 then
+		attackers.unitMixIndex = 6
+	elseif gameTime > 1600 then
+		attackers.unitMixIndex = 5
+	elseif gameTime > 1200 then
+		attackers.unitMixIndex = 4
+	elseif gameTime > 800 then
+		attackers.unitMixIndex = 3
+	elseif gameTime > 400 then
+		attackers.unitMixIndex = 2
+	else
+		attackers.unitMixIndex = 1
+	end
+	
+	if attackers.unitMixIndex > #attackers.unitMix then
+		attackers.unitMixIndex = #attackers.unitMix
+	end
+end
+
+function AbbBonus_MonitorAttackers(context, data)
+	
+	local attackers = data.attackers
+	local player_data = data.player_data
+	
+	if player_data.isActive == false then
+		return
+	end
+	
+	if attackers.currentState == "reinforce" then
+		
+		local unitNames = attackers.unitMix[attackers.unitMixIndex]
+		
+		if currentUnitIndex > #unitNames then
+			currentUnitIndex = 1
+		end
+		
+		local unitData = AbbBonus_GetUnitDataByName(unitNames[currentUnitIndex], attackers.unitTable)
+		attackers.currentCount = SGroup_CountSpawned(attackers.sgroup)
+		
+		if unitData.value <= player_data.resourcePool and attackers.currentCount < attackers.targetCount then
+			
+			if EGroup_CountSpawned(unitData.source) > 0 then
+				
+				local siegeCount = 0
+				if (unitData.isSiege) then
+					siegeCount = AbbBonus_GetSiegeCount(attackers.sgroup)
+				end
+				
+				if siegeCount < SIEGE_LIMIT then
+					SGroup_Clear(sg_temp)
+					
+					if unitData.unitType == "" then
+						sg_temp = CreateUnits(attackers.player, {sbp = unitData.sbp, numSquads = 1}, unitData.spawn, sg_temp)
+					else
+						sg_temp = CreateUnits(attackers.player, {type = unitData.unitType, numSquads = 1}, unitData.spawn, sg_temp)
+					end
+					
+					SGroup_AttackMove(sg_temp, attackers.rallyMarker, false)
+					SGroup_AddGroup(attackers.sgroup, sg_temp)
+					
+					player_data.resourcePool = player_data.resourcePool - unitData.value
+				end
+			end
+		end
+		
+		currentUnitIndex = currentUnitIndex + 1
+		
+		--ready to attack?
+		if attackers.currentCount >= attackers.targetCount then
+			
+			attackers.currentState = "attack"
+			Army_AddSGroup(attackers.army, attackers.sgroup)
+			Army_SetTargets(attackers.army, attackers.attack_targets)
+			
+		end
+		
+	end
+	
+	
+	if attackers.currentState == "attack" then
+		attackers.currentCount = SGroup_CountSpawned(attackers.sgroup)
+		
+		if attackers.currentCount == 0 then
+			attackers.currentState = "reinforce"
+		else
+			--is the group locally outnumbered?
+			SGroup_Clear(sg_temp)
+			World_GetSquadsNearPoint(player1, sg_temp, SGroup_GetAvgPosition(attackers.sgroup), 25, OT_Player)
+			SGroup_Filter(sg_temp, {"scar_villager", "scar_trade_cart"}, FILTER_REMOVE)
+		
+			if attackers.currentCount * 3 < SGroup_CountSpawned(sg_temp) then
+				
+				if AbbBonus_GetSiegeCount(attackers.sgroup) == 0 then
+					
+					Army_RemoveSGroup(attackers.army, attackers.sgroup, AbbBonus_OnAttackSgroupRemoved, {data = attackers})
+					attackers.currentState = "reinforce"
+				end
+			end
+		end
+
+	end
+	
+end
+
+function AbbBonus_GetUnitDataByName(name, unitTable)
+	
+	for i, data in ipairs(unitTable) do
+		if data.name == name then
+			return data
+		end
+	end
+end
+
+function AbbBonus_OnAttackSgroupRemoved(context, data)
+	local attackers = data.data
+	
+	Cmd_Stop(attackers.sgroup)
+	Cmd_Move(attackers.sgroup, attackers.rallyMarker, false)
+end
+
+

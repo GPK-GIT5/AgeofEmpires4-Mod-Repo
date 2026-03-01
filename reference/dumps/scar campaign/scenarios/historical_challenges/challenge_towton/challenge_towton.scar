@@ -1,0 +1,963 @@
+--
+-- Sample Mission
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("MissionOMatic/MissionOMatic_utility.scar")
+import("missionomatic/missionomatic_artofwar.scar")
+import("training/coretraininggoals.scar")
+import("cardinal.scar")
+import("challenge_towton.events")
+import("challenge_towton_obj.scar")
+import("challenge_towton_waves.scar")
+import("challenge_towton_towns.scar")
+
+function Mission_SetupVariables()
+	
+	-- Bools
+	
+	conquerorModeActivated = false
+	conquerorModeFailed = false
+	attackPhase1Started = false
+	attackPhase2Started = false
+	attackPhase3Started = false
+	attackPhase4Started = false
+	finalWaveStarted = false
+	trebuchetAttackStarted = false
+	eastWallBreached = false
+	westWallBreached = false
+	ageUpHintStarted = false
+	ageUpHintCompleted = false
+	productionHintStarted = false
+	productionHintCompleted = false
+	playerTCDestroyed = false
+	initialAttacksCompleted = false
+	
+	goldMedalFailed = false
+	silverMedalFailed = false
+	
+	-- Ints
+	playerAge = 2
+	outerHousesLost = 0
+	alliedBuildingsLost = 0
+	currentAttackPhase = 0
+	allAlliedBuildingsCurrentCount = 0
+	allAlliedBuildingsPreviousCount = 0
+	
+	phase1StartTime = (5 * 60) + 30
+	phase2StartTime = (10 * 60)
+	phase3StartTime = (14 * 60) + 30
+	phase4StartTime = (18 * 60) + 30
+	phase5StartTime = (22 * 60) + 30
+	
+	-- Floats
+	missionStartTime = 0
+	missionTime = 0
+	
+	-- Sgroups 
+	sg_finalWaveGroup = SGroup_CreateIfNotFound("sg_finalWaveGroup")
+
+	-- Other
+	
+	
+end
+
+function Mission_SetupPlayers()
+	
+	PlayerColour_Enable() -- turn on custom colour configuration for this session
+	
+	-- Set up Players
+	player1 = Missionomatic_InitPlayer(1, { name = "$11265366", currentAge = AGE_FEUDAL, maxAge = AGE_IMPERIAL })--House of Lancaster
+	player2 = Missionomatic_InitPlayer(2, { name = "$11156646", currentAge = AGE_CASTLE, maxAge = AGE_IMPERIAL, color = COLOR_RED })--French
+	player3 = Missionomatic_InitPlayer(3, { name = "$11265366", currentAge = AGE_FEUDAL, maxAge = AGE_IMPERIAL, color = COLOR_YELLOW })
+	player4 = Missionomatic_InitPlayer(4, { name = "$11156646", currentAge = AGE_FEUDAL, maxAge = AGE_IMPERIAL, color = COLOR_RED })
+	player5 = Missionomatic_InitPlayer(5, { name = "$11156646", currentAge = AGE_DARK, maxAge = AGE_IMPERIAL, color = COLOR_WHITE })
+	player6 = Missionomatic_InitPlayer(6, { name = "$11201649", currentAge = AGE_CASTLE, maxAge = AGE_IMPERIAL, color = COLOR_YELLOW })
+	player7 = Missionomatic_InitPlayer(7, { name = "$11156646", currentAge = AGE_DARK, maxAge = AGE_IMPERIAL, color = COLOR_WHITE })
+	
+	-- Create player references
+	localPlayer = World_GetPlayerAt(1) --Player
+	enemyPlayer = World_GetPlayerAt(2) --enemy AI player
+	allyPlayer = World_GetPlayerAt(3)
+	enemyPlayer2 = World_GetPlayerAt(4)
+	neutralPlayer = World_GetPlayerAt(5)
+	allyPlayer2 = World_GetPlayerAt(6)
+	neutralPlayer2 = World_GetPlayerAt(7)
+	
+	AI_Enable(enemyPlayer2, false)
+	
+	ChallengeMission_SetupDiplomacy()
+	
+	--override condensed objectives setting to ensure objectives are visible
+	UI_SetPlayerDataContext(player1, { hide_condensed_objectives_override = true})
+end
+
+function Mission_SetRestrictions()
+	
+end
+
+
+function ChallengeMission_SetupDiplomacy()
+	
+	--set up beacon tower player
+	Player_SetRelationship(localPlayer, neutralPlayer, R_ALLY)
+	Player_SetRelationship(neutralPlayer, localPlayer, R_ALLY)
+	
+	Player_SetRelationship(allyPlayer, neutralPlayer, R_ALLY)
+	Player_SetRelationship(neutralPlayer, allyPlayer, R_ALLY)
+	
+	Player_SetRelationship(allyPlayer2, neutralPlayer, R_ALLY)
+	Player_SetRelationship(neutralPlayer, allyPlayer2, R_ALLY)
+	
+	
+	--set up south wall player
+	Player_SetRelationship(localPlayer, neutralPlayer2, R_ALLY)
+	Player_SetRelationship(neutralPlayer2, localPlayer, R_ENEMY)--this is so the player can't go through the south reinforcement gate
+	
+	Player_SetRelationship(allyPlayer, neutralPlayer2, R_ALLY)
+	Player_SetRelationship(neutralPlayer2, allyPlayer, R_ALLY)
+	
+	Player_SetRelationship(allyPlayer2, neutralPlayer2, R_ALLY)
+	Player_SetRelationship(neutralPlayer2, allyPlayer2, R_ALLY)
+end
+
+function Mission_PreInit()
+	
+	Rule_AddGlobalEvent(HC_Towton_OnDestruction, GE_EntityKilled)
+	Rule_AddGlobalEvent(HC_Towton_OnDamaged, GE_DamageReceived)
+	Rule_AddGlobalEvent(HC_Towton_OnConstructionComplete, GE_ConstructionComplete)
+	
+end
+
+function Mission_Preset()
+	
+	ChallengeMission_SetupDiplomacy()
+	
+end
+
+
+
+function Mission_Start()
+	
+	-- Initialize Objectives 
+	HC_Towton_InitObjectives()
+	
+
+	missionStartTime = World_GetGameTime()
+	Rule_AddInterval(HC_Towton_Update, 0.25)
+	Rule_AddInterval(HC_Towton_UpdateObjectiveUI, 0.5)
+	
+	
+	-- Set starting resources
+	Player_SetResource(localPlayer, RT_Food, 500)		
+	Player_SetResource(localPlayer, RT_Wood, 500)
+	Player_SetResource(localPlayer, RT_Gold, 200)
+	Player_SetResource(localPlayer, RT_Stone, 150)
+	--FOW_RevealAll()
+	
+	Player_SetResource(enemyPlayer, RT_Wood, 600)
+	
+	--remove pop cap for enemy
+	UI_SetPlayerDataContext(enemyPlayer, { PopulationCapOn = false })
+	Player_SetMaxPopulation(enemyPlayer, CT_Personnel, 999)
+	
+	--set enemy stone walls to be invulnerable
+	EGroup_SetInvulnerable(eg_EnemyWalls, true, -1)
+	
+	--set landmarks to be rebuildable
+	Player_SetStateModelBool(localPlayer, "disable_landmark_rebuild", false)
+	
+	
+	HC_Towton_SetProduction()
+	
+	HC_Towton_InitObjectiveUI()
+	
+	HC_Towton_InitEnemyWaves()
+	
+	HC_Towton_InitTowns()
+	
+	Rule_AddInterval(HC_Towton_HiddenVillagers, 0.5)
+	
+	Rule_AddInterval(HC_Towton_RevealNorthBeacon, 0.5)
+	Rule_AddInterval(HC_Towton_RevealSouthBeacon, 0.5)
+	
+	Rule_AddInterval(HC_Towton_UpdateEnemyWood, 30)
+	
+	HC_Towton_InitStartingScouts()
+	
+end
+
+function GetRecipe()
+	
+	local recipe = {
+		
+		introNIS = EVENTS.Camera_Intro,
+		
+		audioSettings = {
+			campaignName = "lan",
+			missionName = "rts_towton",
+		},	
+		
+		locations = {
+		},  -- end of LOCATIONS table
+		
+		--
+		-- Modules
+		--
+		modules = {
+		},
+
+		onWin = {
+		},
+		
+		onLose = {
+		},
+	}
+	
+	return recipe
+end
+
+function HC_Towton_SetProduction()
+	
+	
+	Player_CompleteUpgrade(localPlayer, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_FELL_RATE_1)
+	Player_CompleteUpgrade(localPlayer, UPG.LANCASTER.UPGRADE_SYNCHRONIZEDSHOT_LAN)
+	
+	Player_SetEntityProductionAvailability(localPlayer, EBP.LANCASTER.BUILDING_DEFENSE_PALISADE_LAN, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.LANCASTER.BUILDING_DEFENSE_WALL_LAN, ITEM_REMOVED)
+	
+	Player_CompleteUpgrade(allyPlayer, UPG.LANCASTER.UPGRADE_SHIPOFTHECROWN_LAN)
+	
+	--allow enemy to build rams
+	Player_CompleteUpgrade(enemyPlayer, UPG.COMMON.UPGRADE_SIEGE_ENGINEERS)
+	
+end
+
+function HC_Towton_Update()
+	
+	missionTime = World_GetGameTime() - missionStartTime
+	
+	--check for conqueror mode activation
+	if(conquerorModeActivated == false and conquerorModeFailed == false and outerHousesLost > 0) then
+		conquerorModeFailed = true
+		if Objective_IsStarted(OBJ_Conqueror) then
+			Sound_Play2D(MUS_STING_NEGATIVE)
+			Objective_Fail(OBJ_Conqueror, false, false)
+			Objective_Show(OBJ_Conqueror, false, false)
+		end
+	end
+	if(missionTime > (60 * 5) + 30) then
+		if(conquerorModeActivated == false and conquerorModeFailed == false) then
+			conquerorModeActivated = true
+			--inform game code that the conqueror mode was activated during the mission
+			Game_StoreTableData("conquerorMode", {activated = true})
+			
+			--spawn an enemy leader to overlook the player's base
+			sg_temporaryLeader = SGroup_CreateIfNotFound("sg_temporaryLeader")
+			local sbp_king = SBP.ENGLISH.UNIT_ABBEY_KING_2
+			UnitEntry_DeploySquads(enemyPlayer, sg_temporaryLeader, {sbp = sbp_king, numSquads = 1 }, mkr_eastScoutSpawn)
+			SGroup_SetInvulnerable(sg_temporaryLeader, true, 20)
+			SGroup_SetTargetingType(sg_temporaryLeader, Targeting_None)
+			Cmd_Move(sg_temporaryLeader, mkr_eastCliffPath3, true, false, mkr_eastCliffVision)
+			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_eastCliffPath3), 20, 20)
+			Rule_AddOneShot(HC_Towton_RetreatLeader, 15)
+			
+			Util_StartIntel(EVENTS.Conqueror_Unlock)
+			EventCues_CallToAction("$11266822", CTA_ALARM, nil, nil, mkr_eastCliffPath3, 30, "icons/cta/illustrations/alarm")
+			Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_high")
+			if Objective_IsStarted(OBJ_Conqueror) then
+				Objective_Complete(OBJ_Conqueror, true, true)
+				Objective_Show(OBJ_Conqueror, false, false)
+			end
+			--start conqueror medal objective
+			if(Objective_IsStarted(OBJ_GoldMedal)) then
+				Objective_Complete(OBJ_GoldMedal, false, false)
+				Objective_Show(OBJ_GoldMedal, false, false)
+				
+				Objective_Register(OBJ_ConquerorMedal)
+				Objective_Start(OBJ_ConquerorMedal)
+			end
+		end
+		if (Objective_IsStarted(OBJ_InitialAttacks) and initialAttacksCompleted == false) then
+			Objective_Complete(OBJ_InitialAttacks, false, false)
+			Objective_Show(OBJ_InitialAttacks, false, false)
+			--remove initial minimap blips
+			if(initialAttackBlipNW ~= nil) then
+				UI_DeleteMinimapBlip(initialAttackBlipNW)
+			end
+			if(initialAttackBlipNE ~= nil) then
+				UI_DeleteMinimapBlip(initialAttackBlipNE)
+			end
+			if(initialAttackBlipSW ~= nil) then
+				UI_DeleteMinimapBlip(initialAttackBlipSW)
+			end
+			if(initialAttackBlipSE ~= nil) then
+				UI_DeleteMinimapBlip(initialAttackBlipSE)
+			end
+			initialAttacksCompleted = true
+		end
+	end
+	
+	--start age up hint
+	if(missionTime > (60 * 7) and ageUpHintStarted == false and ageUpHintCompleted == false) then
+		HC_Towton_UpdateAgeUpHint()
+	end
+	--start production hint
+	if(missionTime > (60 * 8) and productionHintStarted == false and productionHintCompleted == false) then
+		HC_Towton_UpdateProductionHint()
+	end
+	
+	
+	--start each new attack phase at the next town
+	if(currentAttackPhase == 0) then
+		if(missionTime > phase1StartTime) then
+			HC_Towton_BeginNewPhase(1)
+			currentAttackPhase = 1
+		end
+	end
+	if(currentAttackPhase == 1) then
+		if(missionTime > phase2StartTime) then
+			HC_Towton_BeginNewPhase(2)
+			currentAttackPhase = 2
+			--set previous manor as targetable
+			if(EGroup_CountSpawned(townDataTable[4].manor) > 0) then
+				EGroup_SetTargetingType(townDataTable[4].manor, Targeting_Automatic)
+			end
+		end
+	end
+	if(currentAttackPhase == 2) then
+		if(missionTime > phase3StartTime) then
+			HC_Towton_BeginNewPhase(3)
+			currentAttackPhase = 3
+		end
+		--set previous manor as targetable
+		if(EGroup_CountSpawned(townDataTable[3].manor) > 0) then
+			EGroup_SetTargetingType(townDataTable[3].manor, Targeting_Automatic)
+		end
+	end
+	if(currentAttackPhase == 3) then
+		if(missionTime > phase4StartTime) then
+			HC_Towton_BeginNewPhase(4)
+			currentAttackPhase = 4
+		end
+		--set previous manor as targetable
+		if(EGroup_CountSpawned(townDataTable[2].manor) > 0) then
+			EGroup_SetTargetingType(townDataTable[2].manor, Targeting_Automatic)
+		end
+	end
+	if(currentAttackPhase == 4) then
+		if(missionTime > phase5StartTime) then
+			if(Objective_IsStarted(SOBJ_AttackPhaseNE)) then
+				Objective_Complete(SOBJ_AttackPhaseNE, true, true)
+				Objective_Show(SOBJ_AttackPhaseNE, false, false)
+				--remove timer from victory objective
+				Objective_StopTimer(OBJ_Victory)
+			end
+			currentAttackPhase = 5
+			--set previous manor as targetable
+			if(EGroup_CountSpawned(townDataTable[1].manor) > 0) then
+				EGroup_SetTargetingType(townDataTable[1].manor, Targeting_Automatic)
+			end
+		end
+	end
+	
+	--light beacons and call in reinforcements when each phase ends
+	if(attackPhase1Started == true) then
+		if(missionTime > phase1StartTime + (5 * 60)) then
+			HC_Towton_LightBeacon(4)
+			HC_Towton_EndOldPhase(1)
+		end
+	end
+	if(attackPhase2Started == true) then
+		if(missionTime > phase2StartTime + (5 * 60)) then
+			HC_Towton_LightBeacon(3)
+			HC_Towton_EndOldPhase(2)
+		end
+	end
+	if(attackPhase3Started == true) then
+		if(missionTime > phase3StartTime + (5 * 60)) then
+			HC_Towton_LightBeacon(2)
+			HC_Towton_EndOldPhase(3)
+		end
+	end
+	if(attackPhase4Started == true) then
+		if(missionTime > phase4StartTime + (4 * 60)) then
+			HC_Towton_LightBeacon(1)
+			HC_Towton_EndOldPhase(4)
+		end
+	end
+	if(finalWaveStarted == true) then
+		if(SGroup_CountSpawned(sg_finalWaveGroup) == 0) then
+			-- Set victory objective to complete
+			Objective_Complete(OBJ_Victory, false, true)
+			-- After a short delay end the mission.
+			Rule_AddOneShot(HC_Towton_EndChallenge, 0)
+			Rule_RemoveMe()
+		end
+	end
+	
+	--extra attack with trebuchet from the high ground
+	if(trebuchetAttackStarted == false) then
+		if(missionTime > (16 * 60) and conquerorModeActivated == true) then
+			
+			sg_highgroundTreb = SGroup_CreateIfNotFound("sg_highgroundTreb")
+			local sbp_treb = SBP.ENGLISH.UNIT_TREBUCHET_4_CW_ENG
+			UnitEntry_DeploySquads(enemyPlayer, sg_highgroundTreb, {sbp = sbp_treb, numSquads = 1 }, mkr_eastSpawn0)
+			
+			Cmd_Move(sg_highgroundTreb, mkr_eastCliffPath1, true)
+			Cmd_Move(sg_highgroundTreb, mkr_eastCliffPath2, true)
+			Cmd_Move(sg_highgroundTreb, mkr_eastCliffPath3, true)
+			Cmd_AttackMove(sg_highgroundTreb, mkr_eastCliffPath4, true)
+			
+			FOW_PlayerRevealArea(enemyPlayer, Util_GetPosition(mkr_eastCliffVision), 40, -1)
+			Rule_AddInterval(HC_Towton_RevealTrebuchet, 1)
+			
+			trebuchetAttackStarted = true
+		end
+	end
+	
+	
+	--check for failure condition
+	if (EGroup_CountSpawned(eg_landmark) > 0) then
+		if (EGroup_GetTotalHealth(eg_landmark) == 0) then
+			Util_StartIntel(EVENTS.Defeat)
+			-- Set victory objective to failed
+			Objective_Fail(SOBJ_Defend, false, true)
+			Objective_Fail(OBJ_Victory, false, true)
+			Rule_AddOneShot(Mission_Fail, 0)
+			Rule_RemoveMe()
+		end
+	end
+	
+end
+
+function HC_Towton_UpdateAgeUpHint()
+	
+	--check for hint objectives
+	if(ageUpHintCompleted == false) then
+		if(missionTime > (60 * 7) and ageUpHintStarted == false) then
+			if(Player_GetCurrentAge(localPlayer) < 3) then
+				eg_playerLandmarks = Player_GetEntitiesFromType(localPlayer, "landmark")
+				EGroup_Filter(eg_playerLandmarks, "town_center", FILTER_REMOVE) --remove TC
+				EGroup_RemoveGroup(eg_playerLandmarks, eg_landmark) --remove starting landmark
+				local age3LandmarkCount = EGroup_CountSpawned(eg_playerLandmarks)
+				--start hint only if the player hasn't placed the castle age landmark yet
+				if(age3LandmarkCount < 1) then
+					Objective_Start(OBJ_AgeUpHint)
+					ageUpHintStarted = true
+				else
+					ageUpHintCompleted = true
+				end
+			else
+				ageUpHintStarted = true
+			end
+		end
+		if(ageUpHintStarted == true) then
+			eg_playerLandmarks = Player_GetEntitiesFromType(localPlayer, "landmark")
+			EGroup_Filter(eg_playerLandmarks, "town_center", FILTER_REMOVE) --remove TC
+			EGroup_RemoveGroup(eg_playerLandmarks, eg_landmark) --remove starting landmark
+			EGroup_FilterUnderConstruction(eg_playerLandmarks, FILTER_REMOVE)
+			local age3LandmarkCount = EGroup_CountSpawned(eg_playerLandmarks)
+			--check if the age 3 landmark has been completed or the player has advanced to the 3rd age
+			if(age3LandmarkCount == 1 or Player_GetCurrentAge(localPlayer) >= 3) then
+				Objective_Complete(OBJ_AgeUpHint, false, false)
+				Objective_Show(OBJ_AgeUpHint, false, false)
+				ageUpHintCompleted = true
+			end
+		end
+	end
+end
+
+function HC_Towton_UpdateProductionHint()
+	
+	--production buildings hint
+	if(productionHintCompleted == false) then
+		if(missionTime > (60 * 8) and productionHintStarted == false) then
+			eg_playerProduction = Player_GetEntitiesFromType(localPlayer, "military_production_building")
+			EGroup_FilterUnderConstruction(eg_playerProduction, FILTER_REMOVE)
+			local productionCount = EGroup_CountSpawned(eg_playerProduction)
+			if(productionCount < 4) then
+				Objective_Start(OBJ_ProductionHint)
+				productionHintStarted = true
+			else
+				productionHintCompleted = true
+			end
+		end
+		if(productionHintStarted == true) then
+			eg_playerProduction = Player_GetEntitiesFromType(localPlayer, "military_production_building")
+			EGroup_FilterUnderConstruction(eg_playerProduction, FILTER_REMOVE)
+			local productionCount = EGroup_CountSpawned(eg_playerProduction)
+			if(productionCount >= 4) then
+				Objective_Complete(OBJ_ProductionHint, false, false)
+				Objective_Show(OBJ_ProductionHint, false, false)
+				productionHintCompleted = true
+			end
+		end
+	end
+end
+
+function HC_Towton_RevealTrebuchet()
+	--reveal high ground when trebuchet is attacking
+	if(SGroup_IsDoingAttack(sg_highgroundTreb, ANY, 15) == true) then
+		FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_eastCliffPath3), 20, 5)
+	end
+	
+end
+
+function HC_Towton_UpdateEnemyWood()
+	--periodically refresh the enemy wood resources to allow them to build rams (but not too many rams)
+	--the enemy may have many armies in play, but we still want to limit the number of rams that can be built at once
+	Player_SetResource(enemyPlayer, RT_Wood, 600)
+end
+
+function HC_Towton_HiddenVillagers()
+	--spawn villagers when the player discovers the hidden camp
+	sg_unitsNearVillagers = SGroup_CreateIfNotFound("sg_unitsNearVillagers")
+	Player_GetAllSquadsNearMarker(localPlayer, sg_unitsNearVillagers, mkr_reinforcement_Vills_Area, 25)
+	if(SGroup_CountSpawned(sg_unitsNearVillagers) > 0) then
+		local sbp_villager = SBP.LANCASTER.UNIT_VILLAGER_1_LAN
+		UnitEntry_DeploySquads(localPlayer, sg_northFortUnits, {sbp = sbp_villager, numSquads = 8 }, mkr_reinforcement_Vills_spawn)
+		Rule_RemoveMe()
+	end
+end
+
+function HC_Towton_RevealNorthBeacon()
+	--reveal the northern beacon when units are nearby on the opposite bank of the river
+	sg_unitsNearRiver = SGroup_CreateIfNotFound("sg_unitsNearRiver")
+	Player_GetAllSquadsNearMarker(localPlayer, sg_unitsNearRiver, mkr_river_archers, 12)
+	if(SGroup_CountSpawned(sg_unitsNearRiver) > 0) then
+		FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_beaconN), 15, 5)
+	end
+end
+
+function HC_Towton_RevealSouthBeacon()
+	--reveal the southern beacon when units are nearby on the cliffs
+	sg_unitsNearCliff = SGroup_CreateIfNotFound("sg_unitsNearCliff")
+	Player_GetAllSquadsNearMarker(localPlayer, sg_unitsNearCliff, mkr_cliff_archers, 8)
+	if(SGroup_CountSpawned(sg_unitsNearCliff) > 0) then
+		FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_beaconS), 10, 5)
+		
+		--add reticule to beacon
+		local bp_reticule = BP_GetReticuleBlueprint("marquee")
+		beaconSouthReticuleID = UI_ModalVisual_CreateReticule(bp_reticule, 5)
+		UI_ModalVisual_SetPosition(beaconSouthReticuleID, Util_GetPosition(townDataTable[6].beaconMkr))
+		
+		--remove this function once becaon has been revealed for the first time
+		Rule_RemoveMe()
+	end
+end
+
+function HC_Towton_InitStartingScouts()
+	--adds enemy scouts which have to be killed as the first step in activating conqueror mode
+	
+	sg_firstScoutsW = SGroup_CreateIfNotFound("sg_firstScoutsW")
+	sg_firstScoutsE = SGroup_CreateIfNotFound("sg_firstScoutsE")
+	local sbp_scout = SBP.ENGLISH.UNIT_SCOUT_1_ENG
+	
+	UnitEntry_DeploySquads(enemyPlayer, sg_firstScoutsW, {sbp = sbp_scout, numSquads = 1 }, mkr_westScoutSpawn)
+	UnitEntry_DeploySquads(enemyPlayer, sg_firstScoutsE, {sbp = sbp_scout, numSquads = 1 }, mkr_eastScoutSpawn)
+	
+	Cmd_Move(sg_firstScoutsW, mkr_westScoutDest, false, false, mkr_path3_7)
+	Cmd_Move(sg_firstScoutsE, mkr_eastScoutDest, false, false, mkr_eastCliffVision)
+	
+	Cmd_HoldPosition(sg_firstScoutsE, mkr_eastScoutDest, true)
+	
+	FOW_RevealSGroup(sg_firstScoutsW, 20, 74)
+	FOW_RevealSGroup(sg_firstScoutsE, 20, 74)
+	
+	Rule_AddInterval(HC_Towton_BlipStartingScouts, 7)
+	Rule_AddInterval(HC_Towton_RetreatStartingScouts, 71)
+	Rule_AddInterval(HC_Towton_RetreatStartingScouts2, 74)--this is called just before the first intro wave is set to spawn
+end
+
+function HC_Towton_RetreatStartingScouts()
+	--move scouts back to enemy bases
+	if(SGroup_CountSpawned(sg_firstScoutsW) > 0) then
+		Cmd_Move(sg_firstScoutsW, mkr_path3_1, false, true)
+	end
+	if(SGroup_CountSpawned(sg_firstScoutsE) > 0) then
+		Cmd_Move(sg_firstScoutsE, mkr_eastCliffPath1, false, true)
+	end
+	
+end
+
+function HC_Towton_RetreatStartingScouts2()
+	--check for conqueror mode failure
+	if(SGroup_CountSpawned(sg_firstScoutsW) > 0 or SGroup_CountSpawned(sg_firstScoutsE) > 0) then
+		conquerorModeFailed = true
+		if Objective_IsStarted(OBJ_Conqueror) then
+			Sound_Play2D(MUS_STING_NEGATIVE)
+			Objective_Fail(OBJ_Conqueror, false, false)
+			Objective_Show(OBJ_Conqueror, false, false)
+		end
+	end
+end
+
+function HC_Towton_BlipStartingScouts()
+	
+	if(SGroup_CountSpawned(sg_firstScoutsW) > 0) then
+		UI_CreateMinimapBlip(Util_GetPosition(sg_firstScoutsW), 1, "threat_group")
+	end
+	if(SGroup_CountSpawned(sg_firstScoutsE) > 0) then
+		UI_CreateMinimapBlip(Util_GetPosition(sg_firstScoutsE), 1, "threat_group")
+	end
+	
+	if(SGroup_CountSpawned(sg_firstScoutsW) == 0 and SGroup_CountSpawned(sg_firstScoutsE) == 0) then
+		Rule_RemoveMe()
+	end
+end
+
+function HC_Towton_RetreatLeader()
+	--retreat enemy leader
+	if(SGroup_CountSpawned(sg_temporaryLeader) > 0) then
+		Cmd_Move(sg_temporaryLeader, mkr_eastCliffPath3, false, false)
+	end
+	Rule_AddOneShot(HC_Towton_RetreatLeader2, 5)
+end
+
+function HC_Towton_RetreatLeader2()
+	--despawn the enemy leader
+	if(SGroup_CountSpawned(sg_temporaryLeader) > 0) then
+		Cmd_Move(sg_temporaryLeader, mkr_eastCliffPath3, false, true)
+	end
+end
+
+function HC_Towton_SpawnEnemyUnits()
+	
+	sg_northFortUnits = SGroup_CreateIfNotFound("sg_northFortUnits")
+	
+	local sbp_archer2 = SBP.ENGLISH.UNIT_ARCHER_2_ENG
+	local sbp_horseman2 = SBP.ENGLISH.UNIT_HORSEMAN_2_ENG
+	local sbp_mangonel = SBP.ENGLISH.UNIT_MANGONEL_3_ENG
+	
+	UnitEntry_DeploySquads(enemyPlayer, sg_northFortUnits, {sbp = sbp_mangonel, numSquads = 1 }, mkr_northFort4)
+	Cmd_AttackMove(sg_northFortUnits, mkr_northFort4, true)
+	
+	UnitEntry_DeploySquads(enemyPlayer, sg_northFortUnits, {sbp = sbp_archer2, numSquads = 1 }, mkr_northFort1)
+	UnitEntry_DeploySquads(enemyPlayer, sg_northFortUnits, {sbp = sbp_archer2, numSquads = 2 }, mkr_northFort2)
+	UnitEntry_DeploySquads(enemyPlayer, sg_northFortUnits, {sbp = sbp_archer2, numSquads = 1 }, mkr_northFort3)
+	--
+	sg_eastCampUnits = SGroup_CreateIfNotFound("sg_eastCampUnits")
+	UnitEntry_DeploySquads(enemyPlayer, sg_eastCampUnits, {sbp = sbp_horseman2, numSquads = 5 }, mkr_eastCamp1)
+	--
+	sg_southFortUnits = SGroup_CreateIfNotFound("sg_southFortUnits")
+	UnitEntry_DeploySquads(enemyPlayer, sg_southFortUnits, {sbp = sbp_archer2, numSquads = 4 }, mkr_southFort1)
+	UnitEntry_DeploySquads(enemyPlayer, sg_southFortUnits, {sbp = sbp_archer2, numSquads = 2 }, mkr_southFort2)
+end
+
+function HC_Towton_SpawnPlayerUnits()
+	
+	sg_playerUnits1 = SGroup_CreateIfNotFound("sg_playerUnits1")
+	sg_playerUnits2 = SGroup_CreateIfNotFound("sg_playerUnits2")
+	sg_playerUnits3 = SGroup_CreateIfNotFound("sg_playerUnits3")
+	
+	local sbp_yeoman_lan = SBP.LANCASTER.UNIT_YEOMAN_3_LAN
+	UnitEntry_DeploySquads(localPlayer, sg_playerUnits1, {sbp = sbp_yeoman_lan, numSquads = 13 }, mkr_PlayerSpawn1)
+	
+	local sbp_hobelar_lan = SBP.LANCASTER.UNIT_HOBELAR_3_LAN
+	UnitEntry_DeploySquads(localPlayer, sg_playerUnits2, {sbp = sbp_hobelar_lan, numSquads = 3 }, mkr_PlayerSpawn2)
+	
+	local sbp_horseman_lan = SBP.LANCASTER.UNIT_MOUNTED_MAN_AT_ARM_2_LAN
+	UnitEntry_DeploySquads(localPlayer, sg_playerUnits2, {sbp = sbp_horseman_lan, numSquads = 5 }, mkr_PlayerSpawn2)
+	
+	local sbp_scout_lan = SBP.LANCASTER.UNIT_SCOUT_1_LAN
+	UnitEntry_DeploySquads(localPlayer, sg_playerUnits3, {sbp = sbp_scout_lan, numSquads = 2 }, mkr_PlayerSpawn3)
+	
+	Cmd_FormationMove(sg_playerUnits1, mkr_PlayerSpawn1, true, false, mkr_townE)
+	Cmd_FormationMove(sg_playerUnits2, mkr_PlayerSpawn2, true, false, mkr_townW)
+	
+	
+	local sbp_villager_lan = SBP.LANCASTER.UNIT_VILLAGER_1_LAN
+	
+	sg_playerVillsBerries1 = SGroup_CreateIfNotFound("sg_playerVillsBerries1")
+	UnitEntry_DeploySquads(localPlayer, sg_playerVillsBerries1, {sbp = sbp_villager_lan, numSquads = 4 }, mkr_PlayerVillsBerries1)
+	
+	
+	
+	sg_playerVillsFarms1 = SGroup_CreateIfNotFound("sg_playerVillsFarms1")
+	UnitEntry_DeploySquads(localPlayer, sg_playerVillsFarms1, {sbp = sbp_villager_lan, numSquads = 4 }, mkr_PlayerVillsFarms1)
+	AssignVillagersToSheep(sg_playerVillsFarms1)
+	
+	sg_playerVillsGold1 = SGroup_CreateIfNotFound("sg_playerVillsGold1")
+	UnitEntry_DeploySquads(localPlayer, sg_playerVillsGold1, {sbp = sbp_villager_lan, numSquads = 3 }, mkr_PlayerVillsGold1)
+	AssignVillagersToGold(sg_playerVillsGold1)
+	
+	sg_playerVillsGold2 = SGroup_CreateIfNotFound("sg_playerVillsGold2")
+	UnitEntry_DeploySquads(localPlayer, sg_playerVillsGold2, {sbp = sbp_villager_lan, numSquads = 1 }, mkr_PlayerVillsGold2)
+	AssignVillagersToGold(sg_playerVillsGold2)
+	
+	sg_playerVillsStone1 = SGroup_CreateIfNotFound("sg_playerVillsStone1")
+	UnitEntry_DeploySquads(localPlayer, sg_playerVillsStone1, {sbp = sbp_villager_lan, numSquads = 3 }, mkr_PlayerVillsStone1)
+	AssignVillagersToStone(sg_playerVillsStone1)
+	
+	
+	--upgrade outposts as a 2nd line of defense
+	if(EGroup_CountSpawned(eg_westernOutposts) > 0) then
+		EGroup_CompleteUpgrade(eg_westernOutposts, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+		EGroup_CompleteUpgrade(eg_westernOutposts, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+	end
+	if(EGroup_CountSpawned(eg_easternOutposts) > 0) then
+		EGroup_CompleteUpgrade(eg_easternOutposts, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+		EGroup_CompleteUpgrade(eg_easternOutposts, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+	end
+	if(EGroup_CountSpawned(eg_centerOutposts) > 0) then
+		EGroup_CompleteUpgrade(eg_centerOutposts, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+		EGroup_CompleteUpgrade(eg_centerOutposts, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+	end
+	
+end
+
+function HC_Towton_SpawnGaiaUnits()
+	
+	sg_gaia_sheep = SGroup_CreateIfNotFound("sg_gaia_sheep")
+	local sbp_sheep = SBP.GAIA.GAIA_HERDABLE_SHEEP
+	
+end
+
+-- An entity is destroyed
+function HC_Towton_OnDestruction(context)
+	
+	if context.victim ~= nil then
+		if(Entity_GetBlueprint(context.victim) == EBP.LANCASTER.BUILDING_MANOR_LAN) then
+			if context.victimOwner == allyPlayer then
+				HC_Towton_ManorDestroyed(Util_GetPosition(context.victim))
+			end
+		end
+		
+		
+		
+		--check if entity is not a squad and is owned by player 3
+		if Entity_IsOfType(context.victim,"building") then
+			
+			--check whether either of the walls around the player base has been breached
+			if (Entity_IsOfType(context.victim,"stone_gate") or Entity_IsOfType(context.victim,"stone_wall")) then
+				if(Util_GetDistance(mkr_townW, context.victim) < Util_GetDistance(mkr_townE, context.victim)) then
+					westWallBreached = true
+				else
+					eastWallBreached = true
+				end
+			end
+			
+			if context.victimOwner == allyPlayer then
+				
+				--increase count of allied buildings lost (not including the outer house)
+				if(Util_GetDistance(mkr_townNE, context.victim) < 40) then
+					alliedBuildingsLost = alliedBuildingsLost + 1
+				end
+				if(Util_GetDistance(mkr_townSE, context.victim) < 40) then
+					alliedBuildingsLost = alliedBuildingsLost + 1
+				end
+				if(Util_GetDistance(mkr_townNW, context.victim) < 40) then
+					alliedBuildingsLost = alliedBuildingsLost + 1
+				end
+				if(Util_GetDistance(mkr_townSW, context.victim) < 40) then
+					alliedBuildingsLost = alliedBuildingsLost + 1
+				end
+				
+				--update targetability of manors based on number of allied buildings left (otherwise manors are targeted too soon)
+				if(attackPhase4Started == true) then
+					if(EGroup_CountSpawned(eg_townNE) < 5 and EGroup_CountSpawned(townDataTable[1].manor) > 0) then
+						EGroup_SetTargetingType(townDataTable[1].manor, Targeting_Automatic)
+					end
+				end
+				if(attackPhase3Started == true) then
+					if(EGroup_CountSpawned(eg_townSE) < 5 and EGroup_CountSpawned(townDataTable[2].manor) > 0) then
+						EGroup_SetTargetingType(townDataTable[2].manor, Targeting_Automatic)
+					end
+				end
+				if(attackPhase2Started == true) then
+					if(EGroup_CountSpawned(eg_townSW) < 5 and EGroup_CountSpawned(townDataTable[3].manor) > 0) then
+						EGroup_SetTargetingType(townDataTable[3].manor, Targeting_Automatic)
+					end
+				end
+				if(attackPhase1Started == true) then
+					if(EGroup_CountSpawned(eg_townNW) < 5 and EGroup_CountSpawned(townDataTable[4].manor) > 0) then
+						EGroup_SetTargetingType(townDataTable[4].manor, Targeting_Automatic)
+					end
+				end
+				
+				--upgrade outpost in town where building was lost if conqueror mode is not active
+				if(Util_GetDistance(mkr_townNE, context.victim) < 70) then
+					outerHousesLost = outerHousesLost + 1
+					if(conquerorModeActivated == false) then
+						if(EGroup_CountSpawned(eg_outpostNE) > 0) then
+							if(EGroup_HasUpgrade(eg_outpostNE, UPG.COMMON.UPGRADE_OUTPOST_STONE, ALL) == false) then
+								EGroup_CompleteUpgrade(eg_outpostNE, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+								EGroup_CompleteUpgrade(eg_outpostNE, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+							end
+						end
+					end
+				end
+				if(Util_GetDistance(mkr_townSE, context.victim) < 70) then
+					outerHousesLost = outerHousesLost + 1
+					if(conquerorModeActivated == false) then
+						if(EGroup_CountSpawned(eg_outpostSE) > 0) then
+							if(EGroup_HasUpgrade(eg_outpostSE, UPG.COMMON.UPGRADE_OUTPOST_STONE, ALL) == false) then
+								EGroup_CompleteUpgrade(eg_outpostSE, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+								EGroup_CompleteUpgrade(eg_outpostSE, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+							end
+						end
+					end
+				end
+				if(Util_GetDistance(mkr_townNW, context.victim) < 70) then
+					outerHousesLost = outerHousesLost + 1
+					if(conquerorModeActivated == false) then
+						if(EGroup_CountSpawned(eg_outpostNW) > 0) then
+							if(EGroup_HasUpgrade(eg_outpostNW, UPG.COMMON.UPGRADE_OUTPOST_STONE, ALL) == false) then
+								--upgrade both outposts here with arrowslits but not stone
+								EGroup_CompleteUpgrade(eg_outpostNW, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+							end
+						end
+					end
+				end
+				if(Util_GetDistance(mkr_townSW, context.victim) < 70) then
+					outerHousesLost = outerHousesLost + 1
+					if(conquerorModeActivated == false) then
+						if(EGroup_CountSpawned(eg_outpostSW) > 0) then
+							if(EGroup_HasUpgrade(eg_outpostSW, UPG.COMMON.UPGRADE_OUTPOST_STONE, ALL) == false) then
+								EGroup_CompleteUpgrade(eg_outpostSW, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+								EGroup_CompleteUpgrade(eg_outpostSW, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+							end
+						end
+					end
+				end
+				
+				
+				--update medal based on number of allied buildings destroyed
+				if(conquerorModeActivated == false) then
+					if(alliedBuildingsLost > 5 and goldMedalFailed == false) then
+						if(Objective_IsStarted(OBJ_GoldMedal)) then
+							Sound_Play2D(MUS_STING_NEGATIVE)
+							goldMedalFailed = true
+							Objective_Fail(OBJ_GoldMedal, true, true)
+							Objective_Show(OBJ_GoldMedal, false, false)
+							
+							Objective_Register(OBJ_SilverMedal)
+							Objective_Start(OBJ_SilverMedal)
+						end
+					end
+					if(alliedBuildingsLost > 20 and silverMedalFailed == false) then
+						if(Objective_IsStarted(OBJ_SilverMedal)) then
+							Sound_Play2D(MUS_STING_NEGATIVE)
+							silverMedalFailed = true
+							Objective_Fail(OBJ_SilverMedal, true, true)
+							Objective_Show(OBJ_SilverMedal, false, false)
+							
+							Objective_Register(OBJ_BronzeMedal)
+							Objective_Start(OBJ_BronzeMedal)
+						end
+					end
+				end
+				
+			end
+		end
+	end
+end
+
+-- An entity is damaged
+function HC_Towton_OnDamaged(context)
+	if context.victim ~= nil then
+		if(context.attacker ~= nil) then
+			--make sure attacker is a squad
+			if(Entity_IsBuilding(context.attacker) == false) then
+				local attackerSquad = Entity_GetSquad(context.attacker)
+				if(attackerSquad ~= nil) then
+					--only activate beacons if the player deals the damage
+					if(Squad_IsOwnedByPlayer(attackerSquad, localPlayer) == true) then
+						--light the town's beacon
+						if(EGroup_ContainsEntity(eg_beaconNE, context.victim) and attackPhase4Started) then
+							HC_Towton_LightBeacon(1)
+							HC_Towton_EndOldPhase(4)
+						end
+						if(EGroup_ContainsEntity(eg_beaconSE, context.victim) and attackPhase3Started) then
+							HC_Towton_LightBeacon(2)
+							HC_Towton_EndOldPhase(3)
+						end
+						if(EGroup_ContainsEntity(eg_beaconSW, context.victim) and attackPhase2Started) then
+							HC_Towton_LightBeacon(3)
+							HC_Towton_EndOldPhase(2)
+						end
+						if(EGroup_ContainsEntity(eg_beaconNW, context.victim) and attackPhase1Started) then
+							HC_Towton_LightBeacon(4)
+							HC_Towton_EndOldPhase(1)
+						end
+						if(EGroup_ContainsEntity(eg_beaconN, context.victim)) then
+							HC_Towton_LightBeacon(5)
+						end
+						if(EGroup_ContainsEntity(eg_beaconS, context.victim)) then
+							HC_Towton_LightBeacon(6)
+						end
+					end
+				end
+			end
+		end
+	end
+	
+end
+
+function HC_Towton_OnConstructionComplete(context)
+	
+	--check for both hints
+	local buildingOwner = Entity_GetPlayerOwner(context.entity)
+	if buildingOwner == localPlayer then
+		--check age up hint
+		if(ageUpHintCompleted == false) then
+			HC_Towton_UpdateAgeUpHint()
+		end
+		--check production hint
+		if(productionHintCompleted == false) then
+			HC_Towton_UpdateProductionHint()
+		end
+	end
+	
+end
+
+function HC_Towton_EndChallenge()
+	
+	local buildingsRemaining = 40 - alliedBuildingsLost
+	-- Provide completion data to Stats system via Data Store
+	if(conquerorModeActivated == true) then
+		Game_StoreTableData("conqueror", {kpi = buildingsRemaining})
+	else
+		Game_StoreTableData("trial", {kpi = buildingsRemaining})
+	end
+	
+	-- Play dialogue
+	if(conquerorModeActivated == true) then
+		Util_StartIntel(EVENTS.Victory_Conqueror)
+	else
+		Util_StartIntel(EVENTS.Victory)
+	end
+	
+	Mission_Complete()
+	
+end
+
+function HC_Towton_IntroSetup()
+	
+	HC_Towton_SpawnEnemyUnits()
+	HC_Towton_SpawnPlayerUnits()
+	HC_Towton_SpawnGaiaUnits()
+	
+	UnitEntry_DeploySquads(
+		player2,
+		sg_temp,
+		{
+			{ type = "scar_spearman", numSquads = 6, spawn = mkr_intro_raider_spawn },
+		}
+	)
+	
+	sg_intro_raiders = SGroup_CreateIfNotFound("sg_intro_raiders")
+	SGroup_AddGroup(sg_intro_raiders, sg_temp)
+	Cmd_Attack(sg_intro_raiders, eg_intro_house, false)
+
+end
+
+function HC_Towton_IntroTeardown()
+	
+	SGroup_DestroyAllSquads(sg_intro_raiders)
+	SGroup_Destroy(sg_intro_raiders)
+	
+	EGroup_Kill(eg_intro_house)
+	
+end

@@ -1,0 +1,133 @@
+--
+-- Siege of Kiev 1240
+--
+
+function DestroyGate_InitObjectives()
+	
+	OBJ_DestroyGate = {
+		Title = 11176023,
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.Breach_MainGate,
+		--Intel_Complete = EVENTS.Breach_MainGate_Complete,
+		
+		--Start
+		PreStart = function()
+			Music_PlayStinger(STINGER_COMBAT_THREAT)
+		end,
+		
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_DestroyGate, EGroup_GetPosition(eg_main_gate), true, 11176023, true, 10)
+		end,
+		
+		OnStart = function()			
+			Rule_AddInterval(Kiev_CheckGateDamage, 1, {
+					marker = mkr_main_gate, 
+					gate = GATE_MAIN, 
+					module = "main_gate_defend",
+					spawn = mkr_main_gate_spawn, 
+					delay = 15,
+					targets = {
+						mkr_main_attack_1,
+						mkr_main_attack_2,
+						mkr_main_attack_3,
+						mkr_main_attack_4,
+						},
+					})
+		end,
+		
+		IsComplete = function()
+			--Check the count of the main gate's egroup
+			return EGroup_CountSpawned(eg_main_gate_wall) < wall_count_main
+		end,
+		
+		PreComplete = function()
+			--Set the main gate in destroyedGate to true - this is used in tracking of whether to keep spawning defenders
+			destroyedGate[GATE_MAIN] = true
+			
+			--Play a walla on any units near the gate
+			Music_PlayStinger(MUS_STING_TRIUMPHANT)
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_main_gate, 60)
+			Sound_PlayOnSquad(WALLA_CAMP_ENGAGE_LARGE, sg_temp)
+			SGroup_Clear(sg_temp)
+			
+			Kiev_SetupSprawlProxChecking()
+		end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Breach_MainGate_Complete)
+			Rule_AddInterval(ForwardBase_PreStart, 5)
+			
+			Kiev_SpawnFirstGateDefenders()
+			DestroyKiev_AssignGateReferences()
+		end,
+		
+		--Fail
+		IsFailed = function()
+			Player_GetAll(player1, sg_temp)
+			SGroup_Filter(sg_temp, "gaia", FILTER_REMOVE)
+			return SGroup_IsEmpty(sg_temp)
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+			
+		end,
+	}
+	
+	Objective_Register(OBJ_DestroyGate)
+end
+
+function DestroyGate_EntityKilled(context) --Checks to see if the entity killed was the gate and completes the objective
+	if context.victim ~= nil then
+		local victimBP = Entity_GetBlueprint(context.victim)
+		
+		--Is the victim blueprint a Rus gate wall?
+		if victimBP == EBP.RUS.BUILDING_DEFENSE_WALL_GATE_RUS then
+			
+			--Play sound on destroyed gate first before values are changed
+			destroyed_main_gate = destroyed_main_gate or false
+			
+			Player_GetAllSquadsNearMarker(player1, sg_temp, Entity_GetPosition(context.victim), 60)
+			if not destroyed_gate_main then
+				Sound_PlayOnSquad(WALLA_CAMP_ENGAGE_LARGE, sg_temp)
+				destroyed_main_gate = true
+			else
+				if SGroup_CountSpawned(sg_temp) <= 30 then
+					Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sg_temp)
+				elseif SGroup_CountSpawned(sg_temp) <= 60 then
+					Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_temp)
+				else
+					Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE, sg_temp)
+				end
+				
+				Music_PlayStinger(MUS_STING_POSTIVE)
+			end
+			
+			--Check if the gate hasn't been destroyed yet, if it is, trigger some additional logic
+			if not destroyedGate[GATE_MAIN] and EGroup_IsEmpty(eg_main_gate) then
+				Objective_Complete(OBJ_DestroyGate)
+				destroyedGate[GATE_MAIN] = true
+				local destroyed_main_gate = true
+				
+			elseif not destroyedGate[GATE_INDUSTRIAL] and EGroup_IsEmpty(eg_industrial_gate) then
+				destroyedGate[GATE_INDUSTRIAL] = true
+				Kiev_SpawnIndustrialDistrictUnits()
+				
+			elseif not destroyedGate[GATE_OUTER] and EGroup_IsEmpty(eg_outer_gate) then
+				destroyedGate[GATE_OUTER] = true
+				Kiev_SpawnOuterDistrictUnits()
+				
+			elseif not destroyedGate[GATE_INNER] and EGroup_IsEmpty(eg_inner_gate) then
+				destroyedGate[GATE_INNER] = true
+				Kiev_SpawnInnerDistrictUnits()
+				
+			end
+			
+			--Remove this global rule if all of the gates have been destroyed
+			if destroyedGate[GATE_MAIN] and destroyedGate[GATE_INDUSTRIAL] and destroyedGate[GATE_OUTER] and destroyedGate[GATE_INNER] then
+				Rule_RemoveMe()
+			end
+		end
+	end
+end -- Kiev_EntityKilled

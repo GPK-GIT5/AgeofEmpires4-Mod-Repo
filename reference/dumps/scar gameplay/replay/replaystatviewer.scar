@@ -1,0 +1,166 @@
+-----------------------------------------------------------------------
+--
+-- ReplayStatViewer
+--
+-- Scripted UIs to show stats during replay
+-- http://relicwiki/pages/viewpage.action?pageId=642044324#Observer/ReplayHUD-RequirementsandWire-frames
+--
+-- (c) Relic Entertainment 2019
+--
+-----------------------------------------------------------------------
+
+
+-----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+Core_RegisterModule("ReplayStatViewer")
+Core_RegisterModule("XboxReplayStatViewer")
+
+local _statViewerDataContext = { Stats = {}}
+local _dataContextUpdaters = {}
+local _playerDataContextUpdaters = {}
+
+--? @shortdesc Populate stat tabs in the replay stat viewer.
+--? @args dataTemplates: a table of dataTemple names
+--? Supported values:
+--? "PlayerScoreTemplate"
+--? "CurrentResourcesTemplate"
+--? "IncomeTemplate"
+--? "MilitaryTemplate"
+--? "ConquestTrackerTemplate"
+--? "ReligiousTrackerTemplate"
+--? "WonderTrackerTemplate"
+--? e.g.
+--? ReplayStatViewer_PopulateReplayStatTabs({"CurrentResourcesTemplate", "IncomeTemplate"})
+--? @extdesc
+--? Refer the following xaml for template details:
+--? //cardinal/Mainline/assets/cardinal/ui/HUD/Controls/ReplayStatViewer.xaml
+function ReplayStatViewer_PopulateReplayStatTabs(dataTemplates)
+	if UI_IsReplay() then		
+		for i, dataTemplate in pairs(dataTemplates) do
+			local is_template_in_data_context = false
+			for j, data_context in pairs(_statViewerDataContext) do 
+				if data_context.DataTemplate == dataTemplate then  
+					is_template_in_data_context = true
+					break
+				end
+			end
+			if not is_template_in_data_context then
+				table.insert(_statViewerDataContext.Stats, {DataTemplate = dataTemplate})
+			end
+		end
+	end
+end
+
+--? @shortdesc Register a callback fired right before the data contexts are set to all players 
+--? @extdesc In the callback, manually iterate through all players and pass in the necessary data to the scarModel table of each player
+--? @args callback: function with no arugment
+function ReplayStatViewer_RegisterDataContextUpdater(callback)
+	if UI_IsReplay() then
+		table.insert(_dataContextUpdaters, callback)
+	end
+end
+
+--? @shortdesc Register a callback fired right before the data context is set to each player 
+--? @extdesc In the callback, pass in the data for each player
+--? @args callback: function with two arguments (player, scarModel)
+function ReplayStatViewer_RegisterPlayerDataContextUpdater(callback)
+	if UI_IsReplay() then
+		table.insert(_playerDataContextUpdaters, callback)
+	end
+end
+
+
+function ReplayStatViewer_OnInit()
+	if UI_IsReplay() then
+
+		-- TODO: Populate templates based on game modes.
+		-- If we want to insert tempates from game mode file instead, 
+		-- *import this file from the game mode file
+		-- *add a helper to insert templates into _statViewerDataContext.Stats before ReplayStatViewer_Start()
+		-- *call UI_SetDataContext("ReplayStatViewer", _statViewerDataContext) in ReplayStatViewer_UpdatePlayerDataContexts()
+		
+		--ReplayStatViewer_PopulateReplayStatTabs({
+		--"PlayerScoreTemplate",
+		--"CurrentResourcesTemplate",
+		--"IncomeTemplate",
+		--"MilitaryTemplate", 
+		--"ConquestTrackerTemplate", 
+		--"ReligiousTrackerTemplate",
+		--"WonderTrackerTemplate"
+		--})
+	end
+end
+
+function ReplayStatViewer_Start()
+	if UI_IsReplay() then
+		UI_SetDataContext("XboxReplayStatViewer", _statViewerDataContext)
+		ReplayStatViewer_UpdatePlayerDataContexts()
+		Rule_AddInterval(ReplayStatViewer_UpdatePlayerDataContexts, 5.0)
+	end
+end
+
+function ReplayStatViewer_OnGameOver()
+	if UI_IsReplay() then
+		_dataContextUpdaters = {}
+		_playerDataContextUpdaters = {}
+		
+		Rule_Remove(ReplayStatViewer_UpdatePlayerDataContexts)	
+	end
+end
+
+-- Test/sample data
+local function UpdatePlayerDataContext(player, scarModel)
+	-- TODO: Age 0 - I, 1 - II, 2 - III, 3 - IV
+	scarModel.Age = player.index - 1 % 4
+	
+	-- TODO: player score
+	-- xaml: <!--player score--> in ReplayStatViewer.xaml
+	scarModel.PlayerScore_Target = 10000	
+	scarModel.PlayerScore_Current =  player.index * 2000 + 500
+	
+	-- TODO: Conquest
+	-- xaml: <!--capitals and landmarks--> in ReplayStatViewer.xaml	
+	scarModel.Conquest_Target = 5
+	scarModel.Conquest_Current = player.index
+	
+	-- TODO: Religious
+	-- xaml: <!--relics collected--> in ReplayStatViewer.xaml	
+	scarModel.Relics_Target = 5
+	scarModel.Relics_Current =  player.index
+	
+	-- TODO: Wonder	
+	-- xaml: <!--wonder--> in ReplayStatViewer.xaml
+	if player.index == 1 then		
+		scarModel.Wonder_Target = 100 -- in sec
+		scarModel.Wonder_Current = 50 -- in sec	
+	elseif player.index == 2 then		
+		scarModel.Wonder_Target = 100 -- in sec
+		scarModel.Wonder_Current = 0 -- in sec	0 : under construction
+	else		
+		scarModel.Wonder_Target = 0 	-- in sec
+		scarModel.Wonder_Current = -1 	-- in sec	-1 : not constructed
+	end	
+end
+
+function ReplayStatViewer_UpdatePlayerDataContexts()
+
+	for i, dataContextUpdate in pairs(_dataContextUpdaters) do
+		dataContextUpdate()
+	end
+		
+	for i, player in pairs(PLAYERS) do	
+--		UpdatePlayerDataContext(player, player.scarModel)	
+		for j, playerContextUpdate in pairs(_playerDataContextUpdaters) do
+			playerContextUpdate(player, player.scarModel)
+		end
+	end
+	
+	for i, player in pairs(PLAYERS) do
+		UI_SetPlayerDataContext(player.id, player.scarModel)
+	end	
+
+	-- moved here to run periodically, fixes issue with hot reloading and switching to/from other pages like Caster Mode.
+	UI_SetDataContext("ReplayStatViewer", _statViewerDataContext)
+end

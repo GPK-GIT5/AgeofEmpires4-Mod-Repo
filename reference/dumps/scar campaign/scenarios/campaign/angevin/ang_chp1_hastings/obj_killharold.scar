@@ -1,0 +1,744 @@
+--
+-- Hastings 1066 - Kill Harold objective
+--
+
+
+function KillHarold_InitObjectives()	
+
+	OBJ_KillHarold = {
+	
+		Title = "$11181633", -- Defeat King Harold
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.KillHarold_Start,
+		Intel_Complete = EVENTS.KillHarold_Complete,
+		
+		SetupUI = function()
+			if SGroup_CountSpawned(sg_kingharold) >= 1 then
+				hpid_kingharold1 = Objective_AddUIElements(OBJ_KillHarold, sg_kingharold, true, "$11181634", true) -- Kill King Harold
+				Music_LockIntensity(MUSIC_RARE)
+			end
+		end,
+
+		PreStart = function()
+			EGroup_DeSpawn(eg_blockers_harold)
+			KingHarold_PreStart()
+		end,
+		OnStart = function()
+			Rule_AddInterval(KillHarold_CloseInOnHarold, 1)
+		end,
+		
+		IsComplete = function()
+			return  SGroup_CountSpawned(sg_kingharold) == 0
+
+		end,
+		PreComplete = KillHarold_Killed,
+		OnComplete = KillHarold_StartEpilogue,
+		
+		Cheat = function()
+			
+			EGroup_DestroyAllEntities(eg_blockers_phase3)
+			EGroup_DestroyAllEntities(eg_blockers_phase4)
+	
+			SGroup_DestroyAllSquads(sg_shieldwall_a)
+			SGroup_DestroyAllSquads(sg_shieldwall_b)
+			SGroup_DestroyAllSquads(sg_shieldwall_c)
+			
+			SGroup_DestroyAllSquads(sg_saxons_phase2_all)
+			SGroup_DestroyAllSquads(sg_saxons_phase3_all)
+			SGroup_DestroyAllSquads(sg_saxons_phase4_all)
+			SGroup_DestroyAllSquads(sg_saxons_phase5_all)
+			
+			SGroup_SetPlayerOwner(sg_william_left_secondline, player1)
+			SGroup_SetPlayerOwner(sg_william_center_secondline, player1)
+			SGroup_SetPlayerOwner(sg_william_right_secondline, player1)
+			SGroup_SetPlayerOwner(sg_archers, player1)
+			SGroup_SetPlayerOwner(sg_cavalry, player1)
+			
+			Misc_SetSGroupSelectable(sg_william_left_secondline, true)
+			Misc_SetSGroupSelectable(sg_william_center_secondline, true)
+			Misc_SetSGroupSelectable(sg_william_right_secondline, true)
+			Misc_SetSGroupSelectable(sg_archers, true)
+			Misc_SetSGroupSelectable(sg_cavalry, true)
+			
+			KingHarold_SpawnLastLines()
+			KillHarold_StartObjective()
+			
+		end,
+		
+	}
+
+	Objective_Register(OBJ_KillHarold)
+
+	
+	--
+	-- any other variable initialization can go in here
+	--
+	
+	b_kingHaroldStrikers_areDoingStrike = false
+	timeStamp_kingHaroldStrikers_lastChange = 0
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			SGroup_Kill(sg_kingharold)
+            Mission_Complete()
+	       end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+
+	Rule_AddOneShot(KillHarold_Init, 1)
+	
+end
+
+
+
+--
+-- any other script relating to this objective should go down below here
+--
+
+function KillHarold_Init()
+	
+	local squad = SGroup_GetSpawnedSquadAt(sg_kingharold, 1)
+	local entity = Squad_GetFirstEntity(squad)
+	entityWorldID_kingHarold = Entity_GetID(entity)
+	
+	--SGroup_SetInvulnerable(sg_kingharold, true)
+	
+	SGroup_SetTargetingType(sg_kingharold, Targeting_Manual)
+	SGroup_SetTargetingType(sg_kingharold_entourage, Targeting_Manual)
+	SGroup_SetTargetingType(sg_kingharold_defenders, Targeting_Manual)
+	
+	Misc_SetSGroupSelectable(sg_kingharold, false)
+	Misc_SetSGroupSelectable(sg_kingharold_entourage, false)
+	Misc_SetSGroupSelectable(sg_kingharold_defenders, false)
+	
+	--EGroup_ReSpawn(eg_blockers_harold_movearound)
+	
+end
+
+
+
+--
+-- move King Harold from his position overseeing the shieldwall to his defensive position at the back
+-- (triggered early in the mission)
+--
+
+function KingHarold_RejoinEntourage()
+	
+	Cmd_FormationMove(sg_kingharold, mkr_kingharold, nil, nil, Util_GetOffsetPosition(mkr_kingharold, OFFSET_FRONT, 5))
+	
+	if SGroup_CountSpawned(sg_kingharold) >= 1 then 
+		local squad = SGroup_GetSpawnedSquadAt(sg_kingharold, 1)
+		if Squad_Count(squad) >= 1 then
+			local entity = Squad_GetFirstEntity(squad)	-- ZERO-based index
+			Entity_SetRangedBlocksPerAttacks(entity, 1, 1)
+			Entity_SetProjectileBlocksPerAttacks(entity, 1, 1)
+		end
+	end
+
+	Rule_AddInterval(KingHarold_RejoinEntourage_PartB, 1)
+	
+end
+function KingHarold_RejoinEntourage_PartB()
+
+	if SGroup_IsIdle(sg_kingharold, ALL) then 
+		
+		Cmd_HoldPosition(sg_kingharold)
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+function KingHarold_SpawnLastLines()			-- bring in groups of units at the rear, that will provide reinforcements for other groups
+	
+	local units = {
+		{type = "scar_spearman", numSquads = 6},
+		{type = "scar_manatarms", numSquads = 12},
+	}
+	local options = {
+		dynamicSpawnType = DST_FURTHEST_HIDDEN,
+		destination = mkr_harold_lastline_dest_left,
+		holdPosition = true,
+	}
+	UnitEntry_DeploySquads(player2, sg_lastline_left, units, mkr_harold_reinforce_left, nil, 0, options)
+
+
+	local units = {
+		{type = "scar_manatarms", numSquads = 20},
+	}
+	local options = {
+		dynamicSpawnType = DST_FURTHEST_HIDDEN,
+		destination = mkr_harold_lastline_dest_center,
+		holdPosition = true,
+	}
+	UnitEntry_DeploySquads(player2, sg_lastline_center, units, mkr_harold_reinforce, nil, 0, options)
+
+
+	local units = {
+		{type = "scar_spearman", numSquads = 6},
+		{type = "scar_manatarms", numSquads = 12},
+	}
+	local options = {
+		dynamicSpawnType = DST_FURTHEST_HIDDEN,
+		destination = mkr_harold_lastline_dest_right,
+		holdPosition = true,
+	}
+	UnitEntry_DeploySquads(player2, sg_lastline_right, units, mkr_harold_reinforce_right, nil, 0, options)
+
+	
+	-- add units to the modules
+	local module_DefendHaroldLeft = MissionOMatic_FindModule("DefendHaroldLeft")
+	local module_DefendHaroldCenter = MissionOMatic_FindModule("DefendHaroldCenter")
+	local module_DefendHaroldRight = MissionOMatic_FindModule("DefendHaroldRight")
+		
+	Prefab_DoAction(module_DefendHaroldLeft, "AddSGroup", sg_lastline_left)
+	Prefab_DoAction(module_DefendHaroldCenter, "AddSGroup", sg_lastline_center)
+	Prefab_DoAction(module_DefendHaroldRight, "AddSGroup", sg_lastline_right)
+	
+	-- override the ideal compositions, so they are single-unit-type rather than the initial mixed composition	
+	local idealComposition_left = {						
+		{type = "scar_manatarms", numSquads = 18},
+	}
+	local idealComposition_center = {
+		{type = "scar_manatarms", numSquads = 20},
+	}
+	local idealComposition_right = {
+		{type = "scar_manatarms", numSquads = 18},
+	}
+	Reinforcement_SetIdealComposition(module_DefendHaroldLeft, idealComposition_left)
+	Reinforcement_SetIdealComposition(module_DefendHaroldCenter, idealComposition_center)
+	Reinforcement_SetIdealComposition(module_DefendHaroldRight, idealComposition_right)	
+	
+end
+
+
+
+
+
+
+
+function KillHarold_StartObjective()	-- called on a delay from the DefeatSaxons script
+
+
+	if Objective_IsStarted(OBJ_KillHarold) == false then 
+		
+		Player_GetAll(player1)
+		Sound_PlayOnSquad(WALLA_CAMP_ENGAGE_LARGE, sg_allsquads)
+		
+		Objective_Complete(OBJ_DefeatSaxons, false, false)
+		Objective_Start(OBJ_KillHarold)	
+
+		SGroup_SetTargetingType(sg_kingharold, Targeting_Automatic)
+		SGroup_SetTargetingType(sg_kingharold_entourage, Targeting_Automatic)
+		SGroup_SetTargetingType(sg_kingharold_defenders, Targeting_Automatic)
+		
+		SGroup_SetTargetingType(sg_kingharold, Targeting_Automatic)
+		Misc_SetSGroupSelectable(sg_kingharold, true)
+		Misc_SetSGroupSelectable(sg_kingharold_entourage, true)
+		Misc_SetSGroupSelectable(sg_kingharold_defenders, true)
+
+		Cmd_HoldPosition(sg_kingharold, false)
+		Cmd_HoldPosition(sg_kingharold_entourage, false)
+		Cmd_HoldPosition(sg_kingharold_defenders, false)
+		
+		Cmd_HoldPosition(sg_lastline_left, false)
+		Cmd_HoldPosition(sg_lastline_center, false)
+		Cmd_HoldPosition(sg_lastline_right, false)
+		
+		local module_DefendHaroldLeft = MissionOMatic_FindModule("DefendHaroldLeft")
+		local module_DefendHaroldCenter = MissionOMatic_FindModule("DefendHaroldCenter")
+		local module_DefendHaroldRight = MissionOMatic_FindModule("DefendHaroldRight")
+		
+		-- add units to the modules
+		Prefab_DoAction(module_DefendHaroldLeft, "UpdateTargetLocation", mkr_kingharold_defend_outer1)
+		Prefab_DoAction(module_DefendHaroldCenter, "UpdateTargetLocation", mkr_kingharold_defend_outer2)
+		Prefab_DoAction(module_DefendHaroldRight, "UpdateTargetLocation", mkr_kingharold_defend_outer3)
+		
+		Rule_AddInterval(KillHarold_MonitorModules, 5)
+		
+	end
+	
+end
+
+
+
+--
+-- make King Harold and his entourage "active" (put the units in encounters, not just have them standing there)
+--
+
+function KingHarold_PreStart()
+
+	EGroup_DestroyAllEntities(eg_blockers_harold)
+	EGroup_DestroyAllEntities(eg_blockers_harold_movearound)
+
+	if SGroup_CountSpawned(sg_kingharold) >= 1 then 
+		local squad = SGroup_GetSpawnedSquadAt(sg_kingharold, 1)
+		if Squad_Count(squad) >= 1 then
+			local entity = Squad_GetFirstEntity(squad)	-- ZERO-based index
+			Entity_ResetRangedBlocksPerAttacks(entity)
+			Entity_ResetProjectileBlocksPerAttacks(entity)
+		end
+	end
+	
+	Cmd_FormationMove(sg_kingharold, mkr_kingharold_rearrange, nil, nil, Util_GetOffsetPosition(mkr_kingharold_rearrange, OFFSET_FRONT, 10))
+	Cmd_FormationMove(sg_kingharold_entourage_center, mkr_kingharold_rearrange_entourage, nil, nil, Util_GetOffsetPosition(mkr_kingharold_rearrange_entourage, OFFSET_FRONT, 10))
+	
+	--
+	-- King Harold
+	--
+	local kingHaroldGoal = {		-- set King Harold to defend the area he's had carved out for him 
+		plan = "Defend",
+		target = mkr_kingharold_defend,
+		direction = Marker_GetDirection(mkr_kingharold_defend),
+		useCustomDirection = true,
+		combatRange = 10,
+		leashRange = 15,
+		shouldHoldWhileWaiting = true,
+		attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+		attackMoveAtTarget = attackMoveStyle_attackEverything,
+	}	
+	enc_kingHarold = Encounter_Create(player2, sg_kingharold, kingHaroldGoal, "King Harold")
+	
+	--
+	-- His immediate entourage
+	-- 
+	local entourageGoal = {		-- set the small group of units around King Harold to defend him
+		plan = "Defend",
+		target = sg_kingharold,
+		direction = Marker_GetDirection(mkr_kingharold_defend),
+		useCustomDirection = true,
+		idlePosition = mkr_kingharold_defend,
+		combatRange = 10,
+		leashRange = 10,
+		shouldHoldWhileWaiting = true,
+		attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+		attackMoveAtTarget = attackMoveStyle_attackEverything,
+	}	
+	enc_kingHaroldEntourage = Encounter_Create(player2, sg_kingharold_entourage, entourageGoal, "King Harold Entourage")
+
+	--
+	-- Four outer defender groups 
+	--
+	t_kingHaroldDefenderModules = {
+		MissionOMatic_FindModule("KingHaroldDefenders1"),
+		MissionOMatic_FindModule("KingHaroldDefenders2"),
+		MissionOMatic_FindModule("KingHaroldDefenders3"),
+		MissionOMatic_FindModule("KingHaroldDefenders4"),
+	}
+	
+	SGroup_Duplicate(sg_kingharold_defenders, sg_temp)
+	
+	while SGroup_CountSpawned(sg_temp) >= 1 do
+		for index, module in pairs(t_kingHaroldDefenderModules) do 
+			if SGroup_CountSpawned(sg_temp) >= 1 then 
+				local squad = SGroup_GetClosestSquad(sg_temp, Prefab_DoAction(module, "GetPosition"))
+				if squad ~= nil then 
+					SGroup_Single(sg_single, squad)
+					Prefab_DoAction(module, "AddSGroup", sg_single)
+					SGroup_Remove(sg_temp, squad)
+				end
+			end
+		end
+	end
+	
+	--
+	-- Strikers
+	--
+	local strikersGoal = {							-- set up another encounter that will (eventually) be more aggressive and charge anything that attacks Harold. This encounter starts empty.
+		plan = "DoNothing",
+	}	
+	enc_kingHaroldStrikers = Encounter_Create(player2, sg_kingharold_strikers, strikersGoal, "King Harold Strikers")
+	
+	Rule_AddInterval(KingHarold_ManageStrikers, 1)	-- add a rule that will manage this encounter
+	
+end
+
+
+function KingHarold_ManageStrikers()		-- strikers are a small group of units that move to attack someone directly attacking the King (i.e. archers) rather than sitting in a defend position
+
+	if SGroup_CountSpawned(sg_kingharold) == 0 then 
+		
+		Rule_RemoveMe()
+		
+	elseif b_kingHaroldStrikers_areDoingStrike == true and SGroup_CountSpawned(sg_kingharold_strikers) == 0 then 
+		
+		-- disable the existing striker goal 
+		local newStrikersGoal = {		-- kill the encounter's goal
+			plan = "DoNothing",
+		}	
+		Encounter_SetGoalData(enc_kingHaroldStrikers, newStrikersGoal)			
+		
+		b_kingHaroldStrikers_areDoingStrike = false 
+
+	else 
+			
+		SGroup_Clear(sg_kingharold_attackers)
+		
+		SGroup_GetLastAttacker(sg_kingharold, sg_kingharold_attackers, 5)
+		Player_GetAllSquadsNearMarker(player1, sg_temp, Util_GetPosition(sg_kingharold), 12)
+		SGroup_RemoveGroup(sg_kingharold_attackers, sg_temp)
+
+		
+		if SGroup_CountSpawned(sg_kingharold_attackers) >= 1 and (World_GetGameTime() - timeStamp_kingHaroldStrikers_lastChange > 5)then 
+			
+			SGroup_Clear(sg_kingharold_striketarget)
+			
+			-- grab target
+			local targetSquad = SGroup_GetClosestSquad(sg_kingharold_attackers, Util_GetPosition(sg_kingharold))
+			
+			-- add any attackers that are around the target
+			local _AddSquadIfClose = function(gid, idx, sid)
+				if Util_GetDistanceSquared(targetSquad, sid) <= 10^2 then 
+					SGroup_Add(sg_kingharold_striketarget, sid)
+				end
+			end
+			SGroup_ForEach(sg_kingharold_attackers, _AddSquadIfClose)
+			
+			-- 
+			-- send units out on a strike 
+			--
+
+			SGroup_Clear(sg_temp)
+			
+			for index, module in pairs(t_kingHaroldDefenderModules) do 
+				
+				local sgroup = Prefab_DoAction(module, "GetSGroup")
+				
+				if SGroup_CountSpawned(sgroup) >= 1 then 
+					local squad = SGroup_GetRandomSpawnedSquad(sgroup)
+					SGroup_Single(sg_single, squad)
+					Prefab_DoAction(module, "RemoveSGroup", sg_single)
+					SGroup_Add(sg_kingharold_strikers, squad)
+				end
+				
+			end
+			
+			Encounter_AddSGroup(enc_kingHaroldStrikers, sg_kingharold_strikers)
+			
+			
+			local newStrikersGoal = {
+				plan = "Attack",
+				target = sg_kingharold_striketarget,
+				combatRange = 20,
+				leashRange = 25,
+			}	
+			Encounter_SetGoalData(enc_kingHaroldStrikers, newStrikersGoal)
+			
+			b_kingHaroldStrikers_areDoingStrike = true 
+			timeStamp_kingHaroldStrikers_lastChange = World_GetGameTime()
+			
+		elseif SGroup_CountSpawned(sg_kingharold_striketarget) == 0 then 
+			
+			if b_kingHaroldStrikers_areDoingStrike == true then 
+				
+				--
+				-- merge strikers back into defenders groups
+				--
+				
+				SGroup_Clear(sg_temp)
+				SGroup_AddGroup(sg_temp, sg_kingharold_strikers)
+				SGroup_Clear(sg_kingharold_strikers)
+				
+				-- disable the existing striker goal 
+				local newStrikersGoal = {		-- kill the encounter's goal
+					plan = "DoNothing",
+				}	
+				Encounter_RemoveAllSquads(enc_kingHaroldStrikers)
+				Encounter_SetGoalData(enc_kingHaroldStrikers, newStrikersGoal)
+
+				-- assign all the units back to defender modules
+				local _AssignSquad = function(gid, idx, sid)
+					
+					local fewestSquadsCount = 999
+					local fewestSquadsModule = {} 
+					
+					for index, module in pairs(t_kingHaroldDefenderModules) do 
+						local count = SGroup_CountSpawned(Prefab_DoAction(module, "GetSGroup"))
+						if count < fewestSquadsCount then 
+							fewestSquadsModule = {module}
+							fewestSquadsCount = count 
+						elseif count == fewestSquadsCount then 
+							table.insert(fewestSquadsModule, module)
+						end
+					end
+					
+					if #fewestSquadsModule >= 1 then 
+						local chosenModule = Table_GetRandomItem(fewestSquadsModule)
+						SGroup_Single(sg_single, sid)
+						Prefab_DoAction(chosenModule, "AddSGroup", sg_single)						
+					end
+					
+				end
+				SGroup_ForEach(sg_temp, _AssignSquad)
+
+				b_kingHaroldStrikers_areDoingStrike = false 
+				
+			end
+			
+		end		
+			
+	end
+	
+end
+
+
+function KillHarold_MonitorModules()
+	
+	if Objective_IsComplete(OBJ_KillHarold) then 
+		
+		Rule_RemoveMe()
+		
+	else
+		
+		local _AddToActiveUnits = function(moduleName)
+			
+			local module = MissionOMatic_FindModule(moduleName)
+			
+			if module ~= nil then 
+				local sgroup = Prefab_DoAction(module, "GetSGroup")
+				SGroup_AddGroup(sg_activeUnits_player2, sgroup)
+			end
+			
+		end
+		
+		_AddToActiveUnits("DefendHaroldLeft")
+		_AddToActiveUnits("DefendHaroldCenter")
+		_AddToActiveUnits("DefendHaroldRight")
+		_AddToActiveUnits("DefendHillLeft")
+		_AddToActiveUnits("DefendHillCenter")
+		_AddToActiveUnits("DefendHillRight")
+		
+	end
+	
+end
+
+
+
+function KillHarold_CloseInOnHarold()
+	
+	if SGroup_CountSpawned(sg_kingharold) == 0 then 
+		
+		Rule_RemoveMe()
+		
+	elseif SGroup_CountSpawned(sg_kingharold) >= 1 and Prox_ArePlayersNearMarker(player1, Util_GetPosition(sg_kingharold), ANY, 10) or SGroup_GetAvgHealth(sg_kingharold) <= 0.9 then
+		
+		Rule_RemoveMe()
+
+		-- force King Harold's entourage to active if necessary 
+		local goal = {
+			plan = "Defend",
+			target = sg_kingharold,
+			combatRange = 7,
+			leashRange = 12,
+		}	
+		
+		Encounter_SetGoalData(enc_kingHaroldEntourage, goal)
+
+		
+		-- retarget all units on the hill to a larger defend encounter around King Harold
+		SGroup_Clear(sg_temp)
+		
+		local _StopDefendModule = function(name) 
+			
+			local module = MissionOMatic_FindModule(name)
+			local sgroup = Prefab_DoAction(module, "GetSGroup")
+			local count = SGroup_CountSpawned(sgroup)
+			local numberToReassign = math.floor(count * 0.3)
+
+			for index = 1, numberToReassign do 
+				local squad = SGroup_GetRandomSpawnedSquad(sgroup)
+				SGroup_Add(sg_temp, squad)
+			end
+			
+			Prefab_DoAction(module, "RemoveSGroup", sg_temp)
+
+			--Prefab_Stop(module)
+		end
+		
+		_StopDefendModule("DefendHaroldCenter")
+		_StopDefendModule("DefendHaroldLeft")
+		_StopDefendModule("DefendHaroldRight")
+		
+		
+		if SGroup_CountSpawned(sg_temp) >= 1 then 
+			
+			local goalData = {
+				plan = "Defend",
+				target = sg_kingharold,
+				combatRange = 15,
+				leashRange = 20,
+				shouldHoldWhileWaiting = true,
+			}
+			
+			enc_KingHaroldDefenders = Encounter_Create(player2, sg_temp, goalData, "Harold Defenders")
+	
+			-- trigger panicked noise from harold's army 
+			Sound_PlayOnSquad(WALLA_CAMP_FEAR_MEDIUM, sg_temp)
+			
+		end
+		
+		Util_StartIntel(EVENTS.KillHarold_CloseInOnHarold)		
+		
+	end
+	
+end
+
+function KillHarold_Killed()
+	
+	Objective_Complete(OBJ_Reinforcements, false, false)		-- mission is ending, hide this objective
+	
+	
+	Player_GetAll(player1)
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE, sg_allsquads)
+	
+	Prefab_DoAction(MissionOMatic_FindModule("DefendHaroldLeft"), "Stop")
+	Prefab_DoAction(MissionOMatic_FindModule("DefendHaroldCenter"), "Stop")
+	Prefab_DoAction(MissionOMatic_FindModule("DefendHaroldRight"), "Stop")
+	Prefab_DoAction(MissionOMatic_FindModule("DefendHillLeft"), "Stop")
+	Prefab_DoAction(MissionOMatic_FindModule("DefendHillCenter"), "Stop")
+	Prefab_DoAction(MissionOMatic_FindModule("DefendHillRight"), "Stop")
+	Prefab_DoAction(MissionOMatic_FindModule("KingHaroldDefenders1"), "Stop")
+	Prefab_DoAction(MissionOMatic_FindModule("KingHaroldDefenders2"), "Stop")
+	Prefab_DoAction(MissionOMatic_FindModule("KingHaroldDefenders3"), "Stop")
+	Prefab_DoAction(MissionOMatic_FindModule("KingHaroldDefenders4"), "Stop")
+	
+	
+	-- update all the defender encounters to the spot on the ground where Harold was killed (as the sgroup is no longer a valid target)
+	local entity = Entity_FromID(entityWorldID_kingHarold)
+	local pos = Entity_GetPosition(entity)
+	
+	local newEntourageGoal = {
+		plan = "Defend",
+		target = pos,
+		startIdle = false,
+		combatRange = 7,
+		leashRange = 12,
+	}	
+	Encounter_SetGoalData(enc_kingHaroldEntourage, newEntourageGoal)
+
+	local newStrikersGoal = {
+		plan = "Defend",
+		target = pos,
+		startIdle = false,
+		combatRange = 15,
+		leashRange = 20,
+	}	
+	Encounter_SetGoalData(enc_kingHaroldStrikers, newStrikersGoal)	
+
+	if enc_KingHaroldDefenders ~= nil then 
+		local newDefendersData = {
+			plan = "Defend",
+			target = pos,
+			startIdle = false,
+			combatRange = 25,
+			leashRange = 30,
+		}
+		Encounter_SetGoalData(enc_KingHaroldDefenders, newDefendersData)
+	end
+	
+	-- putting this here so saxons start fleeing while the VO is playing, not after. 
+	Rule_AddInterval(KillHarold_RunAway, 1)
+	
+end
+
+
+
+function KillHarold_StartEpilogue()
+
+	Rule_AddOneShot(KillHarold_MissionEnd, 4)
+	
+end
+
+
+function KillHarold_RunAway()
+	
+	Player_GetAll(player2)
+	
+	local retreatDestinations = {
+		mkr_harold_reinforce,
+		mkr_harold_reinforce_left,
+		mkr_harold_reinforce_right
+	}	
+	
+	if enc_kingHaroldEntourage ~= nil then 
+		
+		local sgroup = Encounter_GetSGroup(enc_kingHaroldEntourage)
+		SGroup_RemoveGroup(sg_allsquads, sgroup)
+		local numEntourageToRetreat = World_GetRand(1, 2)	
+		
+		for index = 1, numEntourageToRetreat do 
+			
+			if SGroup_CountSpawned(sgroup) >= 1 then 
+				
+				local squad = SGroup_GetRandomSpawnedSquad(sgroup)
+				Encounter_RemoveSquad(enc_kingHaroldEntourage, squad)
+				
+				SGroup_Single(sg_single, squad)
+				
+				SGroup_SetAutoTargetting(sg_single, ALL, false)
+				Cmd_Move(sg_single, Table_GetRandomItem(retreatDestinations))
+				
+			end 
+			
+		end
+		
+	end
+	
+	
+	if enc_KingHaroldDefenders ~= nil then 
+		
+		local sgroup = Encounter_GetSGroup(enc_KingHaroldDefenders)
+		SGroup_RemoveGroup(sg_allsquads, sgroup)
+		local numDefendersToRetreat = World_GetRand(1, 3)	
+		
+		for index = 1, numDefendersToRetreat do 
+			
+			if SGroup_CountSpawned(sgroup) >= 1 then 
+				
+				local squad = SGroup_GetRandomSpawnedSquad(sgroup)
+				Encounter_RemoveSquad(enc_KingHaroldDefenders, squad)
+				
+				SGroup_Single(sg_single, squad)
+				
+				--Modify_WeaponEnabled(sg_single, "hardpoint_01", false)
+				SGroup_SetAutoTargetting(sg_single, ALL, false)
+				Cmd_Move(sg_single, Table_GetRandomItem(retreatDestinations))
+				
+			end 
+			
+		end
+		
+	end
+
+	
+	local numOthersToRetreat = math.min(SGroup_CountSpawned(sg_allsquads), World_GetRand(1, 3))
+	if numOthersToRetreat >= 1 then 
+		
+		for index = 1, numOthersToRetreat do 
+			
+			local squad = SGroup_GetRandomSpawnedSquad(sg_allsquads)
+			SGroup_Single(sg_single, squad)
+			
+			SGroup_SetAutoTargetting(sg_single, ALL, false)
+			Cmd_Move(sg_single, Table_GetRandomItem(retreatDestinations))
+			
+		end
+
+	end
+	
+end
+
+function KillHarold_MissionEnd()
+	
+	Rule_Remove(KillHarold_RunAway)
+	
+	Mission_Complete()
+	
+end
+

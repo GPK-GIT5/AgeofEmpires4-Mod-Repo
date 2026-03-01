@@ -1,0 +1,194 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+
+function Monitor_Player_Nicosia_Prox(context, data) 
+	
+	if Player_AreSquadsNearMarker(player1, mkr_nicosia_boundaries) then
+		
+		Util_StartIntel(EVENTS.ApproachNicosia)
+		
+		Objective_RemoveUIElements(OBJ_DestroyNicosia, hpid_nicosia)
+		
+		Objective_Start(SOBJ_DestroyNicosia_TC)
+		Objective_Start(SOBJ_DestroyNicosia_Keeps)
+		
+		Rule_AddInterval(Monitor_Kyrenia_Reinforcements, 4) -- MONITOR IF/WHEN KYRENIA WILL SEND REINFORCEMENTS TO NICOSIA
+		
+		--send cav out to sweep the perimeter
+		local patrol3 = Army_FindFromName("army_nicosia_patrol3")
+		local target_markers = Cyprus_GetSequentialMarkers("mkr_nicosia_wave_path", 7)
+		Army_AddTargets(patrol3, target_markers)
+		
+		Rule_AddOneShot(Cyprus_StartKyreniaDelayed, 45)
+		Rule_RemoveMe()
+	end	
+end
+
+function Monitor_Player_Famagusta_Prox(context, data)
+	
+	if Player_AreSquadsNearMarker(player1, mkr_famagusta_cap) then
+		
+		--start raids (if not already triggered by naval combat)
+		Cyprus_StartFamagustaRaids()
+		
+		Rule_AddOneShot(Cyprus_StartKyreniaDelayed, 45)
+		Rule_RemoveMe()
+	end
+end
+
+function Cyprus_StartFamagustaObjective()
+	
+	if Objective_IsStarted(OBJ_DestroyFamagusta) == false then
+		Objective_Start(OBJ_DestroyFamagusta)
+	end
+end
+
+function Monitor_Player_Kyrenia_Prox(context, data) 
+	
+	if Objective_IsStarted(OBJ_DestroyKyrenia) then
+		Rule_RemoveMe()
+		return
+	end
+	
+	if Player_AreSquadsNearMarker(player1, mkr_kyrenia_cap) or debug_destroyKyrenia then
+		Rule_RemoveMe()
+		Objective_Start(OBJ_DestroyKyrenia)
+	end
+end
+
+function Monitor_Player_Kyrenia_NearProx(context, data) 
+	
+	if Player_AreSquadsNearMarker(player1, mkr_kyrenia_near_prox) then
+		Rule_RemoveMe()
+		Objective_Start(SOBJ_DestroyKyrenia_TC)
+	end
+end
+
+function Cyprus_StartKyreniaDelayed() 
+	if Objective_IsStarted(OBJ_DestroyKyrenia) == false then
+		
+		--The Kyrenian vassals are preparing reinforcements to aid the Franks!
+		--EventCues_CallToAction("$11256042", CTA_ALARM, EVENTS.DestroyKyrenia_CTA, EVENTS.DestroyKyrenia_CTA_OnClick, mkr_kyrenia_cap, 10, "icons/cta/illustrations/announce_incoming_attack_land")
+		Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_high")
+		FOW_RevealArea(Util_GetPosition(mkr_ui_kyrenia), 45, 30)
+		
+		Objective_Start(OBJ_DestroyKyrenia)
+	end
+end
+
+function Cyprus_ObjectiveTargetKilled(context)
+	
+	if context.victimOwner == player2 then
+		
+		--nicosia objective target has been destroyed
+		Cyprus_CheckNicosiaFinale()
+		
+		if Entity_IsOfType(context.victim, "town_center") then 
+			
+			b_nicosiaTCDestroyed = true								
+			Objective_Complete(SOBJ_DestroyNicosia_TC, false, false)
+			
+		elseif Entity_IsOfType(context.victim, "scar_keep") then 
+			
+			nicosiaKeepsDestroyed = nicosiaKeepsDestroyed + 1
+			
+			Objective_SetCounter(SOBJ_DestroyNicosia_Keeps, nicosiaKeepsDestroyed, 2)
+			
+			if nicosiaKeepsDestroyed == 2 and b_nicosiaKeepsDestroyed == false then
+				b_nicosiaKeepsDestroyed = true
+				Objective_Complete(SOBJ_DestroyNicosia_Keeps, false, false)
+			end
+		end
+		
+		if  b_nicosiaTCDestroyed == true and b_nicosiaKeepsDestroyed == true then
+			Objective_Complete(OBJ_DestroyNicosia, true, true)
+		end
+		
+	elseif context.victimOwner == player5 then
+		
+		--famagusta objective target has been destroyed
+		
+		if Entity_IsOfType(context.victim, "scar_dock") and
+			Objective_IsStarted(OBJ_DestroyFamagusta) and Objective_IsComplete(OBJ_DestroyFamagusta) == false then
+			Objective_IncreaseCounter(OBJ_DestroyFamagusta, 1)
+		end
+		
+	elseif context.victimOwner == player6 then	
+		--kyrenia objective target has been destroyed
+		if Entity_IsOfType(context.victim, "town_center") then
+			
+			Objective_Complete(SOBJ_DestroyKyrenia_TC, false, false)
+			
+			b_kyreniaDestroyed = true
+			Objective_Complete(OBJ_DestroyKyrenia)
+		end
+	end
+	
+end
+
+
+function Cyprus_StopNavalRaids()
+	
+	Rule_Remove(Spawn_Navy_Raids)
+	for i, naval_army in ipairs(naval_armies) do
+		Army_Dissolve(naval_army)
+	end
+	Rule_AddOneShot(Cyprus_NavalRetreat, 2)
+end
+
+function Cyprus_NavalRetreat()
+	Player_GetAll(player5)
+	SGroup_Filter(sg_allsquads, "naval_unit", FILTER_KEEP)
+	SGroup_MoveToAndDestroy(sg_allsquads, mkr_navy_despawn, false)
+end
+
+
+function Cyprus_KyreniaDissolveArmies()
+	
+	local cav1 = Army_FindFromName("army_kyrenia_cav1")
+	local cav2 = Army_FindFromName("army_kyrenia_cav2")
+	local cav3 = Army_FindFromName("army_kyrenia_cav3")
+	local inf1 = Army_FindFromName("army_kyrenia_defenders1")
+	local inf2 = Army_FindFromName("army_kyrenia_defenders2")
+	
+	Army_Dissolve(cav1)
+	Army_Dissolve(cav2)
+	Army_Dissolve(cav3)
+	Army_Dissolve(inf1)
+	Army_Dissolve(inf2)
+
+	Rule_AddOneShot(Cyprus_KyreniaRetreat, 2)
+end
+
+function Cyprus_KyreniaRetreat()
+	Player_GetAll(player6)
+	SGroup_MoveToAndDestroy(sg_allsquads, mkr_kyrenia_despawn, false)
+end
+
+
+function Cyprus_CheckNicosiaFinale()
+	
+	if b_nicosiaFinaleTriggered == false then 
+			
+		b_nicosiaFinaleTriggered = true
+		
+		local defenders4 = Army_FindFromName("army_nicosia_defenders4")
+		local patrol1 = Army_FindFromName("army_nicosia_patrol1")
+		
+		local inf_patrol1 = Army_FindFromName("army_nicosia_inf_patrol")
+		
+		Army_AddTarget(defenders4, mkr_nicosia_defense_final)
+		
+		local target_markers = Cyprus_GetSequentialMarkers("mkr_nicosia_wave_path", 7)
+		Army_AddTargets(patrol1, target_markers)
+		
+		Army_AddSGroup(inf_patrol1, sg_nicosia_wall_defenders)
+		
+		--start checking ungarrison trigger
+		if t_difficulty.nicosia_keep_garrisonAmount > 0 then
+			Rule_AddInterval(Cyprus_MonitorNicosiaKeepHealth, 5)
+		end
+		
+	end
+end

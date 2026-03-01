@@ -1,0 +1,520 @@
+--
+-- Lincoln 1141 - Defeat
+--
+
+function Defeat_InitObjectives()
+	
+	OBJ_ClearCamps = {
+		
+		Title = "$11180377", -- Defeat the besieging forces
+				Type = ObjectiveType_Primary,
+		OnComplete = function()
+			
+			Rule_Remove(Lincoln_ReinforceAssault)
+			
+			if Objective_IsComplete(OBJ_DefeatStephen) then
+				Lincoln_BeginEndStage()
+			elseif not Objective_IsStarted(OBJ_DefeatStephen) then
+				Lincoln_LaunchFinalAttack()
+				--Rule_AddOneShot(Lincoln_LaunchFinalAttack, 3)
+				Sound_SetMinimumMusicCombatIntensity(801, 0)
+			end
+		end,
+	}
+	
+	SOBJ_ClearLeftCamp = {
+		
+		Title = "$11191838", -- Clear the western camp
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ClearCamps,
+		OnStart = function()
+			hpid_camp_left = Objective_AddUIElements(SOBJ_ClearLeftCamp, mkr_siege_camp_left, true, 11191848, false)
+			Objective_SetProgressBar(SOBJ_ClearLeftCamp, 0)
+		end,
+		OnComplete = function()
+			t_besiegers[1].active = false
+		end,
+	}
+	SOBJ_ClearMiddleCamp = {
+		
+		Title = "$11191839", -- Clear the central camp
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ClearCamps,
+		OnStart = function()
+			hpid_camp_middle = Objective_AddUIElements(SOBJ_ClearMiddleCamp, mkr_siege_camp_middle, true, 11191849, false)
+			Objective_SetProgressBar(SOBJ_ClearMiddleCamp, 0)
+		end,
+		OnComplete = function()
+			t_besiegers[2].active = false
+			t_besiegers[3].active = false
+		end,
+	}
+	SOBJ_ClearRightCamp = {
+		
+		Title = "$11191840", -- Clear the eastern camp
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_ClearCamps,
+		OnStart = function()
+			hpid_camp_right = Objective_AddUIElements(SOBJ_ClearRightCamp, mkr_siege_camp_right, true, 11191850, false)
+			Objective_SetProgressBar(SOBJ_ClearRightCamp, 0)
+		end,
+		OnComplete = function()
+			t_besiegers[4].active = false
+			t_besiegers[5].active = false
+		end,
+	}
+	
+	OBJ_DefeatStephen = {
+		
+		Title = "$11180381", -- Capture King Stephen
+		Type = ObjectiveType_Primary,
+		--Parent = OBJ_DefeatArmy,
+		Intel_Start = EVENTS.StephenVisible,
+		Intel_Complete = EVENTS.StephenCaptured,
+		PreStart = function()
+			
+			Rule_AddGlobalEvent(DefeatStephen_OnSquadKilled, GE_SquadKilled)
+			Sound_Play2D(MUS_STINGER_ALERT)
+			
+			EventCues_CallToAction("$11191824", CTA_ALARM, nil, nil, sg_stephen, 20)
+			FOW_RevealSGroup(sg_stephen, 7, -1)
+			
+			Objective_AddUIElements(OBJ_DefeatStephen, sg_stephen, false, 11180370, true, 3, sg_stephen)
+		end,
+		OnStart = function()
+			Music_UnlockIntensity()
+			Music_LockIntensity (MUSIC_TENSE_COMBAT_RARE)
+		end,
+		PreComplete = function()
+			Lincoln_FinalAttackRetreat()
+		end,
+		OnComplete = function()
+			if Objective_IsComplete(OBJ_ClearCamps) then
+				Lincoln_BeginEndStage()
+			end
+		end,
+	}
+	
+	OBJ_SetupAmbush = {
+		
+		Title = "$11195386", -- Set up an ambush
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.Eliminate_Reinforcements,
+		PreStart = function()
+			Objective_AddUIElements(OBJ_SetupAmbush, mkr_stealth_forest1, true, 11183436, false)
+			Objective_Start(SOBJ_MoveAllUnits, false)
+			Objective_Start(SOBJ_SetStandGround, false)
+			
+			Rule_AddInterval(Lincoln_CheckStealthForestProx, 1)
+			Rule_AddInterval(Lincoln_CheckHoldPosition, 1)
+		end,
+		IsComplete = function()
+			if Objective_IsComplete(SOBJ_MoveAllUnits) and Objective_IsComplete(SOBJ_SetStandGround) then
+				return true
+			end
+		end,
+		OnComplete = function()
+			Objective_Start(OBJ_DestroyReinforcementGroups)
+			Music_StopMedium()
+		end
+	}
+	SOBJ_MoveAllUnits = {
+		
+		Title = "$11195387", -- Move all units into the stealth forest
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SetupAmbush,
+		PreStart = function()
+			Objective_SetProgressBar(SOBJ_MoveAllUnits, 0)
+		end,
+	}
+	SOBJ_SetStandGround = {
+		
+		Title = "$11195388", -- Set units on stand ground
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SetupAmbush,
+		PreStart = function()
+			Objective_SetProgressBar(SOBJ_SetStandGround, 0)
+		end,
+		OnComplete = function()
+		--	Util_StartIntel(EVENTS.Ambush_SetUp)
+		end,
+	}
+	
+	OBJ_DestroyReinforcementGroups = {
+		
+		Title = "$11180378", -- Eliminate enemy reinforcements
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.Ambush_SetUp,
+		Intel_Complete = EVENTS.Eliminate_Reinforcements_Complete,
+		Intel_Fail = EVENTS.Eliminate_Reinforcements_Fail,
+		OnStart = function()
+			Objective_Start(SOBJ_DestroyReinforcementGroup1, false)
+		end,
+		PreComplete = function()
+			Player_GetSquadsOnscreen(player1, sg_temp)
+			Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+		end,
+	}
+	
+	SOBJ_DestroyReinforcementGroup1 = {
+		
+		Title = "$11192296", -- Eliminate the first column
+		Type = ObjectiveType_Primary,
+		Intel_Complete = EVENTS.FirstColumn_Destroyed,
+		Parent = OBJ_DestroyReinforcementGroups,
+		PreStart = function()
+			Lincoln_SpawnEnemyReinforcements(1, true)
+			rg_hasSpawned1 = true
+		end,
+		OnStart = function()
+			Objective_SetProgressBar(SOBJ_DestroyReinforcementGroup1, 0)
+		end,
+		OnComplete = function()
+			rg_destroyed_count = rg_destroyed_count + 1
+			Objective_Start(SOBJ_DestroyReinforcementGroup2)
+		end,
+		OnFail = function()
+			Objective_Start(SOBJ_DestroyReinforcementGroup2)
+		end,
+	}
+	SOBJ_DestroyReinforcementGroup2 = {
+		
+		Title = "$11192297", -- Eliminate the second column
+		Type = ObjectiveType_Primary,
+		Intel_Complete = EVENTS.SecondColumn_Destroyed,
+		Parent = OBJ_DestroyReinforcementGroups,
+		PreStart = function()
+			Lincoln_SpawnEnemyReinforcements(2, false)
+			rg_hasSpawned2 = true
+		end,
+		OnStart = function()
+			AIPlayer_ResetEnemySquadsVisibility(player2, player1)
+			Objective_SetProgressBar(SOBJ_DestroyReinforcementGroup2, 0)
+		end,
+		OnComplete = function()
+			rg_destroyed_count = rg_destroyed_count + 1
+			Objective_Start(SOBJ_DestroyReinforcementGroup3)
+		end,
+		OnFail = function()
+			Objective_Start(SOBJ_DestroyReinforcementGroup3)
+		end,
+	}
+	SOBJ_DestroyReinforcementGroup3 = {
+		
+		Title = "$11192298", -- Eliminate the final column
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DestroyReinforcementGroups,
+		PreStart = function()
+			AIPlayer_ResetEnemySquadsVisibility(player2, player1)
+			Lincoln_SpawnEnemyReinforcements(3, false)
+			rg_hasSpawned3 = true
+		end,
+		OnStart = function()
+			Objective_SetProgressBar(SOBJ_DestroyReinforcementGroup3, 0)
+		end,
+		OnComplete = function()
+			rg_destroyed_count = rg_destroyed_count + 1
+			Objective_Complete(OBJ_DestroyReinforcementGroups)
+		end,
+		OnFail = function()
+			Objective_Fail(OBJ_DestroyReinforcementGroups)
+		end,
+	}
+	
+	OBJ_DestroyTradePost = {
+		
+		Title = "$11180379", -- Destroy the enemy market town
+		Type = ObjectiveType_Primary,
+		Intel_Complete = EVENTS.TradePost_Destroyed,
+		PreStart = function()
+			Objective_AddUIElements(OBJ_DestroyTradePost, mkr_trade_post, true, 11180382, true, 5)
+			Music_UnlockIntensity()
+			Sound_SetMinimumMusicCombatIntensity(0, 0)
+			
+			town_init_count = EGroup_CountSpawned(eg_trade_post)
+			town_current_count = town_init_count
+			town_prev_count = town_init_count
+			
+			Objective_SetCounter(OBJ_DestroyTradePost, 0, town_init_count)
+			Rule_AddInterval(DestroyTradePost_Check, 1)
+		end,
+		OnComplete = function()
+			Music_StopMedium()
+			Lincoln_StartWelshPhase()
+			Util_AutoSave()
+		end,
+	}
+	
+	OBJ_GainEntry = {
+		
+		Title = "$11195807", -- Gain entry to Lincoln
+		Type = ObjectiveType_Battle,
+		Intel_Start = EVENTS.RouteFieldArmy,
+		PreStart = function()
+			Objective_Start(OBJ_RoutFieldArmy, false)
+		end,
+		Cheat = function()
+			
+			local units_inf = {{type = "scar_manatarms", numSquads = 30 }, {type = "scar_archer", numSquads = 20 }}
+			local units_cav = {{type = "scar_knight", numSquads = 30 }, {type = "scar_scout", numSquads = 2 }}
+			
+			UnitEntry_DeploySquads(player1, nil, units_inf, mkr_cheat_spawn1)
+			UnitEntry_DeploySquads(player1, nil, units_cav, mkr_cheat_spawn2)
+			
+			SGroup_DestroyAllSquads(sg_player_army)
+			
+			local welsh_units = {{type = "scar_archer", numSquads = 8}, {type = "scar_spearman", numSquads = 12}}
+			
+			RovingArmy_SetTargets(MissionOMatic_FindModule("WelshArmyA"), {mkr_welsh_dest_a8})
+			RovingArmy_SetTargets(MissionOMatic_FindModule("WelshArmyB"), {mkr_welsh_dest_b8})
+			RovingArmy_SetTargets(MissionOMatic_FindModule("WelshArmyC"), {mkr_welsh_dest_c8})
+			
+			SpawnUnitsToModule(welsh_units, "WelshArmyA", mkr_welsh_dest_a8)
+			SpawnUnitsToModule(welsh_units, "WelshArmyB", mkr_welsh_dest_b8)
+			SpawnUnitsToModule(welsh_units, "WelshArmyC", mkr_welsh_dest_c8)
+			
+			Lincoln_PrepFieldArmy()
+			
+		end,
+	}
+	
+	OBJ_RoutFieldArmy = {
+		
+		Title = "$11180380", -- Break the blockade at the castle gates
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_GainEntry,
+	--	Intel_Start = EVENTS.RouteFieldArmy,
+		Intel_Complete = EVENTS.RouteFieldArmy_Complete,
+		OnStart = function()
+			Objective_AddUIElements(OBJ_RoutFieldArmy, mkr_field_trigger, true, 11180383, true, 5)
+			Objective_SetProgressBar(OBJ_RoutFieldArmy, 0)
+			Music_CombatMusicOnly()
+		end,
+		OnComplete = function()
+			FOW_PlayerUnRevealArea(player1, Util_GetPosition(mkr_field_trigger))
+			Objective_Start(OBJ_TakeControl)
+		end,
+	}
+	
+	OBJ_TakeControl = {
+		
+		Title = "$11192419", -- Enter Lincoln
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_GainEntry,
+		Intel_Complete = EVENTS.TakeControl,
+		OnStart = function()
+			Objective_AddUIElements(OBJ_TakeControl, mkr_city_trigger, true, 11192420, true, 2) -- City Entrance
+			Rule_AddInterval(Lincoln_CheckCityGateProx, 1)
+		end,
+		OnComplete = function()
+						
+			Objective_Complete(OBJ_GainEntry, false)
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			Music_CombatMusicOnly()
+			
+			Rule_AddInterval(Lincoln_ReinforceAssault, t_difficulty.enemy_siegeInterval)
+			
+			DefeatArmy_StartCamps()
+			Rule_AddInterval(Lincoln_CheckFinalAttackTrigger, 2)
+			Rule_AddInterval(Lincoln_CheckKeep, 2)
+			Rule_AddGlobalEvent(Lincoln_OnEntityKilled, GE_EntityKilled)
+			
+			Util_AutoSave(true)
+		end,
+	}
+	
+	Objective_Register(OBJ_ClearCamps)
+	
+	Objective_Register(SOBJ_ClearLeftCamp)
+	Objective_Register(SOBJ_ClearMiddleCamp)
+	Objective_Register(SOBJ_ClearRightCamp)
+	
+	Objective_Register(OBJ_DefeatStephen)
+	
+	Objective_Register(OBJ_SetupAmbush)
+	Objective_Register(SOBJ_MoveAllUnits)
+	Objective_Register(SOBJ_SetStandGround)
+	
+	Objective_Register(OBJ_DestroyReinforcementGroups)
+	Objective_Register(SOBJ_DestroyReinforcementGroup1)
+	Objective_Register(SOBJ_DestroyReinforcementGroup2)
+	Objective_Register(SOBJ_DestroyReinforcementGroup3)
+	
+	Objective_Register(OBJ_DestroyTradePost)
+	
+	Objective_Register(OBJ_GainEntry)
+	Objective_Register(OBJ_RoutFieldArmy)
+	Objective_Register(OBJ_TakeControl)
+	
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Player_GetAll(player2)
+			SGroup_DestroyAllSquads(sg_allsquads)
+			Player_GetAll(player3)
+			SGroup_DestroyAllSquads(sg_allsquads)
+			Lincoln_Complete()
+	       end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+	
+end
+
+function DefeatArmy_Start()
+	
+	World_EnableSharedLineOfSight(player1, player4, true)
+end
+
+function DefeatArmy_StartCamps()
+	
+	if clearCampsStarted == false then
+		clearCampsStarted = true
+		--Sound_SetMinimumMusicCombatIntensity(801, 0)			
+		--Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE, 60)
+		Music_CombatMusicOnly()
+		Objective_Start(SOBJ_ClearLeftCamp, false)
+		Objective_Start(SOBJ_ClearMiddleCamp, false)
+		Objective_Start(SOBJ_ClearRightCamp, false)
+		
+		camp_data_left.init_count = SGroup_CountSpawned(sg_camp_left)
+		camp_data_middle.init_count = SGroup_CountSpawned(sg_camp_middle)
+		camp_data_right.init_count = SGroup_CountSpawned(sg_camp_right)
+		
+		camp_data_left.prev_count = camp_data_left.init_count
+		camp_data_middle.prev_count = camp_data_middle.init_count
+		camp_data_right.prev_count = camp_data_right.init_count
+		
+		Rule_AddInterval(DefeatArmy_CheckCamps, 1)
+		--Rule_AddGlobalEvent(Lincoln_OnCampSquadKilled, GE_SquadKilled)
+		
+	end
+	
+end
+
+function DefeatArmy_CheckCamps()
+	
+	if not Objective_IsComplete(SOBJ_ClearLeftCamp) then
+		DefeatArmy_CheckCamp(camp_data_left)
+	end
+	
+	if not Objective_IsComplete(SOBJ_ClearMiddleCamp) then
+		DefeatArmy_CheckCamp(camp_data_middle)
+	end
+	
+	if not Objective_IsComplete(SOBJ_ClearRightCamp) then
+		DefeatArmy_CheckCamp(camp_data_right)
+	end
+	
+end
+
+function DefeatArmy_CheckCamp(data)
+	
+	local count = SGroup_CountSpawned(data.sgroup)
+	
+	if count < data.prev_count then
+		
+		data.prev_count = count
+		local dead_count = data.init_count - count
+		local progress = dead_count / data.init_count
+		
+		Objective_SetProgressBar(data.objective, progress)
+	end
+	
+	if count <= 0 then
+			
+		Player_GetAllSquadsNearMarker(player2, sg_temp, data.marker, 20)
+		if SGroup_CountSpawned(sg_temp) <= 0 then
+			
+			Objective_SetProgressBar(data.objective, 1)
+			Lincoln_PlayWallaAtPosition(data.marker, true)
+			camps_cleared = camps_cleared + 1
+			
+			if camps_cleared == 1 then
+				
+				Objective_Complete(data.objective)
+				Util_StartIntel(EVENTS["SiegeCamp1_Destroyed"])
+				
+			elseif camps_cleared == 2 then
+				
+				Objective_Complete(data.objective)
+				Util_StartIntel(EVENTS["SiegeCamp2_Destroyed"])
+				
+			elseif camps_cleared == 3 then
+				
+				Objective_Complete(data.objective, false)
+				Util_StartIntel(EVENTS["DefeatArmy"])
+				
+				if Objective_IsComplete(OBJ_DefeatStephen) then
+					Objective_Complete(OBJ_ClearCamps, false)
+				else
+					Objective_Complete(OBJ_ClearCamps)
+				end
+				
+				Rule_RemoveMe()
+				
+			end
+			
+		end
+			
+	end
+	
+end
+
+
+function DestroyTradePost_Check()
+	
+	town_current_count = EGroup_CountSpawned(eg_trade_post)
+	
+	if town_current_count < town_prev_count or town_current_count <= 0 then
+		
+		if town_current_count > 0 then
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		end
+		
+		town_prev_count = town_current_count
+		local destroy_count = town_init_count - town_current_count
+		Objective_SetCounter(OBJ_DestroyTradePost, destroy_count, town_init_count)
+		
+		if town_current_count < 3 and reinforcements_spawned2 == false then
+			reinforcements_spawned2 = true
+			Lincoln_SpawnReinforcements2()
+		end
+		
+		if town_current_count <= 0 then
+			Rule_RemoveMe()
+			Objective_Complete(OBJ_DestroyTradePost)
+		end
+
+	end
+end
+
+
+function DefeatStephen_OnSquadKilled(context)
+
+	if not World_OwnsSquad(context.victim) then
+	
+		if Squad_GetPlayerOwner(context.victim) == player2 then
+		
+			if Squad_HasBlueprint(context.victim, SBP.ENGLISH.UNIT_KING_STEPHEN_CMP_ENG) then
+				
+				Lincoln_PlayWallaAtPosition(Util_GetPosition(context.victim), true)
+				
+				if Objective_IsComplete(OBJ_ClearCamps) then
+					Objective_Complete(OBJ_DefeatStephen)
+				else
+					Objective_Complete(OBJ_DefeatStephen)
+				end
+				
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+
+

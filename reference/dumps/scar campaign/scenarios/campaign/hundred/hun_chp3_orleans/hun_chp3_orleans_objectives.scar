@@ -1,0 +1,108 @@
+--keep
+function Orleans_InitObjectives()
+	OBJ_Keep = {
+		Title = "$11180111", -- ("Defend Orleans"),
+		Type = ObjectiveType_Primary,
+		IsFailed = function()
+			return EGroup_CountSpawned(eg_landmarks) == 0
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+		Intel_Start = function()
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+		end,
+	}
+	OBJ_Les_Tourelles = {
+		Title = "$11180112", -- ("Destroy the keep at Les Tourelles"),
+		Type = ObjectiveType_Battle,
+		Intel_Start = EVENTS.Destroy_LesTourelles,
+		IsComplete = function()
+			return EGroup_CountSpawned(eg_victory) == 0
+		end,
+		PreComplete = function()
+			World_GetSquadsNearMarker(player1, sg_temp, mkr_tourelles, OT_Player)
+			Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+			mission_over = true	
+		end,
+		OnComplete = function()
+			Mission_Complete()	
+		end,
+		SetupUI = function()
+			Les_Tourelles_Icon = Objective_AddUIElements(OBJ_Les_Tourelles, mkr_tourelles_icon, true, "$11182751", false, 7)
+		end,
+	}
+	
+	OBJ_Trade = {
+		Title = "$11180114", -- ("Optional: Protect the supply convoy"),
+		Type = ObjectiveType_Battle,
+		Intel_Complete = EVENTS.TradeCart_Arrives,
+		OnStart = function()
+			print("Send Traders")
+			trade_convoys_sent = trade_convoys_sent + 1
+			if trade_convoys_sent == 1 then
+				EventCues_CallToAction("$11197755", CTA_UNIQUE_STAKES, EVENTS.TradeCart_Appears, nil, mkr_trade_camera, 20)
+				Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+				Sound_Play2D("mus_stinger_campaign_triumph_short")
+			elseif trade_convoys_sent == 2 then
+				EventCues_CallToAction("$11197755", CTA_UNIQUE_STAKES, EVENTS.Second_SupplyConvoy, nil, mkr_trade_camera, 20)
+				Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+				Sound_Play2D("mus_stinger_campaign_triumph_short")
+			else
+				EventCues_CallToAction("$11197755", CTA_UNIQUE_STAKES, nil, nil, mkr_trade_camera, 20)
+				Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+				Sound_Play2D("mus_stinger_campaign_triumph_short")
+			end
+
+			current_convoy_succeeded = false
+			current_convoy_sent_at = orleans_seconds[1]
+			
+			MarkerPaths_GenerateIcons("trader_spline", AllMarkers_FromName("trader_spline", ""), "military_route_ally")
+			
+			Rule_AddOneShot(Orleans_SpawnTradeCart, 1)
+			Rule_AddOneShot(Orleans_SpawnTradeCart, 4)
+			Rule_AddOneShot(Orleans_SpawnTradeCart, 7)
+			Rule_AddOneShot(Orleans_SpawnTradeCart, 10)
+			Rule_AddOneShot(Orleans_SpawnTradeCart, 13)
+			
+			Rule_AddOneShot(Orleans_ClearMarkerPath, 30)
+			
+			Rule_AddInterval(Orleans_CheckDespawn, 1)
+		end,
+		OnComplete = function()
+			UI_CreateEventCue("$11198718", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_med_priority_play", ECV_Queue)
+		end,
+		OnFail = function()
+			UI_CreateEventCue("$11198719", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_med_priority_play", ECV_Queue)
+			Sound_Play2D("mus_stinger_campaign_negative")
+		end,
+	}
+	SOBJ_NextConvoy = {
+		Title = "$11201886",
+		Type = ObjectiveType_Information,
+		showTitle = false,
+		OnStart = function()
+			Objective_StartTimer(SOBJ_NextConvoy, COUNT_DOWN, TRADE_AMBUSH_SETUP_TIME, 0)
+		end,
+		IsComplete = function()
+			if Objective_GetTimerSeconds(SOBJ_NextConvoy) == 0 then
+				Objective_Complete(SOBJ_NextConvoy, false, false)
+			end
+		end,
+	}
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			Mission_Complete()
+		end,
+    }
+
+	Objective_Register(OBJ_Keep)
+	Objective_Register(OBJ_Les_Tourelles)
+	Objective_Register(OBJ_Trade)
+	Objective_Register(SOBJ_NextConvoy)
+	Objective_Register(OBJ_DebugComplete)
+end

@@ -1,0 +1,733 @@
+--
+-- Ugra - Hold Fords
+--
+
+
+function HoldFords_InitObjectives()
+	
+	OBJ_MaintainSuperiority = {
+		
+		Title = "$11183129", -- Maintain Superiority over the Fords
+		Type = ObjectiveType_Information,
+		
+		SetupUI = function()
+			--Ugra_UpdateForceCount()
+			Objective_StartTimer(OBJ_MaintainSuperiority, COUNT_DOWN, holdFordTimer, 10)
+		end,
+		
+		PreStart = function()
+			if not Objective_IsComplete(OBJ_MoveUnitsToFords) then
+				Objective_Complete(OBJ_MoveUnitsToFords, false)
+			end
+		end,
+		
+		OnStart = function()
+			
+			Rule_AddOneShot(Ugra_Phase2, monReinforcePhase2Delay)
+			Rule_AddOneShot(Ugra_Phase3, monReinforcePhase3Delay)
+			Rule_AddOneShot(Ugra_Phase4, monReinforcePhase4Delay)
+			Rule_AddOneShot(Ugra_ReinforcementTrain, monReinforceWaveDelay)
+			Rule_AddOneShot(Ugra_TimerComplete, holdFordTimer)
+			Rule_AddOneShot(Ugra_ReinforceDelay, attackCooldown)
+			
+			evaluateFord = false
+			Rule_AddOneShot(Ugra_FordStartGraceDelay, fordStartGraceDelay)
+			
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+		end,
+		OnComplete = function()
+			
+			Objective_Complete(SOBJ_MoveToNorthFord, false, false)
+			Objective_Complete(SOBJ_MoveToSouthFord, false, false)
+			
+			Objective_Complete(SOBJ_NorthFordRus, false, false)
+			Objective_Complete(SOBJ_SouthFordRus, false, false)
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			
+			Rule_Remove(Ugra_UpdateForceCount)
+			Rule_Remove(Ugra_WarnPlayerIfTheyCrossTheFords)
+			Rule_Remove(Ugra_ReinforceFords)
+			Rule_Remove(Ugra_ProbeFord)
+			Rule_Remove(Ugra_SouthernReinforcementsCheck)
+			Rule_Remove(Ugra_UnpackSouthernReinforcements)
+			
+			--Rule_Remove(Ugra_CheckFordsScouted)
+			
+			Ugra_SplitAndFallback()
+			Util_StartIntel(EVENTS["AttackMongols"])
+			Objective_Start(OBJ_AttackMongols)
+			Game_TransitionToState("taiga_normal", 90)
+		end,
+	}
+	
+	SOBJ_NorthFordRus = {
+		
+		Title = 11183131, -- North Ford
+		Type = ObjectiveType_TugOfWar,
+		Parent = OBJ_MaintainSuperiority,
+		StartAlongsideParent = true,
+
+		SetupUI = function()
+			Obj_SetProgressVisible(SOBJ_NorthFordRus.ID, true)
+			--Objective_AddGroundReticule(SOBJ_NorthFordRus, mkr_rusford1, Marker_GetProximityRadius(mkr_rusford1), BP_GetReticuleBlueprint("campaign_capturelocation_self"))
+			Objective_AddUIElements(SOBJ_NorthFordRus, mkr_rusford1, true, nil, false, nil, nil, nil, "icons/objectives/objective_battle")
+		end,
+	}
+	
+	SOBJ_SouthFordRus = {
+		
+		Title = 11183132, -- South Ford
+		Type = ObjectiveType_TugOfWar,
+		Parent = OBJ_MaintainSuperiority,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			Obj_SetProgressVisible(SOBJ_SouthFordRus.ID, true)
+			--Objective_AddGroundReticule(SOBJ_SouthFordRus, mkr_rusford2, Marker_GetProximityRadius(mkr_rusford2), BP_GetReticuleBlueprint("campaign_capturelocation_self"))
+			Objective_AddUIElements(SOBJ_SouthFordRus, mkr_rusford2, true, nil, false, nil, nil, nil, "icons/objectives/objective_battle")
+		end,
+	}
+	
+	OBJ_SouthernReinforcements = {
+		
+		Title = "$11186858", -- Optional: Intercept the southern reinforcements
+		Type = ObjectiveType_Optional,
+		
+		targetKillCount = 0,
+		currentKillCount = 0,
+		
+		PreStart = function()
+			Util_AutoSave()
+		end,
+		OnStart = function()
+			Sound_Play2D("mus_stinger_campaign_alert")
+			print("Spawning Southern Reinforcements")
+			Objective_AddUIElements(OBJ_SouthernReinforcements, sg_mon_southreinforce, true, nil, true, nil, nil, nil)
+		
+		end,
+		
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Reinforcements_Success)
+		end,
+		
+		OnFail = function()
+			Util_StartIntel(EVENTS.Reinforcements_Fail)
+		end,
+	}
+	
+	SOBJ_DestroyUnits = {
+		
+		Title = "$11202639", -- Destroy reinforcements before they reach Southern Ford
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_SouthernReinforcements,
+		StartAlongsideParent = true,
+		
+		targetKillCount = 0,
+		currentKillCount = 0,
+		
+		OnStart = function()	
+			local sgroup = MissionOMatic_FindModule("SouthernReinforcements").sgroup
+			local buildings = MissionOMatic_FindModule("SouthernReinforcementsBuildings").sgroup
+			
+			SOBJ_DestroyUnits.targetKillCount = SGroup_Count(sgroup) + SGroup_Count(buildings)
+			Obj_SetProgressVisible(SOBJ_DestroyUnits.ID, true)
+			Obj_SetProgress(SOBJ_DestroyUnits.ID, 0)
+		
+		end,
+	}
+	
+	Objective_Register(OBJ_HoldFords)
+	Objective_Register(OBJ_MaintainSuperiority)
+	Objective_Register(SOBJ_NorthFordRus)
+	Objective_Register(SOBJ_SouthFordRus)
+	Objective_Register(OBJ_SouthernReinforcements)
+	Objective_Register(SOBJ_DestroyUnits)
+
+	timeStamp_lastFordSuperiorityWarning = 0
+	Rule_AddInterval(Ugra_WarnPlayerIfTheyCrossTheFords, 2.5)
+	
+end
+
+function Ugra_OnSquadKilled(context)
+	local victim = context.victim
+	local victimPosition = Squad_GetPosition(victim)
+	
+	-- Supply Cart Death Logic
+	if Marker_InProximity(mkr_south, victimPosition) and World_OwnsSquad(victim) == false then
+		if Squad_GetPlayerOwner(victim) == player2 then
+			SOBJ_DestroyUnits.currentKillCount = SOBJ_DestroyUnits.currentKillCount + 1
+			Obj_SetProgress(SOBJ_DestroyUnits.ID, SOBJ_DestroyUnits.currentKillCount / SOBJ_DestroyUnits.targetKillCount)
+			if SOBJ_DestroyUnits.currentKillCount == SOBJ_DestroyUnits.targetKillCount then
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+function Ugra_SplitAndFallback()
+	
+	local northModules = {
+		MissionOMatic_FindModule("ScoutAttack1"),
+		MissionOMatic_FindModule("AttackNorth"),
+		MissionOMatic_FindModule("DefendMonFord1_1"),
+		MissionOMatic_FindModule("DefendMonFord1_2"),
+		MissionOMatic_FindModule("DefendMonFord1_3"),
+		MissionOMatic_FindModule("DefendMonFord1_4")
+	}
+	local southModules = {
+		MissionOMatic_FindModule("ScoutAttack2"),
+		MissionOMatic_FindModule("AttackSouth"),
+		MissionOMatic_FindModule("DefendMonFord2_1"),
+		MissionOMatic_FindModule("DefendMonFord2_2"),
+		MissionOMatic_FindModule("DefendMonFord2_3"),
+		MissionOMatic_FindModule("DefendMonFord2_4")
+	}
+	
+	sg_mon_retreatcav = SGroup_CreateIfNotFound("sg_mon_retreatcav")
+	sg_mon_retreatinf = SGroup_CreateIfNotFound("sg_mon_retreatinf")
+	
+	local _SplitModule = function(module, north)
+		if north then
+			moduleCav = MissionOMatic_FindModule("DefendNorthCav")
+			moduleInf = MissionOMatic_FindModule("DefendMonFortInfantryNorth")
+		else
+			moduleCav = MissionOMatic_FindModule("DefendSouthCav")
+			moduleInf = MissionOMatic_FindModule("DefendMonFortInfantrySouth")
+		end
+		
+		SGroup_Clear(sg_mon_retreatcav)
+		SGroup_Filter(module.sgroup, "cavalry", FILTER_REMOVE, sg_mon_retreatcav)
+		Defend_RemoveSGroup(module, sg_mon_retreatcav)
+		Defend_AddSGroup(moduleCav, sg_mon_retreatcav)
+		
+		SGroup_Clear(sg_mon_retreatinf)
+		SGroup_Filter(module.sgroup, "melee", FILTER_REMOVE, sg_mon_retreatinf)
+		Defend_RemoveSGroup(module, sg_mon_retreatinf)
+		Defend_AddSGroup(moduleInf, sg_mon_retreatinf)
+		
+		DissolveModuleIntoModule(module, "DefendMonFortRangedNorth")
+		
+	end
+	
+	for k,v in ipairs(northModules) do
+		_SplitModule(v, true)
+	end
+	
+	for k,v in ipairs(southModules) do
+		_SplitModule(v, false)
+	end 
+	
+	if SGroup_IsAlive(sg_mon_backup1) then
+		Cmd_MoveToAndDestroy(sg_mon_backup1, mkr_retreat_nw)
+	end
+	
+	if SGroup_IsAlive(sg_mon_backup2) then
+		Cmd_MoveToAndDestroy(sg_mon_backup2, mkr_retreat_s)
+	end
+	
+	if SGroup_IsAlive(sg_mon_monford3) then
+		Cmd_MoveToAndDestroy(sg_mon_monford3, mkr_retreat_s)
+	end
+	
+	--Modules that retreat on engage
+	retreaterModuleList = {
+		moduleDefendNorthCav, 
+		moduleDefendSouthCav, 
+		moduleDefendMonFortInfantryNorth, 
+		moduleDefendMonFortInfantrySouth,
+		moduleDefendMonFortRanged
+	}
+end
+
+function Ugra_TimerComplete()
+	Objective_Complete(OBJ_MaintainSuperiority)
+	Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+end
+
+-- Update north and south ford unit counts 
+function Ugra_UpdateForceCount()
+	
+	-- Send reinforcements to formations
+	Ugra_SplitModule(MissionOMatic_FindModule("DefendMonFord1"), { 
+			MissionOMatic_FindModule("DefendMonFord1_1"),
+			MissionOMatic_FindModule("DefendMonFord1_2"),
+			MissionOMatic_FindModule("DefendMonFord1_3"),
+			MissionOMatic_FindModule("DefendMonFord1_4") })
+	Ugra_SplitModule(MissionOMatic_FindModule("DefendMonFord2"), { 
+			MissionOMatic_FindModule("DefendMonFord2_1"),
+			MissionOMatic_FindModule("DefendMonFord2_2"),
+			MissionOMatic_FindModule("DefendMonFord2_3"),
+			MissionOMatic_FindModule("DefendMonFord2_4") })
+	
+	-- Count all units at fords
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_northford)
+	SGroup_AddGroup(sg_temp, sg_mon_attacknorth)
+	local northFordMonValue = Ugra_EvaluateForceValue(sg_temp)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_rusford1)
+	local northFordRusValue = Ugra_EvaluateForceValue(sg_temp)
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_southford)
+	SGroup_AddGroup(sg_temp, sg_mon_attacksouth)
+	local southFordMonValue = Ugra_EvaluateForceValue(sg_temp)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_rusford2)
+	local southFordRusValue = Ugra_EvaluateForceValue(sg_temp)
+	
+	-- Handle NaN/Inf div by zero, if no Rus army, set to zero. If no Mon army set to 1.
+	if northFordRusValue <= 0 then
+		forceRatioNorth = 0
+	elseif northFordMonValue <= 0 then
+		forceRatioNorth = 1
+	else
+		forceRatioNorth = northFordRusValue / (northFordMonValue + northFordRusValue)
+	end	
+	
+	if southFordRusValue <= 0 then
+		forceRatioSouth = 0
+	elseif southFordMonValue <= 0 then
+		forceRatioSouth = 1
+	else
+		forceRatioSouth = southFordRusValue / (southFordMonValue + southFordRusValue)	
+	end
+	
+	for i,v in ipairs({ northFordRusValue, northFordMonValue, southFordRusValue, southFordMonValue }) do
+		if v > bestForceValue then
+			bestForceValue = v*1.1
+		end
+	end
+	
+	-- Update UI
+	if Objective_IsStarted(OBJ_MaintainSuperiority) then
+		
+		Obj_SetProgress(SOBJ_NorthFordRus.ID, forceRatioNorth)
+		Obj_SetProgress(SOBJ_SouthFordRus.ID, forceRatioSouth)
+		
+		if (forceRatioNorth < warningThreshold or forceRatioSouth < warningThreshold) and (World_GetGameTime() - timeStamp_lastFordSuperiorityWarning) >= 30 then 
+			--Sound_Play2D("sfx_ui_ugra_ford_warning")
+			timeStamp_lastFordSuperiorityWarning = World_GetGameTime()
+		end
+		
+	else
+		
+		if Objective_IsStarted(OBJ_MoveUnitsToFords) then
+			
+			Obj_SetProgress(SOBJ_MoveToNorthFord.ID, forceRatioNorth)
+			Obj_SetProgress(SOBJ_MoveToSouthFord.ID, forceRatioSouth)
+			
+			if not Objective_IsComplete(OBJ_MoveUnitsToFords) then
+				if forceRatioNorth >= attackThreshold and forceRatioSouth >= attackThreshold then
+					Objective_Complete(OBJ_MoveUnitsToFords)
+				end
+			end
+		else
+			if forceRatioNorth > 0 or forceRatioSouth > 0 then
+				Objective_Start(OBJ_MoveUnitsToFords)
+			end
+		end
+		
+	end
+	
+	--Evaluate Force ratio vs attackThreshold
+	if forceRatioNorth < attackThreshold and evaluateFord then
+		Rule_AddOneShot(Ugra_NorthFordDelayedLaunch, forceGraceDelay)
+	end
+	
+	if forceRatioSouth < attackThreshold and evaluateFord then
+		Rule_AddOneShot(Ugra_SouthFordDelayedLaunch, forceGraceDelay)
+	end
+end
+
+function Ugra_NorthFordDelayedLaunch()
+	if forceRatioNorth < attackThreshold then
+		TransferModuleIntoModule("DefendMonFord1", "AttackNorth")
+		TransferModuleIntoModule("DefendMonFord1_1", "AttackNorth")
+		TransferModuleIntoModule("DefendMonFord1_2", "AttackNorth")
+		TransferModuleIntoModule("DefendMonFord1_3", "AttackNorth")
+		TransferModuleIntoModule("DefendMonFord1_4", "AttackNorth")
+		if firstNorthAttack then
+			firstNorthAttack = false
+			EventCues_CallToAction(11180279, CTA_ALARM, nil, nil, Marker_GetPosition(mkr_monford1), 20) -- The Mongols attack at the north ford!
+			Sound_Play2D("mus_stinger_campaign_alert")
+		end	
+		if attackNorthCooldown then
+			Rule_AddOneShot(Ugra_NorthAttackCooldown, attackCooldown)
+			attackNorthCooldown = false
+		end
+		if not fordAttacked then
+			fordAttacked = true
+			Util_StartIntel(EVENTS["FordAttacks"])
+		end
+	end
+end
+
+function Ugra_SouthFordDelayedLaunch()
+	if forceRatioSouth < attackThreshold then
+		TransferModuleIntoModule("DefendMonFord2", "AttackSouth")
+		TransferModuleIntoModule("DefendMonFord2_1", "AttackSouth")
+		TransferModuleIntoModule("DefendMonFord2_2", "AttackSouth")
+		TransferModuleIntoModule("DefendMonFord2_3", "AttackSouth")
+		TransferModuleIntoModule("DefendMonFord2_4", "AttackSouth")
+		if firstSouthAttack then
+			firstSouthAttack = false
+			EventCues_CallToAction(11180280, CTA_ALARM, nil, nil, Marker_GetPosition(mkr_monford2), 20) -- The Mongols attack at the south ford!
+			Sound_Play2D("mus_stinger_campaign_alert")
+			Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+		end		
+		if attackSouthCooldown then
+			Rule_AddOneShot(Ugra_SouthAttackCooldown, attackCooldown)
+			attackSouthCooldown = false
+		end
+		if not fordAttacked then
+			fordAttacked = true
+			Util_StartIntel(EVENTS["FordAttacks"])
+		end
+	end
+end
+
+function Ugra_EvaluateForceValue(sgroup)
+	SGroup_RemoveGroup(sgroup, sg_mon_scoutwave1)
+	SGroup_RemoveGroup(sgroup, sg_mon_scoutwave2)
+	SGroup_RemoveGroup(sgroup, sg_mon_backup1)
+	SGroup_RemoveGroup(sgroup, sg_mon_backup2)
+	local forceValue = 0
+	
+	local sg_units = SGroup_CreateIfNotFound("sg_units")
+	
+	for unit, data in pairs(unitTypeList) do
+		SGroup_Clear(sg_units)
+		SGroup_Filter(sgroup, data.scar, FILTER_REMOVE, sg_units)
+		forceValue = forceValue + SGroup_Count(sg_units)*data.value
+	end
+	return forceValue
+end
+
+function Ugra_BuildNewMongolProduction() 
+	module = MissionOMatic_FindModule("MonVillagers")
+	-- TODO: script construction of barracks, archery_range, and stable
+end
+	
+
+function Ugra_Phase2()	
+	print("Initiating HoldFord Phase 2")
+	ugraPhase = 2
+	Ugra_BuildNewMongolProduction()
+	newunits = {
+		{ type = "scar_manatarms", numSquads = 1 },
+		{ type = "scar_crossbowman", numSquads = 1 },
+	}
+	Wave_AddUnits(wave_ford1, newunits)
+	Wave_AddUnits(wave_ford2, newunits)
+	
+	--Temp until Building construction is fixed
+	Wave_OverrideUnitBuildTime("scar_spearman", 12)
+	Wave_OverrideUnitBuildTime("scar_manatarms", 17)
+	Wave_OverrideUnitBuildTime("scar_archer", 15)
+	Wave_OverrideUnitBuildTime("scar_crossbowman", 12)
+	Wave_OverrideUnitBuildTime("scar_horseman", 15)
+	Wave_OverrideUnitBuildTime("scar_knight", 17)
+	
+end
+
+function Ugra_Phase3()
+	print("Initiating HoldFord Phase 3")
+	ugraPhase = 3
+	Ugra_BuildNewMongolProduction()
+	newunits = {
+		{ type = "scar_spearman", numSquads = 1 },
+		{ type = "scar_horseman", numSquads = 1 },
+		{ type = "scar_archer", numSquads = 1 },
+	}
+	Wave_AddUnits(wave_ford1, newunits)
+	Wave_AddUnits(wave_ford2, newunits)
+	
+	--Temp until Building construction is fixed
+	Wave_OverrideUnitBuildTime("scar_spearman", 8)
+	Wave_OverrideUnitBuildTime("scar_manatarms", 11)
+	Wave_OverrideUnitBuildTime("scar_archer", 10)
+	Wave_OverrideUnitBuildTime("scar_crossbowman", 8)
+	Wave_OverrideUnitBuildTime("scar_horseman", 10)
+	Wave_OverrideUnitBuildTime("scar_knight", 11)
+end
+
+function Ugra_Phase4()
+	print("Initiating HoldFord Phase 4")
+	ugraPhase = 4
+	Ugra_BuildNewMongolProduction()
+	newunits = {
+		{ type = "scar_manatarms", numSquads = 1 },
+		{ type = "scar_knight", numSquads = 1 },
+		{ type = "scar_crossbowman", numSquads = 1 },
+	}
+	Wave_AddUnits(wave_ford1, newunits)
+	Wave_AddUnits(wave_ford2, newunits)	
+	
+	--Temp until Building construction is fixed
+	Wave_OverrideUnitBuildTime("scar_spearman", 6)
+	Wave_OverrideUnitBuildTime("scar_manatarms", 8)
+	Wave_OverrideUnitBuildTime("scar_archer", 7)
+	Wave_OverrideUnitBuildTime("scar_crossbowman", 6)
+	Wave_OverrideUnitBuildTime("scar_horseman", 7)
+	Wave_OverrideUnitBuildTime("scar_knight", 8)
+end
+
+function Ugra_ReinforceFords()
+	if prepareTimerComplete then
+		Wave_Prepare(wave_ford1)
+		Wave_Prepare(wave_ford2)
+	end
+end
+
+function Ugra_NorthAttackCooldown()
+	attackNorthCooldown = true
+end
+
+function Ugra_SouthAttackCooldown()
+	attackSouthCooldown = true
+end
+
+function Ugra_FordStartGraceDelay()
+	evaluateFord = true
+end
+
+function Ugra_ReinforceDelay()
+	Rule_AddInterval(Ugra_ReinforceFords, monReinforcePeriod)
+	Rule_AddInterval(Ugra_ProbeFord, monWaveTimer)
+end
+
+function Ugra_SplitModule(module, moduleList)
+	
+	local module_inf1 = moduleList[1]
+	local module_inf2 = moduleList[2]
+	local module_rng =  moduleList[3]
+	local module_cav =  moduleList[4]
+	
+	local sgroup = module.sgroup	
+	SGroup_Clear(sg_inf)
+	SGroup_Clear(sg_rng)
+	SGroup_Clear(sg_cav)
+	
+	local i = 1
+	local _GetSmallestModule = function(moduleList)
+		local smallestModule = nil
+		for i, v in ipairs(moduleList) do
+			if smallestModule == nil then
+				smallestModule = v
+			elseif SGroup_CountSpawned(v.sgroup) < SGroup_CountSpawned(smallestModule.sgroup) then
+				smallestModule = v
+			end
+		end
+		return smallestModule
+	end
+			
+	if SGroup_Count(sgroup) > 0 then
+		for i,v in ipairs(moduleList) do
+			local sgroup = Defend_GetSGroup(v)
+			local target = v.target.position
+			Cmd_FormationMove(sgroup, target, false, nil, Marker_GetPosition(mkr_rusfort))
+		end
+		
+		SGroup_Filter(sgroup, { "scar_horseman", "scar_knight", "scar_horsearcher" }, FILTER_REMOVE, sg_cav)
+		SGroup_Filter(sgroup, { "scar_archer", "scar_crossbowman" }, FILTER_REMOVE, sg_rng)
+		SGroup_Filter(sgroup, { "scar_spearman", "scar_manatarms" }, FILTER_REMOVE, sg_inf)
+		
+		Defend_AddSGroup(module_cav, sg_cav)
+		Defend_AddSGroup(module_rng, sg_rng)
+		Defend_AddSGroup(_GetSmallestModule({ module_inf1, module_inf2 }), sg_inf)
+	end	
+	
+end
+
+function Ugra_PlayerHasWalls()
+	
+	eg_temp = Player_GetEntities(player1)
+	EGroup_Filter(eg_temp, "stone_wall", FILTER_KEEP)
+	return EGroup_Count(eg_temp) > 0
+end
+
+function Ugra_ProbeFord()
+	local fordModuleList = {
+		{ "ScoutAttack1", mkr_monford1_spawn },
+		{ "ScoutAttack2", mkr_monford2_spawn }
+	}
+	local unitList = {
+		{ -- Phase 1
+			{
+				{ type = "scar_horseman", 		numSquads = Util_DifVar({ 4, 4, 6, 6 }) },
+				{ type = "scar_horsearcher", 	numSquads = Util_DifVar({ 2, 2, 2, 4 }) },
+				{ type = "scar_knight", 		numSquads = Util_DifVar({ 0, 0, 0, 2 }) },
+			},
+			{
+				{ type = "scar_horseman", 		numSquads = Util_DifVar({ 4, 4, 6, 6 }) },
+				{ type = "scar_horsearcher", 	numSquads = Util_DifVar({ 2, 2, 2, 4 }) },
+				{ type = "scar_knight", 		numSquads = Util_DifVar({ 0, 0, 0, 2 }) },
+			},
+		},
+		{ -- Phase 2
+			{
+				{ type = "scar_horseman", 		numSquads = Util_DifVar({ 4, 5, 9, 9 }) },
+				{ type = "scar_horsearcher", 	numSquads = Util_DifVar({ 2, 3, 3, 7 }) },
+				{ type = "scar_knight", 		numSquads = Util_DifVar({ 0, 0, 0, 2 }) },
+			},
+			{
+				{ type = "scar_spearman", 		numSquads = Util_DifVar({ 4, 5, 9, 9 }) },
+				{ type = "scar_archer", 		numSquads = Util_DifVar({ 2, 3, 3, 7 }) },
+				{ type = "scar_manatarms", 		numSquads = Util_DifVar({ 0, 0, 0, 2 }) },
+			},
+		},
+		{ -- Phase 3
+			{
+				{ type = "scar_horseman", 		numSquads = Util_DifVar({ 4, 4, 8, 8 }) },
+				{ type = "scar_horsearcher", 	numSquads = Util_DifVar({ 2, 2, 2, 6 }) },
+				{ type = "scar_knight", 		numSquads = Util_DifVar({ 0, 0, 2, 4 }) },
+			},
+			{
+				{ type = "scar_spearman", 		numSquads = Util_DifVar({ 4, 4, 8, 8 }) },
+				{ type = "scar_archer", 		numSquads = Util_DifVar({ 2, 2, 2, 6 }) },
+				{ type = "scar_manatarms", 		numSquads = Util_DifVar({ 0, 0, 2, 4 }) },
+			},
+		},
+		{ -- Phase 4
+			{
+				{ type = "scar_horseman", 		numSquads = Util_DifVar({ 4, 4, 10, 10 }) },
+				{ type = "scar_horsearcher", 	numSquads = Util_DifVar({ 2, 2, 2, 6 }) },
+				{ type = "scar_knight", 		numSquads = Util_DifVar({ 0, 0, 2, 6 }) },
+			},
+			{
+				{ type = "scar_spearman", 		numSquads = Util_DifVar({ 4, 4, 10, 10 }) },
+				{ type = "scar_archer", 		numSquads = Util_DifVar({ 2, 2, 2, 6 }) },
+				{ type = "scar_manatarms", 		numSquads = Util_DifVar({ 0, 0, 2, 6 }) },
+			},
+		}
+	}
+	if currentFord == nil or currentFord == 2 then
+		currentFord = 1
+	else
+		currentFord = 2
+	end
+	SpawnUnitsToModule(
+		unitList[ugraPhase][World_GetRand(1, 2)],
+		fordModuleList[currentFord][1], 
+		fordModuleList[currentFord][2])
+	if Ugra_PlayerHasWalls() then
+			SpawnUnitsToModule(
+		{
+			{ type = "scar_ram", numSquads = 1 },
+		},
+		fordModuleList[currentFord][1], 
+		fordModuleList[currentFord][2])
+	end
+	Rule_AddOneShot(Ugra_MongolDrumDelay, 10)
+	if firstProbe then
+		firstProbe = false
+		Util_StartIntel(EVENTS.Skirmish_Ford)
+	end
+end
+
+function Ugra_MongolDrumDelay()
+	Music_PlayStinger("mus_camp_cust_mongol_drum_short_cavalry")
+end
+
+
+function Ugra_ReinforcementTrain()
+	
+	SpawnUnitsToModule(
+			{
+				{ type = "scar_horseman", 		numSquads = Util_DifVar({ 6,  6,  6,  8  }) },
+				{ type = "scar_horsearcher",	numSquads = Util_DifVar({ 4,  6,  8,  10 }) },
+				{ type = "scar_manatarms",		numSquads = Util_DifVar({ 0,  2,  4,  4  }) },
+				{ type = "scar_archer",			numSquads = Util_DifVar({ 4,  6,  8, 10 }) },
+				{ type = "scar_mangonel",		numSquads = Util_DifVar({ 0,  1,  2,  2  }) },
+				{ type = "scar_ram",		    numSquads = Util_DifVar({ 1,  1,  1,  2  }) },
+			},
+			"SouthernReinforcements", 
+			mkr_reinforcementspawn_units)
+	local sgroup = MissionOMatic_FindModule("SouthernReinforcements").sgroup
+	
+	SpawnUnitsToModule(
+			{
+				{ sbp = BP_GetSquadBlueprint("building_unit_cavalry_moving_mon"), numSquads = 1, },
+				{ sbp = BP_GetSquadBlueprint("building_unit_ranged_moving_mon"), numSquads = 1, },
+				{ sbp = BP_GetSquadBlueprint("building_unit_infantry_moving_mon"), numSquads = 1, },
+			},
+			"SouthernReinforcementsBuildings", 
+			mkr_reinforcementspawn_buildings)
+	local buildings = MissionOMatic_FindModule("SouthernReinforcementsBuildings").sgroup
+	
+	southernReinforcementsSpeed = Modify_UnitSpeed(sgroup, 0.5)
+	southernReinforcementsBuildingsSpeed = Modify_UnitSpeed(buildings, 0.25)
+	FOW_RevealSGroup(sgroup, 20, 120)
+	FOW_RevealSGroup(buildings, 20, 120)
+	Rule_AddGlobalEvent(Ugra_OnSquadKilled, GE_SquadKilled)
+
+	EventCues_CallToAction(11186859, CTA_ALARM, EVENTS.ReinforcementWave, nil, Marker_GetPosition(mkr_retreat_se), 20)
+	Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+	Sound_Play2D("mus_stinger_campaign_alert")
+
+	Rule_AddInterval(Ugra_SouthernReinforcementsCheck, 1)
+
+	Objective_Start(OBJ_SouthernReinforcements)
+		
+end
+
+function Ugra_SouthernReinforcementsCheck()
+	local sgroup = MissionOMatic_FindModule("SouthernReinforcements").sgroup
+	local buildings = MissionOMatic_FindModule("SouthernReinforcementsBuildings").sgroup
+	
+	if SGroup_IsEmpty(sgroup) and SGroup_IsEmpty(buildings) then
+		Objective_Complete(OBJ_SouthernReinforcements)
+	end
+end
+
+
+function Ugra_ReleaseReinforcements()
+	local module = MissionOMatic_FindModule("SouthernReinforcements")
+	local buildingsModule = MissionOMatic_FindModule("SouthernReinforcementsBuildings")
+	
+	sg_southinfantry = SGroup_CreateIfNotFound("sg_southinfantry")
+	sg_southcavalry = SGroup_CreateIfNotFound("sg_southcavalry")
+	sg_southranged = SGroup_CreateIfNotFound("sg_southranged")
+	
+	Rule_Remove(Ugra_SouthernReinforcementsCheck)
+	
+	if not SGroup_IsEmpty(module.sgroup) or not SGroup_IsEmpty(buildingsModule.sgroup) and Objective_IsComplete(OBJ_SouthernReinforcements) == false then
+		Modifier_Remove(southernReinforcementsSpeed)
+		--Modifier_Remove(southernReinforcementsBuildingsSpeed)
+		SGroup_Filter(buildingsModule.sgroup, SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON, FILTER_REMOVE, sg_southcavalry)
+		SGroup_Filter(buildingsModule.sgroup, SBP.MONGOL.BUILDING_UNIT_RANGED_MOVING_MON, FILTER_REMOVE, sg_southranged)
+		SGroup_Filter(buildingsModule.sgroup, SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON, FILTER_REMOVE, sg_southinfantry)
+		Action_DissolveModule_Do("SouthernReinforcements")
+		Defend_AddSGroup(MissionOMatic_FindModule("DefendMonFord2"), module.sgroup, true)
+		print("Releasing Reinforcements to Fords")
+		Objective_Fail(OBJ_SouthernReinforcements)
+		Rule_AddInterval(Ugra_UnpackSouthernReinforcements, 10)
+	end
+end
+
+function Ugra_UnpackSouthernReinforcements()
+	packedBuildingsCount = SGroup_Count(sg_southinfantry) + SGroup_Count(sg_southcavalry) + SGroup_Count(sg_southranged)
+	if packedBuildingsCount ~= 0 then
+		Cmd_Ability(sg_southcavalry, BP_GetAbilityBlueprint("unpack_building_unit_cavalry_mon"), Marker_GetPosition(mkr_southbuildinglocation1))
+		Cmd_Ability(sg_southranged, BP_GetAbilityBlueprint("unpack_building_unit_ranged_mon"), Marker_GetPosition(mkr_southbuildinglocation2))
+		Cmd_Ability(sg_southinfantry, BP_GetAbilityBlueprint("unpack_building_unit_infantry_mon"), Marker_GetPosition(mkr_southbuildinglocation3))
+	else
+		Rule_RemoveMe()
+	end
+end
+
+
+function Ugra_WarnPlayerIfTheyCrossTheFords()
+	
+	if Objective_IsComplete(OBJ_MaintainSuperiority) then 
+		Rule_RemoveMe()
+	elseif Event_IsAnyRunning() == false then 
+		
+		if Prox_ArePlayersNearMarker(player1, mkr_ford1_farside_trigger1, ANY) or Prox_ArePlayersNearMarker(player1, mkr_ford1_farside_trigger2, ANY) or
+			Prox_ArePlayersNearMarker(player1, mkr_ford2_farside_trigger1, ANY) or Prox_ArePlayersNearMarker(player1, mkr_ford2_farside_trigger2, ANY) or 
+			Prox_ArePlayersNearMarker(player1, mkr_ford3_farside_trigger1, ANY) then 
+			
+			Util_StartIntel(EVENTS.Warning)
+			Rule_RemoveMe()
+			
+		end
+		
+	end
+	
+end

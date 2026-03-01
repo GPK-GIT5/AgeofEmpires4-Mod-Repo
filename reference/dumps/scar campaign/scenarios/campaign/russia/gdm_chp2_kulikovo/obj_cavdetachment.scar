@@ -1,0 +1,319 @@
+--
+-- Battle of Kulikovo 1380 - Cav Detachment
+--
+
+function CavDetachment_InitObjectives()
+	
+	OBJ_SignalCavalry = {
+		Title = "$11177517", -- Signal the Cavalry to attack when needed"),
+		Type = OT_Primary,
+		
+		--Intel_Start = EVENTS.CavalrySpawn,
+		
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_SignalCavalry, mkr_cavalry_reinforce, true, "$11180213") -- Hidden Cavalry
+		end,
+		
+		--OnStart = CavDetachment_StartCavalry,
+		
+		OnComplete = function()
+			if cav_amount >= cavalry_maximum then
+				Util_StartIntel(EVENTS.CavalryActivated_FullStrength)
+			else Util_StartIntel(EVENTS.CavalryActivated) end
+			
+		end,
+	}
+	
+	SOBJ_SignalInfo1 = {
+		Title = "$11177518", -- Cavalry stops reinforcing and attacks from the forest"),
+		Type = OT_Secondary,
+		Parent = OBJ_SignalCavalry,
+		StartAlongsideParent = true,
+	}
+	
+	SOBJ_SignalInfo2 = {
+		Title = "$11177519", -- Can only be used once"),
+		Type = OT_Secondary,
+		Parent = OBJ_SignalCavalry,
+		StartAlongsideParent = true,
+	}
+	
+	Objective_Register(OBJ_SignalCavalry)
+	--Objective_Register(SOBJ_SignalInfo1)
+	--Objective_Register(SOBJ_SignalInfo2)
+	
+	b_cavalryUIvisible = false 
+	
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--														CAVALRY DETACHMENT
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function CavDetachment_StartCavalry()
+	Rule_AddOneShot(CavDetachment_SpawnCavalryUnits, 0, {spawnCount = 6})
+	Rule_AddInterval(CavDetachment_SpawnCavalryUnits, cav_spawn_rate, {spawnCount = 1})
+	
+	CavDetachment_ShowCavalryUI()
+	--Sound_Play2D("mus_stinger_campaign_alert")
+	
+	EventCues_CallToAction("$11180278", CTA_CELEBRATE, EVENTS.CavalrySpawn, nil, sg_cavalry_detachment, 20, nil, MUS_STING_TRIUMPHANT) -- A cavalry detachment is beginning to arrive
+	Rule_AddOneShot(ObjectiveStart_CavDetachment, 14)
+	Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+end --CavDetachment_StartCavalry()
+
+function ObjectiveStart_CavDetachment()
+	
+	Objective_Start(OBJ_SignalCavalry)
+	
+end
+
+function CavDetachment_ShowCavalryUI()
+	
+	if UI_IsXboxUI() then
+		CavDetachment_ShowXboxCavalryUI()
+		return
+	end
+	
+	local xaml = 
+	[[<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+		xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" 
+		xmlns:engineSharedControls="clr-namespace:WPFGUI.Shared.Controls;assembly=EngineUI"
+		xmlns:sharedConverters="clr-namespace:WPFGUI.Shared.Converters;assembly=EngineUI"
+		xmlns:utility="clr-namespace:WPFGUI.Shared.Utility;assembly=EngineUI">
+		<Button HorizontalAlignment="Right" 
+	        VerticalAlignment="Top" 
+	        Margin="0,6,8,0"
+	        SnapsToDevicePixels="True"
+	        Style="{StaticResource HUDPrimaryRaisedTextButton}"
+			Command="{Binding [cavalry_button_command]}"
+			Content="{Binding [cavalry_button_text]}"
+			utility:AudioAttachedProperty.PreviewMouseLeftButtonUpSound="sfx_ui_hud_inGame_tribute_open_play"
+			engineSharedControls:TagAdorner.ArrowDataTemplate="{StaticResource hudPage:TagArrowDataTemplate}"
+            engineSharedControls:TagAdorner.TargetDataTemplate="{StaticResource hudPage:EmptyTagDataTemplate}"
+            engineSharedControls:TagAdorner.DataTemplate="{StaticResource TagDataTemplate}"
+            engineSharedControls:TagAdorner.AlignmentMode="Relative"
+            engineSharedControls:TagAdorner.VerticalPlacement="Bottom"
+            engineSharedControls:TagAdorner.VerticalAnchor="Bottom"
+            engineSharedControls:TagAdorner.HorizontalPlacement="Left"
+            engineSharedControls:TagAdorner.HorizontalAnchor="Left">
+		
+	        <engineSharedControls:TagAdorner.IsTagged>
+	            <MultiBinding Converter="{StaticResource IsTaggedConverter}"
+	                    ConverterParameter="CavalryButtonAdorner">
+	                <Binding Path="TagVersion" Source="{x:Static model:HUDModel.Instance}" />
+	            </MultiBinding>
+	        </engineSharedControls:TagAdorner.IsTagged>
+	        <engineSharedControls:TagAdorner.Data>
+	            <MultiBinding Converter="{StaticResource TagDataConverter}"
+	                    ConverterParameter="CavalryButtonAdorner">
+	                <Binding Path="TagVersion" Source="{x:Static model:HUDModel.Instance}" />
+	            </MultiBinding>
+	        </engineSharedControls:TagAdorner.Data>
+		
+			<Button.ToolTip>
+				<ToolTip RenderTransformOrigin="1.0,0.0">
+		            <ToolTip.Template>
+		                <ControlTemplate>
+		                    <Border Background="{StaticResource SecondaryColorDarkBrush}"
+		                            Padding="8">
+		                        <StackPanel Orientation="Vertical">
+		                            <TextBlock Style="{StaticResource HUDPrimaryColorTextTitleTextBlock18ptStyle}"
+		                                       Margin="{StaticResource ExtraSmallMarginAll}"
+		                                       Text="{utility:LocString $11177520}" />  
+		                            <TextBlock Style="{StaticResource HUDGray80BodyTextBlock14ptStyle}"
+		                                       Margin="4"
+		                                       Text="{utility:LocString $11177518}" />s 
+		                            <TextBlock Style="{StaticResource HUDGray60BodyTextBlock14ptStyle}"
+		                                       Margin="4"
+		                                       Text="{utility:LocString $11177519}" /> 
+		                        </StackPanel>
+		                    </Border>
+		                </ControlTemplate>
+		            </ToolTip.Template>
+		        </ToolTip>
+			</Button.ToolTip>
+		</Button>
+	</Grid>]]
+	
+	cavalry_data_context = {
+		cavalry_button_text = Loc_GetString(Loc_FormatText("$11177521",cavalry_current,cavalry_maximum)), -- "Signal the Cavalry \n(Preparing: "..cavalry_current.."/"..cavalry_maximum..")",
+		cavalry_button_command = UI_CreateCommand("CavDetachment_CavalryButtonClicked"),
+	}
+	
+	UI_AddChild("", "XamlPresenter", "CavalryUI", { IsHitTestVisible = true, Xaml = xaml, DataContext = UI_CreateDataContext(cavalry_data_context) })
+	
+	b_cavalryUIvisible = true 
+	
+end --CavDetachment_ShowCavalryUI()
+		
+function Mission_OnGameRestore()
+	
+	-- coming in from a savegame - the UI won't have been saved so we need to recreate it
+	
+	if b_cavalryUIvisible == true then 
+		CavDetachment_ShowCavalryUI()
+	end
+
+end
+
+function CavDetachment_CavalryButtonClicked()
+	UI_SetPropertyValue("CavalryUI.CavalryButton", "IsEnabled", false)
+	UI_Remove("CavalryUI")
+	
+	b_cavalryUIvisible = false
+	
+	CavDetachment_ConvertCavalryToPlayer()
+	Objective_Complete(OBJ_SignalCavalry, true, true)
+end --CavDetachment_CavalryButtonClicked()
+
+function CavDetachment_SpawnCavalryUnits(context, data)
+	
+	local units = {{ sbp = SBP.RUS.UNIT_KNIGHT_3_RUS, numSquads = data.spawnCount, tag = "cavalry_detachment" }}
+	local options = { spawnInFormation = false }
+	
+	UnitEntry_DeploySquads(player3, sg_cavalry_detachment, units, mkr_cavalry_spawn, nil, nil, options)
+	Cmd_FormationMove(sg_cavalry_detachment, mkr_cavalry_reinforce)
+	
+	CavDetachment_UpdateCavalryText()
+	
+	cav_amount = SGroup_CountSpawned(sg_cavalry_detachment)
+	if cav_amount >= cavalry_maximum then
+		Rule_RemoveMe()
+		Util_StartIntel(EVENTS.CavalryFull)
+	end
+	
+end --CavDetachment_SpawnCavalryUnits()
+
+function CavDetachment_ConvertCavalryToPlayer()
+	Rule_Remove(CavDetachment_SpawnCavalryUnits)
+	
+	--Filter out whatever units the player cannot receive due to popcap and send them out to attack anyways
+	Player_GetAll(player1, sg_player_units)
+	cav_amount = SGroup_CountSpawned(sg_cavalry_detachment)
+	local unit_total = SGroup_CountSpawned(sg_player_units) + cav_amount 
+	if unit_total > 200 then
+		local over_amount = unit_total - 200
+		local desired_amount = SGroup_CountSpawned(sg_cavalry_detachment) - over_amount
+		sg_cavalry_remnants = SGroup_CreateIfNotFound("sg_cavalry_remnants")
+		SGroup_FilterCount(sg_cavalry_detachment, desired_amount, sg_cavalry_remnants)
+		
+		--Send the spill-over cavalry to wherever the player is
+		if holdStatus[LOCATION_FORDS] then
+			Cmd_FormationAttackMove(sg_cavalry_remnants, mkr_ford_center)
+		elseif holdStatus[LOCATION_MAINLINE] then
+			Cmd_FormationAttackMove(sg_cavalry_remnants, mkr_mainline_center)
+		else
+			Cmd_FormationAttackMove(sg_cavalry_remnants, mkr_last_stand_center)
+		end
+	end
+	
+	SGroup_SetPlayerOwner(sg_cavalry_detachment, player1)
+	
+	--Play a charge walla when the Cavalry is called
+	if cav_amount <= 10 then 
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_SMALL, sg_cavalry_detachment)
+	elseif cav_amount <= 20 then 
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, sg_cavalry_detachment)
+	else 
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_LARGE, sg_cavalry_detachment)
+	end
+	
+	--Send the cavalry to wherever the player is
+	if holdStatus[LOCATION_FORDS] then
+		Cmd_FormationAttackMove(sg_cavalry_detachment, mkr_ford_center)
+	elseif holdStatus[LOCATION_MAINLINE] then
+		Cmd_FormationAttackMove(sg_cavalry_detachment, mkr_mainline_center)
+	else
+		Cmd_FormationAttackMove(sg_cavalry_detachment, mkr_last_stand_center)
+	end
+	
+end --CavDetachment_ConvertCavalryToPlayer()
+
+function CavDetachment_UpdateCavalryText()
+	if cavalry_data_context ~= nil then
+		cavalry_current = SGroup_CountSpawned(sg_cavalry_detachment)
+		-- Salisbury - Progress bar so don't update text, but current value instead
+		if (cavalry_data_context.cavalry_button_text ~= nil) then
+			if cavalry_current == cavalry_maximum then
+				cavalry_data_context.cavalry_button_text = Loc_GetString(Loc_FormatText("$11177522",cavalry_current,cavalry_maximum)) -- "Signal the Cavalry \n(Ready: "..cavalry_current.."/"..cavalry_maximum.."
+				Kulikovo_InitializeCavalryTrainingHints()
+			else	
+				cavalry_data_context.cavalry_button_text = Loc_GetString(Loc_FormatText("$11177521",cavalry_current,cavalry_maximum)) -- "Signal the Cavalry \n(Preparing: "..cavalry_current.."/"..cavalry_maximum.."
+			end
+		else
+			cavalry_data_context.cavalry_button_value = cavalry_current
+		end
+		
+		UI_SetDataContext("CavalryUI", cavalry_data_context)
+	end
+end
+
+--------------------
+-- Xbox Functions --
+--------------------
+
+function CavDetachment_ShowXboxCavalryUI()
+	
+	local xaml = 
+	[[<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" 
+			xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" 
+			xmlns:wm="clr-namespace:WPFGUI.Shared.MarkupExtensions;assembly=EngineUI"
+			xmlns:esActions="clr-namespace:WPFGUI.Shared.Actions;assembly=EngineUI"
+			xmlns:sys="clr-namespace:System;assembly=mscorlib"
+			HorizontalAlignment="Right" 
+			VerticalAlignment="Top" 
+			SnapsToDevicePixels="True"
+			Margin="0,27,27,0">
+	
+		<Grid.Triggers>
+			<esActions:CallCommandTrigger RoutedEvent="Grid.Unloaded" Command="{Binding SetIsDiplomacyAvailable, Source={x:Static model:HUDModel.Instance}}">
+				<esActions:CallCommandTrigger.CommandParameter>
+					<sys:Boolean>False</sys:Boolean>
+				</esActions:CallCommandTrigger.CommandParameter>
+			</esActions:CallCommandTrigger>
+		</Grid.Triggers>
+		<Grid.Style>
+			<Style TargetType="Grid">
+				<Style.Triggers>
+	                <Trigger Property="Visibility" Value="Visible">
+	                    <Trigger.EnterActions>
+	                        <esActions:CallCommandAction Command="{Binding SetIsDiplomacyAvailable, Source={x:Static model:HUDModel.Instance}}">
+	                            <esActions:CallCommandAction.CommandParameter>
+	                                <sys:Boolean>True</sys:Boolean>
+	                            </esActions:CallCommandAction.CommandParameter>
+	                        </esActions:CallCommandAction>
+	                    </Trigger.EnterActions>
+	                </Trigger>
+				</Style.Triggers>
+			</Style>	
+		</Grid.Style>
+		<Grid.Resources>
+			<ResourceDictionary.MergedDictionaries>
+				<ResourceDictionary Source="pack://application:,,,ui/Resources/XboxHUDResources.xaml" />
+			</ResourceDictionary.MergedDictionaries>
+		</Grid.Resources>
+	
+		<Grid.RowDefinitions>
+		    <RowDefinition Height="Auto" />
+			<RowDefinition Height="5" />
+			<RowDefinition Height="Auto" />
+		</Grid.RowDefinitions>
+		
+		<!-- Signal Button -->
+		<ContentPresenter x:Name="SignalButton" Grid.Row="0" HorizontalAlignment="Right" VerticalAlignment="Top" Content="{Binding}" ContentTemplate="{StaticResource Xbox_CavalryUI}" />
+		
+		<!-- Keybind Indication -->
+		<ContentControl Grid.Row="2" Panel.ZIndex="2" Width="{Binding ElementName=SignalButton, Path=ActualWidth}" Style="{StaticResource XboxDiplomacyKeybindIndication}"/>
+	</Grid>]]
+	
+	cavalry_data_context = {
+		cavalry_button_max = cavalry_maximum,
+		cavalry_button_value = cavalry_current,
+		cavalry_button_command = UI_CreateCommand("CavDetachment_CavalryButtonClicked"),
+	}
+	
+	UI_AddChild("", "XamlPresenter", "CavalryUI", { IsHitTestVisible = true, Xaml = xaml, DataContext = UI_CreateDataContext(cavalry_data_context) })
+	UI_AddCommandBinding("xbox_hud_dynamic_controller", "open_diplomacy_panel", "CavDetachment_CavalryButtonClicked")
+	b_cavalryUIvisible = true 
+end

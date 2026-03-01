@@ -1,0 +1,277 @@
+--
+-- Zhongdu 1215 - Primary Objectives - Phase 2
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+g_fireDamageThreshold = 0.5
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function Zhongdu_InitObjectives_Phase2()
+	
+	OBJ_PlunderCity = { Title = "$11178626", Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.Zero_Strength,
+		
+		-- This is OBJECTIVE 8
+		Cheat = function()
+			
+			Player_GetAll(g_playerJin)
+			
+			Player_GetAllEntitiesNearMarker(g_playerJin, eg_temp, mkr_jin_zhongdu_perimeter)
+			EGroup_RemoveGroup(eg_allentities, eg_temp)
+			EGroup_Kill(eg_allentities)
+			
+			Player_GetAllSquadsNearMarker(g_playerJin, sg_temp, mkr_jin_zhongdu_perimeter)
+			SGroup_RemoveGroup(sg_allsquads, sg_temp)
+			SGroup_Kill(sg_allsquads)
+			
+			-- Now add player units
+			UnitEntry_DeploySquads(g_playerMongol, sg_temp, 
+				{
+					type = "scar_spearman", numSquads = 40,
+					type = "scar_archer", numSquads = 40,
+				}, mkr_cheat_1)
+			UnitEntry_DeploySquads(g_playerMongol, sg_temp, 
+				{
+					type = "scar_horseman", numSquads = 25,
+					type = "scar_knight", numSquads = 15,
+					type = "scar_horsearcher", numSquads = 40,
+				}, mkr_cheat_2)
+			UnitEntry_DeploySquads(g_playerMongol, sg_temp, 
+				{
+					sbp = SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON, numSquads = 2, spawn = mkr_cheat_3a,
+					sbp = SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON, numSquads = 2, spawn = mkr_cheat_3b,
+					sbp = SBP.MONGOL.BUILDING_UNIT_RANGED_MOVING_MON, numSquads = 2, spawn = mkr_cheat_3c,
+					sbp = SBP.MONGOL.BUILDING_HOUSE_MOVING_MON, numSquads = 1, spawn = mkr_cheat_3d,
+				}, mkr_ui_easy_hint_2)
+			UnitEntry_DeploySquads(g_playerMongol, sg_temp, 
+				{
+					sbp = SBP.MONGOL.BUILDING_TOWN_CENTER_CAPITAL_MOVING_MON, numSquads = 1, spawn = mkr_cheat_4a,
+					sbp = SBP.MONGOL.BUILDING_HOUSE_MOVING_MON, numSquads = 1, spawn = mkr_cheat_4b,
+					sbp = SBP.MONGOL.BUILDING_PASTURE_MOVING_MON, numSquads = 2, spawn = mkr_cheat_4c,
+					sbp = SBP.MONGOL.BUILDING_TECH_UNIT_INFANTRY_MOVING_MON, numSquads = 1, spawn = mkr_cheat_4d,
+				}, mkr_ui_easy_hint_1)
+			
+		end,
+		
+		PreStart = function()
+			Util_AutoSave()
+			-- Update music parameters and shift to Mongol music
+			Music_Stop()			
+			Sound_SetMusicRaceCode("mongols")
+			Music_UnlockIntensity()
+			Sound_SetMinimumMusicCombatIntensity(801,0)
+			-- Also, we should stop raiding the player - the enemy should be more defensive
+			Rule_Remove(Zhongdu_AttackPlayerBase)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		PreComplete = function()
+			
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_Landmark_1) and Objective_IsComplete(SOBJ_Landmark_2) and Objective_IsComplete(SOBJ_Landmark_3)
+		end,
+		
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(g_playerMongol, sg_allsquads)
+			SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+			return SGroup_Count(sg_allsquads) <= 1
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_Landmark_1 = { Title = "$11178627", Type = ObjectiveType_Battle, Parent = OBJ_PlunderCity, StartAlongsideParent = true,
+		
+		PreStart = function()
+			MissionOMatic_Objective_SetupHintpoints(SOBJ_Landmark_1,
+			{{
+				egroup = eg_zhongdu_landmark_1,
+	            text = "$11178630",
+	            blip = true,
+			},})
+		end,
+		
+		IsComplete = function()
+			local burningAtLowHealth = (EGroup_IsBurning(eg_zhongdu_landmark_1, ALL) == true) and (EGroup_GetAvgHealth(eg_zhongdu_landmark_1) < 0.5)
+			if burningAtLowHealth or EGroup_GetAvgHealth(eg_zhongdu_landmark_1) < g_fireDamageThreshold then
+				if EGroup_IsBurning(eg_zhongdu_landmark_1, ALL) == false then
+					EGroup_SetOnFire(eg_zhongdu_landmark_1)
+				end
+				--Moved the EGroup_SetInvulnerable to mission start in the mon_chp1_zhongdu.scar. Safer for these buildings to always be invulnerable.
+				EGroup_SetTargetingType(eg_zhongdu_landmark_1, Targeting_None)
+			end
+			return burningAtLowHealth
+		end,
+		
+		OnComplete = function()
+			if EGroup_Count(eg_zhongdu_landmark_1) > 0 then
+				Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, EGroup_GetPosition(eg_zhongdu_landmark_1), 30)
+				if SGroup_Count(sg_temp) > 0 then
+					Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+				end
+			else
+				fatal("Spirit Way has been destroyed - this should never happen!")
+			end
+			Zhongdu_StagedVoLandmarks()
+		end,
+	}
+	SOBJ_Landmark_2 = { Title = "$11178628", Type = ObjectiveType_Battle, Parent = OBJ_PlunderCity, StartAlongsideParent = true,
+		
+		PreStart = function()
+			MissionOMatic_Objective_SetupHintpoints(SOBJ_Landmark_2,
+			{{
+				egroup = eg_zhongdu_landmark_2,
+	            text = "$11178631",
+	            blip = true,
+			},})
+		end,
+		
+		IsComplete = function()
+			local burningAtLowHealth = (EGroup_IsBurning(eg_zhongdu_landmark_2, ALL) == true) and (EGroup_GetAvgHealth(eg_zhongdu_landmark_2) < 0.5)
+			if burningAtLowHealth or EGroup_GetAvgHealth(eg_zhongdu_landmark_2) < g_fireDamageThreshold then
+				if EGroup_IsBurning(eg_zhongdu_landmark_2, ALL) == false then
+					EGroup_SetOnFire(eg_zhongdu_landmark_2)
+				end
+				--Moved the EGroup_SetInvulnerable to mission start in the mon_chp1_zhongdu.scar. Safer for these buildings to always be invulnerable.
+				EGroup_SetTargetingType(eg_zhongdu_landmark_2, Targeting_None)
+			end
+			return burningAtLowHealth
+		end,
+		
+		OnComplete = function()
+			if EGroup_Count(eg_zhongdu_landmark_2) > 0 then
+				Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, EGroup_GetPosition(eg_zhongdu_landmark_2), 30)
+				if SGroup_Count(sg_temp) > 0 then
+					Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+				end
+			else
+				fatal("Imperial Academy has been destroyed - this should never happen!")
+			end
+			Zhongdu_StagedVoLandmarks()
+			
+		end,
+	}
+	SOBJ_Landmark_3 = { Title = "$11178629", Type = ObjectiveType_Battle, Parent = OBJ_PlunderCity, StartAlongsideParent = true,
+		
+		PreStart = function()
+			MissionOMatic_Objective_SetupHintpoints(SOBJ_Landmark_3,
+			{{
+				egroup = eg_zhongdu_landmark_3,
+	            text = "$11178632",
+	            blip = true,
+			},})
+		end,
+		
+		IsComplete = function()
+			local burningAtLowHealth = (EGroup_IsBurning(eg_zhongdu_landmark_3, ALL) == true) and (EGroup_GetAvgHealth(eg_zhongdu_landmark_3) < 0.5)
+			if burningAtLowHealth or EGroup_GetAvgHealth(eg_zhongdu_landmark_3) < g_fireDamageThreshold then
+				if EGroup_IsBurning(eg_zhongdu_landmark_3, ALL) == false then
+					EGroup_SetOnFire(eg_zhongdu_landmark_3)
+				end
+				--Moved the EGroup_SetInvulnerable to mission start in the mon_chp1_zhongdu.scar. Safer for these buildings to always be invulnerable.
+				EGroup_SetTargetingType(eg_zhongdu_landmark_3, Targeting_None)
+			end
+			return burningAtLowHealth
+		end,
+		
+		OnComplete = function()
+			if EGroup_Count(eg_zhongdu_landmark_3) > 0 then
+				Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, EGroup_GetPosition(eg_zhongdu_landmark_3), 30)
+				if SGroup_Count(sg_temp) > 0 then
+					Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+				end
+			else
+				fatal("Imperial Palace has been destroyed - this should never happen!")
+			end
+			Zhongdu_StagedVoLandmarks()
+		end,
+	}
+	OBJ_DebugComplete = { Title = LOC("Debug Complete"), Type = ObjectiveType_Primary, showTitle = false,
+		Cheat = function()
+			Rule_RemoveAll()
+			Mission_Complete()
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_PlunderCity)
+	
+	Objective_Register(SOBJ_Landmark_1)
+	Objective_Register(SOBJ_Landmark_2)
+	Objective_Register(SOBJ_Landmark_3)
+	
+	Objective_Register(OBJ_DebugComplete)
+	
+end
+
+--? @shortdesc Makes the Zhongdu skirmishers go help their assigned landmark if it comes under attack
+function Zhongdu_MonitorSkirmishers(context, data)
+	
+	-- Landmark 1
+	local guardsLandmark1 = MissionOMatic_FindModule("GuardsLandmark1")
+	local skirmishers1 = MissionOMatic_FindModule("ZhongduSkirmish1")
+	
+	if guardsLandmark1 ~= nil and skirmishers1 ~= nil and SGroup_Count(guardsLandmark1.sgroup) > 0 then
+		local underAttack1 = SGroup_IsUnderAttack(guardsLandmark1.sgroup, ANY, 5)
+		if underAttack1 == true and RovingArmy_GetRemainingUnitRatio(guardsLandmark1) <= 0.90 then
+			DissolveModuleIntoModule(skirmishers1.descriptor, guardsLandmark1.descriptor)
+		end
+	end
+	
+	-- Landmark 2
+	local guardsLandmark2 = MissionOMatic_FindModule("GuardsLandmark2")
+	local skirmishers2 = MissionOMatic_FindModule("ZhongduSkirmish2")
+	
+	if guardsLandmark2 ~= nil and skirmishers2 ~= nil and SGroup_Count(guardsLandmark2.sgroup) > 0 then
+		local underAttack1 = SGroup_IsUnderAttack(guardsLandmark2.sgroup, ANY, 5)
+		if underAttack1 == true and RovingArmy_GetRemainingUnitRatio(guardsLandmark2) <= 0.90 then
+			DissolveModuleIntoModule(skirmishers2.descriptor, guardsLandmark2.descriptor)
+		end
+	end
+	
+	-- Landmark 1
+	local guardsLandmark3 = MissionOMatic_FindModule("GuardsLandmark3")
+	local skirmishers3 = MissionOMatic_FindModule("ZhongduSkirmish3")
+	
+	if guardsLandmark3 ~= nil and skirmishers3 ~= nil and SGroup_Count(guardsLandmark3.sgroup) > 0 then
+		local underAttack1 = SGroup_IsUnderAttack(guardsLandmark3.sgroup, ANY, 5)
+		if underAttack1 == true and RovingArmy_GetRemainingUnitRatio(guardsLandmark3) <= 0.90 then
+			DissolveModuleIntoModule(skirmishers3.descriptor, guardsLandmark3.descriptor)
+		end
+	end
+	
+end
+
+--? @shortdesc Triggers the speech content related to the last three landmarks
+function Zhongdu_StagedVoLandmarks()
+	if scartype(g_speechLandmarks) ~= ST_NUMBER then
+		g_speechLandmarks = 1
+	end
+	-- Play whatever VO we've reached
+	if g_speechLandmarks == 1 then
+		Util_StartIntel(EVENTS.LANDMARK1)
+	elseif g_speechLandmarks == 2 then
+		Util_StartIntel(EVENTS.LANDMARK2)
+	-- We don't need VO for the third landmark, because at that point the game is over
+	end
+	-- Increment the counter
+	g_speechLandmarks = g_speechLandmarks + 1
+end

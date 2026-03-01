@@ -1,0 +1,704 @@
+-- 
+-- Mission-O-Matic Module - Unit Requests
+--
+-- Receieved unit requests from modules, and finds appropriate modules to service those requests
+--
+
+--
+-- See: Mission-o-Matic: Reinforcements
+--      http://relicwiki/display/CARD/Mission-o-Matic%3A+Reinforcements	(in the EE, you can Control-click on this link to go there)
+--
+
+--? @group MissionOMatic
+
+--? @shortdesc Request to have units produced by available production means 
+--? @extdesc 
+--? @args Table requestingModule, Table requestData[, Table unitSources]
+--? @result RequestData
+function MissionOMatic_RequestUnits(requestingModule, requestData, sources)
+	
+	if _UnitRequests_NextUnusedID == nil then 
+		_UnitRequests_NextUnusedID = 1
+	end
+	if t_allUnitRequests == nil then 
+		t_allUnitRequests = {}
+	end
+	
+	requestData.id = _UnitRequests_NextUnusedID
+	requestData.requestingModule = requestingModule
+	requestData.player = requestingModule.player 
+	
+	_UnitRequests_NextUnusedID = _UnitRequests_NextUnusedID + 1
+	
+	local totalUnits = 0
+	
+	-- make a clone of the units table, as there is progress tracking info stored in the table as units are produced (and that could get shared between requests otherwise) 
+	requestData.units = Clone(requestData.units)
+	
+	-- parse the unit list so everything has a type, sbp, shortName and numSquads field
+	for index, unit in pairs(requestData.units) do 
+		
+		if unit.type == nil then 
+			unit.type = MissionOMatic_GetTypeForBlueprint(unit.sbp)
+		end
+		if unit.sbp == nil and unit.type ~= nil then 
+			unit.sbp = Cardinal_ConvertTypeToSquadBlueprint(unit.type, requestingModule.player)
+			--unit.sbp = AI_FindBestProducibleSquadPBGforSquadTypes(requestingModule.player, {unit.type})
+		end
+		if unit.numSquads == nil then 
+			unit.numSquads = 1 
+		end
+		
+		totalUnits = totalUnits + unit.numSquads
+		
+	end
+	
+	requestData.unitCount = totalUnits 
+	
+	-- if no sources are provided, then make a list of every module
+	if sources == nil then
+		sources = {}
+		for index, module in pairs(t_allModules) do 
+			table.insert(sources, module.descriptor)
+		end
+		requestData.explicitlySpecifiedSources = false 
+	else 
+		requestData.explicitlySpecifiedSources = true 
+	end
+	
+	-- if the table wasn't configured with different priority levels of sources, format the list as if everything is in one priority group 
+	if scartype(sources[1]) ~= ST_TABLE then 
+		sources = {sources}
+	end
+	
+
+	
+	-- get an estimate from every source
+	for index, priorityLevel in pairs(sources) do 
+		
+		local potentialSuppliers = {}	
+		
+		for index, module in pairs(priorityLevel) do 
+			
+			if scartype(module) == ST_STRING then						-- swap strings with actual module references 
+				module = MissionOMatic_FindModule(module)
+			end
+			
+			assert(Table_Contains(t_allModules, module), "Reinforcement source is not valid")
+			
+			if module.player == requestingModule.player and 			-- only get an estimate if the module is the same player owner as the requesting module
+			   module.descriptor ~= requestingModule.descriptor then 	-- and also don't get an estimate from the same module that's doing the requesting!
+				
+				local estimate = Prefab_DoAction(module, "UnitRequest_ProvideEstimate", requestData)
+				
+				
+				if estimate ~= nil then 								-- if an estimate was provided, add it to a list (we'll sort the list later)
+					
+					local pos1 = Prefab_DoAction(requestingModule, "GetPosition")
+					local pos2 = Prefab_DoAction(module, "GetPosition")
+					local distance = Util_GetDistance(pos1, pos2)
+					
+					local entry = {
+						module = module,
+						estimate = estimate + (distance / 2),			-- add some time onto the estimate related to how far away the module is
+					}
+					table.insert(potentialSuppliers, entry)
+					
+					--print(module.descriptor.." can supply the units in "..estimate.." seconds")
+					
+				else
+					
+					--print(module.descriptor.." passed, and provided no estimate.")
+					
+				end
+				
+			end
+		end
+	
+	
+		if #potentialSuppliers >= 1 then 
+			
+			table.sort(potentialSuppliers, function(a,b) return a.estimate < b.estimate end)
+			
+			local winner = potentialSuppliers[1]
+			
+			--if requestData.priority == "high" then 
+				--print(requestingModule.descriptor.." requested "..totalUnits.." units from "..winner.module.descriptor.." with high priority")
+			--else
+				--print(requestingModule.descriptor.." requested "..totalUnits.." units from "..winner.module.descriptor)
+			--end
+			
+			requestData.supplyingModule = winner.module	
+			
+			Prefab_DoAction(winner.module, "UnitRequest_Start", requestData)
+			
+			table.insert(t_allUnitRequests, requestData)
+			
+			return requestData 
+			
+		end
+	
+	end
+	
+	print("Reinforcements - "..requestingModule.descriptor.." requested units but no other module could provide them. Computer says no.")
+	
+end
+
+
+--? @shortdesc Pass an sgroup of units back to the UnitRequest manager to complete a request 
+--? @args RequestData originalRequest, SGroupID unitsToFulfillRequest
+function MissionOMatic_RequestComplete(requestData, sgroup)
+	--print("MissionOMatic_RequestComplete")
+	
+	requestData.inTransit = true
+	
+	local requestingModule = requestData.requestingModule
+
+	local destination = Prefab_DoAction(requestingModule, "GetRendezvousPosition") or Prefab_DoAction(requestingModule, "GetPosition") 		-- not all modules will supply a rendezvous position, so their regular position is used instead
+	
+	if SGroup_CountSpawned(sgroup) == 0 then 
+
+		requestData.completed = true	
+		
+	elseif Util_GetDistance(sgroup, destination) <= 40 then 
+		
+		Prefab_DoAction(requestData.requestingModule, "AddSGroup", sgroup, true, false)
+			
+		requestData.completed = true	
+			
+	else
+		
+		requestData.sgroup = SGroup_CreateUnique("Unit Request Units In Transit")
+		
+		SGroup_AddGroup(requestData.sgroup, sgroup)
+		
+		local goal = {
+			plan = "Move",
+			target = destination,
+			range = 20,
+		}
+		requestData.inTransitEncounterID = Encounter_Create(requestData.player, requestData.sgroup, goal, "UnitRequest")
+		
+		requestData.deliveryDestination = destination 
+		
+		Rule_AddInterval(MissionOMatic_RequestComplete_InTransitManager, 5, {requestData = requestData})
+		
+	end
+	
+end
+
+function MissionOMatic_RequestComplete_InTransitManager(context, data)
+	
+	local requestData = data.requestData 
+	local requestingModule = requestData.requestingModule
+	
+	if SGroup_CountSpawned(requestData.sgroup) == 0 then
+
+			requestData.killedInTransit = true	
+			
+			Encounter_Stop(requestData.inTransitEncounterID)
+			SGroup_Destroy(requestData.sgroup)
+			
+			Rule_RemoveMe()
+				
+	else
+		
+		local originalDestination = requestData.deliveryDestination
+		local currentDestination = Prefab_DoAction(requestingModule, "GetRendezvousPosition") or Prefab_DoAction(requestingModule, "GetPosition")
+		
+		if Util_GetDistance(originalDestination, currentDestination) > 20 then 
+			
+			local goal = {
+				plan = "Move",
+				target = currentDestination,
+				range = 20,
+			}
+			print(string.format("GOAL CHANGED (%s to %s)", originalDestination, currentDestination))
+			Encounter_SetGoalData(requestData.inTransitEncounterID, goal)
+			
+			requestData.deliveryDestination = currentDestination 		
+			
+		end
+		
+		if Encounter_IsActive(requestData.inTransitEncounterID) == false then 
+			
+			--Encounter_Stop(requestData.inTransitEncounterID)
+			
+			Prefab_DoAction(requestData.requestingModule, "AddSGroup", requestData.sgroup, true, false)
+			
+			if scartype(requestData.onFulfill) == ST_FUNCTION then
+				requestData.onFulfill()
+			end
+			requestData.completed = true	
+			
+			SGroup_Destroy(requestData.sgroup)
+			
+			Rule_RemoveMe()
+			
+		end
+		
+	end
+	
+end
+
+function MissionOMatic_FindUnitRequest(item)
+	--print("MissionOMatic_FindUnitRequest")
+	
+	for index, request in pairs(t_allUnitRequests) do 
+		
+		if scartype(item) == ST_NUMBER then 
+			if request.id == item then
+				return request
+			end
+		elseif scartype(item) == ST_TABLE then 
+			if request == item then
+				return request
+			end
+		end
+		
+	end
+	
+end
+
+
+----------------------------------------------------------------------------------------
+-- 
+-- Below are useful functions for modules that need to request reinforcements
+--
+----------------------------------------------------------------------------------------
+
+
+--? @shortdesc Updates a module's "ideal composition" to the high water mark of units it has or has previously had 
+--? @args Table module
+function Reinforcement_UpdateIdealComposition(module)
+	--print("Reinforcement_UpdateIdealComposition")
+	
+	if module.idealComposition == nil then 
+		module.idealComposition = {} 
+	end
+	
+	local sgroup = SGroup_CreateUnique("")
+	
+	SGroup_AddGroup(sgroup, module.sgroup)
+	SGroup_RemoveGroup(sgroup, sg_ignoreForUnitComposition)
+	
+	local currentComposition = UnitTable_GenerateFromSGroup(sgroup)
+	local idealComposition = module.idealComposition
+
+	for i, current in pairs(currentComposition) do
+		
+		local found = false 
+		
+ 		for j, ideal in pairs(idealComposition) do
+			if ideal.type == current.type then 
+				if ideal.numSquads < current.numSquads then 
+					ideal.numSquads = current.numSquads
+				end
+				found = true
+				break
+			end
+		end
+		
+		if found == false then 
+			table.insert(idealComposition, current)
+		end
+			
+	end
+
+	SGroup_Destroy(sgroup)
+	
+end
+
+--? @shortdesc Updates a module's "ideal composition" to subtract an sgroup's units from the high water mark (used when those units are removed from an SGroup) 
+--? @args Table module, SGroup sgroup
+function Reinforcement_SubtractSGroupFromIdealComposition(module, sgroup)
+	--print("Reinforcement_SubtractSGroupFromIdealComposition")
+	
+	if module.idealComposition == nil then 
+		module.idealComposition = {} 
+	end
+	
+	local moduleSGroup = SGroup_CreateUnique("")
+	SGroup_AddGroup(moduleSGroup, module.sgroup)
+	SGroup_RemoveGroup(moduleSGroup, sgroup)
+	
+	local removedSGroup = SGroup_CreateUnique("")
+	SGroup_AddGroup(removedSGroup, sgroup)
+	SGroup_RemoveGroup(removedSGroup, sg_ignoreForUnitComposition)
+	
+	local remainingComposition = UnitTable_GenerateFromSGroup(moduleSGroup)
+	local subtractComposition = UnitTable_GenerateFromSGroup(removedSGroup)
+	local idealComposition = module.idealComposition
+
+	for i, subtract in pairs(subtractComposition) do
+		
+ 		for j, ideal in pairs(idealComposition) do
+			
+			if ideal.type == subtract.type then 
+				
+				ideal.numSquads = ideal.numSquads - subtract.numSquads
+				
+				for k, remaining in pairs(remainingComposition) do 			-- make sure we didn't drop below the number of units remaining (after the sgroup is removed)
+					if remaining.type == subtract.type then
+						if remaining.numSquads > ideal.numSquads then 
+							ideal.numSquads = remaining.numSquads
+						end
+						break						
+					end
+				end
+				
+				break
+				
+			end
+			
+		end
+		
+	end
+
+	SGroup_Destroy(moduleSGroup)
+	SGroup_Destroy(removedSGroup)
+	
+end
+
+
+
+
+
+--? @shortdesc Sets a module's "ideal composition" to a given unit table, overriding what was there before 
+--? @args Table module, UnitTable units
+function Reinforcement_SetIdealComposition(module, units)
+	--print("Reinforcement_SetIdealComposition")
+	
+	if scartype(units) ~= ST_TABLE then 
+		fatal("Reinforcement_SetIdealComposition: No units provided")	
+	end
+	
+	module.idealComposition = Clone(units) 
+	
+end
+
+
+--? @shortdesc Returns if a module needs reinforcements according to it's reinforcement settings 
+--? @args ModuleTable module
+--? @result Boolean
+function Reinforcement_AreReinforcementsNeeded(module)
+	--print("Reinforcement_AreReinforcementsNeeded by "..module.descriptor)
+	
+	local reinforcements = module.reinforcements
+
+	
+	-- some quick checks for reasons NOT to reinforce 
+	
+	if module.data.state == "Stopped" then 
+		return false 
+	end
+	
+	if reinforcements == nil then 
+		return false 		-- no reinforcement data set up on this module at all
+	end
+
+	if reinforcements.enabled == false then 
+		return false		-- a flag to disable the reinforcement ability (but it can be re-enabled later?) 
+	end
+	
+	if reinforcements.maxReinforcementCount ~= nil and reinforcements.tracking ~= nil and (reinforcements.tracking.numReinforcementsRequested or 0) >= reinforcements.maxReinforcementCount then 
+		return false		-- all of the reinforcement charges have been spent 
+	end
+	
+	if reinforcements.maxReinforcementFrequency ~= nil and reinforcements.tracking ~= nil and (World_GetGameTime() - (reinforcements.lastReinforcementTimeStamp or -999)) < reinforcements.maxReinforcementFrequency then
+		return false 		-- too soon since the last reinforcement
+	end
+	
+	
+	-- fill in some defaults if they are missing 
+	reinforcements.upperThreshold = reinforcements.upperThreshold or 0.5      --current strength must fall below this value for reinforcements to be requested  
+	reinforcements.lowerThreshold = reinforcements.lowerThreshold or 0        --if current strength falls below this value, reinforcements will not be requested 
+	reinforcements.desiredStrength = reinforcements.desiredStrength or 1.0    --if reinforcements are called, this is the strength that it will reinforce to
+	
+	-- account for units currently in the request queue
+	local unitsInRequestQueue = Reinforcement_GetAllUnitsInRequestQueue(module)
+	local totalUnitsCurrentlyInRequestQueue = UnitTable_CountUnits(unitsInRequestQueue)
+
+
+	-- figure out if we're below the reinforcement threshold 
+	
+	local currentComposition = UnitTable_GenerateFromSGroup(module.sgroup)
+	local currentSize = SGroup_CountSpawned(module.sgroup)
+	
+	local idealSize = UnitTable_CountUnits(module.idealComposition)
+
+	return (currentSize + totalUnitsCurrentlyInRequestQueue) < (idealSize * reinforcements.upperThreshold) and currentSize >= (idealSize * reinforcements.lowerThreshold)  
+	
+end
+
+
+--? @shortdesc Return a UnitTable of all the units currently in the request queue for a module. 
+--? @extdesc This helps to avoid double-ordering reinforcements - you can add the units requested to the units present when considering whether to reinforce
+--? @args Table module
+--? @result UnitTable
+function Reinforcement_GetAllUnitsInRequestQueue(module)
+	--print("Reinforcement_GetAllUnitsInRequestQueue by "..module.descriptor)
+		
+	local unitsInRequestQueue = {}
+
+	if scartype(module.reinforcements) == ST_TABLE and scartype(module.reinforcements.tracking) == ST_TABLE then 
+	
+		local tracking = module.reinforcements.tracking 
+		
+		if tracking.currentRequests == nil then 
+			tracking.currentRequests = {} 
+		end
+		
+		for index = #tracking.currentRequests, 1, -1 do 
+			local request = tracking.currentRequests[index]
+			if request.completed == true or request.cancelled == true or request.killedInTransit == true then 
+				table.remove(tracking.currentRequests, index) 					-- remove any requests that have been completed
+			else
+				UnitTable_AddUnits(unitsInRequestQueue, request.units)					-- total up unit counts of requests in progress
+			end	
+		end
+		
+	end 
+	
+	return unitsInRequestQueue
+	
+end
+
+
+--? @shortdesc Once a reinforcement request has been made, this should be called in order to update tracking 
+--? @extdesc This also makes any threshold adjustements, etc, specified in the reinforcements table. You need to pass in the requestData so it can be tracked, too, and counted in further reinforcement requests. The skipAdjustments flag lets you force-skip the adjustments step (i.e. you're backfilling after giving up units to supply another request)
+--? @args ModuleTable module, RequestData successfulRequestData, Boolean skipAdjustments
+function Reinforcement_RequestHasBeenTriggered(module, requestData, skipAdjustments)
+	--print("Reinforcement_RequestHasBeenTriggered by "..module.descriptor)
+	
+	if module.reinforcements == nil then 
+		return  
+	end
+	if module.reinforcements.tracking == nil then 
+		module.reinforcements.tracking = {} 
+	end
+	
+	local reinforcements = module.reinforcements	
+	local tracking = module.reinforcements.tracking
+	
+	-- add the request to the list of requests in progress (so they can be counted against in the future)		
+	if requestData ~= nil then
+		if tracking.currentRequests == nil then 
+			tracking.currentRequests = {}
+		end
+		table.insert(tracking.currentRequests, requestData)	
+	end
+	
+	
+	if skipAdjustments ~= true then	
+	
+		tracking.lastReinforcementTimeStamp = World_GetGameTime()
+		tracking.numReinforcementsRequested = (tracking.numReinforcementsRequested or 0) + 1
+		
+		-- if there are adjustements to be made to thresholds, etc, apply them now
+		local adjustments = reinforcements.adjustments
+		
+		if scartype(adjustments) == ST_TABLE then 
+			
+			if scartype(adjustments.adjustUpperThresholdBy) == ST_NUMBER then 
+				
+				local newThreshold = reinforcements.upperThreshold + adjustments.adjustUpperThresholdBy
+				
+				if scartype(adjustments.adjustUpperThresholdLimit) == ST_NUMBER then
+					if adjustments.adjustUpperThresholdBy >= 0 then
+						newThreshold = math.min(newThreshold, adjustments.adjustUpperThresholdLimit)		-- we're adjusting UP, so the limit is an UPPER limit
+					else
+						newThreshold = math.max(newThreshold, adjustments.adjustUpperThresholdLimit)		-- we're adjusting DOWN, so the limit is an LOWER limit
+					end 
+				end
+				
+				reinforcements.upperThreshold = newThreshold
+				
+			end
+			
+			if scartype(adjustments.adjustLowerThresholdBy) == ST_NUMBER then 
+				
+				local newThreshold = reinforcements.lowerThreshold + adjustments.adjustLowerThresholdBy
+				
+				if scartype(adjustments.adjustLowerThresholdLimit) == ST_NUMBER then
+					if adjustments.adjustLowerThresholdBy >= 0 then
+						newThreshold = math.min(newThreshold, adjustments.adjustLowerThresholdLimit)		-- we're adjusting UP, so the limit is an UPPER limit
+					else
+						newThreshold = math.max(newThreshold, adjustments.adjustLowerThresholdLimit)		-- we're adjusting DOWN, so the limit is an LOWER limit
+					end 
+				end
+				
+				reinforcements.lowerThreshold = newThreshold
+				
+			end
+	
+			if scartype(adjustments.adjustDesiredStrengthBy) == ST_NUMBER then 
+				
+				local newDesiredStrength = reinforcements.desiredStrength + adjustments.adjustDesiredStrengthBy
+				
+				if scartype(adjustments.adjustDesiredStrengthLimit) == ST_NUMBER then
+					if adjustments.adjustDesiredStrengthBy >= 0 then
+						newDesiredStrength = math.min(newDesiredStrength, adjustments.adjustDesiredStrengthLimit)	-- we're adjusting UP, so the limit is an UPPER limit
+					else
+						newDesiredStrength = math.max(newDesiredStrength, adjustments.adjustDesiredStrengthLimit)	-- we're adjusting DOWN, so the limit is an LOWER limit
+					end 
+				end
+				
+				reinforcements.desiredStrength = newDesiredStrength
+				
+			end
+			
+		end
+		
+	end
+	
+end
+
+
+--? @shortdesc Generates a unit table of "missing units" that a module can then request to be provided.
+--? @extdesc This takes the module's "ideal composition" and creates a unit list to fill the current composition back up to a portion of that ideal, as directed by the reinforcement settings.
+--? @args Table module, UnitTable idealComposition
+--? @result UnitTable
+function Reinforcement_GenerateReplacementUnitList(module, idealComposition)
+	--print("Reinforcement_GenerateReplacementUnitList by "..module.descriptor)
+	
+	local reinforcements = module.reinforcements 
+	
+	local currentComposition = UnitTable_GenerateFromSGroup(module.sgroup)
+	local unitsInQueue = Reinforcement_GetAllUnitsInRequestQueue(module)
+	
+	-- compare the two lists and figure out what is missing
+	local missingUnits = Clone(idealComposition)
+	UnitTable_RemoveUnits(missingUnits, currentComposition)
+	UnitTable_RemoveUnits(missingUnits, unitsInQueue)
+
+
+	-- figure out how many units to select from this list
+	local currentCount = UnitTable_CountUnits(currentComposition) + UnitTable_CountUnits(unitsInQueue)
+	local desiredCount = math.ceil(UnitTable_CountUnits(idealComposition) * reinforcements.desiredStrength)
+	
+	local unitsToSelect = desiredCount - currentCount
+	
+	
+	-- now pick that many units
+	local unitsToRequest = {}
+	local unitsToPickFrom = missingUnits 
+	
+	while unitsToSelect > 0 do 
+		
+		if #unitsToPickFrom == 0 then						-- if the desired strength is over 100%, then you're going to run out of missing units, so start again from a fresh list of ideal units if this happens 
+			unitsToPickFrom = Clone(idealComposition) 
+		end
+		
+		local rand = World_GetRand(1, #unitsToPickFrom)
+		local entry = unitsToPickFrom[rand]
+		
+		if entry.numSquads > unitsToSelect then 			-- if this has more units than left to request, bring the number down
+			entry.numSquads = unitsToSelect 
+		end
+		
+		table.insert(unitsToRequest, entry) 
+		table.remove(unitsToPickFrom, rand) 
+		
+		unitsToSelect = unitsToSelect - entry.numSquads
+		
+	end
+	
+	return unitsToRequest
+	
+end
+
+
+--? @shortdesc Checks if a non-townLife module has units to fulfill a request, and is willing to give those units up according to its unitProvider data 
+--? @args Table module, Table requestData
+--? @result Boolean
+function UnitProvider_CanModuleProvideUnits(module, requestData)
+	--print("UnitProvider_CanModuleProvideUnits by "..module.descriptor)
+	
+	-- some quick checks for reasons NOT to provide units 
+
+	local unitProvider = module.unitProvider	
+	
+	if unitProvider == nil or unitProvider == false then 
+		return false 		-- no unitProvider data set up on this module at all
+	elseif unitProvider == true then 
+		unitProvider = {} 
+	end
+	
+	if unitProvider.onlyRespondToTargetedRequests == true and requestData.explicitlySpecifiedSources ~= true then
+		return false		-- module only responds when the request explicitly listed it as a unit source, rather than a general request 
+	end
+	
+	if unitProvider.enabled == false then 
+		return false 		-- unitProvider functionality is disabled
+	end
+	
+	if requestData.priority ~= "high" then 
+		return false		-- not a high priority request 
+	end
+	
+	if SGroup_IsUnderAttack(module.sgroup, ANY, 10) then
+		return false 		-- module is under attack itself
+	end
+	
+	unitProvider.retainStrength = unitProvider.retainStrength or 0
+	
+	-- will this request put me beneath the minimumStrength threshold
+	local sgroupAvailableToGiveUp = SGroup_CreateUnique("")
+	SGroup_AddGroup(sgroupAvailableToGiveUp, module.sgroup)
+	SGroup_RemoveGroup(sgroupAvailableToGiveUp, sg_waveManagerStagedUnits)
+	
+	local requestedUnitCount = UnitTable_CountUnits(requestData.units)
+	local currentUnitCount = SGroup_CountSpawned(sgroupAvailableToGiveUp)
+	local remainingUnitCountAfterRequest = currentUnitCount - requestedUnitCount
+	
+	local idealUnitCount = UnitTable_CountUnits(module.idealComposition)			
+	local minimumDesiredUnitCount = math.ceil(idealUnitCount * (unitProvider.retainStrength))
+	
+	if remainingUnitCountAfterRequest >= minimumDesiredUnitCount then 
+		
+		-- do I have the types of units requested?
+
+		for index, unit in pairs(requestData.units) do 
+			local count = SGroup_CountBlueprints(sgroupAvailableToGiveUp, unit.type)
+			if count < (unit.numSquads or 1) then			
+				return false
+			end 
+		end
+		
+		return true
+		
+	end
+	
+	
+	return false 
+	
+end
+
+function UnitProvider_SelectUnitsFromModule(module, requestData, returnSGroup)
+	--print("UnitProvider_SelectUnitsFromModule by "..module.descriptor)
+	
+	local tempSGroup = SGroup_CreateUnique("temp")
+	SGroup_Clear(returnSGroup)	
+	
+	
+	for index, unit in pairs(requestData.units) do 
+		
+		SGroup_Duplicate(module.sgroup, tempSGroup)
+		SGroup_RemoveGroup(tempSGroup, sg_waveManagerStagedUnits)		
+		SGroup_Filter(tempSGroup, unit.type, FILTER_KEEP)					-- get all the units of this type that exist in the module
+		
+		for i = 1, (unit.numSquads or 1) do 
+			if SGroup_CountSpawned(tempSGroup) >= 1 then 					-- syphon off the desired number of them
+				local squad = SGroup_GetRandomSpawnedSquad(tempSGroup)
+				SGroup_Remove(tempSGroup, squad)
+				SGroup_Add(returnSGroup, squad)
+			end
+		end
+
+	end
+	
+	SGroup_Destroy(tempSGroup)
+	
+end
+

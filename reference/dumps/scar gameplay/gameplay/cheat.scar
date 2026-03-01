@@ -1,0 +1,175 @@
+-----------------------------------------------------------------------
+-- Wrappers to make scar network events usable for Cardinal
+--
+-- (c) Relic Entertainment 2020
+--
+-----------------------------------------------------------------------
+import("gameplay/chatcheats.scar")
+
+function CheatAgeUpMultiplayer(playerID,data)
+	if Player_HasUpgrade(playerID, BP_GetUpgradeBlueprint("feudal_age")) == false then
+		LocalCommand_PlayerUpgrade(playerID, BP_GetUpgradeBlueprint("feudal_age"), true, false)
+	elseif Player_HasUpgrade(playerID, BP_GetUpgradeBlueprint("castle_age")) == false then
+		LocalCommand_PlayerUpgrade(playerID, BP_GetUpgradeBlueprint("castle_age"), true, false)
+	elseif Player_HasUpgrade(playerID, BP_GetUpgradeBlueprint("imperial_age")) == false then
+		LocalCommand_PlayerUpgrade(playerID, BP_GetUpgradeBlueprint("imperial_age"), true, false)
+	end
+end
+
+function CheatEconomy(playerID,data)
+	Player_AddResource(playerID,RT_Food,1000)
+	Player_AddResource(playerID,RT_Wood,1000)
+	Player_AddResource(playerID,RT_Gold,1000)
+	Player_AddResource(playerID,RT_Stone,1000)
+	Player_AddResource(playerID,RT_Merc_Byz,1000)
+end
+
+function CheatFoW(playerID,data)
+	if(gFoWCheat == nil)then
+		gFoWCheat = {}
+	end
+	local playerIndex = Player_GetID(playerID)
+	if(gFoWCheat[playerIndex] == nil) then
+		gFoWCheat[playerIndex]=false
+	end
+	if(gFoWCheat[playerIndex] == false) then
+		FOW_PlayerRevealAll(playerID)
+		gFoWCheat[playerIndex] = true
+	else
+		FOW_PlayerUnRevealAll(playerID)
+		FOW_PlayerUnExploreAll(playerID)
+		gFoWCheat[playerIndex] = false
+	end
+end
+
+function CheatInvulnerable(playerID,data)
+	
+	if g_network_cheat_setinvulerable_player_table == nil then
+		local playerCount = World_GetPlayerCount()
+		g_network_cheat_setinvulerable_player_table = {}
+		for i = 1, playerCount, 1 do
+			g_network_cheat_setinvulerable_player_table[i] = World_GetPlayerAt(i) 	
+		end
+	end
+	
+	local SetSquadInvunlerable = function( groupid, itemindex, curSquad )
+		Squad_SetInvulnerableMinCap(curSquad, Squad_GetHealthPercentage(curSquad, false), -1)
+	end
+	
+	local SetEntityInvunlerable = function( groupid, itemindex, curEntity )
+		Entity_SetInvulnerableMinCap(curEntity, Entity_GetHealthPercentage(curEntity), -1)
+	end
+	
+	local UnsetSquadInvunlerable = function( groupid, itemindex, curSquad )
+		Squad_SetInvulnerableMinCap(curSquad, 0, -1)
+	end
+	
+	local UnsetEntityInvunlerable = function( groupid, itemindex, curEntity )
+		Entity_SetInvulnerableMinCap(curEntity, 0, -1)
+	end
+	
+	if g_network_cheat_setinvulerable == true then
+		g_network_cheat_setinvulerable = false
+		for k,v in pairs(g_network_cheat_setinvulerable_player_table) do
+			SGroup_ForEach(Player_GetSquads(v), UnsetSquadInvunlerable)
+			EGroup_ForEach(Player_GetEntities(v), UnsetEntityInvunlerable)
+		end
+	else
+		g_network_cheat_setinvulerable = true
+		for k,v in pairs(g_network_cheat_setinvulerable_player_table) do
+			SGroup_ForEach(Player_GetSquads(v), SetSquadInvunlerable)
+			EGroup_ForEach(Player_GetEntities(v), SetEntityInvunlerable)
+		end
+	end
+end
+ 
+function CheatInstantBuildAndGather(playerID,data)
+	
+	local speed_multiplier = 100.0	
+	local player_id = playerID		
+	local ebps = BP_GetEntityBlueprintsWithType_Internal({"villager"}, true)		
+	local villager_ebp
+	for _, ebp in pairs(ebps) do
+		local ebp_name = BP_GetName(ebp)
+		if BP_GetEntityTypeExtRaceCount(ebp_name) >=1 then
+			if BP_GetEntityTypeExtRaceBlueprintAtIndex(ebp_name, 0) == Player_GetRace(player_id) then
+				villager_ebp = ebp
+				break
+			end
+		end
+	end
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_food", MUT_Multiplication, false, speed_multiplier, villager_ebp), player_id, 0.0)
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_wood", MUT_Multiplication, false, speed_multiplier, villager_ebp), player_id, 0.0)
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_gold", MUT_Multiplication, false, speed_multiplier, villager_ebp), player_id, 0.0)
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_stone", MUT_Multiplication, false, speed_multiplier, villager_ebp), player_id, 0.0)
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "construction_rate", MUT_Multiplication, false, speed_multiplier, villager_ebp), player_id, 0.0)
+	
+	
+	ebps = BP_GetEntityBlueprintsWithType_Internal({"building"}, true)		
+	for _, ebp in pairs(ebps) do
+		local ebp_name = BP_GetName(ebp)
+		if BP_GetEntityTypeExtRaceCount(ebp_name) >=1 then
+			if BP_GetEntityTypeExtRaceBlueprintAtIndex(ebp_name, 0) == Player_GetRace(player_id) then
+				Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "production_speed_modifier", MUT_Multiplication, false, speed_multiplier, ebp), player_id, 0.0)
+			end
+		end
+	end
+	
+end
+function CheatDestroySelected(playerID,data)
+	Entity_Kill(Entity_FromID(tonumber(data[1])))
+end
+function CheatTeleportSelected(playerID,data)
+	local position = {}
+	local sg_temp
+	if(SGroup_Exists("sq_temp_teleport_selected"))then
+		sg_temp = SGroup_FromName("sq_temp_teleport_selected")
+	else
+		sg_temp = SGroup_Create("sq_temp_teleport_selected")
+	end
+	SGroup_Clear(sg_temp)
+	for i, m in ipairs(data) do
+		-- last 3 are the target position to warp to
+		if(i > #data-3)then
+			position[#position + 1] = tonumber(m);
+		else
+			SGroup_Add(sg_temp,Squad_FromID(tonumber(m)))
+		end
+	end
+	SGroup_WarpToPos(sg_temp,World_Pos(position[1],position[2],position[3]))
+end
+function Cheat_Init()
+	if(cheats == nil)then
+		cheats ={}
+		cheats["AGEUP"] = CheatAgeUpMultiplayer
+		cheats["ECONOMY"] = CheatEconomy
+		cheats["FOW"] = CheatFoW
+		cheats["INVULNERABLE"] = CheatInvulnerable
+		cheats["INSTANTBUILD"] = CheatInstantBuildAndGather
+		cheats["DESTROYHOVERED"] = CheatDestroySelected
+		cheats["TELEPORTSELECTED"] = CheatTeleportSelected
+		Rule_AddGlobalEvent(Cheat_Callback, GE_BroadcastMessage)
+	end
+end
+Scar_AddInit(Cheat_Init)
+
+function Cheat_Callback(data)
+	if(Misc_IsCommandLineOptionSet("dev") == false) then
+		return
+	end
+	if(data.type == 0) then
+		local message = string.split(data.message, " ")
+		local func
+		local messageData ={}
+		for i, m in ipairs(message) do
+			if (i == 1)then
+				func = cheats[m]
+			else
+				messageData[#messageData+1] = m;
+			end
+		end
+		if(func ~= nil)then
+			func(data.player,messageData)
+		end
+	end
+end

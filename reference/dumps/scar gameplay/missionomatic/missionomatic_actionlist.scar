@@ -1,0 +1,1119 @@
+--
+-- Mission-o-Matic - Action Lists
+--
+-- Run a list of actions from a data table
+--
+
+--
+-- See: Mission-o-Matic: Conditions and Actions
+--      http://relicwiki/display/CARD/Mission-o-Matic%3A+Conditions+and+Actions	(in the EE, you can Control-click on this link to go there)
+--
+
+
+
+WAIT_FOR_ACTION_TO_FINISH = true 		-- An action can return this flag to make the manager wait until the action calls Action_Finish(action) to indicate
+										-- that it has finished before the manager progresses with the next action. 
+
+
+function ActionList_Init(list)
+	
+	for index, action in pairs(list) do
+		
+		if scartype(_G["Action_"..action.actionName.."_Do"]) ~= ST_FUNCTION then
+			import("Actions/"..action.actionName..".scar")
+			import("Actions/"..action.actionName.."_Schema.scar")
+		end
+
+		
+		if scartype(action.actionList) == ST_TABLE then
+			ActionList_Init(action.actionList)
+		end
+		
+	end
+
+end
+
+function ActionList_PlayActions(list, context, callback, callbackData)
+
+	context = context or {}
+	_ActionLists_Running = _ActionLists_Running or {}
+	
+	local new_id = ActionList_GetNewID()
+	context.listID = new_id
+	
+	if list[1] == nil then
+		list = {list}
+	end
+	
+	-- "actionListInfo" details information about a list of actions, while "actionListInfo.actionList" is a full list of the actions in this sequence.
+	local actionListInfo = {
+		id = new_id,
+		runningAction = false,
+		done = false,
+		actionList = Clone(list),
+		context = context,
+		callback = callback,
+		callbackData = callbackData,
+	}
+	table.insert(_ActionLists_Running, actionListInfo)
+
+	-- kick off the manager, if it isn't already running
+	if Rule_Exists(ActionList_Manager) == false then
+		Rule_Add(ActionList_Manager)
+	end
+	
+end
+
+function ActionList_GetNewID()
+	
+	if _ActionList_CurrentID == nil then
+		_ActionList_CurrentID = 1
+	else
+		_ActionList_CurrentID = _ActionList_CurrentID + 1
+	end
+	
+	return _ActionList_CurrentID
+	
+end
+
+-- rule that runs every frame, and fires off actions as long as there are lists that need processing
+function ActionList_Manager()
+
+	for index, listInfo in pairs(_ActionLists_Running) do 
+	
+		while listInfo.runningAction == false and listInfo.done == false do 
+			
+			if #listInfo.actionList >= 1 then
+			
+				-- Run the 1st action in the list of actions
+				local action = listInfo.actionList[1]
+				
+				action.context = listInfo.context
+				
+				if Action_Do(action, listInfo.context) == WAIT_FOR_ACTION_TO_FINISH then
+					listInfo.runningAction = true
+				end
+				
+				table.remove(listInfo.actionList, 1)
+				
+			else
+				
+				listInfo.done = true
+				
+				-- call the "done" callback for the action list
+				if scartype(listInfo.callback) == ST_FUNCTION then
+					listInfo.callback(listInfo.callbackData)
+				end
+				
+			end
+		
+		end
+	
+	end
+	
+	
+	-- remove any finished lists
+	for index = #_ActionLists_Running, 1, -1 do
+		if _ActionLists_Running[index].done == true then
+			table.remove(_ActionLists_Running, index)
+		end
+	end
+	
+	if #_ActionLists_Running == 0 then
+		Rule_RemoveMe()
+	end
+	
+end
+
+-- Takes an action, finds the appropriate function to do the action, and calls it.
+-- That action function should either:
+--   a)  return nothing if it's immediate and the list manager can carry on to the next item.
+--   b)  return WAIT_FOR_ACTION_TO_FINISH, and then later call Action_Finish(context) when it is done and the list manager can carry on
+-- 			(the context variable is the thing that is passed into the original Do function by the list manager)
+function Action_Do(action, context)
+	
+	-- PLAYBILL_UPDATE what is context??
+	local actionName = action.action	-- copy used for debug print later
+	
+	-- if the function reference is a string, try to replace the string with a function
+	if scartype(action.action) == ST_STRING then
+	
+		local func = _G["Action_"..action.action.."_Do"]
+		
+		if scartype(func) == ST_FUNCTION then
+			action.action = func
+		end
+		
+	end
+	
+	if scartype(action.action) == ST_FUNCTION then
+	
+		local str = "Running action"
+		if scartype(actionName) == ST_STRING then
+			str = str.." "..actionName
+		end
+		if scartype(action.logging) == ST_STRING then
+			str = str.." - "..action.logging
+		end
+		print(str)
+		
+		-- The playbill, or something with it, needs to do into here as Context
+		return action.action(action, context)
+		
+	end
+
+end
+
+-- @shortdesc Callback to indicate to the ActionList system that the action has completed, and the next one can be triggered
+-- @args Table context
+-- @result NIL
+function Action_Finish(context)
+
+	if scartype(_ActionLists_Running) == ST_TABLE then
+		for index, item in pairs(_ActionLists_Running) do 
+			
+			if item.id == context.listID then
+				item.runningAction = false
+			end
+			
+		end
+	end
+	
+end
+
+--
+-- OBJECTIVE actions (start, complete and fail)
+--
+
+function Action_StartObjective_Do(action, context)
+
+	local objective = MissionOMatic_FindObjective(action.objective)
+	if action.restartIfNecessary == true or (Objective_IsStarted(objective) == false and Objective_IsComplete(objective) == false and Objective_IsFailed(objective) == false) then
+	
+		for i, subobjective in ipairs(g_missionObjectives) do 
+			if subobjective.Recipe.parent == objective.Recipe.descriptor and subobjective.Recipe.startAlongsideParent == true then 
+				Objective_Start(subobjective, false, false)
+			end
+		end
+		
+		if action.silent == true then
+			action.showTitle = false
+			action.playIntel = false
+		end
+		
+		Objective_Start(objective, action.showTitle, action.playIntel)
+		
+	end
+	
+end
+
+function Action_CompleteObjective_Do(action, context)
+
+	local objective = MissionOMatic_FindObjective(action.objective)
+	
+	if action.silent == true then
+		action.showTitle = false
+		action.playIntel = false
+	end
+	
+	Objective_Complete(objective, action.showTitle, action.playIntel)
+	
+end
+
+function Action_FailObjective_Do(action, context)
+
+	local objective = MissionOMatic_FindObjective(action.objective)
+	
+	if action.silent == true then
+		action.showTitle = false
+		action.playIntel = false
+	end
+	
+	Objective_Fail(objective, action.showTitle, action.playIntel)
+	
+end
+
+
+-- 
+-- OBJECTIVE TIMERS and COUNTERS
+--
+
+function Action_StartObjectiveTimer_Do(action, context)
+	
+	local objectiveName = action.objective or context.objective
+	local objective = MissionOMatic_FindObjective(objectiveName)
+	
+	Objective_StartTimer(objective, COUNT_DOWN, action.seconds, action.startFlashingAt or 0)
+	
+end
+
+function Action_StartObjectiveCounter_Do(action, context)
+	
+	local objectiveName = action.objective or context.objective
+	local objective = MissionOMatic_FindObjective(objectiveName)
+
+	local data = {
+		action = action,
+		objective = objective,
+	}
+	Action_StartObjectiveCounter_Update(nil, data)		
+	
+end
+function Action_StartObjectiveCounter_Update(context, data)
+
+	local action = data.action
+	local objective = data.objective 
+
+	if Objective_IsComplete(objective) or Objective_IsFailed(objective) then 
+		Rule_RemoveMe()
+	else
+		
+		local number = 0 
+		
+		-- calculate the number
+		if action.thingToCount == "Buildings" then 
+			number = CountBuildings(action)
+		elseif thingToCount == "" then 
+			-- other types can go in here
+		end
+		
+		
+		-- set the counter
+		Objective_SetCounter(objective, number, action.target)	
+		
+		
+		-- set this function up to run in intervals if this wasn't added as a rule yet
+		if context == nil then 
+			Rule_AddInterval(Action_StartObjectiveCounter_Update, 1, data)
+		end
+		
+	end
+	
+end
+
+
+
+--
+-- SET VISIBLE action
+--
+
+function Action_SetObjectiveVisible_Do(action, context)
+	
+	if scartype(action.objective) == ST_STRING then
+		
+		if action.value == nil then action.value = true end
+		local objective = MissionOMatic_FindObjective(action.objective)
+		Obj_SetVisible(objective.ID, action.value)
+
+	end
+	
+end
+
+--
+-- SET PROGRESS VISIBLE action
+--
+
+function Action_SetObjectiveProgressVisible_Do(action, context)
+	
+	if scartype(action.objective) == ST_STRING then
+	
+		local objective = MissionOMatic_FindObjective(action.objective)
+		Obj_SetProgressVisible(objective.ID, true)
+
+	end
+	
+end
+
+--
+-- SET PROGRESS action
+--
+
+function Action_SetObjectiveProgress_Do(action, context)
+	
+	if scartype(action.objective) == ST_STRING then
+	
+		local objective = MissionOMatic_FindObjective(action.objective)
+
+		if action.progress ~= nil then
+			
+			Obj_SetProgress(objective.ID, action.progress)
+			
+		end
+		
+	end
+	
+end
+
+
+--
+-- WAIT action
+--
+
+function Action_Wait_Do(action, context)
+
+	Rule_AddOneShot(Action_Wait_Complete, action.seconds, {actionListContext = context})
+
+	return WAIT_FOR_ACTION_TO_FINISH		-- magic value to indicate that this action is not done yet!
+	
+end
+
+function Action_Wait_Complete(context, data)
+	Action_Finish(data.actionListContext)
+end
+
+--
+-- CALL SCAR FUNCTION action
+--
+
+function Action_CallScarFunction_Do(action, context)
+
+	local func = _G[action.functionName]
+	
+	if scartype(func) == ST_FUNCTION then
+		if scartype(action.functionData) ~= ST_NIL then
+			return func(action.functionData, context)
+		else
+			return func(context)
+		end
+	end
+
+end
+
+--
+-- NOTIFICATION EVENT
+--
+
+--? @shortdesc Notifies the player of something
+function Action_NotifyPlayer_Do(action, context)
+	
+	--TODO: Look into hooking into EventCue_InternalManager and passing something similar into UI_CreateEventCueClickable	
+	-- Visible event cue
+	local duration = action.duration or 5	
+	if (scartype(action.message) == ST_LOCSTRING) or (scartype(action.message) == ST_NUMBER)  or (scartype(action.message) == ST_STRING and string.sub(action.message, 1, 1) == "$") then
+		UI_CreateEventCue(action.message, Loc_Empty(), "", "", "sfx_ui_event_queue_high_priority_play")
+	elseif scartype(action.message) == ST_STRING then
+		UI_CreateEventCue(LOC(action.message), Loc_Empty(), "", "", "sfx_ui_event_queue_high_priority_play")
+	end
+	
+	-- Minimap blip
+	local blipType = action.blipType or "general"
+	if scartype(action.marker) == ST_MARKER then
+		UI_CreateMinimapBlip(Marker_GetPosition(action.marker), duration, blipType)
+	elseif scartype(action.position) == ST_SCARPOS then
+		UI_CreateMinimapBlip(action.position, duration, blipType)
+	elseif scartype(action.sgroup) == ST_SGROUP then
+		UI_CreateMinimapBlip(action.sgroup, duration, blipType)
+	end
+	
+	-- Position reveal
+	if action.reveal == true then
+		local radius = action.revealRadius or 20
+		if scartype(action.marker) == ST_MARKER then
+			FOW_RevealArea(Marker_GetPosition(action.marker), radius, duration)
+		elseif scartype(action.position) == ST_SCARPOS then
+			FOW_RevealArea(action.position, radius, duration)
+		elseif scartype(action.sgroup) == ST_SGROUP then
+			FOW_RevealSGroup(action.sgroup, radius, duration)
+		end
+	end
+	
+	-- Camera snap
+	if action.snapCamera == true then
+		if scartype(action.marker) == ST_MARKER then
+			Camera_MoveTo(Marker_GetPosition(action.marker))
+		elseif scartype(action.position) == ST_SCARPOS then
+			Camera_MoveTo(action.position)
+		elseif scartype(action.sgroup) == ST_SGROUP then
+			Camera_MoveTo(action.sgroup)
+		end
+	end
+	
+end
+
+--
+-- PLAY SPEECH EVENT action
+--
+
+function Action_PlaySpeechEvent_Do(action, context)
+	
+	if scartype(EVENTS) == ST_TABLE and scartype(EVENTS[action.eventName]) == ST_FUNCTION then 
+		
+		local playEvent = true
+		if action.scriptedCamera and Misc_IsCommandLineOptionSet("no_scripted_camera") then playEvent = false end
+		
+		if playEvent then
+		
+			Util_StartIntel(EVENTS[action.eventName])
+			
+			if action.waitForSpeechToFinish ~= false then
+				Rule_Add(Action_PlaySpeechEvent_Complete, {actionListContext = context})
+				return WAIT_FOR_ACTION_TO_FINISH		-- magic value to indicate that this action is not done yet!
+			end
+			
+		end
+		
+	end
+	
+end
+
+function Action_PlaySpeechEvent_Complete(context, data)
+	if Event_IsAnyRunning() == false then
+		Rule_RemoveMe()
+		Action_Finish(data.actionListContext)
+	end
+end
+
+
+function Action_Play3DSound_Do(action, context)
+
+	if scartype(action.sgroup) == ST_SGROUP then 
+		Sound_PlayOnSquad(action.event, action.sgroup)
+	end
+	
+end
+
+--
+-- CHANGE OWNER action
+--
+function Action_SetPlayerOwner_Do(action, context)
+
+	if scartype(action.egroup) == ST_EGROUP then
+		Util_SetPlayerOwner(action.egroup, action.player)
+	end
+	
+	if scartype(action.sgroup) == ST_SGROUP then
+		Util_SetPlayerOwner(action.sgroup, action.player)
+		
+		if action.clear == true then
+			SGroup_Clear(sgroup)
+			if scartype(action.tag) == ST_STRING then
+				MissionOMatic_ClearTag(action.tag)
+			end
+		end
+	end
+	
+end
+
+--
+-- COMPLETE UPGRADE action
+--
+function Action_CompleteUpgrade_Do(action, context)
+
+	if scartype(action.egroup) == ST_EGROUP then
+		
+		EGroup_CompleteUpgrade(action.egroup, action.upgrade)
+		
+	elseif scartype(action.player) == ST_PLAYER then
+		
+		Player_CompleteUpgrade(action.player, action.upgrade)
+		
+	end
+
+end
+
+
+--
+-- IMPORT SCAR FILE action
+--
+
+function Action_EnableReligiousVictory_Do(action, context)
+
+	local religiousScriptName = "winconditions/religious_2.scar"
+	import(religiousScriptName)
+	
+	if scartype(_religious) == ST_TABLE then
+		Religious_Start()
+	end
+	
+end
+
+--
+-- BOOKMARK TIME action
+--
+
+function Action_BookmarkTime_Do(action, context)
+
+	if g_timeStamps == nil then
+		g_timeStamps = {}
+	end
+	
+	-- remove any existing bookmarks with the same name
+	for index = #g_timeStamps, 1, -1 do 
+		local bookmark = g_timeStamps[index]
+		if bookmark.name == action.name then
+			table.remove(g_timeStamps, index)
+		end
+	end
+	
+	
+	local bookmark = {
+		name = action.name,
+		timeStamp = World_GetGameTime(),
+	}
+	
+	table.insert(g_timeStamps, bookmark)
+	
+end
+
+--
+-- MISSION COMPLETE and FAIL actions
+--
+
+function Action_MissionComplete_Do(action, context)
+
+	if action.customDebriefTitle ~= nil then 
+		_MissionOMatic_CustomDebriefTitle = action.customDebriefTitle
+	end
+	
+	MissionOMatic_EndMission(true)
+	
+end
+
+function Action_MissionFail_Do(action, context)
+
+	if action.customDebriefTitle ~= nil then 
+		_MissionOMatic_CustomDebriefTitle = action.customDebriefTitle
+	end
+	
+	MissionOMatic_EndMission(false)
+
+end
+
+--
+-- MUSIC ACTIONS
+--
+
+function Action_SetMusicIntensity_Do(action, context)
+
+	if action.unlock == true then 
+		
+		Music_UnlockIntensity()
+	
+	elseif action.stop == true then 
+		
+		Music_Stop()
+		
+	elseif action.intensity ~= nil then
+	
+		local intensity = action.intensity
+		local duration = action.duration -- omitting this defaults to "until we say otherwise", but that's handled inside the LockIntensity function
+		
+		if duration == nil then 
+			print("Setting music to intensity "..intensity)
+		else
+			print("Setting music to intensity "..intensity.." for duration "..duration)
+		end
+		
+		Music_LockIntensity(intensity, duration)
+		
+	end
+	
+end
+
+function Action_PlayMusicStinger_Do(action, context)
+
+	if action.stinger ~= nil then 
+		Music_PlayStinger(action.stinger)
+	end
+		
+end
+
+--
+-- PLAYBILL actions
+--
+
+function Action_Loop_Do(action, context)
+
+	local playbillInfo = context.playbillInfo
+	if action.count ~= nil then
+		
+		if action.numLoopsMade == nil then
+			action.numLoopsMade = 0
+		end
+		
+		if action.numLoopsMade >= action.count then
+			return
+		end
+		
+		action.numLoopsMade = action.numLoopsMade + 1
+		
+	end
+
+	-- find the target stage
+	local stage = action.stage or 1
+
+	-- We're trying to match the string "stage" to the value of a "descriptor" found inside the recipe, at the head of a sequence of actions
+	-- The table of those sequences of actions is stored as "playbill" under the "playbillInfo" value attached to the "context" passed down into actions
+	if scartype(stage) == ST_STRING then 
+		for index, this in pairs(playbillInfo.playbill) do 
+			if this.descriptor == stage then
+				stage = index 
+				break 
+			end
+		end
+	end
+		
+	playbillInfo.currentStage = stage - 1 		-- (minus one because it will be incremented after this!)
+
+end
+
+--
+-- MODULE actions
+--
+
+function Action_ModuleDoAction_Do(action, context)
+
+	local module
+	
+	if action.module ~= nil then
+		module = MissionOMatic_FindModule(action.module)
+	else
+		module = context.source
+	end
+	
+	Prefab_DoAction(module, action.doAction)
+
+end
+
+function Action_StartModule_Do(action, context)
+
+	local module
+	
+	if action.module ~= nil then
+		module = MissionOMatic_FindModule(action.module)
+	else
+		module = context.source
+	end
+	
+	Prefab_DoAction(module, "Start")
+
+end
+
+function Action_StopModule_Do(action, context)
+
+	local module
+	
+	if action.module ~= nil then
+		module = MissionOMatic_FindModule(action.module)
+	else
+		module = context.source
+	end
+	
+	Prefab_DoAction(module, "Stop")
+	
+end
+
+--
+-- SET INTERACTION STAGE
+--
+
+function Action_SetInteractionStage_Do(action, context)
+
+	if action.stage ~= nil then
+		World_SetInteractionStage(action.stage)
+	else
+		World_IncreaseInteractionStage()
+	end
+	
+	if scartype(MetaMap_CalculateAllTerritoryOwners) == ST_FUNCTION then		-- if this happened on the metamap, we need to recalculate active/inactive status
+		MetaMap_CalculateAllTerritoryOwners()
+	end
+	
+end
+--
+-- Initialization before play E-Cam
+--
+local function Action_ExpositionCameraBegin()
+	Util_EnterCinematicMode(DEFAULT_CINEMATIC_HIDDEN_GAME_COMPONENT_FLAGS, Action_SkipNIS)
+end
+
+--
+-- Cleaning up after E-Cam finishes
+--
+local function Action_ExpositionCameraEnd()
+	Util_ExitCinematicMode()	
+end
+--
+--
+-- E-CAM SEQUENCE
+--
+
+function Action_ExpositionCamera_Do(action, context)
+
+	local event = nil 
+	if scartype(action.eventName) == ST_STRING and scartype(EVENTS) == ST_TABLE then 
+		event = EVENTS[action.eventName]
+	end
+	
+	local ECAM_Wrapper = function()
+		Action_ExpositionCameraBegin()
+		CTRL.Event_Delay(1)
+		CTRL.WAIT()
+		
+		if scartype(event) == ST_FUNCTION then 
+			event()
+		else
+			CTRL.Actor_PlaySpeech(ACTOR.GENERIC, LOC("Placeholder Exposition Camera Sequence"))
+			CTRL.WAIT()
+		end
+		
+		CTRL.Event_Delay(1)
+		CTRL.WAIT()
+		Action_ExpositionCameraEnd()
+	end
+	
+	Util_StartIntel(ECAM_Wrapper)
+	Rule_Add(Action_ExpositionCamera_Complete, {actionListContext = context})
+
+	return WAIT_FOR_ACTION_TO_FINISH		-- magic value to indicate that this action is not done yet!
+	
+end
+
+function Action_ExpositionCamera_Complete(context, data)
+
+	if Event_IsAnyRunning() == false then
+		Rule_RemoveMe()
+		Action_Finish(data.actionListContext)
+	end
+	
+end	
+
+--
+-- OTHER CAMERA
+--
+
+function Action_SnapCamera_Do(action, context)
+	
+	local targetMarker = nil
+	
+	if scartype(action.location) == ST_STRING or scartype(action.location) == ST_TABLE then
+		local location = LOCATION(action.location)
+		targetMarker = location.position
+	elseif scartype(action.marker) == ST_MARKER then
+		targetMarker = action.marker
+	end
+	
+	if scartype(targetMarker) ~= ST_NIL then
+		Camera_MoveTo(Util_GetPosition(targetMarker))
+	end
+
+end
+
+--
+-- CONVERT PLAYER
+--
+
+function Action_ConvertPlayerBuildings_Do(action, context) 
+
+	local convertFrom = action.convertFrom
+	local convertTo = action.convertTo
+
+	Player_GetAll(convertFrom)
+	
+	SGroup_SetPlayerOwner(sg_allsquads, convertTo)
+	
+	if EGroup_CountSpawned(eg_allentities) >= 1 then 
+		
+		-- buildings switch ownership
+		EGroup_SetPlayerOwner(eg_allentities, convertTo)
+		
+		-- HQ ledger flag set
+		EGroup_Filter(eg_allentities, "hq", FILTER_KEEP)		
+		if EGroup_CountSpawned(eg_allentities) >= 1 then
+			Player_SetStateModelBool(convertTo, "player_can_construct_structures", true)
+		end
+	end
+
+end
+
+--
+-- CONVERT Location
+--
+
+function Action_SetLocationOwner_Do(action, context) 
+
+	local location = LOCATION(action.location)
+	local newPlayer = action.newPlayer
+	
+	Location_SetPlayerOwner(location, newPlayer)
+	
+end
+
+
+
+--
+-- CAPTURE Location
+--
+
+function Action_CaptureLocation_Do(action, context) 
+
+	local location = LOCATION(action.location)
+	local newPlayer = action.newPlayer
+	
+	Location_Capture(location, newPlayer)
+	
+end
+
+function Action_SetLocationCapturable_Do(action, context) 
+
+	local location = LOCATION(action.location)
+	local enable = action.enable
+	
+	Location_SetCapturable(location, enable)
+	
+end
+
+
+
+--
+-- SET INVULNERABLE Egroup or Sgroup
+--
+
+function Action_SetInvulnerable_Do(action, context) 
+
+	local enabled = action.enabled or action.cap or true
+	
+	if scartype(action.egroup) == ST_EGROUP then
+	
+		EGroup_SetInvulnerable(action.egroup, enabled)
+	
+	elseif scartype(action.sgroup) == ST_SGROUP then
+		
+		SGroup_SetInvulnerable(action.sgroup, enabled)
+			
+	end
+
+end
+
+--
+-- Deploy Villager -- this is an example, was something to test in Burn, but may not be actually used anywhere 
+-- more for scripting exercise and theory
+--
+function Action_DeployVillager_Do(action, context)
+
+	local villagerPlayer = action.villagerOwner
+
+	local units = {
+		{type = "scar_villager", numSquads = 3},
+	}
+	UnitEntry_DeploySquads(villagerPlayer, nil, units, action.deployMarker)
+
+end
+
+function Action_LoadScenario_Do(action, context)
+
+	Game_LoadSP(action.scenario, 1)
+
+end
+
+-- Useful primarily for debugging purposes
+function Action_Print_Do(action, context)
+
+	print(action.message)
+
+end
+
+function Action_RevealDestination_Do(action, context) 
+	
+	local destinationMarker = nil
+	
+	if scartype(action.location) == ST_STRING or scartype(action.location) == ST_TABLE then
+		location = LOCATION(action.location)
+		destinationMarker = location.position
+	elseif scartype(action.marker) == ST_MARKER then
+		destinationMarker = action.marker
+	end
+	
+	local radius = action.radius or 20	
+	
+	if destinationMarker ~= nil then
+		FOW_RevealArea(Util_GetPosition(destinationMarker), radius, action.duration or 5)
+	end
+	
+end
+
+function Action_RevealUnits_Do(action, context)
+	
+	if scartype(action.sgroup) == ST_SGROUP then
+		
+		local duration = action.duration or 10
+		local radius = action.radius or 20
+		FOW_RevealSGroup(action.sgroup, radius, duration)
+		
+	end
+	
+end
+
+function Action_AddObjectiveHintpoint_Do(action, context)
+
+	-- figure out the location
+	local position = nil
+	
+	if scartype(action.location) == ST_STRING or scartype(action.location) == ST_TABLE then
+		local location = LOCATION(action.location)
+		position = location.position
+	elseif scartype(action.marker) == ST_MARKER then
+		position = action.marker
+	elseif scartype(action.where) == ST_TABLE then
+		position = ResolveSpawnLocation(action.where)
+	end
+	
+	if destinationMarker ~= nil then
+		Objective_AddUIElements(context.objective, position, true, action.text)
+	end
+	
+end
+
+--
+-- UNIT ACTIONS
+--
+
+--? @shortdesc Moves units to a given marker
+function Action_MoveUnits_Do(action, context)
+	
+	if scartype(action.sgroup) == ST_SGROUP then
+		
+		Cmd_Move(action.sgroup, action.marker)
+		
+	end
+	
+end
+
+--? @shortdesc Spawns a new entity at a given location (only once, since many entities don't like overlapping)
+function Action_SpawnBuilding_Do(action, context)
+
+	local spawnLocation = ResolveSpawnLocation(action.spawnLocation)
+	
+	if scartype(action.building) ~= ST_NIL then
+		Util_CreateEntities(action.player, playerBuildings, action.building, spawnLocation, 1)
+	end
+	
+end
+
+--? @shortdesc Spawns new units at a given location
+function Action_SpawnUnits_Do(action, context)
+
+	local spawnLocation = ResolveSpawnLocation(action.spawnLocation)
+	
+	local options = {}
+	if action.zeroPopulation ~= nil then 
+		options.zeroPopulation = action.zeroPopulation
+	end
+	if action.spawnInFormation ~= nil then 
+		options.spawnInFormation = action.spawnInFormation
+	end
+	
+	if scartype(action.units) == ST_TABLE then
+ 		UnitEntry_DeploySquads(action.player, action.sgroup, action.units, spawnLocation, nil, nil, options)
+	end
+	
+end
+
+--? @shortdesc Spawns new units and adds them to a given module
+function Action_SpawnUnitsToModule_Do(action, context)
+
+	SpawnUnitsToModule(action.units, action.module, action.spawnLocation)
+	
+end
+
+--? @shortdesc Adds all the units in a battalion to a given module
+function Action_AddBattalionToModule_Do(action, context)
+
+	-- Figure out what module to add to - often this won't be tied to a location at all
+	local targetModule = MissionOMatic_FindModule(action.module)
+	local sourceBattalion = MissionOMatic_FindBattalion(action.battalionPlayer)
+	if targetModule ~= nil and sourceBattalion then
+	
+		if targetModule.player.descriptor == sourceBattalion.player then
+			Prefab_DoAction(targetModule, 'AddSGroup', sourceBattalion.sgroup)
+			if scartype(sourceBattalion.sgroup_gen) == ST_SGROUP and SGroup_Count(sourceBattalion.sgroup_gen) > 0 then
+				Prefab_DoAction(targetModule, 'AddSGroup', sourceBattalion.sgroup_gen)
+			end
+		else
+			print("WARNING: AddBattalionToModule player mismatch, cannot add units owned by "..tostring(sourceBattalion.player).." to module owned by "..tostring(targetModule.player.descriptor))
+		end
+		
+	else
+		print("WARNING: AddBattalionToModule called on module: "..tostring(targetModule)..", battalion: "..tostring(sourceBattalion))
+	end
+	
+end
+
+--? @shortdesc Dissolves a module
+function Action_DissolveModule_Do(action, context)
+
+	local sourceModule = MissionOMatic_FindModule(action.source)
+	if sourceModule ~= nil then
+		Prefab_DoAction(sourceModule, "Disband")
+	end
+	
+end
+--? @shortdesc Dissolves a module and folds its units into another module
+function Action_DissolveModuleIntoModule_Do(action, context)
+	
+	DissolveModuleIntoModule(action.source, action.target)
+	
+end
+
+function Action_EnableModule_Do(action, context)
+
+	local module = MissionOMatic_FindModule(action.module)	
+	Prefab_DoAction(module, "Enable")
+	
+end
+function Action_DisableModule_Do(action, context)
+
+	local module = MissionOMatic_FindModule(action.module)	
+	Prefab_DoAction(module, "Disable")
+	
+end
+function Action_ModuleAction_Do(action, context)
+
+	local module = MissionOMatic_FindModule(action.module)	
+	Prefab_DoAction(module, action.action, action.parameters)
+	
+end
+
+
+--
+-- RESOURCES
+--
+
+--? @shortdesc Adds resources to a given player
+function Action_AddResources_Do(action, context)
+	
+	local player = action.player
+	
+	if scartype(player) == ST_INTEGER then
+		player = World_GetPlayerAt(action.player)
+	end
+	
+	if scartype(action.resources) == ST_TABLE and player ~= nil then
+		Player_AddResources(player, action.resources)
+	end
+	
+end
+
+
+function Action_SetResources_Do(action, context)
+	
+	local player = action.player
+	
+	if scartype(player) == ST_INTEGER then
+		player = World_GetPlayerAt(action.player)
+	end
+	
+	if scartype(action.resources) == ST_TABLE and player ~= nil then
+		
+		local i = Player_GetResources(player)
+	
+		for k, v in pairs(action.resources) do
+			i[k] = action.resources[k]
+		end
+		
+		Player_SetResources(player, i)
+		
+	end
+
+end
+

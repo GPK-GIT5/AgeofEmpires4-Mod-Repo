@@ -1,0 +1,1174 @@
+--
+-- Xiangyang 1267 - Primary Objectives Phase 2
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+SALLY_WEST = "west"
+SALLY_NORTH = "north"
+SALLY_EAST = "east"
+
+--? @shortdesc Initializes the main objectives for Xiangyang 1267
+function Xiangyang1267_InitObjectives_Phase2()
+
+	OBJ_CampUp = { Title = "$11179216", Type = ObjectiveType_Primary,
+		
+		-- This is Objective: 7
+		Cheat = function()
+			print("CHEAT: Cheating into Phase 2")
+			-- Delete all units and buildings outside the city; the player should have killed these off
+			Xiangyang1267_CheatDeleteOutlyingUnits(3)
+			-- Destroy the bridge
+			EGroup_SetAvgHealth(eg_sally_bridge, 0.0)
+			-- Spawn the allies and reinforcements that should be here
+			Xiangyang1267_SpawnAllies()
+			Xiangyang1267_TopUpWithAllies()
+			--Remove and destroy the trebuchets
+			SGroup_Clear(sg_temp)
+			SGroup_Filter(sg_allies, "scar_trebuchet_traction", FILTER_REMOVE, sg_temp)
+			SGroup_DestroyAllSquads(sg_temp)
+			-- Send off the rest of the allies to defend
+			Xiangyang_HandleLeftovers()
+			-- Finally, teleport the starting units
+			SGroup_FormationWarpToMarker(sg_all_intro_units, mkr_mongol_rally_1)
+			Camera_MoveTo(mkr_mongol_rally_1)
+			-- Bring in the buildings
+			Xiangyang1267_SpawnAllCamps()
+			-- And make sure this stops
+			if Rule_Exists(Xiangyang1267_SpawnRoadPatrol) == true then
+				Rule_Remove(Xiangyang1267_SpawnRoadPatrol)
+			end
+		end,
+		
+		PreStart = function()
+			-- We locked the gates at the start of the mission, so unlock them now to allow raiders out!
+			Missionomatic_SetGateLock(eg_songCityGates, false)
+			-- Show popcap data again
+			UI_SetPlayerDataContext(g_playerMongol, { PopulationCapOn = true })
+			-- Start the VO rule
+			Rule_AddInterval(Xiangyang1267_MonitorBridgeheadVO, 3)
+			-- Kick off this rule to show the player the woods, though we should put the hintpoint here earlier just in case
+			Rule_AddInterval(Xiangyang1267_RevealWoods, 1)
+		end,
+		
+		OnStart = function()
+			FOW_RevealMarker(mkr_fancheng_reveal, 0.125)
+			FOW_RevealMarker(mkr_xiangyang_reveal, 0.125)
+			-- Trigger a sally
+			if Game_GetSPDifficulty() >= GD_NORMAL then
+				Xiangyang1267_SmallPokeAttack()
+				Rule_AddInterval(Xiangyang1267_SmallPokeAttack, 180)
+			end
+			--Autosave soonish, but not right this second, because usually combat is still happening
+			Rule_AddOneShot(Xiangyang1267_DelayedAutoSave, 20)
+			-- Kick an atmo transition
+			Game_TransitionToState("subtropical_morning_smoky", 120)
+		end,
+		
+		IsComplete = function()
+			if Objective_IsStarted(OBJ_FinaleTimer) == false then
+				-- How many "complete" do we have?
+				local numComplete = 0
+				if Xiangyang1267_BridgeheadRatioWest() >= 1.0 then
+					numComplete = numComplete + 1
+				end
+				if Xiangyang1267_BridgeheadRatioNorth() >= 1.0 then
+					numComplete = numComplete + 1
+				end
+				if Xiangyang1267_BridgeheadRatioSouth() >= 1.0 then
+					numComplete = numComplete + 1
+				end
+				
+				-- What's the lowest completion ratio?
+				local lowestRatio = math.min(Xiangyang1267_BridgeheadRatioSouth(), Xiangyang1267_BridgeheadRatioNorth(), Xiangyang1267_BridgeheadRatioWest())
+				
+				-- What's the overall completion level?
+				local totalSurroundRatio = Xiangyang1267_BridgeheadRatioSouth() + Xiangyang1267_BridgeheadRatioNorth() + Xiangyang1267_BridgeheadRatioWest()
+				totalSurroundRatio = totalSurroundRatio / 3.0
+				
+				-- If we've "completed" at least one, the player has seen the "Keep units here" messaging and should know to station units
+				-- We can start the objective
+				if numComplete >= 2 and lowestRatio >= 0.75 then
+					Objective_Start(OBJ_FinaleTimer)
+				end
+			end
+			return Objective_IsComplete(OBJ_ContainFinalSally)
+		end,
+		
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(g_playerMongol)
+			SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+			
+			local lostAllUnits = (SGroup_Count(sg_allsquads) + EGroup_Count(eg_allentities)) <= 0
+			return Objective_IsFailed(OBJ_ContainFinalSally) or lostAllUnits
+		end,
+		
+		OnFail = function()
+			Music_PlayStinger("mon_camp_mus_stinger_mission_fail")
+			Mission_Fail()
+		end,
+	}
+	SOBJ_SurroundWest = { Title = "$11179225", Type = ObjectiveType_Battle, Parent = OBJ_CampUp, StartAlongsideParent = true,
+
+		showTitle = false,
+		
+		PreStart = function()
+			Objective_AddUIElements(SOBJ_SurroundWest, mkr_bridgehead_1, true, "$11179228", true)
+			FOW_RevealMarker(mkr_bridgehead_1, -1)
+			Objective_SetProgressBar(SOBJ_SurroundWest, 0.0)
+			Objective_AddGroundReticule(SOBJ_SurroundWest, mkr_bridgehead_1)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsFailed = function()
+			local endGame = Objective_IsStarted(OBJ_ContainFinalSally)
+			local ratio = Xiangyang1267_BridgeheadRatioWest(endGame, endGame)
+			
+			if Objective_IsStarted(OBJ_ContainFinalSally) == false then
+				if ratio >= 1.0 and g_unitsInWest ~= true then
+					g_unitsInWest = true
+					Obj_SetTitle(SOBJ_SurroundWest.ID, "$11201947")
+				elseif g_unitsInWest == true and ratio < 1.0 then
+					g_unitsInWest = false
+					Obj_SetTitle(SOBJ_SurroundWest.ID, "$11179225")
+				end
+				Objective_SetCounter(SOBJ_SurroundWest, ratio * g_bridgeheadDenominator, g_bridgeheadDenominator)
+			end
+			
+			Objective_SetProgressBar(SOBJ_SurroundWest, ratio)
+			
+			return ratio <= 0.0 and (Objective_IsTimerSet(OBJ_ContainFinalSally) and Objective_GetTimerSeconds(OBJ_ContainFinalSally) <= 0)
+		end,
+	}
+	SOBJ_SurroundNorth = { Title = "$11179226", Type = ObjectiveType_Battle, Parent = OBJ_CampUp, StartAlongsideParent = true,
+
+		showTitle = false,
+		
+		PreStart = function()
+			Objective_AddUIElements(SOBJ_SurroundNorth, mkr_bridgehead_2, true, "$11179229", true)
+			FOW_RevealMarker(mkr_bridgehead_2, -1)
+			Objective_SetProgressBar(SOBJ_SurroundNorth, 0.0)
+			Objective_AddGroundReticule(SOBJ_SurroundNorth, mkr_bridgehead_2)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsFailed = function()
+			local endGame = Objective_IsStarted(OBJ_ContainFinalSally)
+			local ratio = Xiangyang1267_BridgeheadRatioNorth(endGame, endGame)
+			if Objective_IsStarted(OBJ_ContainFinalSally) == false then
+				if ratio >= 1.0 and g_unitsInNorth ~= true then
+					g_unitsInNorth = true
+					Obj_SetTitle(SOBJ_SurroundNorth.ID, "$11201948")
+				elseif g_unitsInNorth == true and ratio < 1.0 then
+					g_unitsInNorth = false
+					Obj_SetTitle(SOBJ_SurroundNorth.ID, "$11179226")
+				end
+				Objective_SetCounter(SOBJ_SurroundNorth, ratio * g_bridgeheadDenominator, g_bridgeheadDenominator)
+			end
+			
+			Objective_SetProgressBar(SOBJ_SurroundNorth, ratio)
+			return ratio <= 0.0 and (Objective_IsTimerSet(OBJ_ContainFinalSally) and Objective_GetTimerSeconds(OBJ_ContainFinalSally) <= 0)
+		end,
+	}
+	SOBJ_SurroundSouth = { Title = "$11179227", Type = ObjectiveType_Battle, Parent = OBJ_CampUp, StartAlongsideParent = true,
+
+		showTitle = false,
+		
+		PreStart = function()
+			Objective_AddUIElements(SOBJ_SurroundSouth, mkr_bridgehead_3, true, "$11179230", true)
+			FOW_RevealMarker(mkr_bridgehead_3, -1)
+			Objective_SetProgressBar(SOBJ_SurroundSouth, 0.0)
+			Objective_AddGroundReticule(SOBJ_SurroundSouth, mkr_bridgehead_3)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsFailed = function()
+			local endGame = Objective_IsStarted(OBJ_ContainFinalSally)
+			local ratio = Xiangyang1267_BridgeheadRatioSouth(endGame, endGame)
+			if Objective_IsStarted(OBJ_ContainFinalSally) == false then
+				if ratio >= 1.0 and g_unitsInSouth ~= true then
+					g_unitsInSouth = true
+					Obj_SetTitle(SOBJ_SurroundSouth.ID, "$11201949")
+				elseif g_unitsInSouth == true and ratio < 1.0 then
+					g_unitsInSouth = false
+					Obj_SetTitle(SOBJ_SurroundSouth.ID, "$11179227")
+				end
+				Objective_SetCounter(SOBJ_SurroundSouth, ratio * g_bridgeheadDenominator, g_bridgeheadDenominator)
+			end
+			
+			Objective_SetProgressBar(SOBJ_SurroundSouth, ratio)
+			return ratio <= 0.0 and (Objective_IsTimerSet(OBJ_ContainFinalSally) and Objective_GetTimerSeconds(OBJ_ContainFinalSally) <= 0)
+		end,
+	}
+	OBJ_FinaleTimer = { Title = "$11198605", Type = ObjectiveType_Information,
+
+		Intel_Start = EVENTS.CounterAttack_TimerStart,
+		
+		duration = 45,
+		Intel_Complete = EVENTS.CounterAttack_Begins,
+		
+		OnStart = function()
+			Objective_StartTimer(OBJ_FinaleTimer, COUNT_DOWN, OBJ_FinaleTimer.duration, 10)
+		end,
+		
+		IsComplete = function()
+			local timerSeconds = Objective_GetTimerSeconds(OBJ_FinaleTimer)
+			print(string.format("Finale timer at %s", timerSeconds))
+			return timerSeconds <= 0
+		end,
+		
+		OnComplete = function()
+			if Objective_IsStarted(OBJ_ContainFinalSally) == false then
+				Objective_Start(OBJ_ContainFinalSally)
+			end
+		end,
+	}
+	OBJ_ContainFinalSally = { Title = "$11179232", Type = ObjectiveType_Information,
+		
+		wavesDefeated = 0,
+		wavesMax = 0,
+
+		PreStart = function()
+			Xiangyang1267_InitFinalSally()
+			Xiangyang1267_TriggerWarningSally()
+			Objective_SetProgressBar(OBJ_ContainFinalSally, 0.0)
+		end,
+		
+		OnStart = function()
+			Obj_SetTitle(SOBJ_SurroundWest.ID, "$11197410")
+			Obj_SetTitle(SOBJ_SurroundNorth.ID, "$11197411")
+			Obj_SetTitle(SOBJ_SurroundSouth.ID, "$11197412")
+			
+			Objective_StopCounter(SOBJ_SurroundWest)
+			Objective_StopCounter(SOBJ_SurroundNorth)
+			Objective_StopCounter(SOBJ_SurroundSouth)
+		end,
+		
+		IsComplete = function()
+			OBJ_ContainFinalSally.showTitle = false
+			local completeRatio = 1.0
+			local bridgeRepairState = EGroup_GetAvgHealth(eg_southern_bridges)
+			if g_finalWavesStarted ~= true and bridgeRepairState >= completeRatio then
+				-- Play the intel announcing the attack
+				-- Start the attack
+				Rule_AddOneShot(Xiangyang1267_LaunchFinaleWave, 10, { timeToNext = (g_finalWaveTiming - 10) })
+				Rule_AddInterval(Xiangyang1267_LaunchFinaleWave, g_finalWaveTiming, { timeToNext = g_finalWaveTiming })
+				-- And get rid of those villagers
+				if SGroup_Count(sg_repair_1) > 0 then
+					Cmd_FormationMoveToAndDestroy(sg_repair_1, mkr_base_xiangyang, false)
+				end
+				if SGroup_Count(sg_repair_2) > 0 then
+					Cmd_FormationMoveToAndDestroy(sg_repair_2, mkr_base_xiangyang, false)
+				end
+				-- Just for completeness' sake
+				EGroup_SetAvgHealth(eg_southern_bridges, 1.0)
+				-- Notify that the final wave has started
+				g_finalWavesStarted = true
+				print("Bridges fixed, final waves started!")
+			end
+			
+			return (OBJ_ContainFinalSally.wavesDefeated / OBJ_ContainFinalSally.wavesMax) >= 1.0
+		end,
+		
+		PreComplete = function()
+			Music_StopMedium()
+			Modifier_Remove(g_fanchengBridgeInvulnerability)
+		end,
+		
+		IsFailed = Xiangyang1267_CheckPlayerDefeat,
+	}
+	OBJ_DebugComplete = { Title = LOC("Debug Complete"), Type = ObjectiveType_Primary, showTitle = false,
+		Cheat = function()
+			Rule_RemoveAll()
+			--Xiangyang1267_RunOutro()
+			Mission_Complete()
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	-- This one needs to be at the top, so it appears at the top of the screen!
+	Objective_Register(OBJ_FinaleTimer)
+	Objective_Register(OBJ_ContainFinalSally)
+	-- Now do the rest
+	Objective_Register(OBJ_CampUp)
+	Objective_Register(SOBJ_SurroundWest)
+	Objective_Register(SOBJ_SurroundNorth)
+	Objective_Register(SOBJ_SurroundSouth)
+	
+	Objective_Register(OBJ_DebugComplete)
+	
+end
+
+--? @shortdesc Watches for VO and tries to play is correctly
+function Xiangyang1267_MonitorBridgeheadVO(context, data)
+	
+	if Objective_IsStarted(OBJ_FinaleTimer) == true then
+		Rule_RemoveMe()
+		return
+	end
+	
+	g_totalBridgeheadsTriggered = g_totalBridgeheadsTriggered or 0
+	local runNewVO = false
+	local endGame = Objective_IsStarted(OBJ_ContainFinalSally)
+	
+	local ratioWest = Xiangyang1267_BridgeheadRatioWest(endGame, endGame)
+	if ratioWest >= 1.0 and g_westVO ~= true then
+		g_westVO = true
+		runNewVO = true
+		g_totalBridgeheadsTriggered = g_totalBridgeheadsTriggered + 1
+	end
+	
+	local ratioNorth = Xiangyang1267_BridgeheadRatioNorth(endGame, endGame)
+	if ratioNorth >= 1.0 and g_northVO ~= true then
+		g_northVO = true
+		runNewVO = true
+		g_totalBridgeheadsTriggered = g_totalBridgeheadsTriggered + 1
+	end
+	
+	local ratioSouth = Xiangyang1267_BridgeheadRatioSouth(endGame, endGame)
+	if ratioSouth >= 1.0 and g_southVO ~= true then
+		g_southVO = true
+		runNewVO = true
+		g_totalBridgeheadsTriggered = g_totalBridgeheadsTriggered + 1
+	end
+
+	if runNewVO == true then
+		if g_totalBridgeheadsTriggered == 1 then
+			Util_StartIntel(EVENTS.SeizePoint1)
+		elseif g_totalBridgeheadsTriggered == 2 then
+			Util_StartIntel(EVENTS.SeizePoint2)
+		elseif g_totalBridgeheadsTriggered >= 3 then
+			-- Nothing needed here, the next objective takes care of it
+		end
+	end
+	
+end
+
+--? @shortdesc Spawns a whole bunch of Mongol forces and sends them in three different directions
+function Xiangyang1267_SpawnAllCamps()
+	
+	-- Give them resources
+	Action_AddResources_Do({
+		player = g_playerMongol,
+		resources = {
+			food = 1800,
+			gold = 900,
+			wood = 900,
+		},
+	})
+	
+	-- We'll spawn things into here
+	local unitList = {}
+
+	--What's the final leeway?
+	local buildingCount = 9
+	local targetPop = (10 * 3) + Player_GetCurrentPopulation(g_playerMongol, CT_Personnel)
+	local finalPop = math.min(targetPop, 140)
+	local unitsTotal = finalPop - buildingCount - Player_GetCurrentPopulation(g_playerMongol, CT_Personnel)
+	
+	local unitsPerType = unitsTotal / 15.0
+	if unitsPerType < 0 then
+		unitsPerType = 0
+	end
+	
+	-- Spawn the EASTWARD camp
+	local mongol_campers_east = SGroup_CreateUnique("mongol_campers_east")
+	local sg_camper_buildings = SGroup_CreateUnique("sg_camper_buildings")
+	local sg_camper_units = SGroup_CreateUnique("sg_camper_units")
+	Action_SpawnUnits_Do({
+		player = g_playerMongol,
+		spawnLocation = mkr_mongol_campers_east,
+		sgroup = mongol_campers_east,
+		units = {
+			{ type = "scar_spearman", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_manatarms", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_archer", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_knight", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_horsearcher", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ sbp = SBP.MONGOL.BUILDING_ECON_MARKET_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+			{ sbp = SBP.MONGOL.BUILDING_UNIT_RANGED_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+			{ sbp = SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+			{ sbp = SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+		},
+	})
+	
+	MissionOMatic_SGroupCommandDelayed(sg_camper_units, mkr_mongol_campdest_1c, false, 1)
+	MissionOMatic_SGroupCommandDelayed(sg_camper_buildings, mkr_mongol_campdest_1b, false, 1)
+	
+	-- Spawn the NORTHERN camp
+	local mongol_campers_north = SGroup_CreateUnique("mongol_campers_north")
+	sg_camper_buildings = SGroup_CreateUnique("sg_camper_buildings")
+	sg_camper_units = SGroup_CreateUnique("sg_camper_units")
+	Action_SpawnUnits_Do({
+		player = g_playerMongol,
+		spawnLocation = mkr_mongol_campers_north,
+		sgroup = mongol_campers_north,
+		units = {
+			{ type = "scar_spearman", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_manatarms", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_crossbowman", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_knight", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_horsearcher", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ sbp = SBP.MONGOL.BUILDING_WONDER_AGE3_STUPA_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+			{ sbp = SBP.MONGOL.BUILDING_UNIT_RANGED_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+			{ sbp = SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+			{ sbp = SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+		},
+	})
+	
+	-- These lines expose at least two fairly bad bugs that we don't have time to look at right now
+	-- Please preserve for future investigation
+	--Cmd_FormationMove(sg_camper_units, mkr_song_post_1, false)
+	--Cmd_FormationMove(sg_camper_buildings, mkr_song_post_1, false)
+	
+	MissionOMatic_SGroupCommandDelayed(sg_camper_units, {mkr_road_patrol_6, mkr_road_patrol_3, mkr_mongol_campdest_2c}, false, 1)
+	MissionOMatic_SGroupCommandDelayed(sg_camper_buildings, {mkr_road_patrol_6, mkr_road_patrol_3, mkr_mongol_campdest_2b}, false, 1)
+	
+	-- Spawn the WESTWARD camp
+	local mongol_campers_west = SGroup_CreateUnique("mongol_campers_west")
+	sg_camper_buildings = SGroup_CreateUnique("sg_camper_buildings")
+	sg_camper_units = SGroup_CreateUnique("sg_camper_units")
+	Action_SpawnUnits_Do({
+		player = g_playerMongol,
+		spawnLocation = mkr_mongol_campers_west,
+		sgroup = mongol_campers_west,
+		units = {
+			{ type = "scar_spearman", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_manatarms", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_archer", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_knight", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ type = "scar_horsearcher", numSquads = unitsPerType, sgroup = sg_camper_units, },
+			{ sbp = SBP.MONGOL.BUILDING_TECH_UNIT_INFANTRY_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+			{ sbp = SBP.MONGOL.BUILDING_UNIT_RANGED_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+			{ sbp = SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+			{ sbp = SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON, sgroup = sg_camper_buildings, numSquads = 1, },
+		},
+	})
+	
+	-- These lines expose at least two fairly bad bugs that we don't have time to look at right now
+	-- Please preserve for future investigation
+	--Cmd_FormationMove(sg_camper_units, mkr_road_patrol_3, false)
+	--Cmd_FormationMove(sg_camper_buildings, mkr_road_patrol_3, false)
+	
+	MissionOMatic_SGroupCommandDelayed(sg_camper_units, {mkr_road_patrol_6, mkr_road_patrol_3, mkr_mongol_campdest_3c}, false, 1)
+	MissionOMatic_SGroupCommandDelayed(sg_camper_buildings, {mkr_road_patrol_6, mkr_road_patrol_3, mkr_mongol_campdest_3b}, false, 1)
+	
+	-- Call to action: The Eastern army has arrived with supplies!
+	Sound_Play2D("mus_stinger_campaign_triumph_short")
+	EventCues_CallToAction("$11189197", CTA_CELEBRATE, EVENTS.Setup_Camp, nil, mongol_campers_east, 180)
+	
+end
+
+--? @shortdesc Tries to figure out how many things we can spawn in as player camps without breaking popcap
+function Xiangyang1267_CalcSpawns(spawnsAfterThis, buildingCount)
+
+	local groupSizeGoal = 30
+	local leeway = 190 - (spawnsAfterThis * groupSizeGoal)
+	local targetPop = groupSizeGoal + Player_GetCurrentPopulation(g_playerMongol, CT_Personnel)
+	local finalPop = math.min(leeway, targetPop)
+	
+	local unitsToBuild = finalPop - buildingCount - Player_GetCurrentPopulation(g_playerMongol, CT_Personnel)
+	if unitsToBuild <= 0 then
+		print(string.format("XIANGYANG: unitsToBuild=0, leeway %s, targetPop %s, finalPop %s, playerPop %s)", leeway, targetPop, finalPop, Player_GetCurrentPopulation(g_playerMongol, CT_Personnel)))
+		return { spawnsCavalry = 0, spawnsInfantry = 0, }
+	end
+	
+	local result = { spawnsCavalry = (unitsToBuild / 2) * 0.4, spawnsInfantry = (unitsToBuild * 0.6) / 3, }
+	
+	print(string.format("XIANGYANG: leeway %s, targetPop %s, finalPop %s, playerPop %s)", leeway, targetPop, finalPop, Player_GetCurrentPopulation(g_playerMongol, CT_Personnel)))
+	print(string.format("XIANGYANG: unitsToBuild=%s, total %s, %s (Math: %s - %s - %s)", unitsToBuild, result.spawnsCavalry, result.spawnsInfantry, targetPop, buildingCount, Player_GetCurrentPopulation(g_playerMongol, CT_Personnel)))
+	return result
+	
+end
+
+--? @shortdesc Launches a small sally from the city
+function Xiangyang1267_SmallPokeAttack(context, data)
+	
+	if g_stopSpawingRaiders ~= true and g_finalWaveInitialized ~= true then
+		
+		Player_GetAll(g_playerMongol)
+		local randomPlayerBuilding = EGroup_GetRandomSpawnedEntity(eg_allentities)
+		if scartype(randomPlayerBuilding) == ST_ENTITY then
+			local songPokePos = Util_GetPosition(randomPlayerBuilding)
+			Raiding_TriggerRaid(songPokePos, true)
+			print(string.format("SONG FORTRESS: Poke attack on position of entity %s", randomPlayerBuilding))
+			return
+		end
+		
+		local randomTarget = Table_GetRandomItem({ mkr_village_2, mkr_village_3, mkr_village_4, mkr_village_5, mkr_village_6, })
+		Raiding_TriggerRaid(randomTarget, true)
+		print(string.format("SONG FORTRESS: Poke attack on marker %s", randomTarget))
+	end
+	
+end
+
+--? @shortdesc Reveal a path through the woods
+function Xiangyang1267_RevealWoods(context, data)
+	if EGroup_IsOnScreen(g_playerMongol, eg_spotter_lumbermill, ANY) then
+		FOW_RevealArea(Util_GetPosition(mkr_reveal_woods), Marker_GetProximityRadiusOrDefault(mkr_reveal_woods, 0), 20)
+		Rule_RemoveMe()
+	end
+end
+
+--? @shortdesc Tests whether the western camp location has been occupied
+function Xiangyang1267_BridgeheadRatioWest(bigRange, includeAllies)
+	
+	local checkRange = Marker_GetProximityRadiusOrDefault(mkr_bridgehead_1, 125)
+	if bigRange == true then
+		checkRange = 125
+	end
+	
+	local allyBonus = 0
+	if includeAllies == true then
+		SGroup_Clear(sg_temp)
+		Player_GetAllSquadsNearMarker(g_playerAllies, sg_temp, mkr_bridgehead_1, checkRange)
+		allyBonus = SGroup_CountPopulation(sg_temp)
+	end
+	
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_bridgehead_1, checkRange)
+	
+	minimumRatio = minimumRatio or 0
+	local realRatio = (SGroup_CountPopulation(sg_temp) + allyBonus) / g_bridgeheadDenominator
+	local adjustedRatio = (realRatio - minimumRatio) / (1.0 - minimumRatio)
+	return adjustedRatio
+end
+
+--? @shortdesc Tests whether the western camp location has been occupied
+function Xiangyang1267_BridgeheadRatioNorth(bigRange, includeAllies)
+	
+	local checkRange = Marker_GetProximityRadiusOrDefault(mkr_bridgehead_2, 125)
+	if bigRange == true then
+		checkRange = 125
+	end
+	
+	local allyBonus = 0
+	if includeAllies == true then
+		SGroup_Clear(sg_temp)
+		Player_GetAllSquadsNearMarker(g_playerAllies, sg_temp, mkr_bridgehead_2, checkRange)
+		allyBonus = SGroup_CountPopulation(sg_temp)
+	end
+	
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_bridgehead_2, checkRange)
+	
+	minimumRatio = minimumRatio or 0
+	local realRatio = (SGroup_CountPopulation(sg_temp) + allyBonus) / g_bridgeheadDenominator
+	local adjustedRatio = (realRatio - minimumRatio) / (1.0 - minimumRatio)
+	return adjustedRatio
+end
+
+--? @shortdesc Tests whether the western camp location has been occupied
+function Xiangyang1267_BridgeheadRatioSouth(bigRange, includeAllies, minimumRatio)
+	
+	local checkRange = Marker_GetProximityRadiusOrDefault(mkr_bridgehead_3, g_bridgeheadBuffer)
+	if bigRange == true then
+		checkRange = g_bridgeheadBuffer
+	end
+	
+	local allyBonus = 0
+	if includeAllies == true then
+		SGroup_Clear(sg_temp)
+		Player_GetAllSquadsNearMarker(g_playerAllies, sg_temp, mkr_bridgehead_3, checkRange)
+		allyBonus = SGroup_CountPopulation(sg_temp)
+	end
+	
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_bridgehead_3, checkRange)
+	
+	minimumRatio = minimumRatio or 0
+	local realRatio = (SGroup_CountPopulation(sg_temp) + allyBonus) / g_bridgeheadDenominator
+	local adjustedRatio = (realRatio - minimumRatio) / (1.0 - minimumRatio)
+	return adjustedRatio
+end
+
+--? @shortdesc Triggers an initial breakthrough from Fancheng, and starts the bridge repair
+function Xiangyang1267_TriggerWarningSally()
+	
+	-- Start one wave right away
+	Rule_AddOneShot(Xiangyang1267_LaunchFinaleWave, 0)
+	-- Unlock the gates, so the villagers can work
+	Missionomatic_SetGateLock(eg_songCityGates, false)
+	-- But unlocking takes a second or two because reasons, so delay the repair slightly
+	Rule_AddOneShot(Xiangyang1267_StartBridgeRepair, 2)
+	
+end
+
+--? @shortdesc Triggers the final assault against the Mongols from the cities of Fancheng and Xiangyang
+function Xiangyang1267_InitFinalSally()
+	
+	if g_finalWaveInitialized == true then
+		return
+	end
+		
+	-- New sally stage
+	g_finalWaveInitialized = true
+	
+	-- We re-locked the gates at the start of this primary objective, so re-unlock them now!
+	Missionomatic_SetGateLock(eg_songCityGates, false)
+	
+	-- Figure out what we're sending
+	g_finalSallySplit = 0
+	g_finaleValidDirections = {}
+	OBJ_ContainFinalSally.allSallies = {}
+	sg_all_sally_ever = SGroup_CreateIfNotFound("sg_all_sally_ever")
+	
+	local westCamp = Objective_IsComplete(SOBJ_SurroundWest)
+	if westCamp == true then 
+		g_finalSallySplit = g_finalSallySplit + 1
+		table.insert(g_finaleValidDirections, SALLY_WEST)
+	end
+	
+	local northCamp = Objective_IsComplete(SOBJ_SurroundNorth)
+	if northCamp == true then
+		g_finalSallySplit = g_finalSallySplit + 1
+		table.insert(g_finaleValidDirections, SALLY_NORTH)
+	end
+	
+	local eastCamp = Objective_IsComplete(SOBJ_SurroundSouth)
+	if eastCamp == true then
+		g_finalSallySplit = g_finalSallySplit + 1
+		table.insert(g_finaleValidDirections, SALLY_EAST)
+	end
+	
+	-- Debug; this happens if we cheat our way through the objective, but should never happen otherwise
+	if (westCamp == false and northCamp == false and eastCamp == false) then
+		print("SONG FORTRESS: No camps at all, proceeding under assumption of debug cheating")
+		westCamp = true
+		northCamp = true
+		eastCamp = true
+		g_finalSallySplit = 3
+		g_finaleValidDirections = { SALLY_WEST, SALLY_NORTH, SALLY_EAST, }
+	end
+	
+	-- Setup what types will go where
+	local enemiesMelee = { "scar_spearman", "scar_manatarms", "scar_spearman", "scar_manatarms", }
+	local enemiesRanged = { "scar_archer", "scar_repeater_crossbow", "scar_archer", "scar_repeater_crossbow", }
+	
+	-- Some Chinese ranged units are especially challenging to deal with if players aren't paying close enough attention
+	-- So reserve those for higher difficulty settings
+	if Game_GetSPDifficulty() == GD_HARD then
+		enemiesRanged = { "scar_archer", "scar_grenadier", "scar_archer", "scar_repeater_crossbow", }
+	elseif Game_GetSPDifficulty() == GD_EXPERT then
+		enemiesRanged = { "scar_archer", "scar_crossbowman", "scar_grenadier", "scar_repeater_crossbow", }
+	end
+	
+	-- TODO: Ensure there are more ranged types if there are 
+	local rangedPerDirection = 4 - g_finalSallySplit
+	local perTypeRatio = 1 / (rangedPerDirection + 1)
+	
+	-- Set up the RovingArmy data that will be cloned
+	g_finalSallyDirections = {}
+	-- West
+	if westCamp == true then
+		local typeMelee = Table_GetRandomItem(enemiesMelee, 1)
+		Table_RemoveFirstItem(enemiesMelee, typeMelee)
+		local typeRanged1 = Table_GetRandomItem(enemiesRanged, 1)
+		Table_RemoveFirstItem(enemiesRanged, typeRanged1)
+		
+		g_finalSallyDirections[SALLY_WEST] = {
+			descriptor = "SongSallyWest",
+			type = "RovingArmy",
+			player = g_playerSong,
+			spawnLocation = mkr_song_finale_1,
+			units = {
+				{ type = typeMelee, numSquads = perTypeRatio, },
+				{ type = typeRanged1, numSquads = perTypeRatio, },
+			},
+			idleTimeOverride = 0,
+			targetingType = ARMY_TARGETING_PROX,
+			targets = {
+				mkr_bridgehead_1,
+				mkr_bridgehead_2,
+				mkr_bridgehead_3,
+			},
+			combatRange = 50,
+			leashRange = 60,
+			preVictoryFunction = Xiangyang1267_FinalWaveAreaComplete,
+			onDeathFunction = Xiangyang1267_FinalWaveDeath,
+		}
+		if rangedPerDirection > 1 then
+			local typeRanged2 = Table_GetRandomItem(enemiesRanged, 1)
+			Table_RemoveFirstItem(enemiesRanged, typeRanged2)
+			table.insert(g_finalSallyDirections[SALLY_WEST].units, { type = typeMelee, numSquads = perTypeRatio, })
+		end
+		if rangedPerDirection > 2 then
+			local typeRanged3 = Table_GetRandomItem(enemiesRanged, 1)
+			Table_RemoveFirstItem(enemiesRanged, typeRanged3)
+			table.insert(g_finalSallyDirections[SALLY_WEST].units, { type = typeMelee, numSquads = perTypeRatio, })
+		end
+	end
+	-- North
+	if northCamp == true then
+		local typeMelee = Table_GetRandomItem(enemiesMelee, 1)
+		Table_RemoveFirstItem(enemiesMelee, typeMelee)
+		local typeRanged1 = Table_GetRandomItem(enemiesRanged, 1)
+		Table_RemoveFirstItem(enemiesRanged, typeRanged1)
+		
+		g_finalSallyDirections[SALLY_NORTH] = {
+			descriptor = "SongSallyNorth",
+			type = "RovingArmy",
+			player = g_playerSong,
+			spawnLocation = mkr_song_finale_2,
+			units = {
+				{ type = typeMelee, numSquads = perTypeRatio, },
+				{ type = typeRanged1, numSquads = perTypeRatio, },
+			},
+			idleTimeOverride = 0,
+			targetingType = ARMY_TARGETING_PROX,
+			targets = {
+				mkr_bridgehead_2,
+				mkr_bridgehead_3,
+				mkr_bridgehead_1,
+			},
+			combatRange = 50,
+			leashRange = 60,
+			preVictoryFunction = Xiangyang1267_FinalWaveAreaComplete,
+			onDeathFunction = Xiangyang1267_FinalWaveDeath,
+		}
+		if rangedPerDirection > 1 then
+			local typeRanged2 = Table_GetRandomItem(enemiesRanged, 1)
+			Table_RemoveFirstItem(enemiesRanged, typeRanged2)
+			table.insert(g_finalSallyDirections[SALLY_NORTH].units, { type = typeMelee, numSquads = perTypeRatio, })
+		end
+		if rangedPerDirection > 2 then
+			local typeRanged3 = Table_GetRandomItem(enemiesRanged, 1)
+			Table_RemoveFirstItem(enemiesRanged, typeRanged3)
+			table.insert(g_finalSallyDirections[SALLY_NORTH].units, { type = typeMelee, numSquads = perTypeRatio, })
+		end
+	end
+	-- East
+	if eastCamp == true then
+		local typeMelee = Table_GetRandomItem(enemiesMelee, 1)
+		Table_RemoveFirstItem(enemiesMelee, typeMelee)
+		local typeRanged1 = Table_GetRandomItem(enemiesRanged, 1)
+		Table_RemoveFirstItem(enemiesRanged, typeRanged1)
+		
+		g_finalSallyDirections[SALLY_EAST] = {
+			descriptor = "SongSallyEast",
+			type = "RovingArmy",
+			player = g_playerSong,
+			spawnLocation = mkr_song_finale_3,
+			units = {
+				{ type = typeMelee, numSquads = perTypeRatio, },
+				{ type = typeRanged1, numSquads = perTypeRatio, },
+			},
+			idleTimeOverride = 0,
+			targetingType = ARMY_TARGETING_PROX,
+			targets = {
+				mkr_bridgehead_3,
+				mkr_bridgehead_2,
+				mkr_bridgehead_1,
+			},
+			combatRange = 50,
+			leashRange = 60,
+			preVictoryFunction = Xiangyang1267_FinalWaveAreaComplete,
+			onDeathFunction = Xiangyang1267_FinalWaveDeath,
+		}
+		if rangedPerDirection > 1 then
+			local typeRanged2 = Table_GetRandomItem(enemiesRanged, 1)
+			Table_RemoveFirstItem(enemiesRanged, typeRanged2)
+			table.insert(g_finalSallyDirections[SALLY_EAST].units, { type = typeMelee, numSquads = perTypeRatio, })
+		end
+		if rangedPerDirection > 2 then
+			local typeRanged3 = Table_GetRandomItem(enemiesRanged, 1)
+			Table_RemoveFirstItem(enemiesRanged, typeRanged3)
+			table.insert(g_finalSallyDirections[SALLY_EAST].units, { type = typeMelee, numSquads = perTypeRatio, })
+		end
+	end
+	
+	-- What will the unit count structures be like?
+	g_waveStructure = {}
+	g_waveStructure[1] = {
+		unitCount = g_finalWaveTotalSize * (2/20),
+		splitMax = 1,
+		fixedDirs = {
+			SALLY_WEST,
+		}
+	}
+	g_waveStructure[2] = {
+		unitCount = g_finalWaveTotalSize * (3/20),
+		splitMax = 3,
+	}
+	g_waveStructure[3] = {
+		unitCount = g_finalWaveTotalSize * (4/20),
+		splitMax = 1,
+	}
+	g_waveStructure[4] = {
+		unitCount = g_finalWaveTotalSize * (5/20),
+		splitMax = 2,
+	}
+	g_waveStructure[5] = {
+		unitCount = g_finalWaveTotalSize * (6/20),
+		splitMax = 3,
+	}
+	
+	OBJ_ContainFinalSally.wavesMax = 10
+	
+end
+
+--? @shortdesc Manages the launching of final sallies
+function Xiangyang1267_LaunchFinaleWave(context, data)
+	
+	-- Sally indices
+	g_sallyIndex = g_sallyIndex or 1
+	-- Manage wave succession and end
+	if g_waveIndex ~= nil then
+		g_waveIndex = g_waveIndex + 1
+		if g_waveIndex > #g_waveStructure then
+			g_readyToCheckVictory = true
+			Rule_RemoveMe()
+			return
+		end
+	else
+		g_waveIndex = 1
+	end
+	
+	-- Also
+	local unitsPerCamp = g_waveStructure[g_waveIndex].unitCount / g_finalSallySplit
+	print(string.format("XIANGYANG: Launching sally wave %s with %s units per camp, total %s", g_waveIndex, unitsPerCamp, g_waveStructure[g_waveIndex].unitCount))
+
+	-- How many directions this time?
+	local countDir = g_waveStructure[g_waveIndex].splitMax
+	if countDir > g_finalSallySplit then
+		countDir = g_finalSallySplit
+	end
+	
+	local currentDirections = {}
+	
+	-- If we're providing fixed directions, use those directly and assume they match  the split count
+	if scartype(g_waveStructure[g_waveIndex].fixedDirs) == ST_TABLE then
+		currentDirections = g_waveStructure[g_waveIndex].fixedDirs
+		
+	-- Otherwise, pick a random set of them
+	else
+		print("XIANGYANG: Picking directions...")
+		local directionsCopy = Table_Copy(g_finaleValidDirections)
+		for idx = 1, countDir do
+			local thisDirection = Table_GetRandomItem(directionsCopy)
+			Table_RemoveFirstItem(directionsCopy, thisDirection)
+			table.insert(currentDirections, thisDirection)
+			print(string.format("XIANGYANG: Picked %s", thisDirection))
+			if #directionsCopy <= 0 then
+				break
+			end
+		end
+	end
+	
+	-- These will be used for the reveal
+	local sgroupsToReveal = {}
+	local thisWholeSally = SGroup_CreateUnique("sg_final_sally_wave_"..tostring(g_waveIndex))
+	-- Now for each of those, make an army and launch it!
+	for index, sally in pairs(currentDirections) do
+		-- Get and adjust the sally data
+		local sallyData = Table_Copy(g_finalSallyDirections[sally])
+		sallyData.descriptor = sallyData.descriptor..tostring(g_sallyIndex)
+		sallyData.sgroup = SGroup_CreateUnique(sallyData.descriptor)
+		
+		for index, unitType in pairs(sallyData.units) do
+			unitType.numSquads = unitType.numSquads * unitsPerCamp
+		end
+		
+		print(string.format("XIANGYANG: Preparing sally %s", sallyData.descriptor))
+		local thisSally = RovingArmy_Init(sallyData)
+		table.insert(OBJ_ContainFinalSally.allSallies, thisSally)
+		table.insert(sgroupsToReveal, sallyData.sgroup)
+		SGroup_AddGroup(thisWholeSally, sallyData.sgroup)
+		ThreatArrow_CreateGroup("enemy squad", sallyData.sgroup)
+		g_sallyIndex = g_sallyIndex + 1
+		
+	end
+	
+	-- Set up the reveal
+	local timeUnderFOW = 5
+	Rule_AddOneShot(Xiangyang1267_DelayedReveal, timeUnderFOW, { fullSGroup = thisWholeSally, splitSGroups = sgroupsToReveal, })
+	
+	-- Also add to what we're using to check victory
+	SGroup_AddGroup(sg_all_sally_ever, thisWholeSally)
+	
+	-- Wrap up
+	print("XIANGYANG: Sally launched!")
+	
+end
+
+--? @shortdesc Reveal the units after their speed boost ends
+function Xiangyang1267_DelayedReveal(context, data)
+	
+	MissionOMatic_RevealMovingSGroup(data.fullSGroup)
+	
+	--Also play audio on the individual SGroups
+	for index, sgroup in pairs(data.splitSGroups) do
+		if SGroup_Count(sgroup) > 0 then
+			Sound_PlayWallaChargeOnSGroup(sgroup)
+			print(string.format("WALLA: Playing walla on final sally SGroup: %s", SGroup_GetName(sgroup)))
+		end
+	end
+end
+
+--? @shortdesc Called whenever one of the final waves is defeated
+function Xiangyang1267_FinalWaveAreaComplete(rovingArmy)
+	
+	if rovingArmy == nil or rovingArmy.sgroup == nil or SGroup_Count(rovingArmy.sgroup) <= 0 then
+		print("Invalid army attempting to trigget preVictoryFunction!")
+		return
+	end
+	
+	-- Search the surrounding area for a new target
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, Util_GetPosition(rovingArmy.sgroup), g_bridgeheadBuffer)
+	if SGroup_Count(sg_temp) <= 0 then
+		return
+	end
+	
+	-- If there are player units nearby that aren't dead, target them
+	local areaSearchTarget = SGroup_CreateUnique("area_search")
+	SGroup_AddGroup(areaSearchTarget, sg_temp)
+	-- We're using skipTransition to make sure it doesn't automatically start the next target
+	-- Because the next target WON'T be the one we just added
+	-- This being PRE-victory, this function will get called BEFORE _RovingArmy_OnEncounterSuccessAttack calls _RovingArmy_UpdateTarget
+	-- And we need _RovingArmy_UpdateTarget to happen for this new target to be resolved into the next target
+	RovingArmy_AddTarget(rovingArmy, areaSearchTarget, nil, nil, true)
+	print(string.format("SONG FORTRESS: %s added new target of %s player units", rovingArmy.descriptor, SGroup_Count(areaSearchTarget)))
+	
+end
+
+--? @shortdesc Called whenever one of the final waves is defeated
+function Xiangyang1267_FinalWaveDeath()
+	
+	OBJ_ContainFinalSally.wavesDefeated = OBJ_ContainFinalSally.wavesDefeated + 1
+	Objective_SetProgressBar(OBJ_ContainFinalSally, OBJ_ContainFinalSally.wavesDefeated / OBJ_ContainFinalSally.wavesMax)
+	Sound_Play2D("sfx_campaign_scripted_large_group_celebrate")
+	
+end
+	
+--? @shortdesc Checks for the player being pushed out of all three zones
+function Xiangyang1267_CheckPlayerDefeat()
+	
+	local ratioWarn = 0.5
+	local ratioFail = 0.1
+	
+	-- Operate the timers
+	g_timeCheckLast = g_timeCheckLast or World_GetGameTime()
+	g_timeCheckNow = World_GetGameTime()
+	local elapsedTime = (g_timeCheckNow - g_timeCheckLast)
+	
+	-- Make sure we can't warn the player too often, or it'll get irritating
+	g_bridgeheadWarningTimer = g_bridgeheadWarningTimer or 0
+	if g_bridgeheadWarningTimer > 0 then
+		g_bridgeheadWarningTimer = g_bridgeheadWarningTimer - elapsedTime
+		g_timeCheckLast = g_timeCheckNow
+	end
+	
+	-- Check the west
+	local ratioWest = Xiangyang1267_BridgeheadRatioWest(true, true)
+	if ratioWest <= ratioWarn and g_bridgeheadWarningTimer <= 0 then
+		if ratioWest >= ratioFail then
+			Xiangyang1267_WarnAboutBridgehead("$11197410")
+			g_bridgeheadWarningTimer = 10
+		end
+		if g_failFlashWest == nil then
+			g_failFlashWest = UI_FlashObjectiveIcon(SOBJ_SurroundWest.ID, false)
+		end
+	elseif ratioWest > ratioWarn and g_failFlashWest ~= nil then
+		UI_StopFlashing(g_failFlashWest)
+		g_failFlashWest = nil
+	end
+	
+	-- Check the north
+	local ratioNorth = Xiangyang1267_BridgeheadRatioNorth(true, true)
+	if ratioNorth <= ratioWarn and ratioNorth >= ratioFail and g_bridgeheadWarningTimer <= 0 then
+		if ratioNorth >= ratioFail then
+			Xiangyang1267_WarnAboutBridgehead("$11197411")
+			g_bridgeheadWarningTimer = 10
+		end
+		if g_failFlashNorth == nil then
+			g_failFlashNorth = UI_FlashObjectiveIcon(SOBJ_SurroundNorth.ID, false)
+		end
+	elseif ratioNorth > ratioWarn and g_failFlashNorth ~= nil then
+		UI_StopFlashing(g_failFlashNorth)
+		g_failFlashNorth = nil
+	end
+	
+	-- Check the south
+	local ratioEast = Xiangyang1267_BridgeheadRatioSouth(true, true)
+	if ratioEast <= ratioWarn and ratioEast >= ratioFail and g_bridgeheadWarningTimer <= 0 then
+		if ratioEast >= ratioFail then
+			Xiangyang1267_WarnAboutBridgehead("$11197412")
+			g_bridgeheadWarningTimer = 10
+		end
+		if g_failFlashSouth == nil then
+			g_failFlashSouth = UI_FlashObjectiveIcon(SOBJ_SurroundSouth.ID, false)
+		end
+	elseif ratioNorth > ratioWarn and g_failFlashSouth ~= nil then
+		UI_StopFlashing(g_failFlashSouth)
+		g_failFlashSouth = nil
+	end
+	
+	local inFailState = ratioWest < ratioFail or ratioNorth < ratioFail or ratioEast < ratioFail
+	
+	-- Manage the failure grace period failure timer
+	if inFailState == true then
+		
+		g_failGraceLeft = g_failGraceLeft - elapsedTime
+		
+		if g_failGraceTimerActive ~= true then
+			-- Update the objective
+			Obj_SetTitle(OBJ_ContainFinalSally.ID, "$11198632")
+			Objective_StartTimer(OBJ_ContainFinalSally, COUNT_DOWN, g_failGracePeriod, g_failGracePeriod / 4)
+			
+			-- Also issue a final, timed warning
+			if ratioWest < ratioFail then
+				Xiangyang1267_WarnAboutBridgehead("$11198629")
+			elseif ratioNorth < ratioFail then
+				Xiangyang1267_WarnAboutBridgehead("$11198630")
+			elseif ratioEast < ratioFail then
+				Xiangyang1267_WarnAboutBridgehead("$11198631")
+			end
+			
+			-- And activate the flag for later
+			g_failGraceTimerActive = true
+			
+		end
+		
+	elseif g_failGraceTimerActive == true then
+		g_failGraceLeft = g_failGracePeriod
+		g_failGraceTimerActive = false
+		Objective_StopTimer(OBJ_ContainFinalSally)
+		Obj_SetTitle(OBJ_ContainFinalSally.ID, "$11179232")
+	end
+	
+	if g_failGraceLeft <= 0 then
+		print("g_failGraceLeft <= 0")
+	end
+	
+	if (Objective_IsTimerSet(OBJ_ContainFinalSally) and Objective_GetTimerSeconds(OBJ_ContainFinalSally) <= 0) then
+		print("Objective_GetTimerSeconds(OBJ_ContainFinalSally) <= 0")
+	end
+	
+	return inFailState and (Objective_IsTimerSet(OBJ_ContainFinalSally) and Objective_GetTimerSeconds(OBJ_ContainFinalSally) <= 0)
+	
+end
+
+--? @shortdesc Sends a few villagers to repair the bridges from Xiangyang
+function Xiangyang1267_StartBridgeRepair(context, data)
+
+	EGroup_SetInvulnerable(eg_southern_bridges, true)
+	
+	-- Try for the first bridge
+	if EGroup_Count(eg_southern_bridges) >= 1 then
+		sg_repair_1 = SGroup_CreateUnique("sg_repair_1")
+		local eg_bridge_1 = EGroup_CreateUnique("")
+		EGroup_Add(eg_bridge_1, EGroup_GetEntityAt(eg_southern_bridges, 1))
+		UnitEntry_DeploySquads(g_playerSong, sg_temp, {
+			{type = "scar_villager", numSquads = 2, spawn = mkr_bridge_repair_1, sgroup = sg_repair_1},
+		}, mkr_bridge_repair_1)
+		Cmd_Ability(sg_repair_1, BP_GetAbilityBlueprint("villager_repair"), eg_bridge_1)
+		SGroup_SetInvulnerable(sg_repair_1, true)
+	else
+		print("OH NO - There isn't 1 bridge to the south of the cities anymore")
+	end
+	
+	-- Now try for the second bridge
+	if EGroup_Count(eg_southern_bridges) >= 2 then
+		sg_repair_2 = SGroup_CreateUnique("sg_repair_2")
+		local eg_bridge_2 = EGroup_CreateUnique("")
+		EGroup_Add(eg_bridge_2, EGroup_GetEntityAt(eg_southern_bridges, 2))
+		UnitEntry_DeploySquads(g_playerSong, sg_temp, {
+				{type = "scar_villager", numSquads = 2, spawn = mkr_bridge_repair_2, sgroup = sg_repair_2},
+			}, mkr_bridge_repair_2)
+		Cmd_Ability(sg_repair_2, BP_GetAbilityBlueprint("villager_repair"), eg_bridge_2)
+		SGroup_SetInvulnerable(sg_repair_2, true)
+	else
+		print("OH NO - There aren't 2 bridges to the south of the cities anymore")
+	end
+	
+	-- Flag this for later
+	g_bridgesRepaired = true
+	
+end
+
+--? @shortdesc This is a workaround due to a buggy bridge repair issue
+function Xiangyang1267_BridgeRepairWorkaround(context, data)
+	
+	if EGroup_GetAvgHealth(data.bridge) >= 1.0 then
+		Rule_RemoveMe()
+		return
+	end
+	
+	if SGroup_IsIdle(data.villagers) == true then
+		Cmd_Ability(data.villagers, BP_GetAbilityBlueprint("villager_repair"), data.bridge)
+	end
+	
+end
+
+--? @shortdesc Watches for the setup of a group of Mongol buildings
+function Xiangyang1267_WatchForSetup(context, data)
+	
+	if data.timer <= 0 or EGroup_Count(data.egroup) <= 0 then
+		if scartype(data.func) == ST_FUNCTION then
+			data.func()
+		end
+		print("ARMIES: Arrived by timeout!")
+		Rule_RemoveMe()	
+	end
+	
+	data.timer  = data.timer - 1
+	
+	local totalUnpacked = 0
+	local _IsUnpacked = function(gid, idx, eid)
+		if Entity_IsValid(Entity_GetID(eid)) and Entity_IsOfType(eid, "mobile_building") == false then
+			totalUnpacked = totalUnpacked + 1
+		end
+	end
+	EGroup_ForEach(data.egroup, _IsUnpacked)
+	
+	if totalUnpacked >= EGroup_Count(data.egroup) then
+		if scartype(data.func) == ST_FUNCTION then
+			Rule_AddOneShot(data.func, data.delay)
+		end
+		print("ARMIES: Arrived by setup!")
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Issues a warning to the player about one of the bridgeheads being near loss
+function Xiangyang1267_WarnAboutBridgehead(warningLoc)
+	
+	local currentTime = World_GetGameTime()
+	local elapsedTime = 10
+	-- We're using a global timer to prevent overlaps
+	if g_failWarningGlobalTimer == nil then
+		g_failWarningGlobalTimer = currentTime
+	else
+		elapsedTime = currentTime - g_failWarningGlobalTimer
+	end
+	
+	if elapsedTime >= 10 then
+		UI_CreateEventCue(Loc_FormatText(warningLoc, g_failGraceLeft), Loc_Empty(), "high_priority_negative", "", "sfx_ui_event_queue_campaign_high_priority_negative_play", ECV_Title)
+		g_failWarningGlobalTimer = currentTime
+	end
+end
+
+function Xiangyang1267_DelayedAutoSave(context, data)
+	Util_AutoSave()
+end

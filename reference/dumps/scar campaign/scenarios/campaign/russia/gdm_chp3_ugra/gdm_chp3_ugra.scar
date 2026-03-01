@@ -1,0 +1,1074 @@
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("obj_mongolwaves.scar")
+import("obj_holdfords.scar")
+import("obj_attackmongols.scar")
+import("ugra_combatvalue.scar")
+import("training_ugra.scar")
+
+import("gdm_chp3_ugra_automated.scar")
+
+function Mission_SetupVariables()
+
+	g_leaderIvan = Missionomatic_InitializeLeader({
+		name = "$11166684", -- Ivan III
+		owner = player1,
+		neutralHolder = player3,
+	})
+
+	--Ivan forces
+	sg_rus_army = SGroup_CreateIfNotFound("sg_rus_army")
+	sg_rus_villagers1 = SGroup_CreateIfNotFound("sg_rus_villagers1")
+	sg_rus_villagers2 = SGroup_CreateIfNotFound("sg_rus_villagers2")
+	sg_rus_villagers3 = SGroup_CreateIfNotFound("sg_rus_villagers3")
+	sg_rus_villagers4 = SGroup_CreateIfNotFound("sg_rus_villagers4")
+	
+	--Cinematic SGroups
+	
+	sg_rus_intro_scout = SGroup_CreateIfNotFound("sg_rus_intro_scout")
+	sg_rus_intro1 = SGroup_CreateIfNotFound("sg_rus_intro1")
+	sg_rus_intro2 = SGroup_CreateIfNotFound("sg_rus_intro2")
+	sg_rus_intro3 = SGroup_CreateIfNotFound("sg_rus_intro3")
+	sg_rus_intro4 = SGroup_CreateIfNotFound("sg_rus_intro4")
+	sg_rus_intro5 = SGroup_CreateIfNotFound("sg_rus_intro5")
+	sg_rus_intro6 = SGroup_CreateIfNotFound("sg_rus_intro6")
+	sg_rus_intro7 = SGroup_CreateIfNotFound("sg_rus_intro7")
+	sg_rus_intro8 = SGroup_CreateIfNotFound("sg_rus_intro8")
+	sg_rus_intro_cheer = SGroup_CreateIfNotFound("sg_rus_intro_cheer")
+	
+	sg_mon_intro_south = SGroup_CreateIfNotFound("sg_mon_intro_south")
+	sg_mon_intro_west = SGroup_CreateIfNotFound("sg_mon_intro_west")
+	sg_mon_intro_north = SGroup_CreateIfNotFound("sg_mon_intro_north")
+	sg_mon_intro_ford = SGroup_CreateIfNotFound("sg_mon_intro_ford")
+	sg_mon_intro_villagers = SGroup_CreateIfNotFound("sg_mon_intro_villagers")
+		
+	sg_mon_outro_cav = SGroup_CreateIfNotFound("sg_mon_outro_cav")
+	sg_rus_outro = SGroup_CreateIfNotFound("sg_rus_outro")
+	sg_outro_cannon = SGroup_CreateIfNotFound("sg_outro_cannon")
+	sg_mon_outro_south = SGroup_CreateIfNotFound("sg_mon_outro_south")
+
+	--Mongol forces
+	sg_mon_fort = SGroup_CreateIfNotFound("sg_mon_fort")
+	sg_mon_ford1 = SGroup_CreateIfNotFound("sg_mon_ford1")
+	sg_mon_ford2 = SGroup_CreateIfNotFound("sg_mon_ford2")
+	sg_mon_attacknorth = SGroup_CreateIfNotFound("sg_mon_attacknorth")
+	sg_mon_attacksouth = SGroup_CreateIfNotFound("sg_mon_attacksouth")
+	
+	sg_mon_scoutwave1 = SGroup_CreateIfNotFound("sg_mon_scoutwave1")
+	sg_mon_scoutwave2 = SGroup_CreateIfNotFound("sg_mon_scoutwave2")
+	
+	sg_mon_southreinforce = SGroup_CreateIfNotFound("sg_mon_southreinforce")
+	sg_mon_southreinforce_buildings = SGroup_CreateIfNotFound("sg_mon_southreinforce_buildings")
+	
+	sg_mon_scout_intro = SGroup_CreateIfNotFound("sg_mon_scout_intro")
+	
+	sg_mon_roaming = SGroup_CreateIfNotFound("sg_mon_roaming")
+	sg_mon_backup1 = SGroup_CreateIfNotFound("sg_mon_backup1")
+	sg_mon_backup2 = SGroup_CreateIfNotFound("sg_mon_backup2")
+	sg_mon_monford3 = SGroup_CreateIfNotFound("sg_mon_monford3")
+	
+	sg_mon_sheep = SGroup_CreateIfNotFound("sg_mon_sheep")
+	
+	-- Mongol ford sorting temp sgroups
+	sg_inf = SGroup_CreateIfNotFound("sg_inf")
+	sg_rng = SGroup_CreateIfNotFound("sg_rng")
+	sg_cav = SGroup_CreateIfNotFound("sg_cav")
+	
+	--EGroups
+	eg_mon_towncenter = EGroup_CreateIfNotFound("eg_mon_towncenter")
+	eg_mon_outro = EGroup_CreateIfNotFound("eg_mon_outro")
+	
+	eg_rus_towncenter = EGroup_CreateIfNotFound("eg_rus_towncenter")
+	
+	--ints
+	ugraPhase = 1
+	
+	--timers
+	prepareTimer = Util_DifVar({520, 520, 400, 280})
+	holdFordTimer = 900
+	fordStartGraceDelay = 60
+	forceGraceDelay = 8
+	monReinforcePeriod = Util_DifVar({85, 54, 48, 42})
+	monReinforcePhase2Delay = Util_DifVar({ holdFordTimer*0.5,	holdFordTimer*0.5,  holdFordTimer*0.33, holdFordTimer*0.25 })
+	monReinforcePhase3Delay = Util_DifVar({ 9999, 				9999,				holdFordTimer*0.66, holdFordTimer*0.50 })
+	monReinforcePhase4Delay = Util_DifVar({ 9999, 				9999,				9999, 				holdFordTimer*0.75 })
+	monReinforceWaveDelay = 530
+	updateLoopPeriod = 1
+	attackCooldown = 60	
+	monWaveTimer = Util_DifVar({60, 60, 60, 60})
+	
+	--bools
+	prepareTimerComplete = false
+	attackNorthCooldown = true
+	attackSouthCooldown = true
+	firstProbe = true
+	firstNorthAttack = true
+	firstSouthAttack = true
+	fordAttacked = false
+	evaluateFord = false
+	
+	--Ford Comparison
+	warningThreshold = 0.50
+	attackThreshold = 0.40
+	bestForceValue = 0
+	UI_SetPlayerDataContext(player1, { tug_of_war_threshold = attackThreshold, tug_of_war_warning_threshold = warningThreshold })
+	
+	MongolWaves_InitObjectives()
+	HoldFords_InitObjectives()
+	AttackMongols_InitObjectives()
+
+end
+
+function Mission_SetupPlayers()
+	
+	player1 = World_GetPlayerAt(1)
+	player2 = World_GetPlayerAt(2)
+	player3 = World_GetPlayerAt(3)
+	
+	
+	--player 1 - Ivan
+	Setup_SetPlayerName(player1, Loc_GetString(11180253)) -- Ivan III
+	Player_SetCurrentAge(player1, AGE_CASTLE)
+	Player_SetMaximumAge(player1, AGE_IMPERIAL)
+	
+	--player 2 - Mongol
+	Setup_SetPlayerName(player2, Loc_GetString(11180254)) -- Akmet Khan
+	Player_SetCurrentAge(player2, AGE_CASTLE)
+	Player_SetMaximumAge(player2, AGE_CASTLE)
+	Player_SetPopCapOverride(player2, 1000) -- extra popcap room for rams
+	
+	AI_Enable(player3, false)
+	
+	-- Player relationships	
+	Player_SetRelationship(player1, player2, R_ENEMY)
+	Player_SetRelationship(player2, player1, R_ENEMY)
+	Player_SetRelationship(player1, player3, R_ALLY)
+	Player_SetRelationship(player3, player1, R_ALLY)
+	Player_SetRelationship(player2, player3, R_ALLY)
+	Player_SetRelationship(player3, player2, R_ALLY)
+	
+	PlayerUpgrades_Auto(player1)
+	PlayerUpgrades_Auto(player2)
+	PlayerUpgrades_Auto(player3)
+	
+	--Tower Upgrades
+	EGroup_CompleteUpgrade(eg_mon_fordtowers, UPG.MONGOL.UPGRADE_OUTPOST_ARROWSLITS_MON)
+	EGroup_CompleteUpgrade(eg_rus_fordtowers, UPG.RUS.UPGRADE_WOODEN_CASTLE_WATCH_RUS)
+	
+end
+
+function Mission_Preset()
+	
+	-- Set Player Colours
+	PlayerColour_Enable()
+	
+	Game_SetPlayerSlotColour(player1, 1)
+	Game_SetPlayerUISlotColour(player1, 1)
+	Game_SetPlayerSlotColour(player2, 2)
+	Game_SetPlayerUISlotColour(player2, 2)
+	Game_SetPlayerSlotColour(player3, 1)
+	Game_SetPlayerUISlotColour(player3, 1)
+	
+	-- AI cached paths
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(player2, mkr_ford1_attack2, Util_GetPosition(mkr_ford1_attack1), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(player2, mkr_ford2_attack2, Util_GetPosition(mkr_ford2_attack1), 5.0)
+	AIPlayer_SetMarkerToUpdateCachedPathToPosition(player2, mkr_ford3_attack2, Util_GetPosition(mkr_ford3_attack1), 5.0)
+	
+	--Intro action
+	Ugra_InitPlayerUnits()
+	Ugra_InitEnemyUnits()
+	Ugra_InitializeUnitValues()
+	
+	-- Audio considerations
+    if Music_UnlockIntensity then
+        Sound_SetForceMusic(false)
+    else
+        Sound_SetForceMusic(true)
+    end
+	
+	--DEBUG: Auto Test--
+	AutoTest_OnInit()
+	
+end
+
+function Mission_Start()	
+	-- Sets initial player resources
+	Player_SetResource(player1, RT_Food, 800)
+	Player_SetResource(player1, RT_Wood, 1000)
+	Player_SetResource(player1, RT_Stone, 300)
+	Player_SetResource(player1, RT_Gold, 600)
+	
+	Objective_Start(OBJ_FindMongols)
+	Rule_AddInterval(Ugra_CheckMissionEndCondition, 5)
+	Rule_AddInterval(Ugra_GatherSheep, 20)
+	
+	local wave_data_ford1 = {
+		descriptor = "wave_ford1",
+		player = player2,	
+		use_separate_spawns = true,
+		spawn = mkr_monfort,
+		units = {
+			{ type = "scar_spearman", numSquads = 1 },
+			{ type = "scar_archer", numSquads = 1 },
+		},
+		staging_module = "DefendMonFortRanged",
+		assault_module = "DefendMonFord1",
+		ignore_build_times = false,
+		auto_launch = true,
+	}
+	
+	local wave_data_ford2 = {
+		descriptor = "wave_ford2",
+		player = player2,	
+		use_separate_spawns = true,
+		spawn = mkr_monfort,
+		units = {
+			{ type = "scar_spearman", numSquads = 1 },
+			{ type = "scar_archer", numSquads = 1 },
+		},
+		staging_module = "DefendMonFortRanged",
+		assault_module = "DefendMonFord2",
+		ignore_build_times = false,
+		auto_launch = true,
+	}
+	
+	wave_ford1 =  Wave_New(wave_data_ford1)
+	wave_ford2 =  Wave_New(wave_data_ford2)
+	
+	-- ACHIEVEMENT SETUP - Counter for tracking kills by outposts
+    outpostKillCounter = 0
+
+    -- ACHIEVEMENT TRACKING - Rule to track death of units by Towers
+    Rule_AddGlobalEvent(Achievement_OnEntityKilled, GE_EntityKilled)
+	
+	Game_TransitionToState("taiga_morning_fog", 90)
+	
+end
+
+function GetRecipe()
+	
+	local recipe = {
+	
+		campaign = "gdm",
+		chapter = "chapter3",
+		phase = "mission_ugra",
+		enableShroud = true,
+		
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,
+		
+		locations = {
+			--Player side
+			{
+				descriptor = "RusFort",
+				marker = mkr_rusfort,
+				player = player1,
+			},
+			{
+				descriptor = "RusFord1",
+				marker = mkr_rusford1,
+				player = player1,
+			},
+			{
+				descriptor = "RusFord2",
+				marker = mkr_rusford2,
+				player = player1,
+			},
+			-- Mongol side
+			{
+				descriptor = "MonFort",
+				marker = mkr_monfort,
+				player = player2,
+			},	
+			{
+				descriptor = "MonFortNorth",
+				marker = mkr_monfortnorth,
+				player = player2,
+			},	
+			{
+				descriptor = "MonFortSouth",
+				marker = mkr_monfortsouth,
+				player = player2,
+			},	
+			{
+				descriptor = "MonFord1",
+				marker = mkr_monford1,
+				player = player2,
+			},
+			{
+				descriptor = "MonFord1_1",
+				marker = mkr_monford1_1,
+				player = player2,
+			},
+			{
+				descriptor = "MonFord1_2",
+				marker = mkr_monford1_2,
+				player = player2,
+			},
+			{
+				descriptor = "MonFord1_3",
+				marker = mkr_monford1_3,
+				player = player2,
+			},
+			{
+				descriptor = "MonFord1_4",
+				marker = mkr_monford1_4,
+				player = player2,
+			},
+			{
+				descriptor = "MonFord2",
+				marker = mkr_monford2,
+				player = player2,
+			},
+			{
+				descriptor = "MonFord2_1",
+				marker = mkr_monford2_1,
+				player = player2,
+			},
+			{
+				descriptor = "MonFord2_2",
+				marker = mkr_monford2_2,
+				player = player2,
+			},
+			{
+				descriptor = "MonFord2_3",
+				marker = mkr_monford2_3,
+				player = player2,
+			},
+			{
+				descriptor = "MonFord2_4",
+				marker = mkr_monford2_4,
+				player = player2,
+			},
+			{
+				descriptor = "SERetreat",
+				marker = mkr_retreat_se,
+				player = player2,
+			},
+			{
+				descriptor = "NorthFallback",
+				marker = mkr_monnorthfallback,
+				player = player2,
+			},
+			{
+				descriptor = "SouthFallback",
+				marker = mkr_monsouthfallback,
+				player = player2,
+			},
+			{
+				descriptor = "MonBackup1",
+				marker = mkr_monbackup1,
+				player = player2,
+			},
+			{
+				descriptor = "MonBackup2",
+				marker = mkr_monbackup2,
+				player = player2,
+			},
+		},  -- end of LOCATIONS table
+		
+		--
+		-- Modules
+		--
+		modules = {
+			--------------
+			--Player Spawn
+			--------------
+			{
+				type = "UnitSpawner",
+				player = player1,
+				sgroup = sg_rus_villagers1,
+				spawnInFormation = true,
+				spawnLocation = mkr_rusvillagerspawn,
+				units = {
+					{ type = "scar_villager", numSquads = 9, facing = Marker_GetPosition(mkr_rusintro_ivan_dest) },
+				},
+			},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				sgroup = sg_rus_villagers2,
+				spawnInFormation = true,
+				spawnLocation = mkr_rusvillagerspawn,
+				units = {
+					{ type = "scar_villager", numSquads = Util_DifVar({8, 6, 6, 6}) },
+				},
+			},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				sgroup = sg_rus_villagers3,
+				spawnInFormation = true,
+				spawnLocation = mkr_rusvillagerspawn,
+				units = {
+					{ type = "scar_villager", numSquads = Util_DifVar({4, 3, 3, 3}) },
+				},
+			},
+			{
+				type = "UnitSpawner",
+				player = player1,
+				sgroup = sg_rus_villagers4,
+				spawnInFormation = true,
+				spawnLocation = mkr_rusvillagerspawn,
+				units = {
+					{ type = "scar_villager", numSquads = Util_DifVar({4, 3, 3, 3}) },
+				},
+			},
+			-----------
+			--Town Life
+			-----------
+			{
+				type = "TownLife",
+				descriptor = "MonVillagers",
+				location = "MonFort",
+				player = player2,
+				spawnLocation = mkr_monvillagerspawn,
+			},
+			---------
+			--Defense
+			---------
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord1",
+				location = "MonFord1",
+				player = player2,
+				sgroup = sg_mon_ford1,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford1,
+				units = {
+					{ type = "scar_spearman", numSquads = Util_DifVar({4, 6, 6, 6}) },
+					{ type = "scar_manatarms", numSquads = 4 },
+					{ type = "scar_archer", numSquads = Util_DifVar({8, 10, 10, 10}) },
+					{ type = "scar_crossbowman", numSquads = Util_DifVar({3, 5, 5, 5}) },
+					
+				},
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord1_1",
+				location = "MonFord1_1",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford1,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord1_2",
+				location = "MonFord1_2",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford1,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord1_3",
+				location = "MonFord1_3",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford1,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord1_4",
+				location = "MonFord1_4",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford1,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord2",
+				location = "MonFord2",
+				player = player2,
+				sgroup = sg_mon_ford2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford2,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord2_1",
+				location = "MonFord2_1",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford2,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord2_2",
+				location = "MonFord2_2",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford2,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord2_3",
+				location = "MonFord2_3",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford2,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord2_4",
+				location = "MonFord2_4",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monford2,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFortRanged",
+				marker = mkr_monfort,
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monfort,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFortRangedNorth",
+				marker = mkr_mon_ranged_north,
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_mon_ranged_north,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFortRangedSouth",
+				marker = mkr_mon_ranged_south,
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_mon_ranged_south,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFortInfantryNorth",
+				marker = mkr_monfortnorth,
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monfort,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFortInfantrySouth",
+				marker = mkr_monfortsouth,
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				spawnLocation = mkr_monfort,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendNorthCav",
+				location = "NorthFallback",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendSouthCav",
+				location = "SouthFallback",
+				player = player2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonBackup1",
+				location = "MonBackup1",
+				player = player2,
+				sgroup = sg_mon_backup1,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				reinforcements = {
+					upperThreshold = 0.80,
+					desiredStrength = 1,
+					maxReinforcementFrequency = 5,
+					unitSources = { "MonVillagers" },
+				},
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonBackup2",
+				location = "MonBackup2",
+				player = player2,
+				sgroup = sg_mon_backup2,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				reinforcements = {
+					upperThreshold = 0.80,
+					desiredStrength = 1,
+					maxReinforcementFrequency = 5,
+					unitSources = { "MonVillagers" },
+				},
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord3_1",
+				marker = mkr_monford3_defend_1,
+				player = player2,
+				sgroup = sg_mon_monford3,
+				spawnInFormation = true,
+				useCustomDirection = true,
+				reinforcements = {
+					upperThreshold = 0.80,
+					desiredStrength = 1,
+					maxReinforcementFrequency = 5,
+					unitSources = { "MonVillagers" },
+				},
+			},
+			{
+				type = "Defend",
+				descriptor = "DefendMonFord3_2",
+				marker = mkr_monford3_defend_2,
+				player = player2,
+				sgroup = sg_mon_monford3,
+				useCustomDirection = true,
+				spawnInFormation = true,
+				reinforcements = {
+					upperThreshold = 0.80,
+					desiredStrength = 1,
+					maxReinforcementFrequency = 5,
+					unitSources = { "MonVillagers" },
+				},
+			},
+			-------------
+			--Roving Army
+			-------------
+			{
+				type = "RovingArmy",
+				descriptor = "MonShore",
+				player = player2,
+				targetingType = ARMY_TARGETING_CYCLE,
+				fallbacks = {{ marker = mkr_monfort }},
+				spawnLocation = mkr_monshore1,
+				targets = {
+					mkr_monshore1,
+					mkr_monshore2,
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "AttackNorth",
+				location = "MonFort",
+				spawnLocation = "MonFort",
+				player = player2,
+				idleTime = 0,
+				targets = {
+					mkr_ford1_attack1,
+					mkr_ford1_attack2,
+					mkr_rus_tc,
+				},
+				sgroup = sg_mon_attacknorth,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "AttackSouth",
+				location = "MonFort",
+				spawnLocation = "MonFort",
+				player = player2,
+				idleTime = 0,
+				targets = {
+					mkr_ford2_attack1,
+					mkr_ford2_attack2,
+					mkr_rus_tc,
+				},
+				sgroup = sg_mon_attacksouth,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "ScoutAttack1",
+				location = "MonFort",
+				spawnLocation = "MonFort",
+				player = player2,
+				idleTime = 0,
+				targets = {
+					mkr_ford1_attack1,
+					mkr_ford1_attack2,
+					mkr_rus_tc,
+				},
+				sgroup = sg_mon_scoutwave1,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "ScoutAttack2",
+				location = "MonFort",
+				spawnLocation = "MonFort",
+				player = player2,
+				idleTime = 0,
+				targets = {
+					mkr_ford2_attack1,
+					mkr_ford2_attack2,
+					mkr_rus_tc,
+				},
+				sgroup = sg_mon_scoutwave2,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "SouthernReinforcements",
+				location = "SERetreat",
+				spawnLocation = "SERetreat",
+				player = player2,
+				combatRange = 35,
+				leashRange = 45,
+				scanRangeEnRoute = 25,
+				attackMoveAtTarget = attackMoveStyle_ignoreEverything,
+				attackMoveEnRoute = attackMoveStyle_ignoreEverything,
+				targets = {
+					mkr_reinforce_1,
+					mkr_reinforce_2,
+					mkr_reinforce_3,
+					mkr_reinforce_4,
+					mkr_reinforce_5,
+				},
+				sgroup = sg_mon_southreinforce,
+				onCompleteFunction = Ugra_ReleaseReinforcements,
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "SouthernReinforcementsBuildings",
+				location = "SERetreat",
+				spawnLocation = "SERetreat",
+				player = player2,
+				attackMove = attackMoveStyle_ignoreEverything,
+				targets = {
+					mkr_reinforce_1,
+					mkr_reinforce_2,
+					mkr_reinforce_3,
+					mkr_reinforce_4,
+					mkr_reinforce_5,
+				},
+				sgroup = sg_mon_southreinforce_buildings,
+				onCompleteFunction = Ugra_ReleaseReinforcements,
+			},
+		},
+		
+		--
+		-- Objectives
+		--
+		objectives = {
+		},	-- end of OBJECTIVES table
+		
+		--
+		-- Playbill
+		--
+		playbill = {
+		},
+		
+		--
+		-- Presentation things for the start or end of a mission
+		--
+		onStart = {
+			intelEvent = "",
+			expositionCamera = {},
+			titleCard = {
+				date = 11160677,
+				location = 11160676,
+				icon = "icons/campaign/campaign_moscow_state_to_empire",
+				},
+			actions = {
+			},
+		},
+
+		onWin = {
+		},
+		
+		onLose = {
+		},
+	}
+	
+	return recipe
+end
+
+function Ugra_InitEnemyUnits()
+	markerListMonSouth = {  
+		mkr_mon_south1,
+		mkr_mon_south2,
+		mkr_mon_south3,
+		mkr_mon_south4,
+		mkr_mon_south5,
+		mkr_mon_south6,
+		mkr_mon_south7,
+		mkr_mon_south7,
+	}
+	markerListMonNorth = {  
+		mkr_mon_north1,
+		mkr_mon_north2,
+		mkr_mon_north3,
+		mkr_mon_north4,
+	}
+	markerListMonWest = {  
+		mkr_mon_west1,
+		mkr_mon_west2,
+		mkr_mon_west3,
+		mkr_mon_west3,
+	}
+	markerListMonFord = {  
+		mkr_mon_river1,
+		mkr_mon_river2,
+		mkr_mon_river3,
+		mkr_mon_river4,
+		mkr_mon_river4,
+	}
+	markerListMonMid = {  
+		mkr_mon_mid1,
+		mkr_mon_mid2,
+		mkr_mon_mid2,
+	}
+
+	local intro_west_units = {
+		{ type = "scar_spearman", numSquads = Util_DifVar({4, 6, 6, 6}) }, 
+		{ type = "scar_manatarms", numSquads = 4 }, 
+		{ type = "scar_archer", numSquads = Util_DifVar({8, 10, 10, 10}) }, 
+		{ type = "scar_crossbowman", numSquads = Util_DifVar({2, 4, 4, 4}) }
+	}
+	
+	UnitEntry_DeploySquads(player2, sg_mon_intro_south, {{ type = "scar_horseman", numSquads = 8 }, { type = "scar_horsearcher", numSquads = 4 }}, mkr_mon_south1 )
+	UnitEntry_DeploySquads(player2, sg_mon_intro_north, { type = "scar_scout", numSquads = 2 }, mkr_mon_north1 )
+	UnitEntry_DeploySquads(player2, sg_mon_intro_west, intro_west_units, mkr_mon_west1 )
+	UnitEntry_DeploySquads(player2, sg_mon_intro_ford, { type = "scar_knight", numSquads = 8 }, mkr_mon_river_spawn )
+	UnitEntry_DeploySquads(player2, sg_mon_intro_villagers, { type = "scar_villager", numSquads = 2 }, mkr_mon_mid1 )
+	
+	Ugra_SendIntroUnits(sg_mon_intro_south, 0, markerListMonSouth ) --cavalry
+	Ugra_SendIntroUnits(sg_mon_intro_north, 4, markerListMonNorth ) --scouts
+	Ugra_SendIntroUnits(sg_mon_intro_west, 0, markerListMonWest ) --infantry
+	Ugra_SendIntroUnits(sg_mon_intro_ford, 0, markerListMonFord ) -- knights
+	Ugra_SendIntroUnits(sg_mon_intro_villagers, 0, markerListMonMid ) -- villagers
+	
+	intro_river_pat_speed = Modify_UnitSpeed(sg_mon_intro_ford, 0.5)
+	
+	Rule_AddOneShot(Ugra_AssignStartingMonUnits, 20)
+	
+end
+
+function Ugra_InitPlayerUnits()
+	markerListIvan = {  
+		mkr_rusintro_ivan_dest,
+		}
+	markerListNorth = {  
+		mkr_rusintropath4,
+		mkr_rusintropath5,
+		mkr_rusintropath_north,
+		}
+	markerListSouth = {  
+		mkr_rusintropath4,
+		mkr_rusintropath5,
+		mkr_rusintropath_south1,
+		mkr_rusintropath_south2,
+	}
+	markerListScout = {  
+		mkr_rusintro_scout1,
+		--mkr_rusintro_scout2,
+		mkr_rusintro_scout3,
+		mkr_rusintro_scout4,
+		mkr_rusintro_scout5,
+	}
+
+	-- Rus Scout	
+	UnitEntry_DeploySquads(player1, sg_rus_intro_scout, { type = "scar_scout",    numSquads = 1 }, mkr_rusintro_scout1 )
+	Ugra_SendIntroUnits(sg_rus_intro_scout, 16, markerListScout)
+
+	
+	--Rus Starting Units
+	UnitEntry_DeploySquads(player1, sg_rus_intro1, { type = "scar_spearman",  numSquads = 6 }, mkr_rusintrospawn1 )
+	UnitEntry_DeploySquads(player1, sg_rus_intro2, { type = "scar_spearman",  numSquads = 6 }, mkr_rusintrospawn2 )
+	UnitEntry_DeploySquads(player1, sg_rus_intro1, { type = "scar_manatarms", numSquads = 6 }, mkr_rusintrospawn3 )
+	UnitEntry_DeploySquads(player1, sg_rus_intro4, { type = "scar_manatarms", numSquads = 6 }, mkr_rusintrospawn4 )
+	UnitEntry_DeploySquads(player1, sg_rus_intro1, { type = "scar_archer",    numSquads = 6 }, mkr_rusintrospawn5 )
+	UnitEntry_DeploySquads(player1, sg_rus_intro6, { type = "scar_archer",    numSquads = 6 }, mkr_rusintrospawn6 )
+	UnitEntry_DeploySquads(player1, sg_rus_intro1, { type = "scar_handcannon",    numSquads = 6 }, mkr_rusintrospawn7 )
+	UnitEntry_DeploySquads(player1, sg_rus_intro8, { type = "scar_handcannon",    numSquads = 6 }, mkr_rusintrospawn8 )
+	
+	SGroup_AddGroups(sg_rus_intro_cheer, {sg_rus_intro2, sg_rus_intro4, sg_rus_intro6,sg_rus_intro8})
+	
+	UnitEntry_DeploySquads(player1, g_leaderIvan.sgroup, { sbp = BP_GetSquadBlueprint("unit_ivan_the_great_cmp_rus"), numSquads = 1 }, mkr_rusintro_ivan )
+	
+	Ugra_SendIntroUnits(g_leaderIvan.sgroup, 2,   markerListSouth, mkr_rusintro_ivan_dest, 			true)
+	Ugra_SendIntroUnits(sg_rus_intro1,       2,   markerListNorth, nil, 	    					true)
+	Ugra_SendIntroUnits(sg_rus_intro2,       2.5, markerListSouth, mkr_rusintropath_south_dest1,	true) 
+	Ugra_SendIntroUnits(sg_rus_intro4,       2,   markerListSouth, mkr_rusintropath_south_dest2,	true)
+	Ugra_SendIntroUnits(sg_rus_intro6,       2,   markerListSouth, mkr_rusintropath_south_dest3,	true)
+	Ugra_SendIntroUnits(sg_rus_intro8,       1.5, markerListSouth, mkr_rusintropath_south_dest4, 	true)
+	
+	
+	--Rus Villagers
+	AssignVillagersToFarms(sg_rus_villagers1)
+	AssignVillagersToWood(sg_rus_villagers2)
+	AssignVillagersToGold(sg_rus_villagers3)
+	AssignVillagersToStone(sg_rus_villagers4)
+	
+	Rule_AddOneShot(Ugra_AddVillagersToCheer, 2, {sgroup=sg_rus_villagers1})
+
+end
+
+function Ugra_AddVillagersToCheer(context, data)
+	
+	local _assignIdle = function(grp, idx, sid)
+		if Squad_IsIdle(sid) then
+			SGroup_Add(sg_rus_intro_cheer, sid)
+		end
+	end
+	
+	SGroup_ForEach(data.sgroup, _assignIdle)
+	
+end
+
+
+function Ugra_SendIvanCheck()
+
+	if Prox_AreSquadsNearMarker(sg_rus_intro_scout, mkr_rusintro_scout3, ANY) then
+		Cmd_FormationMove(g_leaderIvan.sgroup, mkr_rusintro_ivan_dest1)
+		Cmd_FormationMove(g_leaderIvan.sgroup, mkr_rusintro_ivan_dest2, true)
+		Rule_RemoveMe()
+	end
+	
+end
+
+
+function Ugra_AssignStartingMonUnits()
+	SGroup_DestroyAllSquads(sg_mon_intro_north)
+	SGroup_DestroyAllSquads(sg_mon_intro_villagers)
+	Defend_AddSGroup(MissionOMatic_FindModule("DefendMonFord2"), sg_mon_intro_west, true)
+	--RovingArmy_AddSGroup(MissionOMatic_FindModule("MonShore"), sg_mon_intro_ford, true)
+	Defend_AddSGroup(MissionOMatic_FindModule("DefendMonBackup2"), sg_mon_intro_ford, true)
+	Defend_AddSGroup(MissionOMatic_FindModule("DefendMonBackup2"), sg_mon_intro_south, true)
+	SpawnUnitsToModule({{ type = "scar_archer", numSquads = 8 }, { type = "scar_knight", numSquads = 28 }, { type = "scar_horsearcher", numSquads = 16 }, { type = "scar_horseman", numSquads = 8 }}, "DefendMonBackup1", mkr_monbackup1)
+	SpawnUnitsToModule({{ type = "scar_archer", numSquads = 8 }, { type = "scar_knight", numSquads = 20 }, { type = "scar_horsearcher", numSquads = 12 }}, "DefendMonBackup2", mkr_monbackup2)
+	SpawnUnitsToModule({{ type = "scar_archer", numSquads = 12 }, { type = "scar_manatarms", numSquads = 8 }}, "DefendMonFortRanged", mkr_monfort)
+end
+
+function Ugra_BackupFordCombat()
+	Defend_AddSGroup(MissionOMatic_FindModule("DefendMonBackup"), sg_mon_intro_ford, true)
+end
+	
+function Ugra_SendIntroUnits(sgroup, delay, markerList, finalDestination, warpToFinalPosOnSkip)
+
+	if t_introUnitEndPositions == nil then 
+		t_introUnitEndPositions = {}
+	end
+	
+	local data = {
+		sgroup = sgroup, 
+		delay = delay,
+		markerList = Clone(markerList),
+	}
+	
+	if finalDestination ~= nil then
+		table.insert(data.markerList, finalDestination)
+	end
+	
+	data.ruleID = Rule_AddOneShot(Ugra_SendIntroUnits_Delayed, delay, data)
+	
+	if warpToFinalPosOnSkip == true then 
+		table.insert(t_introUnitEndPositions, data)
+	end
+	
+end
+
+function Ugra_SendIntroUnits_Delayed(context, data)
+	
+	-- Add the others as waypoints
+	for index, marker in pairs(data.markerList) do
+		if scartype(marker) == ST_MARKER then
+			if index <= #data.markerList then
+				Cmd_FormationMove(data.sgroup, marker, true)
+			end
+		end
+	end
+	
+end
+
+function Ugra_GatherSheep()
+	local _MoveSheep = function(gid, idx, sid)
+		local offsetPos = PositionWithOffset(Marker_GetPosition(mkr_sheepgather), World_GetRand(0, 10), World_GetRand(0, 10))
+		
+		SGroup_Single(sg_single, sid)
+		Cmd_Move(sg_single, offsetPos)
+	end
+	Player_GetAllSquadsNearMarker(player2, sg_mon_sheep, mkr_sheepgather, 40)
+	SGroup_Filter(sg_mon_sheep, "gaia", FILTER_KEEP)
+	
+	SGroup_ForEach(sg_mon_sheep, _MoveSheep)
+end
+
+function Achievement_OnEntityKilled(context) -- Achievement function to track kills with outposts
+    
+    -- Number of Outpost kills required for Achievement
+    local outpostKillThreshold = 50
+        
+    -- make sure the victim is not world owned and that it is owned by player2
+    if context.victimOwner ~= nil and context.victimOwner == player2 then
+        
+        -- Add a check to make sure victim is not type 'gaia' or 'building'
+        if not Entity_IsOfType(context.victim, "gaia") and not Entity_IsOfType(context.victim, "building") then
+                        
+            -- Check if the killer was an outpost
+			if context.killer ~= nil then --nil check
+				if Entity_IsOfType(context.killer, "outpost") then
+					
+					-- Increment Outpost Kill Count
+					outpostKillCounter = outpostKillCounter + 1            
+					
+					-- If number of Outpost kills exceeds threshold required for Achievement
+					if outpostKillCounter >= outpostKillThreshold then
+						
+						-- ACHIEVEMENT UNLOCKED - Ancient Tower Defense
+						Game_SendCustomChallengeEvent(player1, CE_ACHIEVOUTPOSTKILLSUGRA, 1) 
+						
+						Rule_RemoveMe()	
+						
+					end
+				end
+            end
+        end
+    end
+end
+
+
+function Ugra_SkipIntro()
+	
+	for index, data in pairs(t_introUnitEndPositions) do 
+		
+		if Rule_ExistsWithID(data.ruleID) then
+			Rule_RemoveWithID(data.ruleID)
+		end
+		
+		local finalDestination = data.markerList[#data.markerList]
+		SGroup_FormationWarpToMarker(data.sgroup, finalDestination, Util_GetOffsetPosition(finalDestination, OFFSET_FRONT, 10))
+		
+	end
+	
+	--Insert destroy scout here and spawn a new one at the destination marker
+	sg_starting_scout = SGroup_CreateIfNotFound("sg_starting_scout")
+	
+	SGroup_DestroyAllSquads(sg_rus_intro_scout)
+	UnitEntry_DeploySquads(player1, sg_starting_scout, {type = "scar_scout", numSquads = 1, spawn = mkr_rusintro_scout5})
+	
+end
+
+function Ugra_CheckMissionEndCondition()
+	if Player_GetBuildingsCountOnly(player1, { EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS }) == 0 then
+		Mission_Fail()
+		Rule_RemoveMe()
+	end
+	
+	if Player_GetBuildingsCountOnly(player2, { EBP.MONGOL.BUILDING_TOWN_CENTER_MON }) == 0 then
+		Mission_Complete()
+		Rule_RemoveMe()
+	end
+	
+end

@@ -1,0 +1,215 @@
+--
+-- "Health Trigger"
+--	
+--  Prefab Script
+--
+
+
+--? @group scardoc;Prefabs
+
+
+-- Initializer function should ALWAYS be named after the prefab name with _Init appended on the end
+function healthtrigger_Init(data)	
+
+	local instance = Prefab_GetInstance(data)
+	
+	-- set up instance's data
+	instance.data = {}
+	instance.data.external_interest_list = {} -- store any prefabs to trigger that have been registered externally at runtime, rather than in the WB
+	instance.data.activated = false
+	
+	-- register the trigger zone if there was one
+	-- handles if unit is a plane too
+	if instance.active == "Immediately" then
+		Rule_Add(healthtrigger_check, {instance = instance})
+		instance.data.activated = true
+	end
+	
+end
+
+function healthtrigger_check(id, data)
+	local instance = Prefab_GetInstance(data)
+	local sg = instance.sgroup
+	local eg = instance.egroup
+	local amt = instance.health_percentage
+	
+	if instance.check_operator == "<" then
+		if instance.trigger_type == "EGroup" then
+			if EGroup_GetAvgHealth(eg) < amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		else
+			if SGroup_GetAvgHealth(sg) < amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		end
+	elseif instance.check_operator == "<=" then
+		if instance.trigger_type == "EGroup" then
+			if EGroup_GetAvgHealth(eg) <= amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		else
+			if SGroup_GetAvgHealth(sg) <= amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		end
+	elseif instance.check_operator == "==" then
+		if instance.trigger_type == "EGroup" then
+			if EGroup_GetAvgHealth(eg) == amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		else
+			if SGroup_GetAvgHealth(sg) == amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		end
+	elseif instance.check_operator == ">=" then
+		if instance.trigger_type == "EGroup" then
+			if EGroup_GetAvgHealth(eg) >= amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		else
+			if SGroup_GetAvgHealth(sg) >= amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		end
+	elseif instance.check_operator == ">" then
+		if instance.trigger_type == "EGroup" then
+			if EGroup_GetAvgHealth(eg) > amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		else
+			if SGroup_GetAvgHealth(sg) > amt then
+				healthtrigger_Trigger(instance)
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+--? @args Table/String instance
+--? @shortdesc Start running the HealthTrigger prefab
+function healthtrigger_Activate(data)
+	local instance = Prefab_GetInstance(data)
+	
+	if instance.data.activated ~= true then
+	
+		instance.data.activated = true
+		Rule_Add(healthtrigger_check, {instance = instance})
+		
+	end
+	
+end
+
+
+--? @args Table/String instance
+--? @shortdesc Start triggering the items listed in the HealthTrigger prefab
+--? @extdesc This prefab can only be triggered once
+function healthtrigger_Trigger(data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	print(instance.instanceName.." triggered")
+	
+	-- trigger anything specified in the prefab
+	for index, item in pairs(instance.things_to_trigger) do
+	
+		if item.trigger_type == "Scar Function" then
+			
+			local event_data = {
+				instance = instance,
+				trigger_scar = item.trigger_scar,
+			}
+			Rule_AddOneShot(healthtrigger_TriggerScarFunction, item.delay, event_data)
+			
+		elseif item.trigger_type == "Prefab" then
+
+			local event_data = {
+				instance = instance,
+				trigger_prefab = item.trigger_prefab,
+			}
+			Rule_AddOneShot(healthtrigger_TriggerPrefab, item.delay, event_data)
+			
+		elseif item.trigger_type == "Call Intel Table" then																-- Call a SCAR function
+			
+			local event_data = {
+				instance = instance,
+				trigger_intel = item.trigger_callinteltable
+			}
+			Rule_AddOneShot(healthtrigger_TriggerIntelTable, item.delay, event_data)
+		end
+	
+	end
+	
+	
+	-- trigger anything that was registered externally
+	for index, item in pairs(instance.data.external_interest_list) do 
+		
+		local delay = item.delay or 0
+		Rule_AddOneShot(healthtrigger_TriggerExternalInterest, delay, item)
+		
+	end	
+	
+end
+
+function healthtrigger_RegisterExternalInterest(data, params)
+
+	local instance = Prefab_GetInstance(data)
+	
+	local item = {
+		instance = params.instance,
+		action = params.action,
+		delay = params.delay,
+		params = params.params,
+	}
+	table.insert(instance.data.external_interest_list, item)
+	
+	print("Registering interest in trigger "..instance.instanceName.." from prefab "..params.instance.instanceName.." - "..params.action)
+	
+end
+
+function healthtrigger_TriggerExternalInterest(id, data)
+	
+	print("Triggering external interest on "..data.instance.instanceName.." - "..data.action)
+	Prefab_DoAction(data.instance, data.action, data.params)
+	
+end
+
+
+function healthtrigger_TriggerScarFunction(id, data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	local func = _G[data.trigger_scar]
+	
+	if scartype(func) == ST_FUNCTION then
+		func(instance)
+	end
+
+end
+
+function healthtrigger_TriggerIntelTable(id, data)
+	local instance = Prefab_GetInstance(data)
+	
+	local intel_table = EVENTS[item.action_callinteltable]
+	
+	if scartype(intel_table) == ST_FUNCTION then
+		Util_StartIntel(intel_table)
+	end
+end
+
+
+function healthtrigger_TriggerPrefab(id, data)
+
+	Prefab_DoAction(data.trigger_prefab, "Trigger")
+
+end

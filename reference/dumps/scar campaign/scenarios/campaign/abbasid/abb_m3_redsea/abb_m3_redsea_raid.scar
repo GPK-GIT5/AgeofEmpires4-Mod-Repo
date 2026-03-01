@@ -1,0 +1,611 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")	
+
+function Raids_Init()
+	g_waveIncrement = 0
+	g_waveActive = false
+	g_raidWaveIntervalMultiplier = 1.0
+	-- This is used for the Net formation
+	t_netFleets = {
+		currentStage = 1,
+		fleet1 = {army = nil, marker = mkr_net_outer_1, arrived = false},
+		fleet2 = {army = nil, marker = mkr_net_outer_2, arrived = false},
+		fleet3 = {army = nil, marker = mkr_net_outer_3, arrived = false},
+	}
+	-- This will be used to determine whether to force a new wave
+	g_raidWaveTimestamp = World_GetGameTime()
+	-- Start the raid waves!
+	if Objective_IsStarted(OBJ_RaidWaveIncoming) == false then
+		Objective_Start(OBJ_RaidWaveIncoming, true, true)
+	end
+end
+
+function Debug_ForceRaidStart()
+	if g_finaleStarted ~= true then
+		Objective_Start(OBJ_RaidWaveIncoming, true, true)
+	end
+end
+
+--? @shortdesc A special function for handling the intro crusaders, who will sail around the map causing trouble until the first real wave arrives
+function Raids_HandleIntroShips(context, data)
+	
+	if SGroup_Count(sg_intro_crusader) <= 0 then
+		return
+	end
+	
+	-- Remove Reynald - he's not part of this! Replace him with a hulk!
+	local reynaldPosition = SGroup_GetPosition(sg_intro_reynald)
+	SGroup_DestroyAllSquads(sg_intro_reynald)
+	SGroup_Clear(sg_temp)
+	CreateUnits(player2, {sbp = SBP.CRUSADER_CMP.UNIT_NAVAL_HULK_CRU, numSquads = 1}, reynaldPosition, sg_temp)
+	SGroup_AddGroup(sg_intro_crusader, sg_temp)
+	
+	-- Add the rest to an army
+	local targetRoute = {mkr_raider_route_tut_a, mkr_raider_route_tut_b, mkr_raider_route_tut_c}
+	local stragglerArmy = NavalArmy_Init({
+		name = "crusader_intro_stragglers",
+		player = player2,
+		sgroup = sg_intro_crusader,
+		targets = targetRoute,
+		targetOrder = TARGET_ORDER_LOOP,
+		holdPositionWhileWaiting = false,
+	})
+	-- NavalArmy_Init() overwrites these, so we need to reset them here
+	stragglerArmy.holdPositionWhileWaiting = false
+	
+	-- Now that Reynald's ship has been removed, we can reveal the map to the player too
+	ActivateDockMegavision()
+end
+
+function Raids_GetRandomSpawnPoint()
+	return Table_GetRandomItem({mkr_raider_spawn_1, mkr_raider_spawn_2})
+end
+
+--
+-- RAIDER WAVES
+--
+
+function Raids_LaunchRaiderWave()
+	-- Get the next wave
+	local raidTemplate = Clone(RAIDER_WAVES[g_raiderWaveIdx])
+	if g_raiderWaveIdx < #RAIDER_WAVES then
+		g_raiderWaveIdx = g_raiderWaveIdx + 1
+	end
+	
+	local spawnPoints = Clone(RAIDER_SPAWN_POINTS)
+	Table_Shuffle(spawnPoints)
+	
+	-- Now go through each type and spawn whatever is appropriate, and add these to the new SGroup for this wave
+	g_waveIncrement = g_waveIncrement + 1
+	if g_activeWaveSGroup ~= nil then
+		SGroup_Clear(g_activeWaveSGroup)
+	end
+	g_activeWaveSGroup = SGroup_CreateIfNotFound(string.format("raider_wave_%s_all", tostring(g_waveIncrement)))
+	
+	-- Also spawn them spread out
+	local spawnIdx = 1
+	
+	-- fleets are for scouring the map in pursuit of trade convoys
+	for idx = 1, raidTemplate.fleets, 1 do
+		local resultSGroup = Raid_SpawnFleet(spawnPoints[spawnIdx])
+		print("CRUSADER WAVE: Fleet spawned")
+		spawnIdx = spawnIdx + 1
+		if spawnIdx > #spawnPoints then
+			spawnIdx = 1
+		end
+		UI_CreateMinimapBlip(SGroup_GetPosition(resultSGroup), 8, "threat_group")
+		SGroup_AddGroup(g_activeWaveSGroup, resultSGroup)
+	end
+	
+	-- Only spawn net fleets if the player has docks
+	if Raid_PlayerHasDocks() == true then
+		for idx = 1, raidTemplate.net, 1 do
+			-- This doesn't use normal spawn point logic; it handles that on its own
+			local resultSGroup = Raid_SpawnNetFleets({RAIDER_UNITS_NET_FLEET, RAIDER_UNITS_NET_FLEET, RAIDER_UNITS_NET_FLEET})
+			print("CRUSADER WAVE: Net fleets spawned")
+			UI_CreateMinimapBlip(SGroup_GetPosition(resultSGroup), 8, "threat_group")
+			SGroup_AddGroup(g_activeWaveSGroup, resultSGroup)
+		end
+	end
+	
+	for idx = 1, raidTemplate.marines, 1 do
+		local landingSite = Table_GetRandomItem({mkr_raider_landing_1a, mkr_raider_landing_1b, mkr_raider_landing_1c})
+		local resultSGroup = Raid_SpawnMarines(spawnPoints[spawnIdx], landingSite)
+		print("CRUSADER WAVE: Marines spawned")
+		spawnIdx = spawnIdx + 1
+		if spawnIdx > #spawnPoints then
+			spawnIdx = 1
+		end
+		SGroup_AddGroup(g_activeWaveSGroup, resultSGroup)
+		--If it's the first one, also spawn Reynald
+		if idx == 1 then
+			local resultSGroup = Raids_SpawnMarinesEscort({ landingSite, })
+			print("CRUSADER WAVE: Reynald spawned")
+			UI_CreateMinimapBlip(SGroup_GetPosition(resultSGroup), 8, "threat_group")
+			SGroup_AddGroup(g_activeWaveSGroup, resultSGroup)
+		end
+	end
+	-- If we've launched a wave of marines, make sure subsequent waves include siege
+	if g_includeMarinesSiege ~= true and raidTemplate.marines > 0 then
+		g_includeMarinesSiege = true
+	end
+	
+	for idx = 1, raidTemplate.demoShips, 1 do
+		local resultSGroup = Raid_SpawnDemolishers(spawnPoints[spawnIdx])
+		print("CRUSADER WAVE: Demolishers spawned")
+		spawnIdx = spawnIdx + 1
+		if spawnIdx > #spawnPoints then
+			spawnIdx = 1
+		end
+		
+		UI_CreateMinimapBlip(SGroup_GetPosition(resultSGroup), 8, "threat_group")
+		SGroup_AddGroup(g_activeWaveSGroup, resultSGroup)
+	end
+	
+	-- Warn the player that the Franks have arrived
+	-- Note that the second parameter can be an empty string ("") on PC, but on Console empty strings break the UI
+	-- Luckily the PC UI won't crash with a nil paramter on that
+	UI_CreateEventCue("$11257210", Loc_Empty(), "high_priority_negative", "icons/event_queue_high_priority_large", "sfx_ui_event_queue_high_priority_play", ECV_Title, 8)
+	
+	-- Each time this happens, we want to add ship types to raider_unit_groups
+	if #raider_unit_groups == 1 then
+		table.insert(raider_unit_groups, RAIDER_UNITS_HULK)
+	elseif #raider_unit_groups == 2 then
+		table.insert(raider_unit_groups, RAIDER_UNITS_RAID_GALLEY)
+	elseif #raider_unit_groups == 3 then
+		table.insert(raider_unit_groups, RAIDER_UNITS_MIXED)
+	end
+	
+	g_waveActive = true
+	g_raidWaveTimestamp = World_GetGameTime()
+	if g_raidWaveIntervalMultiplier > 0.4 then
+		g_raidWaveIntervalMultiplier = g_raidWaveIntervalMultiplier - 0.2
+	end
+	if Rule_Exists(Raids_Monitor) == false then
+		Rule_AddInterval(Raids_Monitor, 2)
+	end
+	print(string.format("CRUSADER RAIDS: Spawned wave with %s units", SGroup_Count(g_activeWaveSGroup)))
+	
+end
+
+function Raiders_TriggerPreFinaleRetreat()
+	-- This function finds all currently active Crusader armies and re-targets them to the nearest allied port
+	-- This will make them effectively blockade the ports, and should make it easier for the player to find and eliminate them
+	-- Helps clear the map leading up to the final attack
+	for idx, army in pairs(raider_armies) do
+		if army.sgroup ~= nil and SGroup_Count(army.sgroup) > 0 and SGroup_IsEmpty(army.sgroup) == false then
+			local armyPos = SGroup_GetPosition(army.sgroup)
+			local retreatTargets = {mkr_raider_spawn_1, mkr_raider_spawn_2, mkr_raider_spawn_3, mkr_raider_spawn_4, mkr_raider_spawn_5}
+			local closestAlly = Util_GetClosestMarker(armyPos, retreatTargets)
+			Army_SetTarget(army, closestAlly)
+			FOW_RevealSGroup(army.sgroup, 5, -1)
+			-- Also dissolve the army so it disappears when it's done
+			army.onCompleteFunction = function()
+				SGroup_Clear(sg_temp)
+				Army_Dissolve(army, sg_temp)
+				SGroup_DestroyAllSquads(sg_temp)
+			end
+		end
+	end
+end
+
+function Raids_LaunchFinalRaiderWave()
+	
+	sg_finalWaveUnits = SGroup_CreateIfNotFound("sg_finalWaveUnits")
+	g_finalWaveValid = false
+	
+	-- A net fleet is part of the big finale, and incudes Reynald's flagship
+	local resultSGroup = Raid_SpawnNetFleets({RAIDER_UNITS_FINALE_NET_FLEET_WEST, RAIDER_UNITS_FINALE_NET_FLEET_MID, RAIDER_UNITS_FINALE_NET_FLEET_EAST})
+	SGroup_AddGroup(sg_finalWaveUnits, resultSGroup)
+
+	-- And some demo ships to add to the mix, with some waypoints to make sure they're coming from the same direction
+	resultSGroup = Raid_SpawnDemolishers(mkr_raider_spawn_2, mkr_demolition_waypoint_west)
+	UI_CreateMinimapBlip(SGroup_GetPosition(resultSGroup), 8, "threat_group")
+	SGroup_AddGroup(sg_finalWaveUnits, resultSGroup)
+	
+	-- Additionally, we should send fleets to attack the allied ports
+	resultSGroup = Raid_SpawnBlockaders(RAIDER_SPAWN_POINTS[2])
+	UI_CreateMinimapBlip(SGroup_GetPosition(resultSGroup), 8, "threat_group")
+	SGroup_AddGroup(sg_finalWaveUnits, resultSGroup)
+	
+	resultSGroup = Raid_SpawnBlockaders(RAIDER_SPAWN_POINTS[3])
+	UI_CreateMinimapBlip(SGroup_GetPosition(resultSGroup), 8, "threat_group")
+	SGroup_AddGroup(sg_finalWaveUnits, resultSGroup)
+	
+	resultSGroup = Raid_SpawnBlockaders(RAIDER_SPAWN_POINTS[4])
+	UI_CreateMinimapBlip(SGroup_GetPosition(resultSGroup), 8, "threat_group")
+	SGroup_AddGroup(sg_finalWaveUnits, resultSGroup)
+	
+	-- Reveal and confirm
+	print(string.format("CRUSADER RAIDS: Final wave spawned with %s units", SGroup_Count(sg_finalWaveUnits)))
+	Rule_AddInterval(Raids_ValidateFinalWave, 1)
+end
+
+function Raids_ValidateFinalWave(context, data)
+	if scartype(sg_finalWaveUnits) == ST_SGROUP and SGroup_CountSpawned(sg_finalWaveUnits) > 0 then
+		g_finalWaveValid = true
+		
+		-- Reveal everyone
+		FOW_RevealSGroup(sg_finalWaveUnits, 5, -1)
+		
+		-- Also setup Reynald's UI
+		Player_GetAll(player2)
+		sg_reynald_flagship = SGroup_CreateIfNotFound("sg_reynald_flagship")
+		SGroup_Filter(sg_allsquads, SBP.CRUSADER_CMP.UNIT_LEADER_NAVAL_REYNALD_CRU, FILTER_REMOVE, sg_reynald_flagship)
+		if SGroup_Count(sg_reynald_flagship) > 0 then
+			SGroup_EnableLeaderCrown(sg_reynald_flagship, true)
+			Objective_AddUIElements(OBJ_FinalWave, sg_reynald_flagship, true, "$11247782", true, 3, nil, nil, "icons/objectives/objectives_battle")
+		end
+		
+		Rule_RemoveMe()
+	end
+end
+
+function Debug_ShoreRaid()
+	Raid_SpawnMarines(mkr_raider_spawn_1, mkr_raider_landing_1a)
+end
+
+function Raids_Monitor()
+	-- We're looking for the moment to start counting down to the next wave, which we shouldn't bother doing until there's no active wave
+	if g_waveActive == true then
+		-- We don't want players to game the system by allowing one or two Crusader ships to hang out forever
+		-- Force a new wave if it's been more than X seconds since the last wave launched
+		local forceNewWave = (World_GetGameTime() - g_raidWaveTimestamp) >= t_difficulty.raiderWaveCleanupTime
+		local oldWaveGone = SGroup_Count(g_activeWaveSGroup) <= 0
+		if forceNewWave or oldWaveGone then
+			g_waveActive = false
+			-- If we haven't yet gotten too close to victory, start that timer and prepare for one last wave
+			if TallyTeamGoldDuringObjective() < (t_difficulty.victoryGoldThreshold * RAID_LOCKOUT_GOLD_RATIO) and g_finaleStarted ~= true then
+				Objective_Show(OBJ_RaidWaveIncoming, true, false)
+				Objective_StartTimer(OBJ_RaidWaveIncoming, COUNT_DOWN, t_difficulty.raiderWaveInterval * g_raidWaveIntervalMultiplier, 15)
+			end
+		end
+	end
+end
+
+--
+-- FLEETS - aka groups of naval combat units patrolling the seas, hunting player and allied ships
+--
+
+function Raid_SpawnFleet(spawnPoint, attackBuildings)
+	local targetRoute = Raids_GetTargetConvoyRoute(Util_GetPosition(spawnPoint))
+	local army = NavalArmy_Init({
+		name = "raid_"..GetRaiderIndex(),
+		player = player2,
+		spawn = spawnPoint, 
+		units = GetRaiderUnits(),
+		onCompleteFunction = Raids_FleetOnComplete,
+		onDeathFunction = Raids_FleetOnDeath,
+		targets = targetRoute.targets,
+		routeID = targetRoute.id,
+		holdPositionWhileWaiting = false,
+	})
+	
+	-- NavalArmy_Init() overwrites these, so we need to reset them here
+	army.holdPositionWhileWaiting = false
+	
+	table.insert(raider_armies, army)
+	print(string.format("%s has spawned for route %s, %s raiders active", army.name, army.routeID, #raider_armies))
+	return army.sgroup
+end
+
+function Raids_GetTargetConvoyRoute(referencePos)
+	local nextRoute = Table_Copy(Table_GetRandomItem(RAIDER_ROUTES))
+	if Util_HasPosition(referencePos) == true and #nextRoute.targets >= 2 then
+		local distanceA = Util_GetDistanceSquared(referencePos, nextRoute.targets[1])
+		local distanceB = Util_GetDistanceSquared(referencePos, nextRoute.targets[2])
+		if distanceB < distanceA then
+			print(string.format("SWAP - Before: %s, %s", nextRoute.targets[1], nextRoute.targets[2]))
+			nextRoute.targets[1], nextRoute.targets[2] = nextRoute.targets[2], nextRoute.targets[1]
+			print(string.format("SWAP - After: %s, %s", nextRoute.targets[1], nextRoute.targets[2]))
+		end
+	else
+		local hasPosition = Util_HasPosition(referencePos)
+		print(string.format("Next Convoy Route failed! Reference of type %s (position? %s), route targets: %s", scartype_tostring(referencePos), hasPosition, nextRoute.targets))
+	end
+	return nextRoute
+end
+
+function Raids_FleetOnComplete(army)
+	local newTargetRoute = Raids_GetTargetConvoyRoute(SGroup_GetPosition(army.sgroup))
+	assert(#newTargetRoute.targets > 0, string.format("%s assigned new targets but target list is empty!", army.name)) 
+	Army_SetTargets(army, newTargetRoute.targets)
+	print(string.format("%s assigned %s new targets along route %s", army.name, #newTargetRoute.targets, newTargetRoute.id))
+end
+
+function Raids_FleetOnDeath(army)
+	Table_RemoveFirstItem(raider_armies, army)
+	print(army.name.." has died, "..tostring(#raider_armies).." raiders remaining")
+end
+
+--
+-- BLOCKADERS - For attacking allied bases
+--
+function Raid_SpawnBlockaders(spawnPoint)
+	local army = NavalArmy_Init({
+		name = "bombarders_"..GetRaiderIndex(),
+		player = player2,
+		spawn = spawnPoint, 
+		units = RAIDER_UNITS_FINALE_BOMBARDMENT_FLEET,
+		onCompleteFunction = nil,
+		onDeathFunction = Raids_FleetOnDeath,
+		targets = RAIDER_FINALE_TARGETS,
+		holdPositionWhileWaiting = false,
+	})
+	
+	-- NavalArmy_Init() overwrites these, so we need to reset them here
+	army.attackBuildings = BUILDINGS_ALL
+	army.attackMove = false
+	army.holdPositionWhileWaiting = false
+	
+	table.insert(raider_armies, army)
+	print(string.format("%s has spawned for route %s, %s raiders active", army.name, army.routeID, #raider_armies))
+	return army.sgroup
+end
+
+--
+-- NET - a set of three fleets that slowly close a net in on the player's base
+--
+
+function Raid_SpawnNetFleets(netFleetUnitTables)
+	
+	-- Reset the net data structure
+	t_netFleets.currentStage = 1
+	t_netFleets.withdrawn = false
+	
+	t_netFleets.fleet1.marker = mkr_net_outer_1
+	t_netFleets.fleet2.marker = mkr_net_outer_2
+	t_netFleets.fleet3.marker = mkr_net_outer_3
+	
+	t_netFleets.fleet1.arrived = false
+	t_netFleets.fleet2.arrived = false
+	t_netFleets.fleet3.arrived = false
+	
+	local sgroup_net_fleets = SGroup_CreateUnique("net_fleets")
+	
+	-- Init the new armies
+	t_netFleets.fleet1.army = NavalArmy_Init({
+		name = "net_fleet1_"..GetRaiderIndex(),
+		player = player2,
+		spawn = mkr_raider_spawn_2, 
+		units = netFleetUnitTables[1],
+		onCompleteFunction = function()
+			t_netFleets.fleet1.arrived = true
+		end,
+		onDeathFunction = function()
+			t_netFleets.fleet1.army = nil
+		end,
+		targets = {t_netFleets.fleet1.marker},
+		attackMove = false,
+		holdPositionWhileWaiting = false,
+	})
+	SGroup_AddGroup(sgroup_net_fleets, t_netFleets.fleet1.army.sgroup)
+	
+	t_netFleets.fleet2.army = NavalArmy_Init({
+		name = "net_fleet2_"..GetRaiderIndex(),
+		player = player2,
+		spawn = mkr_raider_spawn_3, 
+		units = netFleetUnitTables[2],
+		onCompleteFunction = function()
+			t_netFleets.fleet2.arrived = true
+		end,
+		onDeathFunction = function()
+			t_netFleets.fleet2.army = nil
+		end,
+		targets = {t_netFleets.fleet2.marker},
+		attackMove = false,
+		holdPositionWhileWaiting = false,
+	})
+	SGroup_AddGroup(sgroup_net_fleets, t_netFleets.fleet2.army.sgroup)
+	
+	t_netFleets.fleet3.army = NavalArmy_Init({
+		name = "net_fleet3_"..GetRaiderIndex(),
+		player = player2,
+		spawn = mkr_raider_spawn_4, 
+		units = netFleetUnitTables[3],
+		onCompleteFunction = function()
+			t_netFleets.fleet3.arrived = true
+		end,
+		onDeathFunction = function()
+			t_netFleets.fleet3.army = nil
+		end,
+		targets = {t_netFleets.fleet3.marker},
+		attackMove = false,
+		holdPositionWhileWaiting = false,
+	})
+	SGroup_AddGroup(sgroup_net_fleets, t_netFleets.fleet3.army.sgroup)
+	
+	if Rule_Exists(Raid_NetManager) == false then
+		Rule_AddInterval(Raid_NetManager, 3)
+	end
+	
+	return sgroup_net_fleets
+end
+
+function Raid_NetManager(context, data)
+
+	-- If the player has no docks at all, turn them right around and leave if they're not already leaving
+	if Raid_PlayerHasDocks() == false then
+		if t_netFleets.withdrawn ~= true then
+			t_netFleets.withdrawn = true
+			local netFleetList = {t_netFleets.fleet1, t_netFleets.fleet2, t_netFleets.fleet3}
+			for idx, netFleet in ipairs(netFleetList) do
+				local army = netFleet.army
+				if army ~= nil then
+					if army.sgroup ~= nil and SGroup_CountSpawned(army.sgroup) > 0 then
+						local armyPos = SGroup_GetPosition(army.sgroup)
+						local retreatTargets = {mkr_raider_spawn_1, mkr_raider_spawn_2, mkr_raider_spawn_3, mkr_raider_spawn_4, mkr_raider_spawn_5}
+						local closestExit = Util_GetClosestMarker(armyPos, retreatTargets)
+						Army_SetTarget(army, closestExit)
+						-- Also dissolve the army so it disappears when it's done
+						army.onCompleteFunction = function()
+							SGroup_Clear(sg_temp)
+							Army_Dissolve(army, sg_temp)
+							SGroup_DestroyAllSquads(sg_temp)
+						end
+					end
+				end
+			end
+		end
+		return
+	end
+	
+	-- Stop now if some fleets are still moving into position
+	if Raid_CheckNetPosition(t_netFleets.fleet1) == false or Raid_CheckNetPosition(t_netFleets.fleet2) == false or Raid_CheckNetPosition(t_netFleets.fleet3) == false then
+		return
+	end
+	
+	-- Do nothing if the current stage is beyong the net
+	t_netFleets.currentStage = t_netFleets.currentStage + 1
+	if t_netFleets.currentStage > #RAIDER_NET_STAGES then
+		print("NET FORMATION - Net closed! Ending rule!")
+		return
+	end
+	
+	print(string.format("NET FORMATION - Advancing to stage %s!", t_netFleets.currentStage))
+	-- We'll need to move each fleet to its next net position
+	local markerName = string.format("mkr_net_%s_", RAIDER_NET_STAGES[t_netFleets.currentStage])
+	t_netFleets.fleet1.marker = Marker_FromName(markerName.."1", "")
+	t_netFleets.fleet2.marker = Marker_FromName(markerName.."2", "")
+	t_netFleets.fleet3.marker = Marker_FromName(markerName.."3", "")
+	
+	-- Issue the orders
+	Raid_UpdateNetPosition(t_netFleets.fleet1)
+	Raid_UpdateNetPosition(t_netFleets.fleet2)
+	Raid_UpdateNetPosition(t_netFleets.fleet3)
+	
+end
+
+function Raid_PlayerHasDocks()
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.AYYUBID_CMP.BUILDING_UNIT_NAVAL_AYY, FILTER_KEEP)
+	return EGroup_CountSpawned(eg_allentities) > 0
+end
+
+function Raid_CheckNetPosition(fleet)
+	return fleet.arrived == true or fleet.army == nil
+end
+
+function Raid_UpdateNetPosition(fleet)
+	if fleet ~= nil and fleet.army ~= nil then
+		fleet.arrived = false
+		Army_SetTarget(fleet.army, fleet.marker)
+	end 
+end
+
+--
+-- MARINES - aka landing parties with transports and accompanying escorts
+--
+
+--? @shortdesc Spawns an embarked army of land units in naval transports and sends them to attack the player via the coast
+function Raid_SpawnMarines(spawnPoint, landPoint)
+	local marinesIdx = GetRaiderIndex()
+	
+	local sg_raider_landing_party = SGroup_CreateIfNotFound("sg_raider_landing_party_"..marinesIdx)
+	local sg_raider_transports = SGroup_CreateIfNotFound("sg_raider_transports_"..marinesIdx)
+
+	-- First we need to spawn the transport ships
+	CreateUnits(player2, { type = "scar_transport_ship", numSquads = RAIDER_MARINES_TRANSPORT_COUNT }, spawnPoint, sg_raider_transports)
+
+	-- Then spawn the land units inside the transports, with siege unless not allowed yet
+	if g_includeMarinesSiege == true then
+		CreateUnitsInsideSGroup(player2, RAIDER_MARINES_UNITS, sg_raider_transports, sg_raider_landing_party)
+	else
+		CreateUnitsInsideSGroup(player2, RAIDER_MARINES_UNITS_NO_SIEGE, sg_raider_transports, sg_raider_landing_party)
+	end
+	
+	local army = Army_Init({
+		type = "Army",
+		name = "marines_"..marinesIdx,
+		player = player2,
+		targets = {landPoint},
+		sgroup = sg_raider_landing_party,
+		transport_ships = sg_raider_transports,
+		onCompleteFunction = _Raids_TransitionToLand,
+	})
+	
+	-- Return both the troops and the transports so they can be tracked
+	SGroup_Clear(sg_temp)
+	SGroup_AddGroup(sg_temp, army.sgroup)
+	SGroup_AddGroup(sg_temp, army.transport_ships)
+	return sg_temp
+end
+
+function _Raids_TransitionToLand(army)
+	local stubSpawn = Util_GetPosition(army.sgroup)
+	local params = {
+		player = player2,
+		name = army.name.."_landed",
+		spawn = stubSpawn,
+		targets = {mkr_raider_landing_2, mkr_raider_landing_3, mkr_raider_landing_4}, 
+		sgroup = army.sgroup, 
+		onDeathDissolve = true,
+	}
+	local thisArmy = Army_Init(params)
+end
+
+--? @shortdesc Spawns a fleet, to accompany a group of marines to land on the coast
+function Raids_SpawnMarinesEscort(targetList)
+	
+	g_armyEscortFleet = NavalArmy_Init({
+		name = "escort_fleet_"..GetRaiderIndex(),
+		player = player2,
+		spawn = mkr_raider_spawn_3, 
+		units = RAIDER_UNITS_ESCORT_FLEET,
+		onCompleteFunction = nil,
+		onDeathFunction = nil,
+		targets = targetList,
+		targetOrder = TARGET_ORDER_LOOP,
+	})
+	
+	return g_armyEscortFleet.sgroup
+end
+
+--
+-- DEMOLISHERS - aka a ball of explosive ships sailing straight for the player's home waters
+--
+
+function Raid_SpawnDemolishers(spawnPoint, optWaypoint)
+	
+	local demoTargets = nil
+	if optWaypoint ~= nil then
+		demoTargets = { optWaypoint, mkr_demolition_target, }
+	else
+		demoTargets = { mkr_demolition_target }
+	end
+	
+	print(string.format("Demoship attack targets: %s", #demoTargets))
+	
+	army = NavalArmy_Init({
+		name = "demolishers_"..GetRaiderIndex(),
+		player = player2,
+		spawn = spawnPoint,
+		units = RAIDER_UNITS_DEMOLITION,
+		onCompleteFunction = function()
+			print("Demoship attack complete!")
+		end,
+		onDeathFunction = Raids_DemolishersOnDeath,
+		targets = demoTargets,
+	})
+	Rule_AddOneShot(Raids_DemolishersConfigureUI, 5, {demoSGroup = army.sgroup})
+	return army.sgroup
+end
+
+function Raids_DemolishersConfigureUI(context, data)
+	if SGroup_CountSpawned(data.demoSGroup) > 0 then
+		if Objective_IsStarted(OBJ_FinalWave) == true then
+			return
+		elseif Objective_IsStarted(OBJ_DemoRaiders) == false then
+			Objective_Start(OBJ_DemoRaiders, false, true)
+		else
+			Objective_Show(OBJ_DemoRaiders, true, false)
+		end
+		local uiSquad = SGroup_GetSpawnedSquadAt(data.demoSGroup, 1)
+		g_demoRaiderUI = Objective_AddUIElements(OBJ_DemoRaiders, uiSquad, true, "$11247647", true, 3)
+	end
+end
+
+function Raids_DemolishersOnDeath(army)
+	Objective_Show(OBJ_DemoRaiders, false, false)
+	Objective_RemoveUIElements(OBJ_DemoRaiders, g_demoRaiderUI)
+end

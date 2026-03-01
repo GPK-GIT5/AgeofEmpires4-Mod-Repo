@@ -1,0 +1,648 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("training.scar")
+import("cardinal.scar")
+
+function MissionTutorial_Init()
+
+	training_currentConstructionBlueprint = nil
+	training_currentConstructionPhase = nil
+	training_previousConstructionBlueprint = nil
+	
+	training_currentAbilityBlueprint = nil
+	training_currentAbilityPhase = nil
+	training_previousAbilityBlueprint = nil
+	
+	-- listen for construction ability events
+	UI_SetModalConstructionPhaseCallback(OnConstructionPhaseChange)
+	UI_SetModalAbilityPhaseCallback(OnAbilityPhaseChange)	
+end
+
+-- ///// Docks //////////////////////////////////////////////
+function Goals_Docks()
+	
+	sg_villagers = SGroup_CreateIfNotFound("sg_villagers")
+	Player_GetAll(player1, sg_villagers)
+	SGroup_Filter(sg_villagers, "scar_villager", FILTER_KEEP)
+
+	local goal_sequence_Docks_id = "goal_sequence_Docks"
+
+	local goal_VillagerMenu = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_startVillagers,1),
+		{
+			ID = "goal_VillagerMenu",
+			Message = "$999668", -- Build 2 Docks from the Villager Radial Menu. Select a Villager and Press RT
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		VillagerMenu_CompletePredicate
+	)
+	
+	local goal_VillagerMenuMilitary = Training_Goal(
+		"RadialDpadRight",
+		{
+			ID = "goal_VillagerMenuMilitary",
+			Message = "$999644", -- The Dock can be found in the military page.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		VillagerMenuMilitary_CompletePredicate
+	)
+	
+	local goal_SelectDockEBP = Training_Goal(
+		EBP.FRENCH.BUILDING_UNIT_NAVAL_FRE,
+		{
+			ID = "goal_SelectDockEBP",
+			Message = "$999644", -- The Dock can be found in the military page.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		SelectDockEBP_CompletePredicate
+	)
+
+	local goal_PlaceDocks = Training_Goal(
+		Marker_GetPosition(mkr_build_docks),
+		{
+			ID = "goal_PlaceDocks",
+			Message = "$999669", -- Docks must be placed next to water. Remember to use LT to queue multiple constructions
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		PlaceDocks_CompletePredicate
+	)
+
+	local goal_sequence_Docks = Training_GoalSequence(
+		goal_sequence_Docks_id,
+		-1,
+		1,
+		Docks_Trigger,
+		Docks_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_VillagerMenu, goal_VillagerMenuMilitary, goal_SelectDockEBP,goal_PlaceDocks}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Docks)
+	Training_EnableGoalSequenceByID(goal_sequence_Docks, true)
+end
+
+function VillagerMenu_CompletePredicate(goal)
+
+	return Misc_IsSGroupSelected(sg_villagers, false) and UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu
+end
+
+function VillagerMenuMilitary_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and UI_GetActiveRelicRadialMenuDirection() == RMD_Right
+end
+
+function SelectDockEBP_CompletePredicate(goal)
+	
+	local required_construction_EBP = EBP.FRENCH.BUILDING_UNIT_NAVAL_FRE
+	local is_placing_dock = training_currentConstructionBlueprint ~= nil and training_currentConstructionPhase == "PLACING" and training_currentConstructionBlueprint.PropertyBagGroupID == required_construction_EBP.PropertyBagGroupID
+	local did_place_dock = training_previousConstructionBlueprint ~= nil and training_previousConstructionBlueprint.PropertyBagGroupID == required_construction_EBP.PropertyBagGroupID
+
+	return is_placing_dock or did_place_dock
+end
+
+function PlaceDocks_CompletePredicate(goal)
+
+	return false
+end
+
+function Docks_Trigger(goalSequence)
+
+	return true
+end
+
+function Docks_IgnorePredicate(goalSequence)
+
+	eg_docks = EGroup_CreateIfNotFound("eg_docks")
+	Player_GetAll(player1, eg_docks)
+	EGroup_Filter(eg_docks, "scar_dock", FILTER_KEEP)
+	
+	build2docks = EGroup_CountSpawned(eg_docks) >= 2 
+	
+	if Objective_IsComplete(SOBJ_Build2Docks) or build2docks then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// TransportShips //////////////////////////////////////////////
+function Goals_TransportShips()
+	
+	eg_docks = EGroup_CreateIfNotFound("eg_docks")
+	Player_GetAll(player1, eg_docks)
+	EGroup_Filter(eg_docks, "scar_dock", FILTER_KEEP)
+	dockEntity = EGroup_GetEntityAt(eg_docks, 1)
+
+	local goal_sequence_TransportShips_id = "goal_sequence_TransportShips"
+
+	local goal_TransportShips = Training_Goal(
+		dockEntity,
+		{
+			ID = "goal_TransportShipsSelectDocks",
+			Message ="$999618", -- Double Press A on a Dock to select both and spread production
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		TransportShipsSelectDocks_CompletePredicate
+	)
+	
+	local goal_TransportShipsDocksMenu = Training_Goal(
+		dockEntity,
+		{
+			ID = "goal_TransportShipsDocksMenu",
+			Message = "$999671", -- Acces the Dock Radial Menu and build 3 Transport ships,
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		TransportShipsMenu_CompletePredicate
+	)
+	
+	local goal_TransportShipsProduce = Training_Goal(
+		SBP.FRENCH.UNIT_NAVAL_TRANSPORT_SHIP_2_FRE,
+		{
+			ID = "goal_TransportShipsProduce",
+			Message = "$999671", -- Acces the Dock Radial Menu and build 3 Transport ships,
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		TransportShipsProduce_CompletePredicate
+	)
+
+	local goal_sequence_TransportShips = Training_GoalSequence(
+		goal_sequence_TransportShips_id,
+		-1,
+		1,
+		TransportShips_Trigger,
+		TransportShips_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_TransportShips, goal_TransportShipsDocksMenu, goal_TransportShipsProduce}
+	)
+
+	Training_AddGoalSequence(goal_sequence_TransportShips)
+	Training_EnableGoalSequenceByID(goal_sequence_TransportShips, true)
+end
+
+function TransportShipsSelectDocks_CompletePredicate(goal)
+
+	return Misc_IsEGroupSelected(eg_docks, false)
+end
+
+function TransportShipsMenu_CompletePredicate(goal)
+
+	return Misc_IsEGroupSelected(eg_docks, false) and UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu 
+end
+
+function Misc_IsEntityProducing(entity)
+	return Entity_GetProductionQueueSize(entity) > 0
+end
+
+function TransportShipsProduce_CompletePredicate(goal)
+
+	return false
+end
+
+function TransportShips_Trigger(goalSequence)
+
+	return true
+end
+
+function TransportShips_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_Build3TransportShips) 
+		or EGroup_CallEntityFunctionAllOrAny( eg_docks, false, Misc_IsEntityProducing )  then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// LoadTroops //////////////////////////////////////////////
+function Goals_LoadTroops()
+
+	local goal_sequence_LoadTroops_id = "goal_sequence_LoadTroops"
+
+	local goal_SelectMilitary = Training_Goal(
+		"DPadLeft",
+		{
+			ID = "goal_SelectMilitary",
+			Message = "$999673", -- Select your entire army by holding Left on Dpad
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectMilitary_CompletePredicate
+	)
+
+	local goal_BoardShip = Training_Goal(
+		LoadTroops_GetNonFullShip(),
+		{
+			ID = "goal_BoardShip",
+			Message = "$999674", -- Highlight a transport ship and press A to board
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		BoardShip_CompletePredicate
+	)
+
+	local goal_AllBoard = Training_Goal(
+		LoadTroops_GetNonFullShip(),
+		{
+			ID = "goal_AllBoard",
+			Message = "$999675", -- Repeat until all units are garrisoned inside a ship
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		AllBoard_CompletePredicate
+	)
+
+	local goal_sequence_LoadTroops = Training_GoalSequence(
+		goal_sequence_LoadTroops_id,
+		-1,
+		1,
+		LoadTroops_Trigger,
+		LoadTroops_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectMilitary, goal_BoardShip, goal_AllBoard}
+	)
+
+	Training_AddGoalSequence(goal_sequence_LoadTroops)
+	Training_EnableGoalSequenceByID(goal_sequence_LoadTroops, true)
+end
+
+function SelectMilitary_CompletePredicate(goal)
+
+	return Misc_IsSGroupSelected(sg_army, true)
+end
+
+function BoardShip_CompletePredicate(goal)
+
+	return SGroup_IsInHoldSquad(sg_army, false)
+end
+
+function AllBoard_CompletePredicate(goal)
+
+	return false
+end
+
+function LoadTroops_Trigger(goalSequence)
+
+	return true
+end
+
+function LoadTroops_IgnorePredicate(goalSequence)
+	
+	local tag_ship = LoadTroops_GetNonFullShip()
+	
+	if goalSequence.currentGoalIndex == 2 or goalSequence.currentGoalIndex == 3 then
+
+		local goal = goalSequence.goals[goalSequence.currentGoalIndex]
+		if goal.key ~= tag_ship and tag_ship ~= nil then
+			-- next sequence update will recreate the tag if it has been invalidated
+			-- this allow dynamically changing the tag target
+			Training_InvalidateCurrentTag()
+			goal.key = tag_ship
+		end
+	end
+	
+	if Objective_IsComplete(OBJ_LoadTroops) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+function LoadTroops_GetNonFullShip()
+	
+	if SGroup_CountSpawned(sg_ships) == 0 then
+		return nil
+	end
+	
+	local first_ship = SGroup_GetSpawnedSquadAt(sg_ships, 1)
+	
+	for i=1, SGroup_CountSpawned(sg_ships) do
+		local ship = SGroup_GetSpawnedSquadAt(sg_ships, i)
+		if ship == nil then
+			break
+		end
+		local ship_entity = Squad_GetFirstEntity(ship)
+		local remaining_slots = Entity_GetMaxHoldSquadSlots(ship_entity) - Entity_GetFilledHoldSquadSlots(ship_entity)
+		if remaining_slots > 0 then
+			return ship
+		end
+	end
+	
+	return first_ship
+end
+
+-- ///// Minimap //////////////////////////////////////////////
+function Goals_Minimap()
+
+	local goal_sequence_Minimap_id = "goal_sequence_Minimap"
+
+	local goal_SelectShips = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_ships, 1),
+		{
+			ID = "goal_SelectShips",
+			Message = "$1001303", -- Select your ships
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectShips_CompletePredicate
+	)
+	
+	local goal_OpenFocus = Training_Goal(
+		"Minimap",
+		{
+			ID = "goal_OpenFocus",
+			Message = "$999678", -- Press RB to open the minimap
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenFocus_CompletePredicate
+	)
+
+	local goal_LeftStick = Training_Goal(
+		"Minimap",
+		{
+			ID = "goal_LeftStick",
+			Message = "$999679", -- Use LS to move the cursor to the objective marker then PRESS A
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		LeftStick_CompletePredicate
+	)
+
+	local goal_CloseMinimap = Training_Goal(
+		"Minimap",
+		{
+			ID = "goal_CloseMinimap",
+			Message = "$999682", -- Press RB to Close the Minimap
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		CloseMinimap_CompletePredicate
+	)
+
+	local goal_sequence_Minimap = Training_GoalSequence(
+		goal_sequence_Minimap_id,
+		-1,
+		1,
+		Minimap_Trigger,
+		Minimap_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectShips, goal_OpenFocus, goal_LeftStick, goal_CloseMinimap}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Minimap)
+	Training_EnableGoalSequenceByID(goal_sequence_Minimap, true)
+end
+
+function SelectShips_CompletePredicate(goal)
+
+	return Misc_IsSGroupSelected(sg_ships, true)
+end
+
+function OpenFocus_CompletePredicate(goal)
+
+	return UI_IsMinimapFocusActive()
+end
+
+function LeftStick_CompletePredicate(goal)
+
+	for i=1, SGroup_CountSpawned(sg_ships) do
+		
+		local ship = SGroup_GetSpawnedSquadAt(sg_ships, i)
+		
+		if( ship == nil or not Squad_HasDestination(ship)) then
+			
+			return false
+		end
+		
+		local is_moving_to_point = World_DistancePointToPoint(Util_GetPosition(mkr_pevensey_landing), Squad_GetDestination(ship)) < 30
+		
+		if( not is_moving_to_point) then
+			
+			return false
+		end
+	end
+	
+	return true
+end
+
+function CloseMinimap_CompletePredicate(goal)
+
+	-- always return false to ensure the goal being removed
+	if not UI_IsMinimapFocusActive() then
+		minimapDone = true
+	end
+	
+	return false
+end
+
+function Minimap_Trigger(goalSequence)
+
+	return true
+end
+
+function Minimap_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_SetSail) or minimapDone then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// UnloadTroops //////////////////////////////////////////////
+function Goals_UnloadTroops()
+
+	local goal_sequence_UnloadTroops_id = "goal_sequence_UnloadTroops"
+
+	local goal_OpenShipsRadial = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_ships,1),
+		{
+			ID = "goal_OpenShipsRadial",
+			Message = "$999684", --With all ships selected press RT to open their radial menu 
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenShipsRadial_CompletePredicate
+	)
+	
+	local goal_StartUnload = Training_Goal(
+		BP_GetAbilityBlueprint("naval_hold_unload"),
+		{
+			ID = "goal_StartUnload",
+			Message = "$1000687", -- Highlight the unload garrison command an press A
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		StartUnload_CompletePredicate
+	)
+
+	local goal_Unload = Training_Goal(
+		Marker_GetPosition(mkr_beach_fow_reveal_03),
+		{
+			ID = "goal_Unload",
+			Message = "$1000688", -- Move the camera to the beach then Press A
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		Unload_CompletePredicate
+	)
+
+	local goal_sequence_UnloadTroops = Training_GoalSequence(
+		goal_sequence_UnloadTroops_id,
+		-1,
+		1,
+		UnloadTroops_Trigger,
+		UnloadTroops_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_OpenShipsRadial, goal_StartUnload, goal_Unload}
+	)
+
+	Training_AddGoalSequence(goal_sequence_UnloadTroops)
+	Training_EnableGoalSequenceByID(goal_sequence_UnloadTroops, true)
+end
+
+function OpenShipsRadial_CompletePredicate(goal)
+
+	return Misc_IsSGroupSelected(sg_ships, true) and UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu 
+end
+
+function StartUnload_CompletePredicate(goal)
+	
+	local is_unload_placing = training_currentAbilityBlueprint ~= nil and training_currentAbilityPhase == "PLACING" and training_currentAbilityBlueprint.PropertyBagGroupID == BP_GetAbilityBlueprint("naval_hold_unload").PropertyBagGroupID
+
+	return Misc_IsSGroupSelected(sg_ships, true) and is_unload_placing
+end
+
+function Unload_CompletePredicate(goal)
+
+	return false
+end
+
+function UnloadTroops_Trigger(goalSequence)
+
+	return true
+end
+
+function UnloadTroops_IgnorePredicate(goalSequence)
+
+	if disembarkedPevensey then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// Survive Ambush //////////////////////////////////////////////
+function Goals_SurviveAmbush()
+	
+	local goal_sequence_SurviveAmbush_id = "goal_sequence_SurviveAmbush"
+		
+	local goal_PanicSelect = Training_Goal(
+		"QuickMenuSelectAllOnScreenHUDElement",
+		{
+			ID = "goal_PanicSelect",
+			Message = "$1001187", -- It's an ambush! Hold Y to select all units on screen
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		PanicSelect_CompletePredicate	
+	)
+	
+	local goal_sequence_SurviveAmbush = Training_GoalSequence(
+		goal_sequence_SurviveAmbush_id,
+		-1,
+		1,
+		SurviveAmbush_Trigger,
+		SurviveAmbush_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_PanicSelect}
+	)
+
+	Training_AddGoalSequence(goal_sequence_SurviveAmbush)
+	Training_EnableGoalSequenceByID(goal_sequence_SurviveAmbush, true)
+	
+end
+
+function PanicSelect_CompletePredicate(goal)
+	return false
+end
+
+function SurviveAmbush_Trigger(goalSequence)
+
+	return true
+end
+
+function SurviveAmbush_IgnorePredicate(goalSequence)
+	if Objective_IsComplete(SOBJ_BeachAmbush) or Misc_IsSGroupSelected(sg_army, true) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// March Hastings //////////////////////////////////////////////
+function Goals_MarchHastings()
+	
+	local goal_sequence_MarchHastings_id = "goal_sequence_MarchHastings"
+		
+	local goal_MoveScouts = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_scouts,1),
+		{
+			ID = "goal_MoveScouts",
+			Message = "$1000927", -- Send your Scout into the Fog of War to find the enemy settlement
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		MoveScouts_CompletePredicate	
+	)
+	
+	local goal_ScoutsWaypoints = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_ScoutsWaypoins",
+			Message = "$1000919", -- You can set waypoints for units by queuing the move command. Hold LT and Press A at different locations.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ScoutsWaypoints_CompletePredicate	
+	)
+	
+	local goal_sequence_MarchHastings = Training_GoalSequence(
+		goal_sequence_MarchHastings_id,
+		-1,
+		1,
+		MarchHastings_Trigger,
+		MarchHastings_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_MoveScouts,goal_ScoutsWaypoints}
+	)
+
+	Training_AddGoalSequence(goal_sequence_MarchHastings)
+	Training_EnableGoalSequenceByID(goal_sequence_MarchHastings, true)
+	
+end
+
+function MoveScouts_CompletePredicate(goal)
+
+	return Misc_IsSGroupSelected(sg_scouts, false)
+end
+
+function ScoutsWaypoints_CompletePredicate(goal)
+
+	--always return false so that the ignore can remove the goal seq
+	queueScoutsTimer = Timer_GetElapsed(goal.timerID) > 10
+	return false
+end
+
+function MarchHastings_Trigger(goalSequence)
+
+	return true
+end
+
+function MarchHastings_IgnorePredicate(goalSequence)
+	if Objective_IsComplete(OBJ_LocateHastings) or queueScoutsTimer == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end

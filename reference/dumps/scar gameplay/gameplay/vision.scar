@@ -1,0 +1,120 @@
+-----------------------------------------------------------------------
+--
+-- Shared vision for standard gameplay.
+--
+-- Players start match without shared vision.
+-- Players gain shared vision with mutual allies when they both consruct a market.
+-- Players lose shared vision when they are no longer mutual allies.
+--
+-- (c) Relic Entertainment 2017
+--
+-----------------------------------------------------------------------
+
+
+-----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+Core_RegisterModule("Vision")
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+_vision = {
+	entity_type = "trade_post",
+}
+
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+
+-- Callback invoked by OnGameSetup() in core.scar
+-- Disables shared vision at match start. 
+function Vision_OnGameSetup()		
+	
+	local n = World_GetPlayerCount()
+	for i = 1, n do
+		for j = 1, n do
+			if i ~= j then
+				World_EnableSharedLineOfSight(World_GetPlayerAt(i), World_GetPlayerAt(j), false) 
+			end
+		end		
+	end	
+
+end	
+	
+-- Callback invoked on mission start by core.scar
+-- Grants shared vision to allies that both have the required prerequisite (i.e. a market).
+function Vision_Start()	
+	
+	for _, player in pairs(PLAYERS) do
+		player.is_shared_vision_enabled = EGroup_CountSpawned(Player_GetEntitiesFromType(player.id, _vision.entity_type)) > 0
+	end
+	
+	for _, player in pairs(PLAYERS) do
+		Vision_UpdateVisionForPlayer(player)
+	end
+	
+	if not Rule_Exists(Vision_OnConstructionComplete) then 
+		Rule_AddGlobalEvent(Vision_OnConstructionComplete, GE_ConstructionComplete)
+	end
+end
+
+
+-- Callback invoked by Core_OnGameOver() 
+function Vision_OnGameOver()
+	Rule_RemoveGlobalEvent(Vision_OnConstructionComplete)	
+end
+
+
+-- Global event callback for GE_ConstructionComplete.
+-- Grants shared vision to allies that both have the required prerequisite (i.e. a market).
+function Vision_OnConstructionComplete(context)	
+	if Entity_IsEBPOfType(context.pbg, _vision.entity_type) then		
+		local player = Core_GetPlayersTableEntry(context.player)
+		if player ~= nil and not player.is_shared_vision_enabled then
+			player.is_shared_vision_enabled = true		
+			Vision_UpdateVisionForPlayer(player)
+		end
+	end	
+end
+
+
+-- Callback invoked by Core_AddPlayerToTeam() in core.scar when a player joins a team.
+-- Grants shared vision to allies that both have the required prerequisite (i.e. a market). 
+-- Revokes shared vision otherwise.
+function Vision_OnPlayerJoinedTeam(player)	
+	Vision_UpdateVisionForPlayer(player) 	
+end
+
+
+-- Callback invoked with relationship between two players changes.
+-- Grants shared vision to allies that both have the required prerequisite (i.e. a market). 
+-- Revokes shared vision otherwise.
+function Vision_OnRelationshipChanged(observer_id, target_id)
+	Vision_UpdateVisionBetweenPlayers(Core_GetPlayersTableEntry(observer_id), Core_GetPlayersTableEntry(target_id))
+end
+
+
+-----------------------------------------------------------------------
+-- LOS Functions
+-----------------------------------------------------------------------
+
+-- Enables/disables shared line of sight if playerA and playerB are mutual allies and both have constructed a market.
+function Vision_UpdateVisionBetweenPlayers(playerA, playerB)		
+	if playerA ~= playerB then 
+		local enable = playerA.is_shared_vision_enabled 
+			and playerB.is_shared_vision_enabled 
+			and Player_ObserveRelationship(playerA.id, playerB.id) == R_ALLY 
+			and Player_ObserveRelationship(playerB.id, playerA.id) == R_ALLY
+		World_EnableSharedLineOfSight(playerA.id, playerB.id, enable)
+	end
+end
+
+
+-- Updates shared line of sight between a player and all others in the match.
+function Vision_UpdateVisionForPlayer(player)		
+	for _, other_player in pairs(PLAYERS) do
+		Vision_UpdateVisionBetweenPlayers(player, other_player)
+	end	
+end

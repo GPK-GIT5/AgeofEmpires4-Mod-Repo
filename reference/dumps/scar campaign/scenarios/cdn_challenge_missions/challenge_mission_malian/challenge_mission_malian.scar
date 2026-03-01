@@ -1,0 +1,2468 @@
+--
+-- Art of War - early defense Economy and Combat
+--
+-- Challenge Mission
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("MissionOMatic/MissionOMatic_utility.scar")
+import("missionomatic/missionomatic_artofwar.scar")
+import("challenge_mission_malian_preintro.scar")
+import("challenge_mission_malian.events")
+import("training/coretraininggoals.scar")
+import("challenge_mission_malian_diplomacy.scar")
+import("challenge_mission_malian_reinforce.scar")
+
+_challenge = {
+	startingResources = {
+		food = 0.0,
+		wood = 0.0,
+		gold = 500.0,
+		stone = 0.0,				
+	},
+		benchmarks = {
+		unplaced = {
+			minimumGoldCollected = 3000,
+			objective = {},
+		},
+		bronze = {
+			minimumGoldCollected = 4500,
+			objective = {},
+		},
+		silver = {
+			minimumGoldCollected = 7000,
+			objective = {},
+		},
+		gold = {
+			minimumGoldCollected = 7000,
+			objective = {},
+		},
+		challengeGoldCollected = 0,
+	},
+	icons = {
+		victoryObjective = "icons\\races\\common\\victory_conditions\\victory_condition_settlements",
+		noMedalObjective = "icons\\fe\\medal_no.png",
+		bronzeMedalObjective = "icons\\fe\\medal_bronze.png",
+		silverMedalObjective = "icons\\fe\\medal_silver.png",
+		goldMedalObjective = "icons\\fe\\medal_gold.png",
+	},
+	currentBenchmark = nil,
+}
+challengeGoldSpent = 0
+
+-- Called when Mission loads
+function Mission_OnInit()
+	
+	if UI_IsXboxUI() then
+		_challenge.benchmarks.unplaced = {
+			minimumGoldCollected = 2500,
+			objective = {},
+		}
+		_challenge.benchmarks.bronze = {
+			minimumGoldCollected = 4000,
+			objective = {},
+		}
+		_challenge.benchmarks.silver = {
+			minimumGoldCollected = 6500,
+			objective = {},
+		}
+		_challenge.benchmarks.gold = {
+			minimumGoldCollected = 6500,
+			objective = {},
+		}
+	end
+end
+
+function Mission_SetupVariables()
+	
+	-- Bools
+	b_reinforceCooldown = false
+	
+	-- Ints
+	playerAge = 4
+	prev_gold_total = 0
+	-- Floats
+	startTime = 0
+	
+	-- Sgroups 
+
+	-- Other
+	
+	minimapBlips = {}
+	--add minimap blip
+	local entry = {
+		id = 1,
+		blip  = UI_CreateMinimapBlip(mkr_gold1, -1, "objective_capture")
+	}
+	table.insert(minimapBlips, entry)
+	entry = {
+		id = 2,
+		blip  = UI_CreateMinimapBlip(mkr_gold2, -1, "general")
+	}
+	table.insert(minimapBlips, entry)
+	entry = {
+		id = 3,
+		blip  = UI_CreateMinimapBlip(mkr_gold3, -1, "threat_group")
+	}
+	table.insert(minimapBlips, entry)
+	-----
+	
+	path1Blips = {}
+	path2Blips = {}
+	
+	-----
+	currentWaveAttackPath = {}
+	
+	
+	waveWaypointPathsList = {}
+	
+	--path 1 west
+	waveWaypointPathsList[1] = {mkr_path_1_spawn, mkr_path_1_w_rally_01, 
+		mkr_path_1_w_rally_02, mkr_path_1_w_rally_03, mkr_path_1_w_rally_04, 
+		mkr_path_1_w_rally_05, mkr_path_1_w_rally_06, mkr_path_1_w_rally_07, 
+		mkr_path_1_w_rally_08, mkr_path_1_w_rally_09, mkr_path_1_w_rally_10, 
+		mkr_path_1_w_rally_11, mkr_gold1}
+	
+	--path 2 south
+	waveWaypointPathsList[2] = {mkr_path_2_spawn, mkr_path_2_s_rally_01, 
+		mkr_path_2_s_rally_02, mkr_path_2_s_rally_03, mkr_path_2_s_rally_04, 
+		mkr_path_2_s_rally_05, mkr_path_2_s_rally_06, mkr_path_2_s_rally_07, 
+		mkr_path_2_s_rally_08, mkr_path_2_s_rally_09, mkr_path_2_s_rally_10, 
+		mkr_path_2_s_rally_11, mkr_path_2_s_rally_12, mkr_path_2_s_rally_13, 
+		mkr_path_2_s_rally_14, mkr_path_2_s_rally_15, mkr_path_2_s_rally_16, 
+		mkr_gold2}
+	
+	--path 3 east
+	waveWaypointPathsList[3] = {mkr_path_3_spawn, mkr_path_3_e_rally_01, 
+		mkr_path_3_e_rally_02, mkr_path_3_e_rally_03, mkr_path_3_e_rally_04, 
+		mkr_path_3_e_rally_05, mkr_path_3_e_rally_06, mkr_path_3_e_rally_07, 
+		mkr_path_3_e_rally_08, mkr_path_3_e_rally_09, mkr_path_3_e_rally_10, 
+		mkr_path_3_e_rally_11, mkr_path_3_e_rally_12, mkr_path_3_e_rally_13,
+		mkr_path_3_e_rally_14, mkr_path_3_e_rally_15, mkr_gold3}
+	
+	waveObjectList = {}
+	
+	
+	
+	local sbp_spearman_sul = BP_GetSquadBlueprint("unit_spearman_4_sul")
+	local sbp_horseman_sul = BP_GetSquadBlueprint("unit_horseman_4_sul")
+	local sbp_knight_sul = BP_GetSquadBlueprint("unit_knight_4_sul")
+	local sbp_archer_sul = BP_GetSquadBlueprint("unit_archer_4_sul")
+	local sbp_crossbowman_sul = BP_GetSquadBlueprint("unit_crossbowman_4_sul")
+	local sbp_manatarms_sul = BP_GetSquadBlueprint("unit_manatarms_4_sul")
+	local sbp_war_elephant_sul = BP_GetSquadBlueprint("unit_war_elephant_3_sul")
+	local sbp_tower_elephant_sul = BP_GetSquadBlueprint("unit_war_elephant_tower_4_sul")
+	local sbp_monk_sul = BP_GetSquadBlueprint("unit_monk_2_sul")
+	local sbp_mangonel_sul = BP_GetSquadBlueprint("unit_mangonel_3_sul")
+	local sbp_trebuchet_sul = BP_GetSquadBlueprint("unit_trebuchet_4_cw_sul")
+	
+	--note: always add the more expensive units first
+	
+	endlessWavePattern = {}
+	waveRepeatMark = 4 + 3
+	
+	--------------------
+	--1st phase
+	--------------------
+	
+	----- wave 1
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_tower_elephant_sul, waveUnitPercent = .5}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_archer_sul, waveUnitPercent = .5}
+	endlessWavePattern[1] = {waveMakeup = enemyWaveMakeup, path = 1, wave = 1, spawnPoint = 1, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_manatarms_sul, waveUnitPercent = .8}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_monk_sul, waveUnitPercent = .1}
+	endlessWavePattern[2] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 1, spawnPoint = 1, speedModifier = 1}
+	----- wave 2
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_crossbowman_sul, waveUnitPercent = .3}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_archer_sul, waveUnitPercent = .6}
+	endlessWavePattern[3] = {waveMakeup = enemyWaveMakeup, path = 1, wave = 2, spawnPoint = 1, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_war_elephant_sul, waveUnitPercent = 1}
+	endlessWavePattern[4] = {waveMakeup = enemyWaveMakeup, path = 3, wave = 2, spawnPoint = 1, speedModifier = 1}
+	----- wave 3
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_tower_elephant_sul, waveUnitPercent = .9}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_crossbowman_sul, waveUnitPercent = .1}
+	enemyWaveMakeup[3] = {waveUnitBP = sbp_monk_sul, waveUnitPercent = .1}
+	endlessWavePattern[5] = {waveMakeup = enemyWaveMakeup, path = 1, wave = 3, spawnPoint = 1, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_knight_sul, waveUnitPercent = .7}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_monk_sul, waveUnitPercent = .1}
+	endlessWavePattern[6] = {waveMakeup = enemyWaveMakeup, path = 3, wave = 3, spawnPoint = 1, speedModifier = 1}
+	----- wave 4 (big wave)
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_horseman_sul, waveUnitPercent = .45}
+	endlessWavePattern[7] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 4, spawnPoint = 1, speedModifier = .8}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_tower_elephant_sul, waveUnitPercent = .4}
+	endlessWavePattern[8] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 4, spawnPoint = 4, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_spearman_sul, waveUnitPercent = .3}
+	endlessWavePattern[9] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 4, spawnPoint = 2, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_manatarms_sul, waveUnitPercent = .3}
+	endlessWavePattern[10] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 4, spawnPoint = 3, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_mangonel_sul, waveUnitPercent = .4}
+	endlessWavePattern[11] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 4, spawnPoint = 5, speedModifier = 1}
+	
+	--------------------
+	--2nd phase
+	--------------------
+	
+	----- wave 5
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_tower_elephant_sul, waveUnitPercent = .7}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_spearman_sul, waveUnitPercent = .2}
+	endlessWavePattern[12] = {waveMakeup = enemyWaveMakeup, path = 1, wave = 5, spawnPoint = 1, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_knight_sul, waveUnitPercent = .15}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_manatarms_sul, waveUnitPercent = .7}
+	enemyWaveMakeup[3] = {waveUnitBP = sbp_monk_sul, waveUnitPercent = .1}
+	endlessWavePattern[13] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 5, spawnPoint = 1, speedModifier = 1}
+	----- wave 6
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_crossbowman_sul, waveUnitPercent = .2}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_archer_sul, waveUnitPercent = .6}
+	endlessWavePattern[14] = {waveMakeup = enemyWaveMakeup, path = 1, wave = 6, spawnPoint = 1, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_manatarms_sul, waveUnitPercent = .6}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_monk_sul, waveUnitPercent = .2}
+	endlessWavePattern[15] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 6, spawnPoint = 1, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_horseman_sul, waveUnitPercent = .8}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_monk_sul, waveUnitPercent = .1}
+	endlessWavePattern[16] = {waveMakeup = enemyWaveMakeup, path = 3, wave = 6, spawnPoint = 1, speedModifier = 1}
+	----- wave 7 (big wave)
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_knight_sul, waveUnitPercent = .35}
+	endlessWavePattern[17] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 7, spawnPoint = 1, speedModifier = .8}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_tower_elephant_sul, waveUnitPercent = .4}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_monk_sul, waveUnitPercent = .15}
+	endlessWavePattern[18] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 7, spawnPoint = 4, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_spearman_sul, waveUnitPercent = .2}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_archer_sul, waveUnitPercent = .2}
+	endlessWavePattern[19] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 7, spawnPoint = 2, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_war_elephant_sul, waveUnitPercent = .4}
+	enemyWaveMakeup[2] = {waveUnitBP = sbp_monk_sul, waveUnitPercent = .15}
+	endlessWavePattern[20] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 7, spawnPoint = 3, speedModifier = 1}
+	
+	enemyWaveMakeup = {}
+	enemyWaveMakeup[1] = {waveUnitBP = sbp_mangonel_sul, waveUnitPercent = .4}
+	endlessWavePattern[21] = {waveMakeup = enemyWaveMakeup, path = 2, wave = 7, spawnPoint = 5, speedModifier = 1}
+	
+	
+	t_reinforcementData = {
+		{
+			id = "reserve1",
+			displayName = "$11226352", 
+			buttontext = "$11180305", 
+			tooltip = "$11215817", 
+			aidAmount = 5,
+			aidAmount_2 = 0,
+			cost = 360,
+			intel_event = "GetReinforcementsA",
+			intel_played = false,
+			units = {{ sbp = SBP.MALIAN.UNIT_GBETO_4_MAL, numSquads = 5}},
+		},
+		{
+			id = "reserve2",
+			displayName = "$11226353", 
+			buttontext = "$11180305", 
+			tooltip = "$11224810", 
+			aidAmount = 5,
+			aidAmount_2 = 0,
+			cost = 400,
+			intel_event = "GetReinforcementsB",
+			intel_played = false,
+			units = {{ sbp = SBP.MALIAN.UNIT_SPEARMAN_4_MAL, numSquads = 5}},
+		},
+		{
+			id = "reserve3",
+			displayName = "$11226354", 
+			buttontext = "$11180305", 
+			tooltip = "$11121183", 
+			aidAmount = 4,
+			aidAmount_2 = 0,
+			cost = 430,
+			intel_event = "GetReinforcementsC",
+			intel_played = false,
+			units = {{ sbp = SBP.MALIAN.UNIT_ARCHER_4_MAL, numSquads = 4}},
+		},
+		{
+			id = "reserve4",
+			displayName = "$11226355", 
+			buttontext = "$11180305", 
+			tooltip = "$11224811", 
+			aidAmount = 4,
+			aidAmount_2 = 0,
+			cost = 430,
+			intel_event = "GetReinforcementsD",
+			intel_played = false,
+			units = {{ sbp = SBP.MALIAN.UNIT_JAVELIN_4_MAL, numSquads = 4}},
+		},
+		{
+			id = "reserve5",
+			displayName = "$11226356", 
+			buttontext = "$11180305", 
+			tooltip = "$11224809", 
+			aidAmount = 2,
+			aidAmount_2 = 0,
+			cost = 430,
+			intel_event = "GetReinforcementsE",
+			intel_played = false,
+			units = {{ sbp = SBP.MALIAN.UNIT_HANDCANNON_4_MAL, numSquads = 2}},
+		}
+	}
+	player_reinforcement_counter = 0
+	
+	
+end
+
+
+
+function ChallengeMission_SetupDiplomacy()
+	
+	
+	Player_SetRelationship(localPlayer, allyPlayer, R_ALLY)
+	Player_SetRelationship(allyPlayer, localPlayer, R_ALLY)
+	
+	Player_SetRelationship(localPlayer, enemyPlayer, R_ENEMY)
+	
+	Player_SetRelationship(enemyPlayer, allyPlayer, R_ALLY)
+	Player_SetRelationship(allyPlayer, enemyPlayer, R_ALLY)
+	
+	Player_SetRelationship(localPlayer, neutralPlayer, R_ALLY)
+	Player_SetRelationship(neutralPlayer, localPlayer, R_ALLY)
+	
+	Player_SetRelationship(enemyPlayer, neutralPlayer, R_ALLY)
+	Player_SetRelationship(neutralPlayer, enemyPlayer, R_ALLY)
+	
+	Player_SetRelationship(allyPlayer, enemyPlayer2, R_ENEMY)
+	Player_SetRelationship(enemyPlayer2, allyPlayer, R_ENEMY)
+	
+	Player_SetRelationship(neutralPlayer, enemyPlayer2, R_ENEMY)
+	Player_SetRelationship(enemyPlayer2, neutralPlayer, R_ENEMY)
+	
+	World_EnableSharedLineOfSight(localPlayer, neutralPlayer, false)
+	
+	World_EnableSharedLineOfSight(localPlayer, allyPlayer, false)
+	World_EnableSharedLineOfSight(allyPlayer, localPlayer, false)
+	World_EnableSharedLineOfSight(allyPlayer, enemyPlayer2, true)
+	
+	World_EnableSharedLineOfSight(localPlayer, enemyPlayer2, false)
+	
+	-----
+	
+end
+
+--return the number of units of type rounded down to stay under remaining cost
+function ChallengeMission_GetWaveUnitCount(waveUnitPercent, waveUnitBP)
+	
+	local unitCostAllResources = Player_GetSquadBPCost(enemyPlayer, waveUnitBP)
+	local unitCost = unitCostAllResources.food + unitCostAllResources.wood + unitCostAllResources.gold
+	local idealCount = math.ceil((endlessWaveCost * waveUnitPercent) / unitCost)
+	
+	--reduce idealCount if there is not enough remaining resources, but keep >= 1
+	while(idealCount * unitCost > endlessWaveCostRemaining and idealCount > 1) do
+		idealCount = idealCount - 1
+	end
+	
+	endlessWaveCostRemaining = endlessWaveCostRemaining - (idealCount * unitCost)
+	return idealCount
+end
+
+function ChallengeMission_AddNewWave()
+	--adds a new wave from the pattern of endless wave unit makeups
+	--waves follow a pattern and increase in strength and frequency
+	
+	local newWaveIndex = #waveObjectList + 1
+	
+	--add event for the 2nd wave (contains groups 3 and 4)
+	if(newWaveIndex == 3) then
+		-- Play dialogue
+		Util_StartIntel(EVENTS.Narr2ndWave)
+	end
+	
+	if(newWaveIndex == 5) then
+		-- Play dialogue (removed, this line now used in preintro)
+		--Util_StartIntel(EVENTS.NarrHealInStealth)
+	end
+	
+	--add event for big combined waves
+	if(endlessWavesType == waveRepeatMark or endlessWavesType == 4) then
+		-- Play dialogue
+		Util_StartIntel(EVENTS.NarrBigWave)
+		Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_high")
+	end
+	
+	--set hints to invisible
+	HintPoint_SetVisible(hint_path1, false)
+	HintPoint_SetVisible(hint_path2, false)
+	HintPoint_SetVisible(hint_path3, false)
+	HintPoint_SetVisible(hint_path4, false)
+	
+	
+	
+	for i = 1, #endlessWavePattern do
+		--reset endless wave remaining cost
+		endlessWaveCostRemaining = endlessWaveCost
+		
+		--add the wave unit data
+		if(endlessWavePattern[i]["wave"] == endlessWavesType) then
+			local sg_endlessWave = SGroup_Create("sgEndless" .. tostring(newWaveIndex))
+			
+			waveUnitMakeup = {}
+			for u = 1, #endlessWavePattern[i]["waveMakeup"] do
+				
+				local uCount = ChallengeMission_GetWaveUnitCount(endlessWavePattern[i]["waveMakeup"][u]["waveUnitPercent"], endlessWavePattern[i]["waveMakeup"][u]["waveUnitBP"])
+				waveUnitMakeup[u] = {waveUnitBP = endlessWavePattern[i]["waveMakeup"][u]["waveUnitBP"], waveUnitCount = uCount}
+			end
+			waveObjectList[newWaveIndex] = {waveNumber = newWaveIndex, wavePath = endlessWavePattern[i]["path"], waveGroup = sg_endlessWave, 
+				waveUnits = waveUnitMakeup, waveSpawnPoint = endlessWavePattern[i]["spawnPoint"], waveSpeedModifier = endlessWavePattern[i]["speedModifier"], waveStartTime = 0, waveStarted = false, waveAttacking = false,
+				wavePathProgress = 0, scoutPathProgress = 0, wavePathFinished = false, waveDefeated = false, conversionStarted = false, conversionTime = 0,
+				waveDelayFinished = false, waveDelayTime = (World_GetGameTime() - startTime) + 10}
+			
+			
+			--give hint text
+			if(waveObjectList[newWaveIndex]["wavePath"] == 1) then
+				HintPoint_SetVisible(hint_path1, true)
+				blip_hint = UI_CreateMinimapBlip(mkr_path_1_scout_10, 5, "question_here")
+			elseif(waveObjectList[newWaveIndex]["wavePath"] == 2) then
+				if(endlessWavesType == 4 or endlessWavesType == 7) then
+					HintPoint_SetVisible(hint_path4, true)
+				else
+					HintPoint_SetVisible(hint_path2, true)
+				end
+				blip_hint = UI_CreateMinimapBlip(mkr_path_2_scout_07, 5, "question_here")
+			elseif(waveObjectList[newWaveIndex]["wavePath"] == 3) then
+				HintPoint_SetVisible(hint_path3, true)
+				blip_hint = UI_CreateMinimapBlip(mkr_path_3_scout_07, 5, "question_here")
+			end
+			
+			
+			newWaveIndex = #waveObjectList + 1
+		end
+	end
+	
+	
+	--give more time after the big middle waves
+	if(endlessWavesType == waveRepeatMark or endlessWavesType == 4) then
+		nextEndlessWaveTime = nextEndlessWaveTime + 20
+	end
+	
+	
+	--cycle to next composition type
+	endlessWavesType = endlessWavesType + 1
+	if(endlessWavesType > waveRepeatMark) then
+		endlessWavesType = 1
+	end
+	
+	--adjust next wave time and cost
+	if(nextEndlessWaveTime > 960) then
+		nextEndlessWaveTime = nextEndlessWaveTime + 40
+		endlessWaveCost = endlessWaveCost + 75
+	elseif(nextEndlessWaveTime > 720) then
+		nextEndlessWaveTime = nextEndlessWaveTime + 41
+		endlessWaveCost = endlessWaveCost + 70
+	elseif(nextEndlessWaveTime > 480) then
+		nextEndlessWaveTime = nextEndlessWaveTime + 43
+		endlessWaveCost = endlessWaveCost + 65
+	elseif(nextEndlessWaveTime > 330) then
+		nextEndlessWaveTime = nextEndlessWaveTime + 45
+		endlessWaveCost = endlessWaveCost + 60
+	else
+		nextEndlessWaveTime = nextEndlessWaveTime + 50
+		endlessWaveCost = endlessWaveCost + 50
+	end
+	
+	--give more time before the big middle waves
+	if(endlessWavesType == waveRepeatMark or endlessWavesType == 4) then
+		nextEndlessWaveTime = nextEndlessWaveTime + 30
+	end
+	
+	--give more time after the first wave (groups 1 and 2)
+	if(newWaveIndex == 3) then
+		nextEndlessWaveTime = nextEndlessWaveTime + 15
+	end
+end
+
+function Mission_SetupPlayers()
+	
+	-- Set up Players
+	player1 = Missionomatic_InitPlayer(1, { name = "$11215009", currentAge = AGE_IMPERIAL })
+	player2 = Missionomatic_InitPlayer(2, { name = "$11202489", currentAge = AGE_IMPERIAL })
+	player3 = Missionomatic_InitPlayer(3, { name = "$11215009", currentAge = AGE_IMPERIAL })
+	player4 = Missionomatic_InitPlayer(4, { name = "$11215009", currentAge = AGE_IMPERIAL })
+	player5 = Missionomatic_InitPlayer(5, { name = "$11215009", currentAge = AGE_IMPERIAL })
+	player6 = Missionomatic_InitPlayer(6, { name = "$11215009", currentAge = AGE_IMPERIAL })
+	
+	PlayerColour_Enable() -- turn on custom colour configuration for this session
+	
+	Game_SetPlayerSlotColour(player5, 9) -- Neutral	(9 = grey)
+	Game_SetPlayerUISlotColour(player5, 9)
+	--Player relationships
+	
+	--Shared LOS
+	
+	-- Player Upgrades
+	--PlayerUpgrades_Auto(player1)
+	--PlayerUpgrades_Auto(player2)
+end
+
+function Mission_SetRestrictions()
+	
+end
+
+
+function Mission_PreInit()
+	
+	ChallengeMission_HideTributeMenu()
+end
+
+function Mission_Preset()
+	
+	-- Enable player colours
+	PlayerColour_Enable()
+	
+	
+	
+	ChallengeMission_OnGameSetup()
+	ChallengeMission_SetPlayerUpgrades()
+	ChallengeMission_SpawnPlayerUnits()
+	ChallengeMission_SetupDiplomacy()
+	
+	--delete wolves
+	if(region_dist_gaia_wolf ~= nil) then
+		if(SGroup_CountSpawned(region_dist_gaia_wolf) > 0) then
+			SGroup_DestroyAllSquads(region_dist_gaia_wolf)
+		end
+	end
+	
+end
+
+function Mission_Start()
+	
+	startTime = World_GetGameTime()
+	Malian_PreIntro_Clean_Scenes()
+	
+	Player_SetResource( localPlayer, RT_Food, 	0)
+	Player_SetResource( localPlayer, RT_Wood, 	0)
+	Player_SetResource( localPlayer, RT_Gold, 	1000)
+	challengeGoldSpent = -1000
+	Player_SetResource( localPlayer, RT_Stone, 	0)
+	
+	ChallengeMission_SetupGbetoScouts()
+	
+	-- Initialize Objectives 
+	ChallengeMission_InitializeObjectives()
+	-- Initialize starting Objectives 
+	ChallengeMission_PathSetupObjectives()
+	
+	Rule_AddInterval(ChallengeMission_Update, 0.125)
+	Rule_AddInterval(ChallengeMission_GuideWaves, .15)
+	Rule_AddInterval(ChallengeMission_SwitchTarget, 5)
+	Rule_AddInterval(ChallengeMission_TargetMines, 6)
+	
+	FOW_ExploreAll()
+	
+	UI_DeleteMinimapBlip(minimapBlips[1].blip)
+	minimapBlips[1].blip  = UI_CreateMinimapBlip(mkr_gold1, -1, "objective_primary")
+	UI_DeleteMinimapBlip(minimapBlips[2].blip)
+	minimapBlips[2].blip  = UI_CreateMinimapBlip(mkr_gold2, -1, "objective_primary")
+	UI_DeleteMinimapBlip(minimapBlips[3].blip)
+	minimapBlips[3].blip  = UI_CreateMinimapBlip(mkr_gold3, -1, "objective_primary")
+	
+	Rule_AddInterval(ChallengeMission_UpdateTorches, .25)
+	
+	Rule_AddOneShot(ChallengeMission_IntroduceDiplomacyUI, 5)
+	
+	Rule_AddInterval(ChallengeMission_PulseThreatBlip, 5)
+	
+	
+	hint_path1 = HintPoint_Add(mkr_path_1_scout_10, true, "$11224804", 5, HPAT_Attack, "icons/threat_group_arrow", nil, true, nil)
+	HintPoint_SetVisible(hint_path1, true)
+	
+	hint_path2 = HintPoint_Add(mkr_path_2_scout_07, true, "$11224805", 5, HPAT_Attack, "icons/threat_group_arrow", nil, true, nil)
+	HintPoint_SetVisible(hint_path2, true)
+	
+	hint_path3 = HintPoint_Add(mkr_path_3_scout_07, true, "$11224806", 5, HPAT_Attack, "icons/threat_group_arrow", nil, true, nil)
+	HintPoint_SetVisible(hint_path3, false)
+	
+	hint_path4 = HintPoint_Add(mkr_path_2_scout_07, true, "$11224807", 5, HPAT_Attack, "icons/threat_group_arrow", nil, true, nil)
+	HintPoint_SetVisible(hint_path4, false)
+	
+	FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_reinforce_barracks), 20, -1)
+	FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_reinforce_archery), 20, -1)
+	
+	--check if lane is inactive
+	ChallengeMission_CheckLaneActive(1)
+	ChallengeMission_CheckLaneActive(2)
+	ChallengeMission_CheckLaneActive(3)
+	
+	--light torches and set owner on lanes 1 and 2
+	ChallengeMission_SetupMinimapPath(waveWaypointPathsList[1], 1, 0)
+	ChallengeMission_SetupMinimapPath(waveWaypointPathsList[2], 2, 0)
+	
+	--explore enemy base area
+	FOW_RevealArea(Util_GetPosition(mkr_enemy_base), 120, .2)
+	FOW_RevealArea(Util_GetPosition(mkr_allied_base), 120, .2)
+	
+	local allyWalls = EGroup_CreateIfNotFound("allyWalls")
+	local enemyWalls = EGroup_CreateIfNotFound("allyWalls")
+	allyWalls = Player_GetAllEntitiesFromType(allyPlayer, "wall")
+	enemyWalls = Player_GetAllEntitiesFromType(enemyPlayer, "wall")
+	Modify_EnableIsVisibleInFOW(allyWalls, true, -1)
+	Modify_EnableIsVisibleInFOW(enemyWalls, true, -1)
+	
+	
+	--set up house groups for each pit mine
+	
+	eg_houses1 = EGroup_CreateIfNotFound("eg_houses1")
+	Player_GetAllEntitiesNearMarker(localPlayer, eg_houses1, Util_GetPosition(mkr_gold1), 40)
+	EGroup_Filter(eg_houses1, "pit_mine", FILTER_REMOVE)
+	house1StartingCount = EGroup_CountSpawned(eg_houses1)
+		
+	eg_houses2 = EGroup_CreateIfNotFound("eg_houses2")
+	Player_GetAllEntitiesNearMarker(localPlayer, eg_houses2, Util_GetPosition(mkr_gold2), 40)
+	EGroup_Filter(eg_houses2, "pit_mine", FILTER_REMOVE)
+	house2StartingCount = EGroup_CountSpawned(eg_houses2)
+		
+	eg_houses3 = EGroup_CreateIfNotFound("eg_houses3")
+	Player_GetAllEntitiesNearMarker(localPlayer, eg_houses3, Util_GetPosition(mkr_gold3), 40)
+	EGroup_Filter(eg_houses3, "pit_mine", FILTER_REMOVE)
+	house3StartingCount = EGroup_CountSpawned(eg_houses3)
+		
+	
+	-- Play dialogue
+	Util_StartIntel(EVENTS.NarrIntro)
+	
+	
+end
+		
+function GetRecipe()
+	
+	localPlayer = World_GetPlayerAt(1) --Player
+	enemyPlayer = World_GetPlayerAt(2) --enemy AI player
+	allyPlayer = World_GetPlayerAt(3) --ally AI player
+	enemyPlayer2 = World_GetPlayerAt(4) --enemy AI player 2
+	neutralPlayer = World_GetPlayerAt(5) --ally AI player scouts
+	scoutPlayer = World_GetPlayerAt(6) --ally AI player scouts
+	
+	local recipe = {
+	
+		--enableShroud = true,
+		
+		introNIS = EVENTS.PreIntro,
+		--outroNIS = EVENTS.Victory,
+		
+		locations = {
+			{ descriptor = "path1Capture", marker = mkr_path1Capture, player = enemyPlayer },
+			{ descriptor = "path2Capture", marker = mkr_path2Capture, player = enemyPlayer },
+		},  -- end of LOCATIONS table
+		
+		--
+		-- Modules
+		--
+		modules = {
+		},
+
+		onWin = {
+		},
+		
+		onLose = {
+		},
+	}
+	
+	return recipe
+end
+
+-- Initialize Objectives
+function ChallengeMission_InitializeObjectives()
+	
+	OBJ_Victory = {
+		
+		Title = "$11226357",
+		Type = ObjectiveType_Primary,
+		
+		PreStart = function()
+			
+		end,
+		OnStart = function()
+			Rule_AddGlobalEvent(ChallengeMission_OnSquadKilled, GE_SquadKilled)
+			Rule_AddGlobalEvent(ChallengeMission_OnDestruction, GE_EntityKilled)
+		end,
+		IsComplete = function()
+			return false
+		end,
+		OnComplete = function()
+			
+			Mission_Complete()
+		end,
+	}
+	
+	OBJ_AmbushWaves = {
+		
+		Title = "$11224799",
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_Victory,
+		StartAlongsideParent = false, 
+		
+		PreStart = function()
+			
+		end,
+		
+		OnComplete = function()
+			
+		end,
+	}
+	
+	OBJ_DefendMines = {
+		
+		Title = "$11224798",
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_Victory,
+		StartAlongsideParent = true, 
+		
+		PreStart = function()
+			
+		end,
+		
+		OnComplete = function()
+			
+		end,
+	}
+	
+	_challenge.benchmarks.unplaced.objective = {
+				-- Set Objective Title Collect %1GoldCollected% Gold for Bronze Medal
+				Title = Loc_FormatText("$11224800", _challenge.benchmarks.unplaced.minimumGoldCollected),
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.noMedalObjective,
+				}
+	_challenge.benchmarks.bronze.objective = {
+				-- Set Objective Title
+				Title = Loc_FormatText("$11224801", _challenge.benchmarks.bronze.minimumGoldCollected),
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.bronzeMedalObjective,
+				}
+	_challenge.benchmarks.silver.objective = {
+				-- Set Objective Title
+				Title = Loc_FormatText("$11224802", _challenge.benchmarks.silver.minimumGoldCollected),
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.silverMedalObjective,
+				}
+	_challenge.benchmarks.gold.objective = {
+				-- Set Objective Title
+				Title = Loc_FormatText("$11224803"),
+				-- Set Objective Type
+				Type = OT_Bonus,
+				-- Set Objective Icon
+				Icon = _challenge.icons.goldMedalObjective,
+				}
+	
+	
+	Objective_Register(OBJ_Victory)
+	Objective_Register(OBJ_AmbushWaves)
+	Objective_Register(OBJ_DefendMines)
+	
+	
+	_challenge.currentBenchmark = _challenge.benchmarks.unplaced
+	-- Register Medal objective
+	Objective_Register(_challenge.currentBenchmark.objective, localPlayer.id)
+		
+	Objective_SetCounter(_challenge.currentBenchmark.objective, 0)
+	
+	
+end
+
+-----
+
+
+--objectives for delay before mission start
+function ChallengeMission_PathSetupObjectives()
+
+	local location = LOCATION("path1Capture")
+	
+	    OBJ_PrepareForAmbush = 
+	{
+         
+        Title = "$11226358",
+        Type = ObjectiveType_Capture,
+    }
+	
+	SOBJ_Path1 = 
+	{
+		Title = "$11226359", 
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_PrepareForAmbush,
+		StartAlongsideParent = true, 
+	}
+	
+	SOBJ_Path2 = 
+	{
+		Title = "$11226360", 
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_PrepareForAmbush,
+		StartAlongsideParent = true, 
+	}
+	
+		OBJ_Recruit = 
+	{
+		Title = "$11226361", 
+		Type = ObjectiveType_Optional,
+	}
+	
+	SOBJ_RecruitPanel = 
+	{
+		Title = "$11226362", 
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_Recruit,
+		StartAlongsideParent = true, 
+	}
+	
+	Objective_Register(OBJ_PrepareForAmbush)
+	Objective_Register(SOBJ_Path1)
+	Objective_Register(SOBJ_Path2)
+	
+	Objective_Register(OBJ_Recruit)
+	Objective_Register(SOBJ_RecruitPanel)
+	
+	path1Capturing = false
+	path2Capturing = false
+	path1CaptureTime = 0
+	path2CaptureTime = 0
+	pathCaptureDuration = 2
+	
+	location.objectivePrimary = OBJ_PrepareForAmbush
+	location.objectiveSecondary = SOBJ_Path1
+	location.objectiveSecondary = SOBJ_Path2
+	
+	
+	Objective_Start(OBJ_PrepareForAmbush, false, false)
+	Objective_Start(SOBJ_Path1, false, false)
+	Objective_Start(SOBJ_Path2, false, false)
+	
+	Objective_Start(OBJ_Recruit, false, false)
+	Objective_Start(SOBJ_RecruitPanel, false, false)
+	
+	-- Add UI Elements
+	Objective_AddUIElements(SOBJ_Path1, mkr_path1Capture, false, "$11226363", true, -2)
+	Objective_AddUIElements(SOBJ_Path2, mkr_path2Capture, false, "$11226364", true, -2)
+	Objective_AddUIElements(OBJ_PrepareForAmbush, mkr_path3Capture, false, "$11226365", true, -2)
+	
+	-----
+	-----
+	
+	
+	
+	local bp_reticule = BP_GetReticuleBlueprint("capture_neutral_holy_site")--medium width white circle
+	local reticulePos = Util_GetPosition(mkr_path1Capture)
+	local size = 15
+	captureReticuleID1 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+	UI_ModalVisual_SetPosition(captureReticuleID1, reticulePos)
+	
+	captureReticuleID2 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+	reticulePos = Util_GetPosition(mkr_path2Capture)
+	UI_ModalVisual_SetPosition(captureReticuleID2, reticulePos)
+	
+	
+	Rule_AddInterval(ChallengeMission_CheckPathSetupObjectives, .5)
+end
+
+function ChallengeMission_CheckPathSetupObjectives()
+
+	
+	sg_player_startUnits = SGroup_CreateIfNotFound("sg_player_startUnits")
+	
+	SGroup_Clear(sg_player_startUnits)
+	Player_GetAllSquadsNearMarker(localPlayer, sg_player_startUnits, Util_GetPosition(mkr_path1Capture), 15)
+	if(SGroup_CountSpawned(sg_player_startUnits) > 0) then
+		
+		if(Objective_IsComplete(SOBJ_Path1) == false and path1Capturing == false) then
+			path1Capturing = true
+			path1CaptureTime = World_GetGameTime() + pathCaptureDuration
+			Rule_AddInterval(ChallengeMission_CapturePath1, .025)
+			
+			local bp_reticule = BP_GetReticuleBlueprint("campaign_capturelocation_self")-- blue circle
+			local reticulePos = Util_GetPosition(mkr_path1Capture)
+			local size = 15
+			
+			captureReticuleID1_blue1 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+			UI_ModalVisual_SetPosition(captureReticuleID1_blue1, reticulePos)
+			
+		end
+	elseif(Objective_IsComplete(SOBJ_Path1) == false and path1Capturing == true) then
+		path1Capturing = false
+		if(captureReticuleID1_blue1 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID1_blue1)
+		end
+		if(captureReticuleID1_blue2 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID1_blue2)
+		end
+		if(Rule_Exists(ChallengeMission_CapturePath1)) then
+			Rule_Remove(ChallengeMission_CapturePath1)
+		end
+	elseif(Objective_IsComplete(SOBJ_Path1) == true) then
+		Objective_Stop(SOBJ_Path1, false, false)
+		Objective_Start(SOBJ_Path1, false, false)
+		
+		if(captureReticuleID1_blue1 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID1_blue1)
+		end
+		if(captureReticuleID1_blue2 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID1_blue2)
+		end
+		--respawn white circle
+		local bp_reticule = BP_GetReticuleBlueprint("capture_neutral_holy_site")--medium width white circle
+		local reticulePos = Util_GetPosition(mkr_path1Capture)
+		local size = 15
+		captureReticuleID1 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+		UI_ModalVisual_SetPosition(captureReticuleID1, reticulePos)
+	end
+
+	SGroup_Clear(sg_player_startUnits)
+	Player_GetAllSquadsNearMarker(localPlayer, sg_player_startUnits, Util_GetPosition(mkr_path2Capture), 15)
+	if(SGroup_CountSpawned(sg_player_startUnits) > 0) then
+		
+		if(Objective_IsComplete(SOBJ_Path2) == false and path2Capturing == false) then
+			path2Capturing = true
+			path2CaptureTime = World_GetGameTime() + pathCaptureDuration
+			Rule_AddInterval(ChallengeMission_CapturePath2, .025)
+			
+			local bp_reticule = BP_GetReticuleBlueprint("campaign_capturelocation_self")-- blue circle
+			local reticulePos = Util_GetPosition(mkr_path2Capture)
+			local size = 15
+			
+			captureReticuleID2_blue1 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+			UI_ModalVisual_SetPosition(captureReticuleID2_blue1, reticulePos)
+			
+		end
+	elseif(Objective_IsComplete(SOBJ_Path2) == false and path2Capturing == true) then
+		path2Capturing = false
+		if(captureReticuleID2_blue1 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID2_blue1)
+		end
+		if(captureReticuleID2_blue2 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID2_blue2)
+		end
+		if(Rule_Exists(ChallengeMission_CapturePath2)) then
+			Rule_Remove(ChallengeMission_CapturePath2)
+		end
+	elseif(Objective_IsComplete(SOBJ_Path2) == true) then
+		Objective_Stop(SOBJ_Path2, false, false)
+		Objective_Start(SOBJ_Path2, false, false)
+		
+		if(captureReticuleID2_blue1 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID2_blue1)
+		end
+		if(captureReticuleID2_blue2 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID2_blue2)
+		end
+		--respawn white circle
+		local bp_reticule = BP_GetReticuleBlueprint("capture_neutral_holy_site")--medium width white circle
+		local reticulePos = Util_GetPosition(mkr_path2Capture)
+		local size = 15
+		captureReticuleID2 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+		UI_ModalVisual_SetPosition(captureReticuleID2, reticulePos)
+	end
+	
+	--check if both capture objectives are complete
+	if(Objective_IsComplete(SOBJ_Path1) and Objective_IsComplete(SOBJ_Path2)) then
+		Objective_Complete(OBJ_PrepareForAmbush, true, false)
+		
+		if(captureReticuleID1_blue1 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID1_blue1)
+		end
+		if(captureReticuleID2_blue1 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID2_blue1)
+		end
+		
+		--replace allied pit mines with player pit mines to start resource collection
+		EGroup_DestroyAllEntities(eg_gold_mines)
+		EGroup_Clear(eg_gold_mines)
+		
+		eg_goldDeposits = EGroup_CreateIfNotFound("eg_goldDeposits")
+		World_GetAllNeutralEntities(eg_goldDeposits)
+		if(eg_goldDeposits ~= nil) then
+			if(EGroup_Count(eg_goldDeposits) > 0) then
+				EGroup_Filter(eg_goldDeposits, "gold", FILTER_KEEP)
+				
+				if(EGroup_Count(eg_goldDeposits) > 0) then
+					for i = 1, EGroup_Count(eg_goldDeposits) do
+						local entity = EGroup_GetEntityAt(eg_goldDeposits, i)	
+						EGroup_Single(eg_single, entity)	
+						
+						if(Util_GetDistance(eg_single, mkr_gold1) < 30) then
+							Util_CreateEntities(localPlayer, eg_gold_mines, EBP.MALIAN.BUILDING_OPEN_PIT_MINE_MAL, Util_GetPosition(eg_single), 1, nil, nil, false)
+						end
+						if(Util_GetDistance(eg_single, mkr_gold2) < 30) then
+							Util_CreateEntities(localPlayer, eg_gold_mines, EBP.MALIAN.BUILDING_OPEN_PIT_MINE_MAL, Util_GetPosition(eg_single), 1, nil, nil, false)
+						end
+						if(Util_GetDistance(eg_single, mkr_gold3) < 30) then
+							Util_CreateEntities(localPlayer, eg_gold_mines, EBP.MALIAN.BUILDING_OPEN_PIT_MINE_MAL, Util_GetPosition(eg_single), 1, nil, nil, false)
+						end
+					end
+				end
+			end
+		end
+		
+		
+		wavesStarted = true
+		startTime = World_GetGameTime()
+		
+		--start main objectives
+		Objective_Start(OBJ_Victory)
+		Objective_Start(OBJ_AmbushWaves)
+		Objective_Start(_challenge.currentBenchmark.objective, false, false)
+		
+		Util_StartIntel(EVENTS.NarrMissionStart)
+		
+		
+		--make sure white circles are removed
+		UI_ModalVisual_Destroy(captureReticuleID1)
+		UI_ModalVisual_Destroy(captureReticuleID2)
+		
+		Rule_RemoveMe()
+	end
+end
+
+
+function ChallengeMission_CapturePath1()
+	
+	
+	local timeElapsed = World_GetGameTime()
+	if(captureReticuleID1_blue2 ~= nil) then
+		UI_ModalVisual_Destroy(captureReticuleID1_blue2)
+	end
+	
+	local bp_reticule = BP_GetReticuleBlueprint("campaign_capturelocation_self")-- blue circle
+	local size = 15 - (15 * ((path1CaptureTime - timeElapsed) / pathCaptureDuration))
+	local reticulePos = Util_GetPosition(mkr_path1Capture)
+	
+	captureReticuleID1_blue2 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+	UI_ModalVisual_SetPosition(captureReticuleID1_blue2, reticulePos)
+	
+	if(timeElapsed >= path1CaptureTime) then
+		
+		path1Capturing = false
+		
+		-- Mark Objective as Complete
+		Objective_Complete(SOBJ_Path1, false, false)
+		UI_ModalVisual_Destroy(captureReticuleID1)
+		
+		if(captureReticuleID1_blue2 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID1_blue2)
+		end
+		Rule_RemoveMe()
+		return
+	end
+	
+end
+
+function ChallengeMission_CapturePath2()
+	
+	
+	local timeElapsed = World_GetGameTime()
+	if(captureReticuleID2_blue2 ~= nil) then
+		UI_ModalVisual_Destroy(captureReticuleID2_blue2)
+	end
+	
+	local bp_reticule = BP_GetReticuleBlueprint("campaign_capturelocation_self")-- blue circle
+	local size = 15 - (15 * ((path2CaptureTime - timeElapsed) / pathCaptureDuration))
+	local reticulePos = Util_GetPosition(mkr_path2Capture)
+	
+	captureReticuleID2_blue2 = UI_ModalVisual_CreateReticule(bp_reticule, size)
+	UI_ModalVisual_SetPosition(captureReticuleID2_blue2, reticulePos)
+	
+	if(timeElapsed >= path2CaptureTime) then
+		
+		path2Capturing = false
+		
+		-- Mark Objective as Complete
+		Objective_Complete(SOBJ_Path2, false, false)
+		UI_ModalVisual_Destroy(captureReticuleID2)
+		
+		if(captureReticuleID2_blue2 ~= nil) then
+			UI_ModalVisual_Destroy(captureReticuleID2_blue2)
+		end
+		
+		Rule_RemoveMe()
+		return
+	end
+	
+end
+
+
+-----
+
+function ChallengeMission_UpdateMedals()
+	
+	if(_challenge.currentBenchmark == _challenge.benchmarks.unplaced)then
+		Util_StartIntel(EVENTS.NarrBronzeThreshold )
+		Objective_Complete(_challenge.currentBenchmark.objective, false, false)
+		_challenge.currentBenchmark = _challenge.benchmarks.bronze
+		Objective_Register(_challenge.currentBenchmark.objective, localPlayer.id)
+		Objective_Start(_challenge.currentBenchmark.objective, false, false)
+		Objective_SetCounter(_challenge.currentBenchmark.objective, challengeGoldCollected)
+	elseif(_challenge.currentBenchmark == _challenge.benchmarks.bronze)then
+		Util_StartIntel(EVENTS.NarrSilverThreshold )
+		Objective_Complete(_challenge.currentBenchmark.objective, false, false)
+		_challenge.currentBenchmark = _challenge.benchmarks.silver
+		Objective_Register(_challenge.currentBenchmark.objective, localPlayer.id)
+		Objective_Start(_challenge.currentBenchmark.objective, false, false)
+		Objective_SetCounter(_challenge.currentBenchmark.objective, challengeGoldCollected)
+	elseif(_challenge.currentBenchmark == _challenge.benchmarks.silver)then
+		Util_StartIntel(EVENTS.NarrGoldThreshold )
+		Objective_Complete(_challenge.currentBenchmark.objective, false, false)
+		_challenge.currentBenchmark = _challenge.benchmarks.gold
+		Objective_Register(_challenge.currentBenchmark.objective, localPlayer.id)
+		Objective_Start(_challenge.currentBenchmark.objective, false, false)
+		Objective_SetCounter(_challenge.currentBenchmark.objective, challengeGoldCollected)
+	end
+	
+end
+
+
+function ChallengeMission_CheckVictory()
+	
+	-- Store completion loss counter
+	local points = Objective_GetCounter(_challenge.currentBenchmark.objective)
+	-- Package completion time for Data Store
+	local trialInformation = {kpi = points}
+	
+	-- Provide completion time to Stats system via Data Store
+	Game_StoreTableData("trial", trialInformation)
+	
+	if(_challenge.currentBenchmark == _challenge.benchmarks.unplaced)then
+		--fail if current objective is unplaced
+		Rule_AddOneShot(Mission_Fail, 0)
+	else
+		-- Set victory objective to complete
+		Objective_Complete(OBJ_Victory, false, true)
+		-- After a short delay end the mission.
+		Rule_AddOneShot(ChallengeMission_EndChallenge, 0)
+	end
+
+end
+
+function ChallengeMission_EndChallenge()
+	
+	
+	-- Play dialogue
+	if(_challenge.currentBenchmark == _challenge.benchmarks.bronze)then
+		Util_StartIntel(EVENTS.NarrMissionEndBronze)
+	elseif(_challenge.currentBenchmark == _challenge.benchmarks.silver)then
+		Util_StartIntel(EVENTS.NarrMissionEndSilver)
+	elseif(_challenge.currentBenchmark == _challenge.benchmarks.gold)then
+		Util_StartIntel(EVENTS.NarrMissionEndGold)
+		Game_SendCustomChallengeEvent(player1, CE_MALIANSARTGOLD, 1)
+	end
+	
+	Mission_Complete()
+	--Core_SetPlayerVictorious(localPlayer, nil, WR_OBJECTIVECOMPLETE)
+	
+end
+
+-- Setup functionality for mission
+function ChallengeMission_OnGameSetup()
+	
+	-- Create player references
+	localPlayer = World_GetPlayerAt(1) --Player
+	enemyPlayer = World_GetPlayerAt(2) --enemy AI player
+	allyPlayer = World_GetPlayerAt(3) --ally AI player
+	enemyPlayer2 = World_GetPlayerAt(4) --enemy AI player 2
+	neutralPlayer = World_GetPlayerAt(5) --ally AI player scouts
+	scoutPlayer = World_GetPlayerAt(6) --ally AI player scouts
+	
+end
+
+function ChallengeMission_SpawnPlayerUnits()
+	
+	sg_player_musofadi_01 = SGroup_CreateIfNotFound("sg_player_musofadi_01")
+	
+	UnitEntry_DeploySquads(localPlayer, sg_player_musofadi_01, {{sbp = BP_GetSquadBlueprint("unit_gbeto_4_mal"), numSquads = 8 }}, mkr_musofadi_spawn_01)
+	UnitEntry_DeploySquads(localPlayer, sg_player_musofadi_01, {{sbp = BP_GetSquadBlueprint("unit_javelin_4_mal"), numSquads = 10 }}, mkr_javelin_spawn_01)
+	UnitEntry_DeploySquads(localPlayer, sg_player_musofadi_01, {{sbp = BP_GetSquadBlueprint("unit_spearman_4_mal"), numSquads = 10 }}, mkr_donso_spawn_01)
+	
+	--spawn mines for ally player to prevent gaining gold before mission start
+	eg_gold_mines = EGroup_CreateIfNotFound("eg_gold_mines")
+	
+	eg_goldDeposits = EGroup_CreateIfNotFound("eg_goldDeposits")
+	World_GetAllNeutralEntities(eg_goldDeposits)
+	if(eg_goldDeposits ~= nil) then
+		if(EGroup_Count(eg_goldDeposits) > 0) then
+			EGroup_Filter(eg_goldDeposits, "gold", FILTER_KEEP)
+			
+			for i = 1, EGroup_Count(eg_goldDeposits) do
+				local entity = EGroup_GetEntityAt(eg_goldDeposits, i)	
+				EGroup_Single(eg_single, entity)	
+				
+				if(Util_GetDistance(eg_single, mkr_gold1) < 30) then
+					Util_CreateEntities(allyPlayer, eg_gold_mines, EBP.MALIAN.BUILDING_OPEN_PIT_MINE_MAL, Util_GetPosition(eg_single), 1, nil, nil, false)
+				end
+				if(Util_GetDistance(eg_single, mkr_gold2) < 30) then
+					Util_CreateEntities(allyPlayer, eg_gold_mines, EBP.MALIAN.BUILDING_OPEN_PIT_MINE_MAL, Util_GetPosition(eg_single), 1, nil, nil, false)
+				end
+				if(Util_GetDistance(eg_single, mkr_gold3) < 30) then
+					Util_CreateEntities(allyPlayer, eg_gold_mines, EBP.MALIAN.BUILDING_OPEN_PIT_MINE_MAL, Util_GetPosition(eg_single), 1, nil, nil, false)
+				end
+			end
+		end
+	end
+	
+end
+
+
+function ChallengeMission_SetupGbetoScouts()
+	gbetoScoutPath = {}
+	
+	local pathIndex = 1
+	local scoutIndex = 1
+	local sg_musofadiScout = nil
+	
+	scoutPath1 = {}
+	scoutPath1[1] = mkr_path_1_scout_01
+	scoutPath1[2] = mkr_path_1_scout_02
+	scoutPath1[3] = mkr_path_1_scout_03
+	scoutPath1[4] = mkr_path_1_scout_04
+	scoutPath1[5] = mkr_path_1_scout_05
+	scoutPath1[6] = mkr_path_1_scout_06
+	scoutPath1[7] = mkr_path_1_scout_07
+	scoutPath1[8] = mkr_path_1_scout_08
+	scoutPath1[9] = mkr_path_1_scout_09
+	scoutPath1[10] = mkr_path_1_scout_10
+	scoutPath1[11] = mkr_path_1_scout_11
+	scoutPath1[12] = mkr_path_1_scout_12
+	scoutPath1[13] = mkr_path_1_scout_13
+	scoutPath1[14] = mkr_path_1_scout_14
+	
+	pathIndex = 1
+	gbetoScoutPath[pathIndex] = {}
+	for p = 1, #scoutPath1 do
+		sg_musofadiScout = SGroup_Create("sgGbetoScout" .. tostring(pathIndex) .. "_" .. tostring(p))
+		gbetoScoutPath[pathIndex][p] = {sGroup = sg_musofadiScout, marker = scoutPath1[p], torchVisible = false, torchLit = false, roadSide = "left"}
+		
+	end
+	--set up the side of the road data for each of the scouts
+	gbetoScoutPath[pathIndex][1]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][2]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][3]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][4]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][5]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][6]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][7]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][8]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][9]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][10]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][11]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][12]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][13]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][14]["roadSide"] = "right"
+	--
+	
+	scoutPath2 = {}
+	scoutPath2[1] = mkr_path_2_scout_01
+	scoutPath2[2] = mkr_path_2_scout_02
+	scoutPath2[3] = mkr_path_2_scout_03
+	scoutPath2[4] = mkr_path_2_scout_04
+	scoutPath2[5] = mkr_path_2_scout_05
+	scoutPath2[6] = mkr_path_2_scout_06
+	scoutPath2[7] = mkr_path_2_scout_07
+	scoutPath2[8] = mkr_path_2_scout_08
+	scoutPath2[9] = mkr_path_2_scout_09
+	scoutPath2[10] = mkr_path_2_scout_10
+	scoutPath2[11] = mkr_path_2_scout_11
+	scoutPath2[12] = mkr_path_2_scout_12
+	
+	pathIndex = 2
+	gbetoScoutPath[pathIndex] = {}
+	for p = 1, #scoutPath2 do
+		sg_musofadiScout = SGroup_Create("sgGbetoScout" .. tostring(pathIndex) .. "_" .. tostring(p))
+		gbetoScoutPath[pathIndex][p] = {sGroup = sg_musofadiScout, marker = scoutPath2[p], torchVisible = false, torchLit = false, roadSide = "left"}
+		
+	end
+	--set up the side of the road data for each of the scouts
+	gbetoScoutPath[pathIndex][1]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][2]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][3]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][4]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][5]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][6]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][7]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][8]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][9]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][10]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][11]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][12]["roadSide"] = "right"
+	--
+	
+	scoutPath3 = {}
+	scoutPath3[1] = mkr_path_3_scout_01
+	scoutPath3[2] = mkr_path_3_scout_02
+	scoutPath3[3] = mkr_path_3_scout_03
+	scoutPath3[4] = mkr_path_3_scout_04
+	scoutPath3[5] = mkr_path_3_scout_05
+	scoutPath3[6] = mkr_path_3_scout_06
+	scoutPath3[7] = mkr_path_3_scout_07
+	scoutPath3[8] = mkr_path_3_scout_08
+	scoutPath3[9] = mkr_path_3_scout_09
+	scoutPath3[10] = mkr_path_3_scout_10
+	scoutPath3[11] = mkr_path_3_scout_11
+	scoutPath3[12] = mkr_path_3_scout_12
+	scoutPath3[13] = mkr_path_3_scout_13
+	scoutPath3[14] = mkr_path_3_scout_14
+	
+	pathIndex = 3
+	gbetoScoutPath[pathIndex] = {}
+	for p = 1, #scoutPath3 do
+		sg_musofadiScout = SGroup_Create("sgGbetoScout" .. tostring(pathIndex) .. "_" .. tostring(p))
+		gbetoScoutPath[pathIndex][p] = {sGroup = sg_musofadiScout, marker = scoutPath3[p], torchVisible = false, torchLit = false, roadSide = "left"}
+		
+	end
+	--set up the side of the road data for each of the scouts
+	gbetoScoutPath[pathIndex][1]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][2]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][3]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][4]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][5]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][6]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][7]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][8]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][9]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][10]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][11]["roadSide"] = "right"
+	gbetoScoutPath[pathIndex][12]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][13]["roadSide"] = "left"
+	gbetoScoutPath[pathIndex][14]["roadSide"] = "right"
+	
+	
+	--
+	
+	for p = 1, #gbetoScoutPath do
+		for i = 1, #gbetoScoutPath[p] do
+			
+			UnitEntry_DeploySquads(neutralPlayer, gbetoScoutPath[p][i]["sGroup"], {{sbp = SBP.MALIAN.UNIT_GBETO_4_ONLY_TORCH_MAL, numSquads = 1 }}, gbetoScoutPath[p][i]["marker"])
+			Modify_UnitSpeed(gbetoScoutPath[p][i]["sGroup"], 0, -1)
+			Cmd_HoldPosition(gbetoScoutPath[p][i]["sGroup"], gbetoScoutPath[p][i]["marker"], false)
+			SGroup_WarpToMarker(gbetoScoutPath[p][i]["sGroup"], gbetoScoutPath[p][i]["marker"])
+			SGroup_SetInvulnerable(gbetoScoutPath[p][i]["sGroup"], true, -1)
+			
+			Modify_WeaponEnabled(gbetoScoutPath[p][i]["sGroup"], "hardpoint_01", false)
+			
+			FOW_PlayerRevealSGroup(localPlayer, gbetoScoutPath[p][i]["sGroup"], 5, -1)
+			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(gbetoScoutPath[p][i]["marker"]), 15, -1)
+			
+			SGroup_Hide(gbetoScoutPath[p][i]["sGroup"], false)
+			SGroup_SetPlayerOwner(gbetoScoutPath[p][i]["sGroup"], neutralPlayer)
+			SGroup_Hide(gbetoScoutPath[p][i]["sGroup"], true)
+			
+		end
+	end
+	
+	
+	--set up enemy targets for lighting/extinguishing torches
+	
+	eg_enemy_building_01 = EGroup_CreateIfNotFound("eg_enemy_building_01")
+	Util_CreateEntities(enemyPlayer2, eg_enemy_building_01, EBP.SULTANATE.BUILDING_HOUSE_CONTROL_SUL, mkr_enemy_house_01, 1, nil, nil, true)
+	Modify_EntityConstructionTime(eg_enemy_building_01, 0.1)
+	Entity_ForceSelfConstruct(EGroup_GetEntityAt(eg_enemy_building_01, 1))
+	EGroup_SetInvulnerable(eg_enemy_building_01, true, -1)
+	EGroup_Hide(eg_enemy_building_01, true)
+	
+	eg_enemy_building_02 = EGroup_CreateIfNotFound("eg_enemy_building_02")
+	Util_CreateEntities(enemyPlayer2, eg_enemy_building_02, EBP.SULTANATE.BUILDING_HOUSE_CONTROL_SUL, mkr_enemy_house_02, 1, nil, nil, true)
+	Modify_EntityConstructionTime(eg_enemy_building_02, 0.1)
+	Entity_ForceSelfConstruct(EGroup_GetEntityAt(eg_enemy_building_02, 1))
+	EGroup_SetInvulnerable(eg_enemy_building_02, true, -1)
+	EGroup_Hide(eg_enemy_building_02, true)
+	
+	
+	sg_enemy_unit_01 = SGroup_CreateIfNotFound("sg_enemy_unit_01")
+	UnitEntry_DeploySquads(enemyPlayer2, sg_enemy_unit_01, {type = "scar_villager", numSquads = 1 }, mkr_enemy_unit_01)
+	SGroup_Hide(sg_enemy_unit_01, true)
+	
+	sg_enemy_unit_02 = SGroup_CreateIfNotFound("sg_enemy_unit_02")
+	UnitEntry_DeploySquads(enemyPlayer2, sg_enemy_unit_02, {type = "scar_villager", numSquads = 1 }, mkr_enemy_unit_02)
+	SGroup_Hide(sg_enemy_unit_02, true)
+	
+	FOW_PlayerRevealArea(allyPlayer, Util_GetPosition(mkr_enemy_house_01), 20, -1)
+	FOW_PlayerRevealArea(allyPlayer, Util_GetPosition(mkr_enemy_unit_01), 20, -1)
+	
+	FOW_PlayerRevealArea(allyPlayer, Util_GetPosition(mkr_enemy_house_02), 20, -1)
+	FOW_PlayerRevealArea(allyPlayer, Util_GetPosition(mkr_enemy_unit_02), 20, -1)
+	
+	Rule_AddOneShot(ChallengeMission_SetupGbetoScouts2, .5)
+	
+	
+end
+
+
+function ChallengeMission_SetupGbetoScouts2()
+	
+	for p = 1, #gbetoScoutPath do
+		for i = 1, #gbetoScoutPath[p] do
+			Rule_AddOneShot(ChallengeMission_ScoutHoldPos, 0, {sIndex = p, sNode = i })
+		end
+	end
+end
+
+function ChallengeMission_SetPlayerUpgrades()
+	
+	local bp_siege_engineers = BP_GetUpgradeBlueprint("upgrade_siege_engineers")
+	Player_CompleteUpgrade(enemyPlayer, bp_siege_engineers)
+	
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_house_mal"), ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_open_pit_mine_mal"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, BP_GetEntityBlueprint("building_town_center_mal"), ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(localPlayer, UPG.MALIAN.UPGRADE_ARCHER_POISON_ARROW_MAL, ITEM_UNLOCKED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MALIAN.UPGRADE_STEALTH_HEALING_MAL, ITEM_UNLOCKED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MALIAN.UPGRADE_DONSO_PRECISION_TRAINING_MAL, ITEM_UNLOCKED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MALIAN.UPGRADE_UNIT_ARCHER_4_MAL, ITEM_UNLOCKED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MALIAN.UPGRADE_UNIT_SPEARMAN_4_MAL, ITEM_UNLOCKED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MALIAN.UPGRADE_UNIT_JAVELIN_4_MAL, ITEM_UNLOCKED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MALIAN.UPGRADE_UNIT_GBETO_4_MAL, ITEM_UNLOCKED)
+	
+	--remove outpost upgrades
+	Player_SetUpgradeAvailability(localPlayer, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.COMMON.UPGRADE_OUTPOST_CANNON, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.COMMON.UPGRADE_OUTPOST_STONE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(localPlayer, UPG.MALIAN.UPGRADE_OUTPOST_TOLL_MAL, ITEM_REMOVED)
+	
+	-- Add Local Player Upgrades
+	Player_CompleteUpgrade(localPlayer, UPG.MALIAN.UPGRADE_ARCHER_POISON_ARROW_MAL)
+	Player_CompleteUpgrade(localPlayer, UPG.MALIAN.UPGRADE_STEALTH_HEALING_MAL)
+	Player_CompleteUpgrade(localPlayer, UPG.MALIAN.UPGRADE_DONSO_PRECISION_TRAINING_MAL)
+	Player_CompleteUpgrade(localPlayer, UPG.MALIAN.UPGRADE_UNIT_ARCHER_4_MAL)
+	Player_CompleteUpgrade(localPlayer, UPG.MALIAN.UPGRADE_UNIT_SPEARMAN_4_MAL)
+	Player_CompleteUpgrade(localPlayer, UPG.MALIAN.UPGRADE_UNIT_JAVELIN_4_MAL)
+	Player_CompleteUpgrade(localPlayer, UPG.MALIAN.UPGRADE_UNIT_GBETO_4_MAL)
+	
+	-- Hide Building Scuttle
+	Player_SetAbilityAvailability(localPlayer, BP_GetAbilityBlueprint("core_building_scuttle"), ITEM_REMOVED)
+	
+	-- Hide Death (delete units)
+	Player_SetAbilityAvailability(localPlayer, BP_GetAbilityBlueprint("core_unit_death"), ITEM_REMOVED)
+		
+end
+
+wavesStarted = false
+nextEndlessWaveTime = 5
+endlessWaveCostRemaining = 800
+endlessWaveCost = 800 --cost of the units in the next wave
+endlessWavesType = 1 --which of the preset unit compositions and lanes to use
+
+--variables for gold income adjustment
+incomeIntervalsPassed = 0
+goldIncomeRate = 0
+previousGoldCollected = 0
+timeSinceGoldCollected = 0
+extraGoldIncome = 1
+
+-- Update Objectives - Called by a rule every simtic
+function ChallengeMission_Update()
+	
+	local timeElapsed = World_GetGameTime() - startTime
+	
+	if(wavesStarted == true) then
+		if(timeElapsed >= nextEndlessWaveTime) then
+			ChallengeMission_AddNewWave()
+		end
+	end
+	
+	
+	--start waves when the timer is up
+	for i, waveObject in pairs(waveObjectList) do
+		if(timeElapsed > waveObject["waveStartTime"] and waveObject["waveStarted"] == false) then
+			
+			ChallengeMission_SendWave(waveObject["waveNumber"])
+			waveObject["waveStarted"] = true
+		end
+		
+	end
+	
+	--set waves as finished when they reach the end of the path
+	for i, waveObject in pairs(waveObjectList) do
+		if(waveObject["waveStarted"] == true and waveObject["wavePathFinished"] == false and 
+				waveObject["waveDefeated"] == false) then
+			
+			--get path length minus the final node
+			currentPathLength = #waveWaypointPathsList[waveObject["wavePath"]] - 1
+	
+			if(waveObject["wavePathProgress"] == currentPathLength) then
+				waveObject["wavePathFinished"] = true
+			end
+		end
+	end
+	
+	
+	if(Objective_IsCounterSet(_challenge.currentBenchmark.objective)) then
+		
+		
+		challengeGoldCollected = Player_GetResource(localPlayer, RT_Gold) + challengeGoldSpent
+		Objective_SetCounter(_challenge.currentBenchmark.objective, challengeGoldCollected)
+		
+		--check the first 2 intervals to determine the base income rate
+		if(incomeIntervalsPassed < 2) then
+			local goldCollectedThisInterval = challengeGoldCollected - previousGoldCollected
+			previousGoldCollected = challengeGoldCollected
+			local goldCollectionInterval = timeElapsed - timeSinceGoldCollected
+			if(goldCollectedThisInterval > 0 and goldCollectionInterval > 0) then
+				
+				goldIncomeRate = goldCollectedThisInterval / goldCollectionInterval
+				
+				timeSinceGoldCollected = timeElapsed
+				incomeIntervalsPassed = incomeIntervalsPassed + 1
+				--once income is calculated, add a rule adding income over time
+				if(incomeIntervalsPassed == 2) then
+					--calculate difference from target income per minute
+					local goldIncomeDiff = 411 - (goldIncomeRate * 60)
+					if(goldIncomeDiff > 0) then
+						--calculate income for the 10 second interval
+						extraGoldIncome = goldIncomeDiff / 6
+						--grant refund for first full interval missed
+						ChallengeMission_GrantExtraGoldIncome()
+						--add rule for continuing income adjustment every 10 seconds
+						Rule_AddInterval(ChallengeMission_GrantExtraGoldIncome, 10)
+					end
+				end
+			end
+		end
+		
+		if(_challenge.currentBenchmark.minimumGoldCollected ~= nil and Objective_GetCounter(_challenge.currentBenchmark.objective) >= _challenge.currentBenchmark.minimumGoldCollected) then
+			ChallengeMission_UpdateMedals()
+		end
+	end
+	
+end
+
+
+function ChallengeMission_GrantExtraGoldIncome()
+	Player_SetResource( localPlayer, RT_Gold, Player_GetResource(localPlayer, RT_Gold) + extraGoldIncome)
+	
+end
+
+
+function ChallengeMission_PulseThreatBlip()
+	
+	for i, waveObject in pairs(waveObjectList) do
+		if(waveObject["waveStarted"] == true and 
+				waveObject["wavePathFinished"] == false and 
+				waveObject["waveDefeated"] == false) then
+			
+			if(SGroup_CountSpawned(waveObject["waveGroup"]) > 0) then
+				
+				
+				--pulse minimap blip
+				UI_CreateMinimapBlip(Util_GetPosition(waveObject["waveGroup"]), 1, "threat_group")
+			end
+		end
+	end
+end
+
+relicSpawnedCount = 0
+function ChallengeMission_SendWave(sendWaveIndex)
+	--waves can last well into the next wave to spawn so we can't reuse the sgroups
+	local shouldSpawnRelic = false
+	
+	--start spawning relics on the 15th group and after the 1st repeat
+	if(sendWaveIndex > 21 or sendWaveIndex == 15) then
+		shouldSpawnRelic = true
+	end
+	
+	local waveSpawnMarker = waveWaypointPathsList[waveObjectList[sendWaveIndex]["wavePath"]][1]
+	
+	for i, unitMakeup in pairs(waveObjectList[sendWaveIndex]["waveUnits"]) do
+		
+		--spread out units on combined waves
+		if(waveObjectList[sendWaveIndex]["waveSpawnPoint"] == 2) then
+			waveSpawnMarker = mkr_path_2_spawn_2
+		elseif(waveObjectList[sendWaveIndex]["waveSpawnPoint"] == 3) then
+			waveSpawnMarker = mkr_path_2_spawn_3
+		elseif(waveObjectList[sendWaveIndex]["waveSpawnPoint"] == 4) then
+			waveSpawnMarker = mkr_path_2_spawn_4
+		elseif(waveObjectList[sendWaveIndex]["waveSpawnPoint"] == 5) then
+			waveSpawnMarker = mkr_path_2_spawn_5
+		end
+		
+		UnitEntry_DeploySquads(enemyPlayer, waveObjectList[sendWaveIndex]["waveGroup"], {sbp = unitMakeup["waveUnitBP"], numSquads = unitMakeup["waveUnitCount"] }, waveSpawnMarker)
+		FOW_PlayerRevealSGroup(localPlayer, waveObjectList[sendWaveIndex]["waveGroup"],20,-1)
+		
+		--add temporary slow to cavalry group
+		if(waveObjectList[sendWaveIndex]["waveSpeedModifier"] < 1) then
+			Modify_UnitSpeed(waveObjectList[sendWaveIndex]["waveGroup"], waveObjectList[sendWaveIndex]["waveSpeedModifier"], 20)
+		end
+		
+		--spawn in a relic for later waves
+		if(shouldSpawnRelic == true) then
+			local sbp_monk_sul = BP_GetSquadBlueprint("unit_monk_2_sul")
+			if(unitMakeup["waveUnitBP"] == sbp_monk_sul) then
+				--sg_single monk and pick up relic
+				eg_relic_01 = EGroup_CreateIfNotFound("eg_relic_01")
+				Util_CreateEntities(enemyPlayer, eg_relic_01, BP_GetEntityBlueprint("relic"), waveWaypointPathsList[waveObjectList[sendWaveIndex]["wavePath"]][1], 1, nil, nil, true)
+				
+				Rule_AddOneShot(ChallengeMission_PickUpRelic, 1, {waveObjectIndex = sendWaveIndex})
+				
+				Cmd_Ability(waveObjectList[sendWaveIndex]["waveGroup"], BP_GetAbilityBlueprint("pickup_relic"), eg_relic_01, nil, nil, false)
+				relicSpawnedCount = relicSpawnedCount + 1
+			end
+		end
+	end
+	
+	--get path length minus the final node
+	currentPathLength = #waveWaypointPathsList[waveObjectList[sendWaveIndex]["wavePath"]] - 1
+	
+	--reveal path
+	for w = 1, currentPathLength do
+		if(w <= currentPathLength) then
+			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(waveWaypointPathsList[waveObjectList[sendWaveIndex]["wavePath"]][w]), 20, -1)
+		end
+	end
+	
+	
+	Cmd_FormationMove(waveObjectList[sendWaveIndex]["waveGroup"], waveSpawnMarker, true, false, waveWaypointPathsList[waveObjectList[sendWaveIndex]["wavePath"]][2])
+	
+	
+	--place path markers on minimap
+	ChallengeMission_SetupMinimapPath(waveWaypointPathsList[waveObjectList[sendWaveIndex]["wavePath"]], waveObjectList[sendWaveIndex]["wavePath"], sendWaveIndex)
+	
+end
+
+function ChallengeMission_GuideWaves()
+	for i, waveObject in pairs(waveObjectList) do
+		
+		
+		local timeElapsed = World_GetGameTime() - startTime
+		if(timeElapsed > waveObject["waveDelayTime"] and waveObject["waveDelayFinished"] == false) then
+			waveObject["waveDelayFinished"] = true
+			Cmd_FormationAttackMove(waveObject["waveGroup"], waveWaypointPathsList[waveObject["wavePath"]][1], true, false)
+	
+		end
+		
+		if(waveObject["waveStarted"] == true and waveObject["wavePathFinished"] == false 
+				and waveObject["waveDefeated"] == false and waveObject["waveDelayFinished"] == true) then
+			
+			if(SGroup_CountSpawned(waveObject["waveGroup"]) > 0) then
+				
+				--create group without monks to compare distance to next marker
+				local sg_GroupWithoutMonks = SGroup_CreateIfNotFound("sg_GroupWithoutMonks")
+				SGroup_Clear(sg_GroupWithoutMonks)
+				SGroup_AddGroup(sg_GroupWithoutMonks, waveObject["waveGroup"])
+				SGroup_Filter(sg_GroupWithoutMonks,  "monk", FILTER_REMOVE)
+				--add back monks if nothing is left
+				if(SGroup_CountSpawned(sg_GroupWithoutMonks) == 0) then
+					SGroup_AddGroup(sg_GroupWithoutMonks, waveObject["waveGroup"])
+				end
+				
+				--get path length minus the final node
+				currentPathLength = #waveWaypointPathsList[waveObject["wavePath"]] - 1
+				
+				--actual path markers
+				for w = waveObject["wavePathProgress"], currentPathLength do
+					if(w == 0) then
+						w = 1
+					end
+					if(waveObject["wavePathProgress"] < w and Util_GetDistance(sg_GroupWithoutMonks, waveWaypointPathsList[waveObject["wavePath"]][w]) < 10) then
+						if(w <= currentPathLength) then
+							if(waveObject["waveAttacking"] == false) then
+								Cmd_FormationAttackMove(waveObject["waveGroup"], waveWaypointPathsList[waveObject["wavePath"]][w + 1], false, false)
+							else
+								Cmd_FormationAttackMove(waveObject["waveGroup"], waveWaypointPathsList[waveObject["wavePath"]][w + 1], false, false)
+							end
+							waveObject["waveAttacking"] = false
+							if(ChallengeMission_CheckNodeInUse(i, waveObject["wavePath"], w) == false) then
+								--unreveal previous point
+								FOW_PlayerUnRevealArea(localPlayer, Util_GetPosition(waveWaypointPathsList[waveObject["wavePath"]][w]))
+							end
+							
+						end
+						waveObject["wavePathProgress"] = w
+					end
+				end
+				
+				currentScoutPathLength = #gbetoScoutPath[waveObject["wavePath"]] - 1
+				
+				
+				
+				--slightly delayed attack move if wave is under attack
+				if(waveObject["waveAttacking"] == false) then
+					if(SGroup_IsUnderAttack(waveObject["waveGroup"], ANY, 4) == true) then
+						Rule_AddOneShot(ChallengeMission_GuideWaveAttack, .5, {waveObjectIndex = i})
+						waveObject["waveAttacking"] = true
+					end
+				end
+				
+				
+				--check for monks, order them to stop and heal if the group is attacked
+				if(waveObject["waveAttacking"] == true) then
+					for i2 = 1, SGroup_CountSpawned(waveObject["waveGroup"]) do
+						local squad = SGroup_GetSquadAt(waveObject["waveGroup"], i2)
+						if(Squad_IsOfType(squad, "monk") == true) then
+							SGroup_Single(sg_single, squad)
+							--check if monk is carrying a relic
+							if(Squad_CanCastAbilityOnSquad(squad, BP_GetAbilityBlueprint("monk_conversion"), squad) == true) then
+								
+								--check if there are enemy units nearby
+								sg_conversionTargets = SGroup_CreateIfNotFound("sg_conversionTargets")
+								SGroup_Clear(sg_conversionTargets)
+								Player_GetAllSquadsNearMarker(localPlayer, sg_conversionTargets, Util_GetPosition(sg_single), 10)
+								
+								if(SGroup_CountSpawned(sg_conversionTargets) > 0) then
+									Cmd_Ability(sg_single, BP_GetAbilityBlueprint("monk_conversion"), sg_single, nil, nil, false)
+									waveObject["conversionStarted"] = true
+									waveObject["conversionTime"] = timeElapsed + 10
+									
+								end
+							end
+						end
+					end
+				end
+				
+				--check if relic conversion has completed and drop relic
+				if(waveObject["conversionStarted"] == true and waveObject["conversionTime"] < timeElapsed) then
+					for i2 = SGroup_CountSpawned(waveObject["waveGroup"]), 1, -1 do
+						local squad = SGroup_GetSquadAt(waveObject["waveGroup"], i2)
+						if(Squad_IsOfType(squad, "monk") == true) then
+							SGroup_Single(sg_single, squad)
+							if(SGroup_IsEmpty(sg_single) == false) then
+								--check if monk is carrying a relic
+								if(Squad_CanCastAbilityOnSquad(squad, BP_GetAbilityBlueprint("monk_statetree_drop_relic"), squad) == true) then
+									
+									Cmd_Ability(sg_single, BP_GetAbilityBlueprint("monk_statetree_drop_relic"), sg_single, nil, nil, false)
+									waveObject["conversionStarted"] = false
+									ChallengeMission_DespawnRelic(Util_GetPosition(sg_single))
+									ChallengeMission_OrderConverts()
+								end
+							end
+						end
+					end
+				end
+				
+				
+				--check if group is idle and set attacking to false
+				if(SGroup_IsIdle(waveObject["waveGroup"], ALL)) then
+					waveObject["waveAttacking"] = false
+				end
+				
+			end
+			
+		end
+		
+		
+	end
+	
+	
+end
+
+function ChallengeMission_DespawnRelic(relicPos)
+	
+	eg_relic_dropped = EGroup_CreateIfNotFound("eg_relic_dropped")
+	
+	World_GetAllNeutralEntities(eg_relic_dropped)
+	EGroup_Filter(eg_relic_dropped, "relic", FILTER_KEEP)
+	
+	for i = EGroup_CountSpawned(eg_relic_dropped), 1, -1 do
+		local entity = EGroup_GetEntityAt(eg_relic_dropped, i)	
+		EGroup_Single(eg_single, entity)	
+		if(relicPos ~= nil) then
+			if(Util_GetDistance(eg_single, relicPos) < 10) then
+				Entity_Destroy(entity)
+			end
+		end
+	end
+end
+
+function ChallengeMission_OrderConverts()
+	
+	--find Mali units owned by the enemy and order them to the nearest pit mine
+	sg_converts = SGroup_CreateIfNotFound("sg_converts")
+	SGroup_Clear(sg_converts)
+	sg_converts = Player_GetSquads(enemyPlayer)
+	SGroup_Filter(sg_converts, {SBP.MALIAN.UNIT_GBETO_4_MAL, SBP.MALIAN.UNIT_SPEARMAN_4_MAL, SBP.MALIAN.UNIT_ARCHER_4_MAL, SBP.MALIAN.UNIT_JAVELIN_4_MAL, SBP.MALIAN.UNIT_HANDCANNON_4_MAL}, FILTER_KEEP)
+	
+	
+	for c = 1, SGroup_CountSpawned(sg_converts) do
+		local squad = SGroup_GetSquadAt(sg_converts, c)
+		SGroup_Single(sg_single, squad)	
+		if(SGroup_IsEmpty(sg_single) == false) then
+			eg_pit_mines = EGroup_CreateIfNotFound("eg_pit_mines")
+			EGroup_Clear(eg_pit_mines)
+			eg_pit_mines = Player_GetAllEntitiesFromType(localPlayer, "building")
+			EGroup_Filter(eg_pit_mines, "pit_mine", FILTER_KEEP)
+			
+			if(eg_pit_mines ~= nil) then
+				if(EGroup_IsEmpty(eg_pit_mines) == false) then
+					--find the closest remaining pit mine
+					local nearestPitMine = 1
+					local distToPitMine = -1
+					for i = 1, EGroup_CountSpawned(eg_pit_mines) do
+						local entity = EGroup_GetEntityAt(eg_pit_mines, i)	
+						local currentHealth = Entity_GetHealthPercentage(entity)
+						if(currentHealth > 0) then
+							if(distToPitMine == -1 or Util_GetDistance(sg_single, entity) < distToPitMine) then
+								distToPitMine = Util_GetDistance(sg_single, entity)
+								nearestPitMine = i
+							end
+						end
+					end
+					
+					--attack move towards mine
+					if(distToPitMine > 5) then
+						local entity = EGroup_GetEntityAt(eg_pit_mines, nearestPitMine)	
+						EGroup_Single(eg_single, entity)
+						if(EGroup_IsEmpty(eg_single) == false) then
+							Cmd_AttackMove(sg_single, Util_GetPosition(eg_single), false)
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+
+function ChallengeMission_CheckForIdleWaves()
+	for i, waveObject in pairs(waveObjectList) do
+		
+		if(waveObject["waveStarted"] == true and waveObject["wavePathFinished"] == false 
+				and waveObject["waveDefeated"] == false and waveObject["waveDelayFinished"] == true) then
+			if(SGroup_CountSpawned(waveObject["waveGroup"]) > 0) then
+				
+				--get path length minus the final node
+				currentPathLength = #waveWaypointPathsList[waveObject["wavePath"]] - 1
+				
+				local currentMarker = mkr_gold1
+				for p = 1, 3 do
+					if(p == 2) then
+						currentMarker = mkr_gold2
+					elseif(p == 3) then
+						currentMarker = mkr_gold3
+					end
+					
+					--set path as completed if any units in the group are at the mines
+					local waveReachedMine = false
+					for i2 = 1, SGroup_CountSpawned(waveObject["waveGroup"]) do
+						if(waveReachedMine == false) then
+							local squad = SGroup_GetSquadAt(waveObject["waveGroup"], i2)
+							if(Util_GetDistance(squad, currentMarker) < 15) then
+								waveReachedMine = true
+							end
+						end
+					end
+					if(waveReachedMine == true) then
+						waveObject["wavePathProgress"] = currentPathLength
+					end
+					
+				end
+			end
+		end
+	end
+end
+
+function ChallengeMission_PickUpRelic(context, data)
+	sg_monksInWave = SGroup_CreateIfNotFound("sg_monksInWave")
+	SGroup_Clear(sg_monksInWave)
+	local eg_nearbyRelic = EGroup_CreateIfNotFound("eg_nearbyRelic")
+	
+	World_GetAllNeutralEntities(eg_nearbyRelic)
+	EGroup_Filter(eg_nearbyRelic, "relic", FILTER_KEEP)
+	
+	
+	
+	SGroup_AddGroup(sg_monksInWave, waveObjectList[data.waveObjectIndex]["waveGroup"])
+	SGroup_Filter(sg_monksInWave, "monk", FILTER_KEEP)
+	if(SGroup_CountSpawned(sg_monksInWave) > 0) then
+		if(EGroup_CountSpawned(eg_nearbyRelic) > 0) then
+			for i = 1, EGroup_CountSpawned(eg_nearbyRelic) do
+				local entity = EGroup_GetEntityAt(eg_nearbyRelic, i)	
+				EGroup_Single(eg_single, entity)	
+				
+				if(Util_GetDistance(eg_single, sg_monksInWave) < 30) then
+					Cmd_Ability(sg_monksInWave, BP_GetAbilityBlueprint("pickup_relic"), eg_single, nil, nil, false)
+				end
+			end
+		end
+	end
+end
+
+function ChallengeMission_GuideWaveAttack(context, data)
+	for i, waveObject in pairs(waveObjectList) do
+		if(i == data.waveObjectIndex and waveObject["waveStarted"] == true and 
+				waveObject["wavePathFinished"] == false and waveObject["waveDefeated"] == false) then
+			
+			if(SGroup_CountSpawned(waveObject["waveGroup"]) > 0) then
+				
+				Cmd_FormationAttackMove(waveObject["waveGroup"], waveWaypointPathsList[waveObject["wavePath"]][waveObject["wavePathProgress"] + 1], false, false)
+			end
+		end
+	end
+end
+
+
+function Malian_Wave_SpawnRelic(context, data)
+	--test of spawning relic and converting
+	--
+	sg_preintro2_enemy_monk_01 = SGroup_CreateIfNotFound("sg_preintro2_enemy_monk_01")
+	UnitEntry_DeploySquads(enemyPlayer, sg_preintro2_enemy_monk_01, {{sbp = BP_GetSquadBlueprint("unit_monk_2_sul"), numSquads = 1 }}, mkr_path_2_scout_01)
+	
+	eg_relic_01 = EGroup_CreateIfNotFound("eg_relic_01")
+	Util_CreateEntities(enemyPlayer, eg_relic_01, BP_GetEntityBlueprint("relic"), mkr_path_2_s_rally_03, 1, nil, nil, true)
+	
+	Cmd_Ability(sg_preintro2_enemy_monk_01, BP_GetAbilityBlueprint("pickup_relic"), eg_relic_01, nil, nil, false)
+	Rule_AddOneShot(Malian_Wave_Convert, 5)
+	--
+end
+function Malian_Wave_Convert(context, data)
+	
+	
+	Cmd_Ability(sg_preintro2_enemy_monk_01, BP_GetAbilityBlueprint("monk_conversion"), sg_preintro2_enemy_monk_01, nil, nil, false)
+	--add another rule to change owner of allied scouts back
+end
+
+--returns true if the marker is used by any other unfinished wave groups
+function ChallengeMission_CheckNodeInUse(checkWaveObject, checkPathIndex, checkNodeIndex)
+	for i, waveObject in pairs(waveObjectList) do
+		if(i ~= checkWaveObject) then
+			if(waveObject["waveStarted"] == true and waveObject["wavePathFinished"] == false and 
+					waveObject["waveDefeated"] == false) then
+				if(SGroup_CountSpawned(waveObject["waveGroup"]) > 0) then
+					if(waveObject["wavePath"] == checkPathIndex and 
+							waveObject["wavePathProgress"] < checkNodeIndex) then
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+function ChallengeMission_SwitchTarget()
+	
+	for i, waveObject in pairs(waveObjectList) do
+		if(waveObject["waveStarted"] == true and waveObject["wavePathFinished"] == true and waveObject["waveDefeated"] == false) then
+			--attack move towards nearest pit mine
+			
+			if(SGroup_CountSpawned(waveObject["waveGroup"]) > 0) then
+				eg_pit_mines = EGroup_CreateIfNotFound("eg_pit_mines")
+				EGroup_Clear(eg_pit_mines)
+				eg_pit_mines = Player_GetAllEntitiesFromType(localPlayer, "building")
+				EGroup_Filter(eg_pit_mines, "pit_mine", FILTER_KEEP)
+				
+				--get all houses
+				eg_houses = EGroup_CreateIfNotFound("eg_houses")
+				eg_houses = Player_GetAllEntitiesFromType(localPlayer, "building")
+				EGroup_Filter(eg_houses, "pit_mine", FILTER_REMOVE)
+				
+				if(eg_pit_mines ~= nil) then
+					--find the closest remaining pit mine
+					local nearestPitMine = 1
+					local distToPitMine = -1
+					for i = 1, EGroup_CountSpawned(eg_pit_mines) do
+						local entity = EGroup_GetEntityAt(eg_pit_mines, i)	
+						local currentHealth = Entity_GetHealthPercentage(entity)
+						if(currentHealth > 0) then
+							if(distToPitMine == -1 or Util_GetDistance(waveObject["waveGroup"], entity) < distToPitMine) then
+								distToPitMine = Util_GetDistance(waveObject["waveGroup"], entity)
+								nearestPitMine = i
+							end
+						end
+					end
+					
+					local nearestHouse = 1
+					local distToNearestHouse = -1
+					for i = 1, EGroup_CountSpawned(eg_houses) do
+						local entity = EGroup_GetEntityAt(eg_houses, i)	
+						local currentHealth = Entity_GetHealthPercentage(entity)
+						if(currentHealth > 0) then
+							if(distToNearestHouse == -1 or Util_GetDistance(waveObject["waveGroup"], entity) < distToNearestHouse) then
+								distToNearestHouse = Util_GetDistance(waveObject["waveGroup"], entity)
+								nearestHouse = i
+							end
+						end
+					end
+					
+					if(distToPitMine ~= -1 and distToNearestHouse ~= -1) then
+						--find pit mine cloeset to the cloeset house
+						local nearestPitMine2 = 1
+						local distToPitMine2 = -1
+						for i = 1, EGroup_CountSpawned(eg_pit_mines) do
+							local entity = EGroup_GetEntityAt(eg_pit_mines, i)	
+							local currentHealth = Entity_GetHealthPercentage(entity)
+							if(currentHealth > 0) then
+								if(distToPitMine2 == -1 or Util_GetDistance(entity, EGroup_GetEntityAt(eg_houses, nearestHouse)) < distToPitMine2) then
+									distToPitMine2 = Util_GetDistance(entity, EGroup_GetEntityAt(eg_houses, nearestHouse))
+									nearestPitMine2 = i
+								end
+							end
+						end
+						
+						local entity = EGroup_GetEntityAt(eg_pit_mines, nearestPitMine)	
+						EGroup_Single(eg_single, entity)
+						if(distToPitMine2 ~= -1) then
+							--true when the current pit mine has been destroyed
+							if(distToPitMine2 > 50) then
+								if(distToPitMine > 50 and SGroup_IsUnderAttack(waveObject["waveGroup"], ANY, 4) == false) then
+									--attack next mine (ignore nearby houses)
+									Cmd_Move(waveObject["waveGroup"], eg_single, false, false)
+								else
+									--attack move (also targets houses/units)
+									Cmd_AttackMove(waveObject["waveGroup"], eg_single, false, false)
+								end
+							else
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+end
+
+
+function ChallengeMission_TargetMines()
+	
+	eg_pit_mines = EGroup_CreateIfNotFound("eg_pit_mines")
+	sg_UnitsNearMine = SGroup_CreateIfNotFound("sg_UnitsNearMine")
+	
+	
+	local minesTargeted = false
+	local currentMarker = mkr_gold1
+	local housesLost = house1StartingCount - EGroup_CountSpawned(eg_houses1)
+	for p = 1, 3 do
+		if(p == 2) then
+			currentMarker = mkr_gold2
+			housesLost = house2StartingCount - EGroup_CountSpawned(eg_houses2)
+		elseif(p == 3) then
+			currentMarker = mkr_gold3
+			housesLost = house3StartingCount - EGroup_CountSpawned(eg_houses3)
+		end
+		
+		EGroup_Clear(eg_pit_mines)
+		Player_GetAllEntitiesNearMarker(localPlayer, eg_pit_mines, Util_GetPosition(currentMarker), 40)
+		EGroup_Filter(eg_pit_mines, "pit_mine", FILTER_KEEP)
+		
+		--if 2 houses have been destroyed already target the pit mine
+		if(EGroup_CountSpawned(eg_pit_mines) > 0 and housesLost >= 2) then
+			local entity = EGroup_GetEntityAt(eg_pit_mines, 1)
+			if(Entity_GetHealth(entity) > 1) then
+				
+				Player_GetAllSquadsNearMarker(enemyPlayer, sg_UnitsNearMine, Util_GetPosition(currentMarker), 40)
+				
+				if(SGroup_CountSpawned(sg_UnitsNearMine) > 0) then
+					
+					minesTargeted = true
+					
+					for i = 1, SGroup_CountSpawned(sg_UnitsNearMine) do
+						local squad = SGroup_GetSquadAt(sg_UnitsNearMine, i)
+						if(Squad_IsUnderAttack(squad, 4) == false and SGroup_IsUnderAttack(sg_UnitsNearMine, ANY, 4) == false) then
+							SGroup_Single(sg_single, squad)	
+							Cmd_Attack(sg_single, eg_pit_mines, false)
+						else
+							SGroup_Single(sg_single, squad)	
+							Cmd_AttackMove(sg_single, eg_pit_mines, false)
+						end
+					end
+					
+				end
+			end
+		end
+		
+		
+	end
+	
+	--only call if any mines are threatened
+	if(minesTargeted == true) then
+		ChallengeMission_CheckForIdleWaves()
+	end
+end
+
+
+function ChallengeMission_OnSquadKilled(context)
+	local victim = context.victim
+	
+	if(World_OwnsSquad(victim) == true) then
+		return
+	end
+	
+	if Squad_GetPlayerOwner(victim) == player2 then
+		--unreveal all areas on the squad's path that are not used by another group
+		
+		for i, waveObject in pairs(waveObjectList) do
+			
+			if(waveObject["waveDefeated"] == false) then
+				if(waveObject["waveGroup"] ~= nil) then
+					if(SGroup_CountSpawned(waveObject["waveGroup"]) == 0) then
+						waveObject["waveDefeated"] = true
+						
+						--unreveal all nodes not in use
+						currentPathLength = #waveWaypointPathsList[waveObject["wavePath"]]
+						for w = 1, currentPathLength do
+							if(ChallengeMission_CheckNodeInUse(i, waveObject["wavePath"], w) == false) then
+								--unreveal previous point
+								FOW_PlayerUnRevealArea(localPlayer, Util_GetPosition(waveWaypointPathsList[waveObject["wavePath"]][w]))
+							end
+						end
+					end
+				end
+			end
+			
+		end
+		
+		--if unit is a monk, check for dropped relic and destroy it
+		if(Squad_IsOfType(victim, "monk")) then
+			ChallengeMission_DespawnRelic(Util_GetPosition(victim))
+		end
+		
+		--check if lane is inactive
+		ChallengeMission_CheckLaneActive(1)
+		ChallengeMission_CheckLaneActive(2)
+		ChallengeMission_CheckLaneActive(3)
+	end
+end
+
+
+function ChallengeMission_CheckLaneActive(laneIndex)
+	local laneActive = false
+	for i, waveObject in pairs(waveObjectList) do
+		
+		if(waveObject["waveDefeated"] == false) then
+			
+			if(waveObject["wavePath"] == laneIndex) then
+				laneActive = true
+			end
+		end
+	end
+	
+	if(laneActive == false) then
+		--unreveal all nodes not in use
+		currentPathLength = #waveWaypointPathsList[laneIndex]
+		for w = 1, currentPathLength do
+			if(ChallengeMission_CheckNodeInUse(i, laneIndex, w) == false) then
+				--unreveal previous point
+				FOW_PlayerUnRevealArea(localPlayer, Util_GetPosition(waveWaypointPathsList[laneIndex][w]))
+			end
+		end
+		
+		--change owner of scouts
+		for i = 1, #gbetoScoutPath[laneIndex] do
+			gbetoScoutPath[laneIndex][i]["torchLit"] = false
+			SGroup_SetPlayerOwner(gbetoScoutPath[laneIndex][i]["sGroup"], neutralPlayer)
+			SGroup_Hide(gbetoScoutPath[laneIndex][i]["sGroup"], true)
+		end
+	end
+	
+end
+
+-- A building is destroyed
+function ChallengeMission_OnDestruction(context)
+	
+	if(context.victimOwner == localPlayer) then
+		if Entity_IsOfType(context.victim,"pit_mine") then
+			local refundAmount = 0
+			if(Util_GetDistance(mkr_gold1, context.victim) < 10) then
+				UI_DeleteMinimapBlip(minimapBlips[1].blip)
+				-- Play dialogue
+				Util_StartIntel(EVENTS.NarrWestMineDestroyed)
+				--grant extra gold after mine is destroyed
+				challengeGoldSpent = challengeGoldSpent - refundAmount
+				Player_SetResource( localPlayer, RT_Gold, Player_GetResource(localPlayer, RT_Gold) + refundAmount)
+			end
+			if(Util_GetDistance(mkr_gold2, context.victim) < 10) then
+				UI_DeleteMinimapBlip(minimapBlips[2].blip)
+				-- Play dialogue
+				Util_StartIntel(EVENTS.NarrSouthMineDestroyed)
+				--grant extra gold after mine is destroyed
+				challengeGoldSpent = challengeGoldSpent - refundAmount
+				Player_SetResource( localPlayer, RT_Gold, Player_GetResource(localPlayer, RT_Gold) + refundAmount)
+			end
+			if(Util_GetDistance(mkr_gold3, context.victim) < 10) then
+				UI_DeleteMinimapBlip(minimapBlips[3].blip)
+				-- Play dialogue
+				Util_StartIntel(EVENTS.NarrEastMineDestroyed)
+				--grant extra gold after mine is destroyed
+				challengeGoldSpent = challengeGoldSpent - refundAmount
+				Player_SetResource( localPlayer, RT_Gold, Player_GetResource(localPlayer, RT_Gold) + refundAmount)
+			end
+			
+			
+			eg_pit_mines = SGroup_CreateIfNotFound("eg_pit_mines")
+			eg_pit_mines = Player_GetAllEntitiesFromType(localPlayer, "pit_mine")
+			
+			
+			if(EGroup_Count(eg_pit_mines) == 0) then
+				if(_challenge.currentBenchmark == _challenge.benchmarks.unplaced)then
+					--fail if current objective is unplaced
+					Objective_Fail(OBJ_Victory, true, false)
+					Rule_AddOneShot(ChallengeMission_CheckVictory, 1)
+				else
+					Rule_AddOneShot(ChallengeMission_CheckVictory, 1)
+				end
+			end
+			
+			--check for unfinished paths
+			ChallengeMission_CheckForIdleWaves()
+		end
+	end
+end
+
+--? @shortdesc Creates a set of minimap paths along a list of markers
+function ChallengeMission_SetupMinimapPath(markerPath, pathIndex, waveIndex)
+	
+	--show blips for first 2 sets of waves and first big wave
+	for i = 1, #markerPath, 2 do
+		--add minimap blip
+		if((waveIndex > 0 and waveIndex <= 4) or waveIndex == 7) then
+			Rule_AddOneShot(ChallengeMission_SetupMinimapNode, i * .15, {markerPath = markerPath, pathIndex = pathIndex, nodeIndex = i})
+		end
+	end
+	
+	local timeElapsed = World_GetGameTime() - startTime
+	
+	--light all torches along the path
+	for i = 1, #gbetoScoutPath[pathIndex] do
+		--allyPlayer
+		SGroup_SetPlayerOwner(gbetoScoutPath[pathIndex][i]["sGroup"], allyPlayer)
+		SGroup_Hide(gbetoScoutPath[pathIndex][i]["sGroup"], false)
+		Modify_UnitSpeed(gbetoScoutPath[pathIndex][i]["sGroup"], 0, -1)
+		Cmd_HoldPosition(gbetoScoutPath[pathIndex][i]["sGroup"], gbetoScoutPath[pathIndex][i]["marker"], false)
+		SGroup_WarpToMarker(gbetoScoutPath[pathIndex][i]["sGroup"], gbetoScoutPath[pathIndex][i]["marker"])
+		Rule_AddOneShot(ChallengeMission_ScoutHoldPos, 3, {sIndex = pathIndex, sNode = i })
+		
+		SGroup_WarpToMarker(gbetoScoutPath[pathIndex][i]["sGroup"], gbetoScoutPath[pathIndex][i]["marker"])
+		gbetoScoutPath[pathIndex][i]["torchVisible"] = false
+		gbetoScoutPath[pathIndex][i]["torchLit"] = true
+		gbetoScoutPath[pathIndex][i]["torchStartTime"] = timeElapsed
+		
+	end
+end
+
+function ChallengeMission_ScoutHoldPos(context, data)
+	
+	local position = Util_GetPosition(gbetoScoutPath[data.sIndex][data.sNode]["marker"])
+	local facing1 = Util_GetPosition(mkr_enemy_house_01)
+	local facing2 = Util_GetPosition(mkr_enemy_house_02)
+	
+	
+	local squad = SGroup_GetSquadAt(gbetoScoutPath[data.sIndex][data.sNode]["sGroup"], 1)
+	
+	local entity = Squad_GetFirstEntity(squad)
+	Squad_SetPosition(squad, position, facing2)
+	Entity_SetPosition(entity, position)
+	Cmd_Stop(sg_temp)
+		
+	local unit = {
+		squadID = Squad_GetID(squad),
+		position = position,
+		facing = facing2,
+		row = row,
+	}
+	ChallengeMission_ScoutHoldGround(unit) 
+	
+	--Cmd_Attack(gbetoScoutPath[data.sIndex][data.sNode]["sGroup"], eg_enemy_building_01, false)
+	
+end
+
+--
+-- turn the "lock into the wall" on and off for a particular unit
+--
+function ChallengeMission_ScoutHoldGround(unit) 
+
+	if Squad_IsValid(unit.squadID) then
+	
+		local squad = Squad_FromID(unit.squadID)
+		
+		if Squad_Count(squad) >= 1 then 
+			
+			local entity = Squad_GetFirstEntity(squad)
+
+			SGroup_Single(sg_temp, squad)																-- shield wall units:
+			unit.modid_damage = Modify_WeaponDamage(sg_temp, "hardpoint_01", 3)								-- have more damage
+			unit.modid_shield = Modify_ReceivedDamage(sg_temp, 0.75)										-- take less damage themselves
+			
+			Entity_SetRangedBlocksPerAttacks(entity, 1, 1)
+			Entity_SetProjectileBlocksPerAttacks(entity, 1, 1)
+			Entity_SetMeleeBlocksPerAttacks(entity, 19, 20)
+			
+			
+			Cmd_HoldPosition(sg_temp, true, true)		-- hold position at current location
+			
+		end
+		
+	end
+	
+end
+
+function ChallengeMission_UpdateTorches()
+	local timeElapsed = World_GetGameTime() - startTime
+	
+	--torches do not light if triggered offscreen so we need to check to light them again
+	for p = 1, #gbetoScoutPath do
+		for i = 1, #gbetoScoutPath[p] do
+			if(gbetoScoutPath[p][i]["torchLit"] == true and gbetoScoutPath[p][i]["torchVisible"] == false) then
+				
+				if(timeElapsed >= gbetoScoutPath[p][i]["torchStartTime"] + 7) then
+					
+					if(Misc_IsPosOnScreen(Util_GetPosition(gbetoScoutPath[p][i]["sGroup"]), 1) == true) then
+						
+						SGroup_WarpToMarker(gbetoScoutPath[p][i]["sGroup"], gbetoScoutPath[p][i]["marker"])
+						
+						SGroup_DestroyAllSquads(gbetoScoutPath[p][i]["sGroup"])
+						SGroup_Clear(gbetoScoutPath[p][i]["sGroup"])
+						
+						UnitEntry_DeploySquads(neutralPlayer, gbetoScoutPath[p][i]["sGroup"], {{sbp = SBP.MALIAN.UNIT_GBETO_4_ONLY_TORCH_MAL, numSquads = 1 }}, gbetoScoutPath[p][i]["marker"])
+						
+						if(gbetoScoutPath[p][i]["roadSide"] == "right") then
+							Cmd_Attack(gbetoScoutPath[p][i]["sGroup"], eg_enemy_building_01, false)
+						else
+							Cmd_Attack(gbetoScoutPath[p][i]["sGroup"], eg_enemy_building_02, false)
+						end
+						
+						Modify_UnitSpeed(gbetoScoutPath[p][i]["sGroup"], 0, -1)
+						Cmd_HoldPosition(gbetoScoutPath[p][i]["sGroup"], gbetoScoutPath[p][i]["marker"], false)
+						SGroup_WarpToMarker(gbetoScoutPath[p][i]["sGroup"], gbetoScoutPath[p][i]["marker"])
+						SGroup_SetInvulnerable(gbetoScoutPath[p][i]["sGroup"], true, -1)
+						
+						
+						gbetoScoutPath[p][i]["torchVisible"] = true
+						Cmd_HoldPosition(gbetoScoutPath[p][i]["sGroup"], true, true)
+					end
+				end
+			end
+		end
+	end
+	
+	
+end
+
+--? @shortdesc Create temporary minimap blip at a marker
+function ChallengeMission_SetupMinimapNode(context, data)
+	--markerPath, pathIndex, nodeIndex
+	
+	if(data.nodeIndex == #(data.markerPath)) then
+		--add threat blip at target
+		UI_CreateMinimapBlip(data.markerPath[#data.markerPath], .5, "threat_group")
+		--objective_capture
+	end
+	
+	--add minimap blip
+	local entry = {
+		id = data.nodeIndex,
+		--blip  = UI_CreateMinimapBlip(data.markerPath[data.nodeIndex], 1.5, "general")
+		blip = UI_CreateMinimapBlipOnMarkerFrom(allyPlayer, data.markerPath[data.nodeIndex], 1.5, "general")
+	}
+	table.insert(path1Blips, entry)
+	
+	
+end
+
+
+
+function ChallengeMission_IntroduceDiplomacyUI()
+	
+	ChallengeMission_ShowTributeMenu()
+	
+	Rule_AddInterval(ChallengeMission_CheckDiplomacyReminder, 1)
+end
+
+function ChallengeMission_CheckDiplomacyReminder()
+	
+	current_gold_total = Player_GetResource(player1, RT_Gold)
+	
+	if current_gold_total >= 500 and current_gold_total > prev_gold_total and Diplomacy_IsExpanded() == false then
+		
+		if UI_IsXboxUI() then
+			
+			MalianTrainingGoals_AddDiplomacyPanelHint()
+			Rule_RemoveMe()
+			
+		else
+			Diplomacy_ShowDiplomacyUI(true)
+		end
+	end
+	
+	prev_gold_total = current_gold_total
+end
+
+function ChallengeMission_ShowTributeMenu()
+	Diplomacy_ShowUI(true)
+	
+	UI_ReinforcePanel_UpdateData()
+	Rule_AddInterval(UI_ReinforcePanel_UpdateData, 1)
+	
+end
+
+function ChallengeMission_HideTributeMenu()
+
+	Core_CallDelegateFunctions("DiplomacyEnabled", false)
+	Diplomacy_ShowUI(false)
+end
+
+
+--this function orders units to form a line form startPos to endPos with the curvature curveStrength
+function ArcFormation(startPos, endPos, inGroup, curveStrength, inQueued, inOffset)
+	if(SGroup_CountSpawned(inGroup) == 0) then
+		return
+	end
+	
+	local fLine = Util_GetPosition(startPos)
+	fLine["x"] = endPos["x"] - startPos["x"]
+	fLine["z"] = endPos["z"] - startPos["z"]
+	
+	local tLine = Util_GetPosition(startPos)
+	tLine["x"] = fLine["z"]
+	tLine["z"] = -fLine["x"]
+	
+	
+	for i = 1, SGroup_Count(inGroup) do
+		--offset should be from 0 to 1
+		local pointD = (i - inOffset) / SGroup_Count(inGroup)
+		
+		local unitDest = Util_GetPosition(startPos)
+		--calculate the destination for each unit
+		unitDest["x"] = startPos["x"] + (pointD * fLine["x"])
+		unitDest["z"] = startPos["z"] + (pointD * fLine["z"])
+		
+		local curveMultiplier = pointD - .5
+		
+		curveMultiplier = curveMultiplier * curveMultiplier
+		curveMultiplier = .25 - curveMultiplier
+		
+		unitDest["x"] = unitDest["x"] + (tLine["x"] * curveMultiplier * curveStrength)
+		unitDest["z"] = unitDest["z"] + (tLine["z"] * curveMultiplier * curveStrength)
+		
+		--isolate each unit and give it a move order
+		local squad = SGroup_GetSquadAt(inGroup, i)
+		SGroup_Single(sg_single, squad)
+		Cmd_Move(sg_single, unitDest, inQueued)
+	end
+	
+end
+

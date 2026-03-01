@@ -1,0 +1,1213 @@
+--
+-- Zhongdu 1215
+--
+-- Mongol Chapter 1
+--
+
+-- We need to import this for anything to work
+import("MissionOMatic/MissionOMatic.scar")
+-- We need to import custom objective files
+import("obj_zhongdu_secondary.scar")
+import("obj_zhongdu_phase1.scar")
+import("training_zhongdu.scar")
+
+--? @shortdesc Is the FIRST function called during setup
+function Mission_SetupPlayers()
+
+	-- Get IDs for all players
+	g_playerMongol = World_GetPlayerAt(1)
+	g_playerJin = World_GetPlayerAt(2)
+	g_playerNeutral = World_GetPlayerAt(3)
+	
+	-- The human player
+	Setup_SetPlayerName(g_playerMongol, Loc_GetString(11178718)) -- Genghis Khan
+	Player_SetCurrentAge(g_playerMongol, AGE_DARK)
+	Player_SetMaximumAge(g_playerMongol, AGE_FEUDAL)
+	--
+	-- The main enemy AI player
+	--
+	Setup_SetPlayerName(g_playerJin, Loc_GetString(11178715)) -- Jin Dynasty
+	Player_SetCurrentAge(g_playerJin, AGE_FEUDAL)
+	Player_SetMaximumAge(g_playerJin, AGE_FEUDAL)
+	-- Player relationship
+	Player_SetRelationship(g_playerMongol, g_playerJin, R_ENEMY)
+	Player_SetRelationship(g_playerJin, g_playerMongol, R_ENEMY)
+	--
+	-- The AI neutral holder player
+	--
+	Setup_SetPlayerName(g_playerNeutral, Loc_GetString(11178716))
+	Player_SetCurrentAge(g_playerNeutral, AGE_DARK)
+	Player_SetMaximumAge(g_playerNeutral, AGE_FEUDAL)
+	-- Relationship to player
+	Player_SetRelationship(g_playerMongol, g_playerNeutral, R_ALLY)
+	Player_SetRelationship(g_playerNeutral, g_playerMongol, R_ALLY)
+	-- Enemy also needs to consider this player an ally, so they don't attack neutral units
+	Player_SetRelationship(g_playerJin, g_playerNeutral, R_ALLY)
+	
+	AI_Enable(g_playerNeutral, false)
+	
+	-- Player/Leader LoS
+	World_EnableSharedLineOfSight(g_playerMongol, g_playerNeutral, true)
+	World_EnableSharedLineOfSight(g_playerNeutral, g_playerMongol, true)
+	
+end
+
+--? @shortdesc Is the SECOND function called during setup
+function Mission_SetupVariables()
+
+	-- Generic SGroups
+	sg_player = SGroup_CreateIfNotFound("sg_player")
+	sg_enemy = SGroup_CreateIfNotFound("sg_enemy")
+	
+	-- Special SGroups for this scenario
+	sg_intro_troops = SGroup_CreateIfNotFound("sg_intro_troops")
+	sg_intro_riders = SGroup_CreateIfNotFound("sg_intro_riders")
+	sg_intro_caravan = SGroup_CreateIfNotFound("sg_intro_caravan")
+	sg_intro_sheep = SGroup_CreateIfNotFound("sg_intro_sheep")
+	sg_outro_troops = SGroup_CreateIfNotFound("sg_outro_troops")
+	sg_outro_troops2 = SGroup_CreateIfNotFound("sg_outro_troops2")
+	sg_outro_genghis = SGroup_CreateIfNotFound("sg_outro_genghis")
+	sg_outro_troops3 = SGroup_CreateIfNotFound("sg_outro_troops3")
+	sg_outro_troops4 = SGroup_CreateIfNotFound("sg_outro_troops4")
+	sg_outro_troops5 = SGroup_CreateIfNotFound("sg_outro_troops5")
+	sg_outro_villagers = SGroup_CreateIfNotFound("sg_outro_villagers")
+	
+	sg_scouts_waiting = SGroup_CreateIfNotFound("sg_scouts_waiting")
+
+	sg_first_enemies = SGroup_CreateIfNotFound("sg_first_enemies")
+
+	eg_zhongdu = EGroup_CreateIfNotFound("eg_zhongdu")
+	eg_shunyi = EGroup_CreateIfNotFound("eg_shunyi")
+	eg_tongzhou = EGroup_CreateIfNotFound("eg_tongzhou")
+	eg_daxing = EGroup_CreateIfNotFound("eg_daxing")
+	eg_fangshan = EGroup_CreateIfNotFound("eg_fangshan")
+	eg_zhongdu_landmarks = EGroup_CreateIfNotFound("eg_zhongdu_landmarks")
+	eg_raid_targets = EGroup_CreateIfNotFound("eg_raid_targets")
+	eg_bridge_riverbend = EGroup_CreateIfNotFound("eg_bridge_riverbend")
+	
+	eg_market_shunyi = EGroup_CreateIfNotFound("eg_market_shunyi")
+	eg_market_tongzhou = EGroup_CreateIfNotFound("eg_market_tongzhou")
+	eg_market_daxing = EGroup_CreateIfNotFound("eg_market_daxing")
+	eg_market_fangshan = EGroup_CreateIfNotFound("eg_market_fangshan")
+	
+	-- Basic variables
+	g_numOutroCarts = 8
+	g_zhongduModifierList = {}
+	g_villagesDestroyed = 0
+	g_followerSystem = {
+		usesCavalry = 0,
+		usesInfantry = 0,
+		usesFood = 0,
+		usesResources = 0,
+		drumTimer = 0,
+	}
+	g_supplyCartFrequency = 120
+	g_supplyCartSpacing = g_supplyCartFrequency / 4
+	g_supplyCartStrength = 6
+	g_raidGrowthIncrements = 8
+	g_baseHuntingTimer = 30
+	
+	g_debugRaidClocker = 0
+	
+	-- Numbers for the guards within Zhongdu
+	g_guardsPrimary = Util_DifVar({8, 9, 18, 27})
+	g_guardsLandmarks = Util_DifVar({5, 6, 12, 18})
+	g_guardsSkirmish = Util_DifVar({2, 3, 6, 9})
+	g_guardsWalls = Util_DifVar({6, 8, 12, 16})
+	g_guardsTowns = Util_DifVar({4, 6, 12, 18})
+	
+	g_pos_market_shunyi = Util_GetPosition(eg_market_shunyi)
+	g_pos_market_tongzhou = Util_GetPosition(eg_market_tongzhou)
+	g_pos_market_daxing = Util_GetPosition(eg_market_daxing)
+	g_pos_market_fangshan = Util_GetPosition(eg_market_fangshan)
+	
+	g_supplyIntelLowPlayed = false
+	g_supplyIntelNonePlayed = false
+	g_intelFirstTraderPlayed = false
+	g_intelFirstMarketPlayed = false
+	g_intelFirstCounterattackPlayed = false
+	
+	-- Do this after specifying cart count
+	for cart = 1, g_numOutroCarts, 1 do
+		SGroup_CreateIfNotFound("sg_outro_cart_"..tostring(cart))
+	end
+	
+	-- Get a table of these positions
+	eg_world_resources = EGroup_CreateIfNotFound("eg_world_resources")
+	local resourcePositions = {}
+	local _GetEntityPos = function(gid, idx, eid)
+		table.insert(resourcePositions, Util_GetPosition(eid))
+	end
+	EGroup_ForEach(eg_world_resources, _GetEntityPos)
+	
+	-- Also make a group just for stone
+	eg_world_stone = EGroup_CreateIfNotFound("eg_world_stone")
+	EGroup_AddEGroup(eg_world_stone, eg_world_resources)
+	EGroup_Filter(eg_world_stone, BP_GetEntityBlueprint("resource_stone_deposit"), FILTER_KEEP)
+	
+	eg_settlement_1 = EGroup_CreateIfNotFound("eg_settlement_1")
+	HintPoint_Add(eg_settlement_1, true, "$11178717", LOCATION_LABEL_HEIGHT)
+	
+	-- Compile the tower EGroup
+	Player_GetAll(g_playerJin)
+	EGroup_Filter(eg_allentities, EBP.CHINESE.BUILDING_DEFENSE_TOWER_CHI, FILTER_KEEP)
+	eg_zhongdu_towers = EGroup_CreateIfNotFound("eg_zhongdu_towers")
+	EGroup_AddEGroup(eg_zhongdu_towers, eg_allentities)
+	Cmd_InstantUpgrade(eg_allentities, UPG.CHINESE.UPGRADE_TOWER_HANDCANNONSLITS_CHI)
+	
+	-- Set up the leader as a global variable
+	g_leaderGenghisKhan = Missionomatic_InitializeLeader({
+		name = 11162478, -- Genghis Khan
+		owner = g_playerMongol,
+		neutralHolder = g_playerNeutral,
+		respawns = { mkr_leader_respawn },
+	})
+	
+	-- Setup the raiding system
+	Raiding_Init({
+		player = g_playerJin,
+		spawnLocation = mkr_zhongdu_raid_spawn,
+		despawnLocation = mkr_scout_despawn,
+		scoutTargets = resourcePositions,
+		raiderComposition = {
+			{ type = "scar_spearman", ratio = 0.4, },
+			{ type = "scar_archer", ratio = 0.6, },
+		},
+		sendProbes = true,
+		activeScouting = false,
+		scoutTiming = Util_DifVar({330, 300, 270, 210}),
+		partyLimit = 1,
+		partySize = Util_DifVar({4, 4, 6, 9}),
+		raidTiming = Util_DifVar({480, 360, 240, 120}),
+		onIdle = Zhongdu_OnIdleRaiders,
+	})
+	
+	-- Objectives
+	Zhongdu_InitObjectives_Phase1()
+	Zhongdu_InitObjectives_Phase2()
+	ZhongduRaid_InitObjectives()
+	
+	--Set Invulnerable Buildings
+	EGroup_SetInvulnerable(eg_zhongdu_landmark_3, 0.05)
+	EGroup_SetInvulnerable(eg_zhongdu_landmark_2, 0.05)
+	EGroup_SetInvulnerable(eg_zhongdu_landmark_1, 0.05)
+	
+end
+
+function Zhongdu_Intro_Parade()
+	
+	--CONSIDER SPLITTING UP SGROUPS - SOME UNITS IN THIS SPAWN MOVE FASTER THAN OTHERS, AND NEED OTHER SPEED MODIFIERS TO POTENTIALLY SLOW DOWN.
+	
+	sg_intro_scout_01 = SGroup_CreateIfNotFound("sg_intro_scout_01")
+	sg_intro_knight_01 = SGroup_CreateIfNotFound("sg_intro_knight_01")
+	sg_intro_knight_02 = SGroup_CreateIfNotFound("sg_intro_knight_02")
+	sg_intro_knight_03 = SGroup_CreateIfNotFound("sg_intro_knight_03")
+	sg_intro_knight_04 = SGroup_CreateIfNotFound("sg_intro_knight_04")
+	sg_intro_horseman_05 = SGroup_CreateIfNotFound("sg_intro_horseman_05")
+	sg_intro_horseman_06 = SGroup_CreateIfNotFound("sg_intro_horseman_06")
+	sg_intro_horseman_07 = SGroup_CreateIfNotFound("sg_intro_horseman_07")
+	sg_intro_horseman_08 = SGroup_CreateIfNotFound("sg_intro_horseman_08")
+	sg_intro_mangudai_08 = SGroup_CreateIfNotFound("sg_intro_mangudai_08")
+	sg_intro_mangudai_09 = SGroup_CreateIfNotFound("sg_intro_mangudai_09")
+	sg_intro_mangudai_10 = SGroup_CreateIfNotFound("sg_intro_mangudai_10")
+	sg_intro_mangudai_11 = SGroup_CreateIfNotFound("sg_intro_mangudai_11")
+	sg_intro_mangudai_12 = SGroup_CreateIfNotFound("sg_intro_mangudai_12")
+	
+	sg_intro_knight_all = SGroup_CreateIfNotFound("sg_intro_knight_all")
+	sg_intro_horseman_all = SGroup_CreateIfNotFound("sg_intro_horseman_all")
+	sg_intro_mangudai_all = SGroup_CreateIfNotFound("sg_intro_mangudai_all")
+	
+	sg_intro_villager = SGroup_CreateIfNotFound("sg_intro_villager")
+	sg_intro_caravan = SGroup_CreateIfNotFound("sg_intro_caravan")
+	
+	local units_parade = {
+		{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 1, spawn = mkr_intro_parade01, sgroup = sg_intro_knight_01},
+		{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 3, spawn = mkr_intro_parade02, sgroup = sg_intro_knight_02},
+		{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 3, spawn = mkr_intro_parade03, sgroup = sg_intro_knight_03},
+		{sbp = SBP.MONGOL.UNIT_KNIGHT_2_MON, numSquads = 3, spawn = mkr_intro_parade04, sgroup = sg_intro_knight_04},
+		{sbp = SBP.MONGOL.UNIT_HORSEMAN_1_MON, numSquads = 1, spawn = mkr_intro_parade05, sgroup = sg_intro_horseman_05},
+		{sbp = SBP.MONGOL.UNIT_HORSEMAN_1_MON, numSquads = 3, spawn = mkr_intro_parade06, sgroup = sg_intro_horseman_06},
+		
+		--split below into new parade?????
+		--{sbp = SBP.MONGOL.UNIT_HORSEMAN_1_MON, numSquads = 3, spawn = mkr_intro_parade07, sgroup = sg_intro_horseman_07},
+		--{sbp = SBP.MONGOL.UNIT_HORSEMAN_1_MON, numSquads = 3, spawn = mkr_intro_parade08, sgroup = sg_intro_mangudai_08},
+		--{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 1, spawn = mkr_intro_parade09, sgroup = sg_intro_mangudai_09},
+		--{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 3, spawn = mkr_intro_parade10, sgroup = sg_intro_mangudai_10},
+		--{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 3, spawn = mkr_intro_parade11, sgroup = sg_intro_villager},
+		--{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 3, spawn = mkr_intro_parade12, sgroup = sg_intro_villager},
+		}
+	
+	local parade_markers = {
+		mkr_intro_parade_mid01,
+		mkr_intro_parade_mid02,
+		--mkr_intro_parade12_target,
+		--mkr_intro_parade11_target,
+		--mkr_intro_parade10_target,
+		--mkr_intro_parade09_target,
+		--mkr_intro_parade08_target,
+		--mkr_intro_parade07_target,
+		mkr_intro_parade06_target,
+		mkr_intro_parade05_target,
+		mkr_intro_parade04_target,
+		mkr_intro_parade03_target,
+		mkr_intro_parade02_target,
+		mkr_intro_parade01_target,
+	}
+	
+	Util_UnitParade(parade_markers, units_parade)
+	
+		local units_parade_back = {
+		{sbp = SBP.MONGOL.UNIT_HORSEMAN_1_MON, numSquads = 3, spawn = mkr_intro_parade07, sgroup = sg_intro_horseman_07},
+		{sbp = SBP.MONGOL.UNIT_HORSEMAN_1_MON, numSquads = 3, spawn = mkr_intro_parade08, sgroup = sg_intro_horseman_08},
+		{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 1, spawn = mkr_intro_parade09, sgroup = sg_intro_mangudai_09},
+		{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 3, spawn = mkr_intro_parade10, sgroup = sg_intro_mangudai_10},
+		{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 3, spawn = mkr_intro_parade11, sgroup = sg_intro_mangudai_11},
+		{sbp = SBP.MONGOL.UNIT_HORSEARCHER_2_MON, numSquads = 3, spawn = mkr_intro_parade12, sgroup = sg_intro_mangudai_12},
+	}
+	
+	local parade_markers_back = {
+		mkr_intro_parade05,
+		mkr_intro_parade03,
+		mkr_intro_parade01,
+		mkr_intro_parade_mid02,
+	--	mkr_intro_parade05_target,
+		mkr_intro_parade12_target,
+		mkr_intro_parade11_target,
+		mkr_intro_parade10_target,
+		mkr_intro_parade09_target,
+		mkr_intro_parade08_target,
+		mkr_intro_parade07_target,
+	}
+	
+	Util_UnitParade(parade_markers_back, units_parade_back)
+	
+	SGroup_AddGroups(sg_intro_knight_all, {sg_intro_knight_01, sg_intro_knight_02, sg_intro_knight_03, sg_intro_knight_04})
+	SGroup_AddGroups(sg_intro_horseman_all, {sg_intro_horseman_05, sg_intro_horseman_06, sg_intro_horseman_07, sg_intro_horseman_08})
+	SGroup_AddGroups(sg_intro_mangudai_all, {sg_intro_mangudai_08, sg_intro_mangudai_09, sg_intro_mangudai_10, sg_intro_mangudai_11, sg_intro_mangudai_12})
+	
+	intro_ScoutSpeed_Mod = Modify_UnitSpeed(sg_intro_scout_01, 0.7)
+	intro_KnightSpeed_Mod = Modify_UnitSpeed(sg_intro_knight_all, 0.8)
+	intro_HorsemanSpeed_Mod = Modify_UnitSpeed(sg_intro_horseman_all, 0.7)
+	intro_MangudaiSpeed_Mod = Modify_UnitSpeed(sg_intro_mangudai_all, 0.7)
+
+end
+
+--? @shortdesc Is the THIRD function called during setup
+function Mission_SetRestrictions()	-- set up any restrictions (i.e. locking out units, etc) in here
+
+	-- Set tech based on difficulty and age
+	PlayerUpgrades_Auto(g_playerMongol, true)
+	PlayerUpgrades_Auto(g_playerJin, false)
+	PlayerUpgrades_Auto(g_playerNeutral, true)
+
+	-- Give players incendiary arrows. Ranged units are utterly infuriating to play with without them.
+	Player_CompleteUpgrade(g_playerMongol, UPG.MONGOL.UPGRADE_RANGED_INCENDIARY_MON)
+	
+	--Player does not reach an age to make use of improved siege options
+	Player_SetUpgradeAvailability(g_playerMongol, UPG.MONGOL.UPGRADE_IMPROVED_SIEGE_ENGINEERS_MON, ITEM_REMOVED)
+	
+	-- If we're on easy, remove all outposts from villages. They are perceptually intimidating and cause approach anxiety.
+	if Game_GetSPDifficulty() <= GD_NORMAL then
+		Player_GetAllEntitiesNearMarker(g_playerJin, eg_temp, mkr_jin_shunyi, 100)
+		EGroup_Filter(eg_temp, EBP.CHINESE.BUILDING_DEFENSE_OUTPOST_CHI, FILTER_KEEP)
+		EGroup_DestroyAllEntities(eg_temp)
+		
+		Player_GetAllEntitiesNearMarker(g_playerJin, eg_temp, mkr_jin_tongzhou, 100)
+		EGroup_Filter(eg_temp, EBP.CHINESE.BUILDING_DEFENSE_OUTPOST_CHI, FILTER_KEEP)
+		EGroup_DestroyAllEntities(eg_temp)
+		
+		Player_GetAllEntitiesNearMarker(g_playerJin, eg_temp, mkr_jin_daxing, 100)
+		EGroup_Filter(eg_temp, EBP.CHINESE.BUILDING_DEFENSE_OUTPOST_CHI, FILTER_KEEP)
+		EGroup_DestroyAllEntities(eg_temp)
+		
+		Player_GetAllEntitiesNearMarker(g_playerJin, eg_temp, mkr_jin_fangshan, 100)
+		EGroup_Filter(eg_temp, EBP.CHINESE.BUILDING_DEFENSE_OUTPOST_CHI, FILTER_KEEP)
+		EGroup_DestroyAllEntities(eg_temp)
+		
+		-- Also remove this bridge, which allows the enemy to attack from angles that are hard for low-difficulty players to understand
+		EGroup_SetAvgHealth(eg_bridge_riverbend, 0.0)
+		
+	end
+	
+	
+	
+	-- Make sure Jin fortifications actually shoot
+	Player_GetAll(g_playerJin)
+	EGroup_Filter(eg_allentities, EBP.CHINESE.BUILDING_DEFENSE_OUTPOST_CHI, FILTER_KEEP)
+	-- On the hardest difficulty, make them Stone outposts to really mess with players
+	if Game_GetSPDifficulty() == GD_EXPERT then 
+		Cmd_InstantUpgrade(eg_allentities, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	end
+	-- But don't add cannons to that first one, ever
+	EGroup_RemoveGroup(eg_allentities, eg_do_not_upgrade)
+	Cmd_InstantUpgrade(eg_allentities, UPG.CHINESE.UPGRADE_OUTPOST_HANDCANNONSLITS_CHI)
+	
+	-- Make sure Jin landmarks actually burn
+	Modify_OnFireHealthPercentage(eg_zhongdu_landmark_1, MUT_Addition, 0.25)
+	Modify_OnFireHealthPercentage(eg_zhongdu_landmark_2, MUT_Addition, 0.25)
+	Modify_OnFireHealthPercentage(eg_zhongdu_landmark_3, MUT_Addition, 0.25)
+	
+	-- Also make the markets burn faster to reward hit-and-runs
+	Modify_OnFireHealthPercentage(eg_market_shunyi, MUT_Addition, 0.35)
+	Modify_OnFireHealthPercentage(eg_market_tongzhou, MUT_Addition, 0.35)
+	Modify_OnFireHealthPercentage(eg_market_daxing, MUT_Addition, 0.35)
+	Modify_OnFireHealthPercentage(eg_market_fangshan, MUT_Addition, 0.35)
+	
+	-- We could do this, but it breaks a pattern:
+	-- UI_SetPlayerDataContext(g_playerMongol, { PopulationCapOn = false })
+	-- Instead, we want to do this, for safety:
+	for index, player in pairs(PLAYERS) do
+		if player.isLocal == true then
+			player.scarModel.PopulationCapOn  = false
+			UI_SetPlayerDataContext(g_playerMongol, player.scarModel)
+		end
+    end
+	
+end
+
+--? @shortdesc Is the FIFTH function called during setup
+function Mission_Preset()	-- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)
+
+	-- Enable player colours
+	PlayerColour_Enable()
+   
+    Game_SetPlayerSlotColour(g_playerMongol, 1)
+    Game_SetPlayerUISlotColour(g_playerMongol, 1)
+	
+    Game_SetPlayerSlotColour(g_playerJin, 2)
+    Game_SetPlayerUISlotColour(g_playerJin, 2)
+	
+    Game_SetPlayerSlotColour(g_playerNeutral, 1)
+    Game_SetPlayerUISlotColour(g_playerNeutral, 1)
+	
+	-- Set up rules
+	Rule_AddGlobalEvent(Zhongdu_OnAbilityExecuted, GE_AbilityExecuted)
+	Rule_AddGlobalEvent(Zhongdu_OnSquadKilled, GE_SquadKilled)
+	Rule_AddGlobalEvent(Zhongdu_OnEntityKilled, GE_EntityKilled)
+	Rule_AddInterval(Zhongdu_OnPlayerBreach, 1)
+	Rule_AddInterval(Zhongdu_MonitorSkirmishers, 1)
+	
+	if UI_IsXboxControllerUI() then
+		Rule_AddInterval(Zhongdu_WatchForAgeUp_Xbox, 1)
+		Rule_AddInterval(Zhongdu_WatchForBlacksmith_Xbox, 1)
+	else
+		Rule_AddInterval(Zhongdu_WatchForAgeUp, 1)
+		Rule_AddInterval(Zhongdu_WatchForBlacksmith, 1)
+	end
+	
+	
+	
+	-- Configure the rules
+	Rule_AddInterval(Zhongdu_GrowRaidSize, 180)
+	Rule_AddOneShot(Zhongdu_DelayScouting, 90)
+	Rule_AddInterval(Zhongdu_WarnAgainstCity, 1)
+	
+	-- Audio considerations
+	if Music_UnlockIntensity then
+		Sound_SetForceMusic(false)
+	else
+		Sound_SetForceMusic(true)
+	end
+	-- We'll start off with Chinese music, and transition to Mongol music later
+	Sound_SetMusicRaceCode("chinese")
+	
+	-- Music Triggers	
+    AudioTrigger_InitAreaTrigger({
+		marker = mkr_jin_shunyi,
+		audioCue = MUSIC_COMBAT,
+		triggeringPlayer = g_playerMongol,
+		startAboveUnitCount = 5,
+		duration = 10,
+	})
+	
+	AudioTrigger_InitAreaTrigger({
+		marker = mkr_jin_tongzhou,
+		audioCue = MUSIC_COMBAT,
+		triggeringPlayer = g_playerMongol,
+		startAboveUnitCount = 5,
+		duration = 30,
+	})
+	
+	AudioTrigger_InitAreaTrigger({
+		marker = mkr_jin_fangshan,
+		audioCue = MUSIC_TENSE_COMBAT,
+		triggeringPlayer = g_playerMongol,
+		startAboveUnitCount = 5,
+		duration = 30,
+	})
+	
+	AudioTrigger_InitAreaTrigger({
+		marker = mkr_jin_daxing,
+		audioCue = MUSIC_TENSE_COMBAT,
+		triggeringPlayer = g_playerMongol,
+		startAboveUnitCount = 5,
+		duration = 30,
+	})	
+	
+	AudioTrigger_InitAreaTrigger({
+		marker = mkr_jin_zhongdu,
+		audioCue = MUSIC_COMBAT_RARE,
+		triggeringPlayer = g_playerMongol,
+		startAboveUnitCount = 5,
+		duration = 40,
+	})
+	
+	SGroup_Clear(sg_temp)
+	SGroup_AddGroup(sg_temp, sg_intro_troops)
+	SGroup_Filter(sg_temp, "scar_scout", FILTER_KEEP)
+	if SGroup_Count(sg_temp) > 1 then
+		local scoutSquad = SGroup_GetSpawnedSquadAt(sg_temp, 1)
+		SGroup_SetWorldOwned(sg_intro_sheep)
+		print("Herding sheep!")
+	end
+	
+	Cmd_FormationMove(sg_intro_caravan, mkr_mongol_start_destination_2, false)
+	Cmd_FormationMove(sg_intro_troops, mkr_mongol_start_destination_1, false)
+	Cmd_FormationMove(sg_intro_riders, mkr_mongol_start_destination_riders, false)
+	Rule_AddOneShot(GenghisMove_Intro, 12) --changed from 8 to 12
+	
+end
+
+function GenghisMove_Intro()
+	
+	Cmd_FormationMove(g_leaderGenghisKhan.sgroup, mkr_mongol_start_leader, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_mongol_start_leader), Marker_GetDirection(mkr_mongol_start_leader)))
+	
+end
+
+--? @shortdesc Is the SIXTH function called during setup
+function Mission_Start()
+	
+	print("Mission Start with difficulty "..Game_GetSPDifficulty())
+	
+	-- start the opening objectives (if you're using ObjectiveTable style objectives)
+	Objective_Start(OBJ_Raid)
+	
+	-- Sets initial player resources
+	Player_SetResource(g_playerMongol, RT_Food, 0)
+	Player_SetResource(g_playerMongol, RT_Wood, 0)
+	Player_SetResource(g_playerMongol, RT_Stone, 0)
+	Player_SetResource(g_playerMongol, RT_Gold, 0)
+	
+	for idx = 1, 6 do
+		local moduleName = "WallArchers"..tostring(idx)
+		local archerSgroup = MissionOMatic_FindModule(moduleName).sgroup
+		LocalCommand_SquadExt(g_playerJin, archerSgroup, SCMD_HoldPosition, 1, false)
+	end
+	
+	TrackTradeCartsForPlayers({g_playerJin})
+	
+	local testScout = SGroup_GetSquadAt(sg_scouts_waiting, 1)
+	print(string.format("ZHONGDU: Scout health at %s of %s", Squad_GetHealth(testScout), Squad_GetHealthMax(testScout)))
+	SGroup_SetAvgHealth(sg_scouts_waiting, 1.0)
+	
+	Zhongdu_SetupSheepRallyHint()
+	
+	Zhongdu_UpdateDefences(2)
+	
+end
+
+--? @shortdesc Is the FOURTH function called during setup
+function GetRecipe()
+
+	local recipe = {
+
+		missionType = "Sack Zhongdu",
+		campaign = "mongol",
+		chapter = "chapter1",
+		phase = "mission_zhongdu",
+		
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_mongol_shock_and_awe",
+				-- Zhongdu
+				title = 11160686,
+				-- 1215
+				date = 11160687,
+			},
+		},
+		
+		introNIS = EVENTS.Zhongdu_Intro,
+		outroNIS = EVENTS.Zhongdu_Outro,
+		
+		locations = {
+			-- Enemy capital
+			{ descriptor = "Zhongdu", marker = mkr_jin_zhongdu, player = g_playerJin, egroup = eg_zhongdu, },
+			-- Surrounding villages
+			{ descriptor = "Shunyi", marker = mkr_jin_shunyi, player = g_playerJin, egroup = eg_shunyi, },
+			{ descriptor = "Tongzhou", marker = mkr_jin_tongzhou, player = g_playerJin, egroup = eg_tongzhou, },
+			{ descriptor = "Daxing", marker = mkr_jin_daxing, player = g_playerJin, egroup = eg_daxing, },
+			{ descriptor = "Fangshan", marker = mkr_jin_fangshan, player = g_playerJin, egroup = eg_fangshan, },
+		},
+		modules = {
+			-- PLAYER UNITS
+			{
+				descriptor = "PlayerStartLeader",
+				type = "UnitSpawner",
+				player = g_playerMongol,
+				sgroup = g_leaderGenghisKhan.sgroup,
+				
+				spawnLocation = mkr_genghis_start,
+				units = {
+					{ sbp = BP_GetSquadBlueprint("unit_genghis_khan_cmp_mon"), numSquads = 1, tag = "genghis_khan", },
+				},
+			},
+			{
+				descriptor = "PlayerStartScouts",
+				type = "UnitSpawner",
+				player = g_playerMongol,
+				
+				spawnLocation = mkr_scouts_waiting,
+				units = {
+					{ sbp = BP_GetSquadBlueprint("unit_scout_female_mon"), numSquads = 2, sgroup = sg_scouts_waiting, },
+				},
+			},
+			-- ENEMY GARRISONS
+			{
+				descriptor = "GuardsZhongdu",
+				
+				type = "Defend",
+				marker = mkr_zhongdu_garrison,
+				player = g_playerJin,
+				faceHumanPlayer = true,
+				units = {
+					{ type = "scar_spearman", numSquads = g_guardsPrimary * 0.4, },
+					{ type = "scar_archer", numSquads = g_guardsPrimary * 0.6, },
+				},
+			},
+			{
+				descriptor = "GuardsLandmark1",
+				type = "Defend",
+				marker = mkr_jin_landmark_1,
+				player = g_playerJin,
+				faceHumanPlayer = true,
+				units = {
+					{ type = "scar_manatarms", numSquads = g_guardsLandmarks * 0.45, },
+					{ type = "scar_repeater_crossbow", numSquads = g_guardsLandmarks * 0.45, },
+					{ type = "scar_monk", numSquads = g_guardsLandmarks * 0.1, },
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "ZhongduSkirmish1",
+				player = g_playerJin,
+				targets = { mkr_zhongdu_skirmish_1a, mkr_zhongdu_skirmish_1b, mkr_zhongdu_skirmish_1c },
+				spawnLocation = mkr_zhongdu_skirmish_1a,
+				targetingType = ARMY_TARGETING_REVERSE,
+				units = {
+					{ type = "scar_spearman", numSquads = g_guardsSkirmish * 0.4, },
+					{ type = "scar_archer", numSquads = g_guardsSkirmish * 0.6, },
+				},
+			},
+			{
+				descriptor = "GuardsLandmark2",
+				type = "Defend",
+				marker = mkr_jin_landmark_2,
+				player = g_playerJin,
+				faceHumanPlayer = true,
+				units = {
+					{ type = "scar_manatarms", numSquads = g_guardsLandmarks * 0.45, },
+					{ type = "scar_grenadier", numSquads = g_guardsLandmarks * 0.45, },
+					{ type = "scar_monk", numSquads = g_guardsLandmarks * 0.1, },
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "ZhongduSkirmish2",
+				player = g_playerJin,
+				targets = { mkr_zhongdu_skirmish_2a, mkr_zhongdu_skirmish_2b, mkr_zhongdu_skirmish_2c },
+				spawnLocation = mkr_zhongdu_skirmish_2a,
+				targetingType = ARMY_TARGETING_REVERSE,
+				units = {
+					{ type = "scar_spearman", numSquads = g_guardsSkirmish * 0.4, },
+					{ type = "scar_archer", numSquads = g_guardsSkirmish * 0.6, },
+				},
+			},
+			{
+				descriptor = "GuardsLandmark3",
+				type = "Defend",
+				marker = mkr_jin_landmark_3,
+				player = g_playerJin,
+				faceHumanPlayer = true,
+				units = {
+					{ type = "scar_manatarms", numSquads = g_guardsLandmarks * 0.45, },
+					{ type = "scar_crossbowman", numSquads = g_guardsLandmarks * 0.45, },
+					{ type = "scar_monk", numSquads = g_guardsLandmarks * 0.1, },
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "ZhongduSkirmish3",
+				player = g_playerJin,
+				targets = { mkr_zhongdu_skirmish_3a, mkr_zhongdu_skirmish_3b, mkr_zhongdu_skirmish_3c },
+				spawnLocation = mkr_zhongdu_skirmish_3a,
+				targetingType = ARMY_TARGETING_REVERSE,
+				units = {
+					{ type = "scar_spearman", numSquads = g_guardsSkirmish * 0.4, },
+					{ type = "scar_archer", numSquads = g_guardsSkirmish * 0.6, },
+				},
+			},
+			{
+				descriptor = "WallArchers1", type = "UnitSpawner", spawnLocation = mkr_zhongdu_archers_1, player = g_playerJin,
+				units = {
+					{ type = "scar_grenadier", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_1, },
+					{ type = "scar_crossbowman", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_1, },
+				},
+			},
+			{
+				descriptor = "WallArchers2", type = "UnitSpawner", spawnLocation = mkr_zhongdu_archers_2, player = g_playerJin,
+				units = {
+					{ type = "scar_repeater_crossbow", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_2, },
+					{ type = "scar_crossbowman", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_2, },
+				},
+			},
+			{
+				descriptor = "WallArchers3", type = "UnitSpawner", spawnLocation = mkr_zhongdu_archers_3, player = g_playerJin,
+				units = {
+					{ type = "scar_grenadier", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_3, },
+					{ type = "scar_crossbowman", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_3, },
+				},
+			},
+			{
+				descriptor = "WallArchers4", type = "UnitSpawner", spawnLocation = mkr_zhongdu_archers_4, player = g_playerJin,
+				units = {
+					{ type = "scar_repeater_crossbow", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_4, },
+					{ type = "scar_crossbowman", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_4, },
+				},
+			},
+			{
+				descriptor = "WallArchers5", type = "UnitSpawner", spawnLocation = mkr_zhongdu_archers_5, player = g_playerJin,
+				units = {
+					{ type = "scar_grenadier", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_5, },
+					{ type = "scar_crossbowman", g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_5, },
+				},
+			},
+			{
+				descriptor = "WallArchers6", type = "UnitSpawner", spawnLocation = mkr_zhongdu_archers_6, player = g_playerJin,
+				units = {
+					{ type = "scar_repeater_crossbow", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_6, },
+					{ type = "scar_crossbowman", numSquads = g_guardsWalls * 0.5, destination = mkr_zhongdu_archers_6, },
+				},
+			},
+			{
+				descriptor = "GuardsShunyi",
+				
+				type = "Defend",
+				location = "Shunyi",
+				player = g_playerJin,
+				faceHumanPlayer = true,
+				spawnLocation = mkr_jin_shunyi_guards,
+				units = {
+					{ sbp = BP_GetSquadBlueprint("unit_militia_cmp_chi"), numSquads = g_guardsTowns * 0.5, },
+					{ type = "scar_repeater_crossbow", numSquads = g_guardsTowns * 0.5, },
+				},
+			},
+			{
+				descriptor = "GuardsTongzhou",
+				
+				type = "Defend",
+				location = "Tongzhou",
+				player = g_playerJin,
+				faceHumanPlayer = true,
+				spawnLocation = mkr_jin_tongzhou_guards,
+				units = {
+					{ sbp = BP_GetSquadBlueprint("unit_militia_cmp_chi"), numSquads = g_guardsTowns * 0.5, },
+					{ type = "scar_archer", numSquads = g_guardsTowns * 0.5, },
+				},
+			},
+			{
+				descriptor = "GuardsDaxing",
+				
+				type = "Defend",
+				location = "Daxing",
+				player = g_playerJin,
+				faceHumanPlayer = true,
+				units = {
+					{ sbp = BP_GetSquadBlueprint("unit_militia_cmp_chi"), numSquads = g_guardsTowns * 0.15, spawn = mkr_jin_daxing_guards1, },
+					{ type = "scar_archer", numSquads = g_guardsTowns * 0.15, spawn = mkr_jin_daxing_guards1, },
+					
+					{ sbp = BP_GetSquadBlueprint("unit_militia_cmp_chi"), numSquads = g_guardsTowns * 0.15, spawn = mkr_jin_daxing_guards2, },
+					{ type = "scar_archer", numSquads = g_guardsTowns * 0.15, spawn = mkr_jin_daxing_guards2, },
+					
+					{ sbp = BP_GetSquadBlueprint("unit_militia_cmp_chi"), numSquads = g_guardsTowns * 0.2, spawn = mkr_jin_daxing_guards3, },
+					{ type = "scar_archer", numSquads = g_guardsTowns * 0.2, spawn = mkr_jin_daxing_guards3, },
+				},
+			},
+			{
+				descriptor = "GuardsFangshan",
+				
+				type = "Defend",
+				location = "Fangshan",
+				player = g_playerJin,
+				faceHumanPlayer = true,
+				
+				units = {
+					{ sbp = BP_GetSquadBlueprint("unit_militia_cmp_chi"), numSquads = g_guardsTowns * 0.5, spawn = mkr_jin_fangshan_guards1, },
+					{ type = "scar_archer", numSquads = g_guardsTowns * 0.5, spawn = mkr_jin_fangshan_guards2, },
+				},
+			},
+			-- ENEMY ROAD POSTS
+			{
+				descriptor = "Runners1",
+				type = "Defend",
+				marker = mkr_post_road_1,
+				player = g_playerJin,
+				sgroup = sg_first_enemies,
+				units = {
+					{ type = "scar_spearman", numSquads = 3, },
+					{ type = "scar_archer", numSquads = 3, },
+					{ type = "scar_scout", numSquads = 1, },
+				},
+				withdrawData = {
+					onSightedPlayer = g_playerMongol,
+					withdrawDestination = mkr_jin_zhongdu,
+					dissolveModule = "GuardsZhongdu",
+					onForceWithdrawFunc = function()
+						Sound_PlayWallaFearOnSGroup(sg_first_enemies)
+					end,
+				},
+			},
+			{
+				descriptor = "WarningPost1",
+				type = "Defend",
+				marker = mkr_jin_warning_1,
+				player = g_playerJin,
+				units = {
+					{ type = "scar_spearman", numSquads = 4, },
+				},
+			},
+			{
+				descriptor = "WarningPost2",
+				type = "Defend",
+				marker = mkr_jin_warning_2,
+				player = g_playerJin,
+				units = {
+					{ type = "scar_spearman", numSquads = 4, },
+				},
+			},
+			{
+				descriptor = "WarningPost3",
+				type = "Defend",
+				marker = mkr_jin_warning_3,
+				player = g_playerJin,
+				units = {
+					{ type = "scar_spearman", numSquads = 4, },
+				},
+			},
+			{
+				type = "RovingArmy",
+				descriptor = "WarningPatrol",
+				player = g_playerJin,
+				targets = { mkr_jin_warning_patrol_1, mkr_jin_warning_patrol_2, },
+				spawnLocation = mkr_jin_warning_patrol_1,
+				targetingType = ARMY_TARGETING_REVERSE,
+				units = {
+					{ type = "scar_spearman", numSquads = 4, },
+					{ type = "scar_archer", numSquads = 6, },
+				},
+			},
+		},
+		objectives = {
+		},
+		playbill = {
+		},
+		audioSettings = { 
+            campaignName = "mon",
+            missionName = "rts1215zhongdu",
+        },
+		preStart = {
+			actions = {
+				{
+					action = "SetMusicIntensity",
+					intensity = MUSIC_TENSE_RARE,
+				},
+			},
+		},
+	}
+	
+	return recipe
+	
+end
+
+--? @shortdesc Marks the arrival of a caravan in Zhongdu by removing the caravan and spawning soldiers to the Jin
+function Zhongdu_OnAbilityExecuted(context)
+	
+	-- We want to watch this ability
+	g_relicDeposited = BP_GetAbilityBlueprint("monk_statetree_deposit_relic")
+	if context.ability == g_relicDeposited then
+		
+		-- If the Target is owned by a player (this is done here instead of where context.executer is found because context.target is a position instead of an entity for Monk Dropped Relic, which gets weird)
+		if not World_OwnsEntity(context.target) then
+			-- Grab ID of target
+			targetPlayerID = Entity_GetPlayerOwner(context.target)		
+		end
+		
+		-- Ping minimap at Monk's pickup location
+		Religious_PingMinimap(context.target)
+		-- This is the monk itself: context.executer
+		
+	end
+	
+end
+
+--? @shortdesc Watches for the killing of Jin units
+function Zhongdu_OnSquadKilled(context, data)
+	
+	local victim = context.victim
+	if World_OwnsSquad(victim) == false and Squad_GetPlayerOwner(victim) == g_playerJin then
+		
+		-- Killing a scout should trigger the start of the sallies, but after that should do nothing
+		if Game_GetSPDifficulty() >= GD_NORMAL and (g_raidSystem.partyLimit > 0 or Squad_IsOfType(victim, "scar_scout") == true) and MissionOMatic_SquadHasTag(victim, "probe") == false then
+			local deathPos = Util_GetPosition(context.victim)
+			-- Issue a raid against anything near the point of death
+			local unitRevengeTarget = SGroup_CreateUnique("sally_target")
+			Player_GetAllSquadsNearMarker(g_playerMongol, unitRevengeTarget, deathPos, 30)
+			if SGroup_Count(unitRevengeTarget) > 0 then
+				local raidRevengeSquad = Raiding_TriggerRaid(unitRevengeTarget)
+				if raidRevengeSquad ~= nil then
+					g_baseHuntingTimer = g_baseHuntingTimer + Util_DifVar({4, 4, 2, 1})
+					Zhongdu_DebugRaidTiming("squad revenge")
+				end
+			end
+			
+			-- Killing a trader should increment the progress on that objective
+			
+		end
+		
+		-- Also handle trader destruction as a 
+		if Squad_IsOfType(victim, "scar_trade_cart") == true and Objective_IsComplete(SOBJ_StopTraders) == false then
+			SOBJ_StopTraders.progressCurrent = SOBJ_StopTraders.progressCurrent + 5
+			print("SOBJ_StopTraders: progress at "..tostring(SOBJ_StopTraders.progressCurrent))
+			
+			-- Also, the first time, play intel
+			if g_intelFirstTraderPlayed == false then
+				Util_StartIntel(EVENTS.Eliminate_Trader)
+				g_intelFirstTraderPlayed = true
+			end
+		end
+		
+	end
+	
+end
+
+--? @shortdesc For debugging raid timing
+function Zhongdu_DebugRaidTiming(causeString)
+	
+	local thisTime = World_GetGameTime()
+	print(string.format("REQUESTING RAID (%s) at %s seconds, %s seconds since last time", causeString, thisTime, thisTime - g_debugRaidClocker))
+	g_debugRaidClocker = thisTime
+	
+end
+
+--? @shortdesc Checks for entity destruction
+function Zhongdu_OnEntityKilled(context, data)
+
+	local killer = context.killer
+	local victim = context.victim
+	local victimOwner = context.victimOwner
+	
+	-- We don't need to know who the killer is. It's actually easier to debug if we don't care
+	if scartype(victimOwner) == ST_PLAYER and victimOwner == g_playerJin then
+
+		if Game_GetSPDifficulty() >= GD_NORMAL and g_raidSystem.partyLimit > 0 then
+			-- Where was the entity killed?
+			local deathPos = Util_GetPosition(victim)
+			-- Issue a raid against anything near the point of death
+			local buildingRevengeTarget = SGroup_CreateUnique("sally_target")
+			Player_GetAllSquadsNearMarker(g_playerMongol, buildingRevengeTarget, deathPos, 30)
+			if SGroup_Count(buildingRevengeTarget) > 0 then
+				local raidRevengeBurn = Raiding_TriggerRaid(buildingRevengeTarget)
+				if raidRevengeBurn ~= nil then
+					g_baseHuntingTimer = g_baseHuntingTimer + 20
+					Zhongdu_DebugRaidTiming("burn revenge")
+				end
+			end
+		end
+			
+		-- If one of the landmarks is getting destroyed, debug it
+		if Entity_IsOfType(victim, "landmark") == true then
+			print("ALERT: Landmark destroyed?! Victim:")
+			Util_PrintTable(victim)
+			print(string.format("Was invulnerable? %s", Entity_IsInvulnerable(victim)))
+			print(string.format("Was on fire? %s", Entity_IsBurning(victim)))
+			
+			if killer == nil then
+				print("ALERT: Landmark destroyed?! Nil killer table!")
+			else
+				print("ALERT: Landmark destroyed?! Killer:")
+				Util_PrintTable(killer)
+			end
+		end
+		
+	-- If player buildings are getting destroyed, boost the timer between now and the next attack on their base
+	elseif scartype(victimOwner) == ST_PLAYER and victimOwner == g_playerMongol and Entity_IsOfType(victim, "building") then
+		g_baseHuntingTimer = g_baseHuntingTimer + Util_DifVar({120, 120, 60, 30})
+		
+	end
+end
+
+--? @shortdesc Creates a Mongol parade for the outro cinematic
+function Zhongdu_OutroParade()
+	
+	-- Delete any leftover units
+	Player_GetAll(g_playerMongol)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	
+	Player_GetAll(g_playerJin)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	EGroup_SetPlayerOwner(eg_allentities, g_playerMongol)
+	
+	UnitEntry_DeploySquads(g_playerMongol,
+		sg_outro_troops,
+		{
+			{ sbp = BP_GetSquadBlueprint("unit_genghis_khan_cmp_mon"), numSquads = 1, spawn = mkr_outro_genghis, sgroup = sg_outro_genghis},
+			{ type = "scar_knight", numSquads = 1, spawn = mkr_outro_troops },
+			{ type = "scar_knight", numSquads = 1, spawn = mkr_outro_troops5 },
+		},
+		mkr_outro_troops)
+	
+	--UnitEntry_DeploySquads(g_playerMongol,
+		--sg_outro_troops5,
+		--{
+			--{ type = "scar_spearman", numSquads = 6 },
+			--{ type = "scar_manatarms", numSquads = 12 },
+		--},
+		--mkr_outro_troops5)
+	
+	UnitEntry_DeploySquads(g_playerMongol,
+		sg_outro_villagers,
+		{
+			{ type = "scar_villager", numSquads = 4 },
+			--{ type = "scar_archer", numSquads = 4 },
+			--{ type = "scar_manatarms", numSquads = 8 },
+		},
+		mkr_outro_troops2)
+	
+	UnitEntry_DeploySquads(g_playerMongol,
+		sg_outro_troops3,
+		{
+			--{ type = "scar_spearman", numSquads = 8 },
+			{ type = "scar_manatarms", numSquads = 6 },
+		},
+		mkr_outro_troops3)
+	
+	UnitEntry_DeploySquads(g_playerMongol,
+		sg_outro_villagers,
+		{
+			{ type = "scar_villager", numSquads = 3 },
+			--{ type = "scar_archer", numSquads = 3 },
+		--	{ type = "scar_crossbowman", numSquads = 8 },
+		},
+		mkr_outro_troops4)
+	
+		UnitEntry_DeploySquads(g_playerMongol,
+		sg_gate_guard01,
+		{
+			{ type = "scar_spearman", numSquads = 1 },
+		},
+		mkr_outro_gateguard_01)
+	
+		UnitEntry_DeploySquads(g_playerMongol,
+		sg_gate_guard02,
+		{
+			{ type = "scar_spearman", numSquads = 1 },
+		},
+		mkr_outro_gateguard_02)
+	
+	Cmd_Stop(sg_outro_troops)
+	Cmd_HoldPosition(sg_outro_troops)
+	
+	Cmd_Stop(sg_outro_troops2)
+	Cmd_HoldPosition(sg_outro_troops2)
+	
+	local markerList = { 
+		mkr_outro_carts_middle,
+		mkr_outro_carts_exit_4,
+		mkr_outro_carts_exit_3,
+		mkr_outro_carts_exit_2,
+		mkr_outro_carts_exit_1,
+	}
+	
+	local function __AddGold(gid, index, sid)
+		local entity = Squad_GetFirstEntity(sid)
+		Entity_SetAnimatorState(entity, "trade_cart_carry_resource", "gold")
+	end
+	
+	for cart = 1, g_numOutroCarts, 1 do
+		local cartSGroup = SGroup_FromName("sg_outro_cart_"..tostring(cart))
+		local cartMarker = Marker_FromName("mkr_outro_carts_"..tostring(cart), "")
+		if cartSGroup ~= nil and cartSGroup ~= nil then
+			UnitEntry_DeploySquads(g_playerMongol, cartSGroup, { type = "scar_trade_cart", numSquads = 1 }, cartMarker)
+			MissionOMatic_SGroupCommandDelayed(cartSGroup, markerList, false, 0.5)
+			SGroup_ForEach(cartSGroup, __AddGold)
+		else
+			fatal("Not enough markers or trade carts for outro cart #"..tostring(cart))
+		end
+	end
+	
+end
+
+function Zhongdu_GrowRaidSize(context, data)
+	
+	-- Boost the raid party size by a small amount
+	g_raidSystem.partySize = g_raidSystem.partySize + 1
+	
+	-- Make sure we don't do this too many times
+	g_raidGrowthIncrements = g_raidGrowthIncrements - 1
+	if g_raidGrowthIncrements <= 0 then
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Triggers the speech content related to entering Zhongdu
+function Zhongdu_OnPlayerBreach()
+	
+	World_GetSquadsNearMarker(g_playerMongol, sg_temp, mkr_jin_zhongdu, OT_Player)
+	if SGroup_Count(sg_temp) > 3 then
+		
+		-- Once the player is inside the city, stop all raiding!
+		Raiding_Dectivate()
+		
+		-- If the primary objective wasn't completed, complete it so we can get on with the mission
+		if Objective_IsComplete(OBJ_StarveCity) == false then
+			Objective_Complete(OBJ_StarveCity)	
+		end
+		
+		-- Get those units and send them back to Zhongdu
+		local allRaiders = Raiding_ExtractAllSquads()
+		if scartype(allRaiders) == ST_SGROUP and SGroup_Count(allRaiders) > 0 then
+			Cmd_AttackMove(allRaiders, Marker_GetPosition(mkr_jin_zhongdu), false)
+		end
+		
+		-- Trigger a stinger
+		Sound_Play2D(MUS_STING_TRIUMPHANT)
+		-- And a walla
+		Sound_PlayWallaEngageOnSGroup(sg_temp)
+		-- And VO!
+		Util_StartIntel(EVENTS.BREAKZHONGDU)
+		
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Occasionally launches an attack on the player's base
+function Zhongdu_AttackPlayerBase(context, data)
+
+	g_baseHuntingTimer = g_baseHuntingTimer - 1
+	-- If we've hit that time, attack the player's economy where it hurts - villagers!
+	if g_baseHuntingTimer <= 0 then
+		Player_GetAll(g_playerMongol)
+		SGroup_Filter(sg_allsquads, { SBP.MONGOL.UNIT_VILLAGER_1_MON, SBP.MONGOL.UNIT_TRADE_CART_MON }, FILTER_KEEP)
+		if SGroup_Count(sg_allsquads) > 0 then
+			local econTarget = SGroup_CreateUnique("target_econ")
+			SGroup_Add(econTarget, SGroup_GetRandomSpawnedSquad(sg_allsquads))
+			-- Trigger a raid, or at least try to (may not work out if there's nobody available and we can't make a new raid party)
+			local baseRaiders = Raiding_TriggerRaid(econTarget)
+			-- If we did assign the target, we'll have gotten something back, so we can reset the timer
+			if baseRaiders ~= nil then
+				Zhongdu_DebugRaidTiming("base raid")
+				g_baseHuntingTimer = Util_DifVar({360, 360, 300, 210}) + World_GetRand(0, 60)
+				print(string.format("ZHONGDU: Base raid timer reset to %s seconds", g_baseHuntingTimer))
+			end
+		end
+	end
+	
+end
+
+--? @shortdesc What to do if an idle raid party was found?
+function Zhongdu_OnIdleRaiders()
+	
+	Player_GetAll(g_playerMongol)
+	SGroup_Filter(sg_allsquads, { SBP.MONGOL.UNIT_VILLAGER_1_MON, SBP.MONGOL.UNIT_TRADE_CART_MON, SBP.MONGOL.HERDABLE_SHEEP_MON }, FILTER_REMOVE)
+	if SGroup_Count(sg_allsquads) > 0 then
+		local militaryTarget = SGroup_CreateUnique("target_military")
+		SGroup_Add(militaryTarget, SGroup_GetRandomSpawnedSquad(sg_allsquads))
+		-- Trigger a raid, or at least try to (may not work out if there's nobody available and we can't make a new raid party)
+		local idleRaiders = Raiding_TriggerRaid(militaryTarget)
+		-- If we did assign the target, we'll have gotten something back, so we can reset the timer
+		if idleRaiders == nil then
+			print(string.format("ZHONGDU: Idle raiders detected, but failed to launch an attack!"))
+		else
+			Zhongdu_DebugRaidTiming("idle raiders")
+		end
+	end
+	
+end
+
+--? @shortdesc Starts raid system scouting after a delay
+function Zhongdu_DelayScouting(context, data)
+	
+	print("ZHONGDU: Enabling raid scouting!")
+	Raiding_SetScouting(true)
+	
+end
+
+--? @shortdesc Warns the player if they get too close too early
+function Zhongdu_WarnAgainstCity(context, data)
+	
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_jin_zhongdu_perimeter, Marker_GetProximityRadiusOrDefault(mkr_jin_zhongdu_perimeter, 95))
+	if SGroup_Count(sg_temp) > 2 then
+		Util_StartIntel(EVENTS.High_Strength_Attack)
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Watch for aging up to notify player of fancy new stuff
+function Zhongdu_WatchForAgeUp_Xbox(context, data)
+	
+	if Player_GetCurrentAge(g_playerMongol) == Player_GetMaximumAge(g_playerMongol) then
+		Rule_RemoveMe()
+		MissionOMatic_HintOnHover_Xbox(
+			Zhongdu_TriggerGenghisHint_Xbox,
+			"Genghis Khan's arrows can grant nearby units Incendiary Arrows for destroying buildings",
+			"$11199781",
+			"campaign_mon_chp1_zhongdu_incendiaries")
+	end
+	
+end
+
+function Zhongdu_WatchForAgeUp(context, data)
+	
+	if Player_GetCurrentAge(g_playerMongol) == Player_GetMaximumAge(g_playerMongol) then
+		Rule_RemoveMe()
+		MissionOMatic_HintOnHover(
+			Zhongdu_TriggerGenghisHint,
+			"Genghis Khan's arrows can grant nearby units Incendiary Arrows for destroying buildings",
+			"$11199781",
+			"campaign_mon_chp1_zhongdu_incendiaries")
+	end
+	
+end
+
+--? @shortdesc Watch for aging up to notify player of fancy new stuff
+function Zhongdu_WatchForBlacksmith_Xbox(context, data)
+	
+	Player_GetAllEntities(g_playerMongol)
+	EGroup_Filter(eg_allentities, EBP.MONGOL.BUILDING_TECH_UNIT_INFANTRY_MON, FILTER_KEEP)
+	if EGroup_Count(eg_allentities) > 0 then
+		Rule_RemoveMe()
+		MissionOMatic_HintOnHover_Xbox(
+			Zhongdu_TriggerSiegeEngineersHint_Xbox,
+			"Siege Engineers lets you build Siege Towers to climb walls and Rams to destroy buildings",
+			"$11199784",
+			"campaign_mon_chp1_zhongdu_engineers")
+	end
+	
+end
+
+function Zhongdu_WatchForBlacksmith(context, data)
+	
+	Player_GetAllEntities(g_playerMongol)
+	EGroup_Filter(eg_allentities, EBP.MONGOL.BUILDING_TECH_UNIT_INFANTRY_MON, FILTER_KEEP)
+	if EGroup_Count(eg_allentities) > 0 then
+		Rule_RemoveMe()
+		MissionOMatic_HintOnHover(
+			Zhongdu_TriggerSiegeEngineersHint,
+			"Siege Engineers lets you build Siege Towers to climb walls and Rams to destroy buildings",
+			"$11199784",
+			"campaign_mon_chp1_zhongdu_engineers")
+	end
+	
+end

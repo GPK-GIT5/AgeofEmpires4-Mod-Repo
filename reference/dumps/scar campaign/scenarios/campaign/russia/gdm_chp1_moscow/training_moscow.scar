@@ -1,0 +1,579 @@
+--
+-- Moscow 1238 - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+
+local goal_sequence_putoutfire = "campaign_gdm_chp1_moscow_put_out_fire"
+local goal_sequence_fortresslumberbonus = "campaign_gdm_chp1_moscow_fortress_lumber_bonus"
+local goal_sequence_huntingcabins_dropoff = "campaign_gdm_chp1_moscow_hunting_cabins_dropoff"
+local goal_sequence_huntingcabins_goldgen = "campaign_gdm_chp1_moscow_hunting_cabins_goldgen"
+local goal_sequence_buildscout = "campaign_gdm_chp1_moscow_buildscout"
+local goal_sequence_huntingbounty = "campaign_gdm_chp1_moscow_hunting_bounty"
+local goal_sequence_garrisonoutposts = "campaign_gdm_chp1_moscow_garrison_outposts"
+
+
+
+function MissionTutorial_Init()	-- called from the mission's Mission_Start() function, so post-intro
+	
+	MissionTutorial_AddHintToPutOutFire()
+	MissionTutorial_AddHintForWoodenFortressLumberCampBonus()
+	
+end
+
+
+
+
+
+--
+-- Put out fires
+--
+
+function MissionTutorial_AddHintToPutOutFire()
+	
+	local GoalPutOutFire = Training_Goal(
+		entity, 											-- key
+		{
+			ID = "Select a villager and RIGHT-CLICK on this burning building to put out the fire.",
+			Message = UI_PickIDForInputMode(11192280, 11248502),
+			DataTemplate = "RightClickTrainingDataTemplate"
+		}, 
+		Predicate_BuildingIsNotOnFire						-- isComplete
+	)
+	
+	local GoalSequencePutOutFire = Training_GoalSequence(
+		goal_sequence_putoutfire, 						-- id
+		1, 												-- repeatMax
+		0, 												-- remindMax
+		Trigger_PutOutFire, 							-- trigger
+		Ignore_PutOutFire,								-- ignore
+		nil,									 		-- remind
+		Bypass_AreAnyVillagersRepairing, 				-- bypass
+		true, 											-- canRegress
+		{GoalPutOutFire}								-- goals
+	)
+	Training_AddGoalSequence(GoalSequencePutOutFire)
+		
+	Training_EnableGoalSequenceByID(goal_sequence_putoutfire, true)
+	
+end
+
+function Trigger_PutOutFire(goalSequence)
+	
+	if AShortPeriodOfTimeHasPassed(goalSequence) then
+		
+		Player_GetAll(player1)
+		EGroup_Filter(eg_allentities, "wall", FILTER_REMOVE)
+		
+		local potentialBuilding_health = 0
+		local potentialBuilding_eid = nil 
+		
+		local _CheckEntityIsOnFire = function(gid, idx, eid)			-- add anything that's on fire
+			if Entity_IsBurning(eid) and Misc_IsEntityOnScreen(eid, 0.8) then
+				
+				local health = Entity_GetHealth(eid)
+				if health > potentialBuilding_health then 
+					
+					potentialBuilding_health = health
+					potentialBuilding_eid = eid
+
+				end
+				
+			end
+		end
+		EGroup_ForEach(eg_allentities, _CheckEntityIsOnFire)
+	
+		if potentialBuilding_eid ~= nil then 
+			
+			goalSequence.goals[1].key = Entity_GetID(potentialBuilding_eid)
+
+			return true
+			
+		end
+		
+	end
+	
+end
+function Ignore_PutOutFire(goalSequence)
+	
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) or (goalSequence.goals[1].key ~= nil and (Entity_IsValid(goalSequence.goals[1].key) == false or World_OwnsEntity(Entity_FromID(goalSequence.goals[1].key)))) then 
+		return true
+	end
+	
+end
+
+
+function Predicate_BuildingIsNotOnFire(goal)
+	return Entity_IsValid(goal.key) and Entity_IsBurning(Entity_FromID(goal.key)) == false
+end
+
+function Bypass_AreAnyVillagersRepairing(goalSequence)
+	local _CheckEntity = function(gid, idx, eid)
+		return Entity_IsUnderRepair(eid)
+	end
+	return EGroup_ForEachAllOrAny(eg_gradBuildings_onFire, ANY, _CheckEntity)
+end
+
+
+
+
+--
+-- Bounty info
+--
+
+function MissionTutorial_AddHintToHuntingBounties()
+	
+	local GoalKillWildAnimalForGold = Training_Goal(
+		squad, 
+		{
+			ID = "Rus units receive gold bounties for hunting wild animals.", 
+			Message = "$11201206",
+			DataTemplate = "GenericTrainingDataTemplate"
+		}, 
+		Predicate_UserHasKilledWildAnimal				-- isComplete
+	)
+	local GoalViewHuntingBounty = Training_Goal(
+		"RusBountyTag", 
+		{
+			ID = "Accumulating bounties will unlock economic bonuses. View the bounties here.", 
+			Message = "$11194466",
+			DataTemplate = "GenericTrainingDataTemplate"
+		}, 
+		Predicate_UserHasViewedHuntingBounty				-- isComplete
+	)
+	
+	local scoutViewsHuntingAbility = Training_GoalSequence(
+		goal_sequence_huntingbounty, 						-- id
+		1,													-- repeatMax
+		0, 													-- remindMax
+		Trigger_WolfIsOnScreen,								-- trigger
+		CampaignTraining_TimeoutIgnorePredicate,			-- ignore
+		nil, 												-- remind
+		UserHasHunted,										-- bypass 
+		true,												-- canRegress
+		{GoalKillWildAnimalForGold, GoalViewHuntingBounty}				
+	)
+	Training_AddGoalSequence(scoutViewsHuntingAbility)	
+	
+	Training_EnableGoalSequenceByID(goal_sequence_huntingbounty, true)	
+	
+end
+
+function Trigger_WolfIsOnScreen(goalSequence)
+	
+	local target 
+	
+	local _CheckSquad = function(gid, idx, sid)
+		if Misc_IsSquadOnScreen(sid, 0.8) then 
+			target = sid
+			return true		-- this stops the SGroup_ForEach, as there is no need to check any more squads
+		end
+	end
+	SGroup_ForEach(sg_gaia, _CheckSquad)
+	
+	if target ~= nil then 
+		
+		if goalSequence.isActive ~= true then 				
+			goalSequence.goals[1].key = Squad_GetID(target)
+		end
+		
+		return true 	
+		
+	end
+	
+end
+
+
+function Predicate_UserHasKilledWildAnimal(goal)
+	
+	if scartype(goal.key) == ST_NUMBER then
+		
+		if Squad_IsValid(goal.key) == false then			-- wolves die immediately
+			return true
+		else
+			local squad = Squad_FromID(goal.key)			-- deer are harvestable, so need a different check
+			if Squad_GetHealth(squad) == 0 then 
+				return true
+			end
+		end
+	end
+	
+end
+
+
+function Predicate_UserHasViewedHuntingBounty(goal)
+	if _g_tempHuntingTimer == nil then
+		_g_tempHuntingTimer = Training_GetNewTimerID()
+		Timer_Start(_g_tempHuntingTimer, 10)
+	else
+		local currentTime = Timer_GetRemaining(_g_tempHuntingTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_tempHuntingTimer)
+			_g_tempHuntingTimer = nil
+			return true	
+		end
+	end
+end
+
+
+
+
+
+
+--
+-- Wooden Fortress / Lumber Camp Bonus info
+--
+
+function MissionTutorial_AddHintForWoodenFortressLumberCampBonus()
+
+	local GoalBuildFortress = Training_Goal(
+		entity, 											-- key
+		{	
+			ID = "Build a Wooden Fortress near this Lumber Camp for protection and a resource drop-off bonus", 
+			Message = "$11200045", 
+			DataTemplate = "GenericTrainingDataTemplate"
+		}, 
+		Predicate_UserHasStartedBuildingWoodenFortressNearLumberCamp	-- isComplete
+	)
+
+	local GoalSequenceBuildFortress = Training_GoalSequence(
+		goal_sequence_fortresslumberbonus, 					-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		Trigger_LumberCampIsOnScreen, 						-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		nil, 												-- bypass
+		false, 												-- canRegress
+		{GoalBuildFortress}									-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceBuildFortress)
+		
+	Training_EnableGoalSequenceByID(goal_sequence_fortresslumberbonus, true)
+	
+end
+
+function Trigger_LumberCampIsOnScreen(goalSequence)
+	
+	if AShortPeriodOfTimeHasPassed(goalSequence) == false then 
+		return false 
+	end
+	
+	Player_GetAll(player1)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_ECON_WOOD_CONTROL_RUS, FILTER_KEEP)
+	
+	if EGroup_CountSpawned(eg_allentities) >= 1 then 
+		
+		local onScreenLumberCamp = nil 
+		
+		local _CheckEntity = function(gid, idx, eid)
+			if Misc_IsEntityOnScreen(eid, 0.8) then 
+				onScreenLumberCamp = eid
+				return true		-- breaks ForEach loop
+			end
+		end
+		EGroup_ForEach(eg_allentities, _CheckEntity)
+		
+		if onScreenLumberCamp ~= nil then 
+			goalSequence.goals[1].key = onScreenLumberCamp
+			goalSequence.goals[1].originalPos = Util_GetPosition(onScreenLumberCamp)
+			return true 
+		end
+	end		
+	
+end
+
+function Predicate_UserHasStartedBuildingWoodenFortressNearLumberCamp(goal)
+	
+	local districtGenerator = Misc_GetDistrictGeneratorFromPosition(goal.originalPos)
+	
+	if scartype(districtGenerator) == ST_ENTITY then
+		return Entity_GetBlueprint(districtGenerator) == EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS
+	end
+	
+end
+
+
+--
+-- Hunting cabin food dropoff info
+--
+
+function MissionTutorial_AddHintToDropoffHuntingCabins()
+
+	if EGroup_CountSpawned(eg_farmDropOff) >= 1 then 
+		
+		local GoalSelectDropoffHuntingCabin = Training_Goal(
+			EGroup_GetSpawnedEntityAt(eg_farmDropOff, 1),		-- key
+			{	
+				ID = "Hunting Cabins serve as food drop off points for the Rus.", 
+				Message = "$11201421",
+				DataTemplate = "GenericTrainingDataTemplate"
+			}, 
+			Predicate_UserHasSelectedDropoffHuntingCabin		-- isComplete
+			)
+		
+		local GoalSequenceSelectDropoffHuntingCabin = Training_GoalSequence(
+			goal_sequence_huntingcabins_dropoff,				-- id
+			1, 													-- repeatMax
+			0, 													-- remindMax
+			Trigger_DropoffHuntingCabinIsOnScreen, 				-- trigger
+			CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+			nil,										 		-- remind
+			Predicate_UserHasSelectedDropoffHuntingCabin, 		-- bypass
+			false, 												-- canRegress
+			{GoalSelectDropoffHuntingCabin}						-- goals
+			)
+		Training_AddGoalSequence(GoalSequenceSelectDropoffHuntingCabin)
+		
+		Training_EnableGoalSequenceByID(goal_sequence_huntingcabins_dropoff, true)
+		
+	end
+	
+end
+
+
+function Trigger_DropoffHuntingCabinIsOnScreen(goalSequence)
+	
+	if AShortPeriodOfTimeHasPassed(goalSequence) == false then 
+		return false 
+	end
+	
+	return Misc_IsEGroupOnScreen(eg_farmDropOff, 0.8, ANY)
+	
+end
+
+function Predicate_UserHasSelectedDropoffHuntingCabin(goal)
+	return Misc_IsEGroupSelected(eg_farmDropOff, ANY)
+end
+
+
+--
+-- Hunting cabin gold generation info
+--
+
+function MissionTutorial_AddHintToGoldGenHuntingCabins()
+
+	local GoalSelectGoldGenHuntingCabin = Training_Goal(
+		entity, 											-- key
+		{	
+			ID = "Hunting Cabins surrounded by trees generate gold.", 
+			Message = "$11192281", 
+			DataTemplate = "GenericTrainingDataTemplate"
+		}, 
+		Predicate_UserHasSelectedGoldGenHuntingCabin		-- isComplete
+	)
+
+	local GoalSequenceSelectGoldGenHuntingCabin = Training_GoalSequence(
+		goal_sequence_huntingcabins_goldgen,				-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		Trigger_GoldGenHuntingCabinIsOnScreen, 				-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		Predicate_UserHasSelectedGoldGenHuntingCabin, 		-- bypass
+		false, 												-- canRegress
+		{GoalSelectGoldGenHuntingCabin}						-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceSelectGoldGenHuntingCabin)
+		
+	Training_EnableGoalSequenceByID(goal_sequence_huntingcabins_goldgen, true)
+	
+end
+
+
+function Trigger_GoldGenHuntingCabinIsOnScreen(goalSequence)
+	
+	if AShortPeriodOfTimeHasPassed(goalSequence) == false then 
+		return false 
+	end
+	
+	if EGroup_CountSpawned(eg_forestHouses) >= 1 then 
+		
+		local onScreenCabin = nil 
+		
+		local _CheckEntity = function(gid, idx, eid)
+			if Player_OwnsEntity(player1, eid) and Misc_IsEntityOnScreen(eid, 0.8) then 
+				onScreenCabin = eid
+				return true		-- breaks ForEach loop
+			end
+		end
+		EGroup_ForEach(eg_forestHouses, _CheckEntity)
+		
+		if onScreenCabin ~= nil then 
+			goalSequence.goals[1].key = onScreenCabin
+			return true 
+		end
+	end		
+	
+end
+
+function Predicate_UserHasSelectedGoldGenHuntingCabin(goal)
+	return Misc_IsEGroupSelected(eg_forestHouses, ANY)
+end
+
+
+
+
+--
+-- Build scouts to search for villagers
+--
+
+function MissionTutorial_AddHintToBuildScouts()
+
+	if EGroup_CountSpawned(eg_townCenter) >= 1 then 
+		
+		local GoalBuildScout = Training_Goal(
+			EGroup_GetSpawnedEntityAt(eg_townCenter, 1),		-- key
+			{	
+				ID = "Build a scout from your Town Center or a Hunting Cabin in order to search the forests for villagers.", 
+				Message = "$11201990", 
+				DataTemplate = "GenericTrainingDataTemplate"
+			}, 
+			Predicate_UserHasSelectedScoutProductionBuilding		-- isComplete
+			)
+		
+		local GoalSequenceBuildScout = Training_GoalSequence(
+			goal_sequence_buildscout,							-- id
+			1, 													-- repeatMax
+			0, 													-- remindMax
+			Trigger_ScoutProductionBuildingIsOnScreen, 			-- trigger
+			CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+			nil,										 		-- remind
+			Predicate_UserHasSelectedScoutProductionBuilding, 	-- bypass
+			false, 												-- canRegress
+			{GoalBuildScout}									-- goals
+			)
+		Training_AddGoalSequence(GoalSequenceBuildScout)
+		
+		Training_EnableGoalSequenceByID(goal_sequence_buildscout, true)
+	
+	end
+	
+end
+
+
+function Trigger_ScoutProductionBuildingIsOnScreen(goalSequence)
+	
+	if AShortPeriodOfTimeHasPassed(goalSequence) == false then 
+		return false 
+	end
+	
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, {EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS, EBP.RUS.BUILDING_HUNTING_CABIN_RUS}, FILTER_KEEP)
+	
+	local onScreenEntity 
+	
+	local _FindEntityOnScreen = function(gid, idx, eid)
+		if Misc_IsEntityOnScreen(eid, 0.8) then 
+			onScreenEntity = eid 
+			return true 		-- breaks ForEach loop
+		end
+	end
+	EGroup_ForEach(eg_allentities, _FindEntityOnScreen)
+	
+	if onScreenEntity ~= nil then 
+		goalSequence.goals[1].key = onScreenEntity 
+		return true 
+	end
+	
+end
+
+function Predicate_UserHasSelectedScoutProductionBuilding(goal)
+
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, {EBP.RUS.BUILDING_TOWN_CENTER_CAPITAL_RUS, EBP.RUS.BUILDING_HUNTING_CABIN_RUS}, FILTER_KEEP)
+
+	return Misc_IsEGroupSelected(eg_allentities, ANY)
+	
+end
+
+
+
+
+
+
+--
+-- Garrison Outpost (Wooden Fortress for the Rus)
+--
+
+function MissionTutorial_AddHintToGarrisonOutposts()
+	
+	local GoalGarrisonOutpost = Training_Goal(
+		entity, 											-- key
+		{	
+			ID = "Select a unit and RIGHT-CLICK on this Wooden Fortress to garrison them inside, where they will be able to shoot at nearby enemies.", 
+			Message = UI_PickIDForInputMode(11192282, 11248503),
+			DataTemplate = "RightClickTrainingDataTemplate"
+		}, 
+		Predicate_UserHasGarrisonedOutpost					-- isComplete
+	)
+
+	local GoalSequenceGarrisonOutpost = Training_GoalSequence(
+		goal_sequence_garrisonoutposts, 					-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		Trigger_OutpostAndUnitIsOnScreen, 					-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		Predicate_UserHasGarrisonedOutpost, 				-- bypass
+		true, 												-- canRegress
+		{GoalGarrisonOutpost}								-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceGarrisonOutpost)
+		
+	Training_EnableGoalSequenceByID(goal_sequence_garrisonoutposts, true)	
+	
+end
+
+
+function Trigger_OutpostAndUnitIsOnScreen(goalSequence)
+	
+	if AShortPeriodOfTimeHasPassed(goalSequence) == false then 
+		return false 
+	end
+	
+	local egroup = EGroup_CreateUnique("")
+	EGroup_Duplicate(eg_constructDefences, egroup)
+	EGroup_FilterUnderConstruction(egroup, FILTER_REMOVE)
+	
+	if EGroup_CountSpawned(egroup) >= 1 then 
+		
+		local onScreenOutpost = nil 
+		
+		local _CheckEntity = function(gid, idx, eid)
+			if Misc_IsEntityOnScreen(eid, 0.8) then 
+
+				Player_GetAllSquadsNearMarker(player1, sg_temp, Util_GetPosition(eid), 20)
+				
+				local _CheckSquad = function(gid, idx, sid)
+					return Misc_IsSquadOnScreen(sid, 0.8) 
+				end
+				
+				if SGroup_ForEachAllOrAny(sg_temp, ANY, _CheckSquad) == true then 
+					onScreenOutpost = eid
+					return true		-- breaks EGroup_ForEach loop
+				end
+				
+			end
+		end
+		EGroup_ForEach(egroup, _CheckEntity)
+		
+		if onScreenOutpost ~= nil then 
+			goalSequence.goals[1].key = Entity_GetID(onScreenOutpost)
+			return true 
+		end
+	end		
+	
+end
+
+function Predicate_UserHasGarrisonedOutpost(goal)	-- do any of the outposts have units in them?
+	
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.RUS.BUILDING_DEFENSE_WOODEN_FORT_RUS, FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+
+	return EGroup_IsHoldingAny(eg_allentities)
+	
+end
+

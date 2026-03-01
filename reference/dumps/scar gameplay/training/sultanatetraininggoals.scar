@@ -1,0 +1,140 @@
+-----------------------------------------------------------------------
+--
+-- Sultanate Training Conditions
+--
+-- (c) Relic Entertainment 2019
+--
+-----------------------------------------------------------------------
+
+import("training.scar")
+import("training/sultanatetrainingconditions.scar")
+import("training/coretrainingconditions.scar")
+
+Core_RegisterModule("SultanateTrainingGoals")
+
+local goal_scholar_low_count_upgrade_sul = "scholar_low_count_upgrade_sul"
+local goal_scholar_no_count_upgrade_sul = "scholar_no_count_upgrade_sul"
+local goal_scholar_idle_sul = "scholar_idle_sul"
+--local goal_scholar_production_ability_sul = "scholar_production_ability_sul"
+--local goal_gristmill_orchard_sul = "gristmill_orchard_sul"
+
+local training_goals_sultanate =
+{
+	goal_scholar_low_count_upgrade_sul,
+	goal_scholar_no_count_upgrade_sul,
+	goal_scholar_idle_sul,
+	--goal_scholar_production_ability_sul,
+	--goal_gristmill_orchard_sul
+	
+}
+
+function SultanateTrainingGoals_OnInit()
+	
+	if Player_GetRaceName(Game_GetLocalPlayer()) ~= "sultanate" then
+		return	
+	end
+	
+	sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	eg_currentSelection = EGroup_CreateIfNotFound("eg_currentSelection")
+	eg_nearbyDeposits = EGroup_CreateIfNotFound("eg_nearbyDeposits")
+	
+	training_currentConstructionBlueprint = nil
+	training_currentHoverBlueprint = nil
+	training_previousConstructionBlueprint = nil
+	
+	--UI_SetModalConstructionPhaseCallback(OnConstructionPhaseChange)
+	--UI_SetModalHoverCallback(OnHoverChange)
+	
+	if ( UI_IsXboxControllerUI() == false ) then -- PC/KBM Hints
+		
+		-- Upgrade low Scholar count
+		local selectMosqueLowScholar = Training_Goal("Entity", 
+			{ID= "Increase upgrade research speed by producing more Scholars. LEFT CLICK to select a Mosque.", Message= 11184857, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasSelectedMosque)
+		local viewTrainScholar = Training_Goal("PBG", 
+			{ID= "Scholars garrisoned in a Mosque will increase your research speed by 20%.", Message= 11184858, DataTemplate="GenericTrainingDataTemplate"}, 
+			UserHasViewedScholar)
+		local scholarLowCount = Training_GoalSequence(goal_scholar_low_count_upgrade_sul, 
+			1, 1, --repeat max and remind max
+			HasActiveUpgradeWithLowScholarCount, --trigger
+			nil, --ignore
+			nil, --remind
+			nil, --bypass 
+			true, --can regress
+			{selectMosqueLowScholar,viewTrainScholar})
+		Training_AddGoalSequence(scholarLowCount)
+		
+		-- Upgrade no Scholar count
+		local selectMosqueNoScholar = Training_Goal("Entity", 
+			{ID= "Without any garrisoned Scholars all upgrade research is halted. LEFT CLICK to select a Mosque.", Message= 11184860, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasSelectedMosque)
+		local viewTrainScholar = Training_Goal("PBG", 
+			{ID= "Scholars garrisoned in a Mosque will increase your research speed by 20%.", Message= 11184858, DataTemplate="GenericTrainingDataTemplate"}, 
+			UserHasViewedScholar)
+		local scholarNoCount = Training_GoalSequence(goal_scholar_no_count_upgrade_sul, 
+			1, 1, --repeat max and remind max
+			HasActiveUpgradeWithNoScholarCount, --trigger
+			nil, --ignore
+			nil, --remind
+			nil, --bypass 
+			true, --can regress
+			{selectMosqueNoScholar,viewTrainScholar})
+		Training_AddGoalSequence(scholarNoCount)
+		
+		-- Scholar Idle with available mosque
+		local selectIdleScholar = Training_Goal("Squad", 
+			{ID= "Idle Scholars can be used to increase upgrade research speed. LEFT CLICK to select a Scholar.", Message= 11184861, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasSelectedScholar)
+		local issueGarrisonCommand = Training_Goal("Entity", 
+			{ID= "Scholars in a Mosque will increase research speed by 20%. RIGHT CLICK on a Mosque.", Message= 11184862, DataTemplate="RightClickTrainingDataTemplate"}, 
+			UserHasIssuedGarrison)
+		local scholarIdleMosque = Training_GoalSequence(goal_scholar_idle_sul, 
+			1, 1, --repeat max and remind max
+			HasIdleScholarWithMosque, --trigger
+			nil, --ignore
+			nil, --remind
+			nil, --bypass 
+			true, --can regress
+			{selectIdleScholar,issueGarrisonCommand})
+		Training_AddGoalSequence(scholarIdleMosque)
+		
+		---- Scholar Idle with Production Speed Ability
+		--local selectIdleScholarProduction = Training_Goal("Squad", 
+		--{ID= "Idle Scholars can be used to increase unit production speed. LEFT CLICK to select a Scholar.", Message= 11181015, DataTemplate="LeftClickTrainingDataTemplate"},
+		--UserHasSelectedScholar)
+		--local issueGarrisonCommandProduction = Training_Goal("Entity", 
+		--{ID= "Scholars in a Military Building will increase production speed by 50%. RIGHT CLICK on building.", Message= 11184863, DataTemplate="RightClickTrainingDataTemplate"}, 
+		--UserHasIssuedGarrison)
+		--local scholarIdleProductionAbility = Training_GoalSequence(goal_scholar_production_ability_sul, 
+		--1, 1, --repeat max and remind max
+		--HasIdleScholarWithMilitaryBuilding, --trigger
+		--nil, --ignore
+		--nil, --remind
+		--nil, --bypass 
+		--true, --can regress
+		--{selectIdleScholarProduction,issueGarrisonCommandProduction})
+		--Training_AddGoalSequence(scholarIdleProductionAbility)
+		
+		-- Idle villager gristmill orchard
+		--local selectIdleVillagerGristmill = Training_Goal("Squad", 
+		--{ID= "Building a Gristmill near a Berry bush converts into an Orchard. LEFT CLICK to select a Villager.", Message= 11184864, DataTemplate="LeftClickTrainingDataTemplate"},
+		--UserHasSelectedVillager)
+		--local viewGristmill = Training_Goal("PBG", 
+		--{ID= "Gristmills will double the Food of any nearby Berry Bushes.", Message= 11184865, DataTemplate="GenericTrainingDataTemplate"}, 
+		--UserHasViewedGristmill)
+		--local villagerIdleGristmill = Training_GoalSequence(goal_gristmill_orchard_sul, 
+		--1, 1, --repeat max and remind max
+		--HasIdleVillagerWithoutGristmill, --trigger
+		--nil, --ignore
+		--nil, --remind
+		--nil, --bypass 
+		--true, --can regress
+		--{selectIdleVillagerGristmill,viewGristmill})
+		--Training_AddGoalSequence(villagerIdleGristmill)
+		
+	end
+	
+end
+
+function SultanateTrainingGoals_OnGameOver()
+end

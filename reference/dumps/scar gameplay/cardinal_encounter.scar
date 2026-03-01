@@ -1,0 +1,577 @@
+-------------------------------------------------------------------------
+-- Encounter management util
+-- 
+-- Relic Entertainment 2020
+--
+-- This system manages the handling of script encounters, so they can represent the entirety of the squads
+-- in one parent encounter, while under the hood, the script encounter is in fact, several AI encounters. 
+-- It also acts as a layer between the AI encounters and the core_encounter.scar (script encounter).
+--
+-- See: SCAR Encounter System
+--      http://relicwiki/display/CARD/SCAR+Encounter+System	(in the EE, you can Control-click on this link to go there)
+-- 
+-- Conceptually we have a Parent encounter and it can have 0 to many children encounters - these are 
+-- 1:1 with the AI Encounter created. 
+--
+-------------------------------------------------------------------------
+
+-- Debug helpers
+function cardinal_encounter_fatal(msg)
+	if Game_IsRTM() then
+		print("WARNING:" .. msg) 
+	else
+		fatal(msg)
+	end	
+end
+
+EncounterFamily = {parent = 0, parentStatus = true, originalID = 0, originalCBID = 0, children = {}, callbackID = 0, endReasonResults = {}}
+EncounterChild = {encounterID = 0, callbackID = 0}
+
+t_cardinalEncounters_allFamilies = {}
+t_cardinalEncounters_allCreationParams = {}
+t_cardinalEncounters_allReleasedSquadsInfo = {}
+t_cardinalEncounters_allAddedSquadsInfo = {}
+
+function EncounterFamily:new(o, parentID, callbackID)
+	o = o or {parent = parentID or 0, parentStatus = true, originalID = parentID, originalCBID = callbackID, children = {}, callbackID = 0, endReasonResults = {}}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+function EncounterChild:new(o, childEnc, callback)
+	o = o or {encounterID = childEnc, callbackID = callback}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+function EncounterFamily:addChild(encounterID)
+	local babyEncounter = EncounterChild:new(nil, encounterID, EventRule_GetNextUniqueRuleID())
+	table.insert(self.children, babyEncounter)
+end
+
+function EncounterFamily:removeChild(childIdx)
+	if childIdx >= 0 then
+		table.remove(self.children, childIdx)
+	end
+end
+
+function EncounterFamily:areAllDone()
+	return #self.children == 0 and self.parentStatus == false
+end
+
+function EncounterFamily:findChild(callbackID)
+	if #self.children == 0 then
+		return -1
+	end
+	for i, child in ipairs(self.children) do
+		if child.callbackID == callbackID then
+			return i
+		end
+	end
+	return -1 -- child not found
+end
+
+function EncounterFamily:promoteChild()
+	if #self.children == 0 then
+		self.parentStatus = false
+		self.parent = self.originalID
+		self.callbackID = self.orginalCBID
+	else
+		for i, child in ipairs(self.children) do
+			self.parent = child.encounterID
+			self.callbackID = child.callbackID
+			self:removeChild(i)
+			return
+		end
+	end
+end
+
+-- if it is a child encounter that is done, just remove it but
+-- if it is the parent and there are still children left, promote
+-- one of the children to be the parent encounter. If it is the
+-- parent, and there are no children, this encounter family is done 
+function EncounterFamily:markDone(callbackID)
+	if callbackID == self.callbackID then
+		self:promoteChild()
+		return true
+	else 
+		local childIdx = self:findChild(callbackID)
+			if childIdx > -1 then
+				self:removeChild(childIdx)
+				return true
+			end
+	end
+	return false
+end
+
+function EncounterFamily:hasCallbackID(callbackID)
+	if callbackID == self.callbackID then
+		return true
+	else 
+		local childIdx = self:findChild(callbackID)
+			if childIdx > -1 then
+				return true
+			end
+	end
+	return false
+end
+
+-- this is called for AI Encounter notifications that we've sent out for split up encounter, it finds 
+-- the relevant encounter family and once the encounters are determined to be done, farms out the main 
+-- encounter response 
+function _CardinalEncounter_AINotificationCallback(context)
+	
+	-- for some reason this is called the encounter ID when it is the
+	-- callback ID 
+ 	local callbackID = context.encounterID
+	if scartype(callbackID) ~= ST_NUMBER then
+		return
+	end
+	
+	local notificationType = context.notificationType
+	if notificationType == AIEncounterNotification_StateTreeExit then 
+		for index, family in ipairs(t_cardinalEncounters_allFamilies) do 
+			if family:markDone(callbackID) then
+				-- record the endReason of this sub-encounter.
+				table.insert(family.endReasonResults, context.encounterStage)
+				
+				if family:areAllDone() then
+					-- resolve the endReasons amongst all sub-encounters of this Family.
+					-- To return "SelfSquadsEmpty" result, all end reasons must be "SelfSquadsEmpty".
+					-- E.g. if the 1st subgroup arrived (with "AtDestination" result) but the 2nd subgroup is all killed
+					--      (with "SelfSquadsEmpty" result), we still want to return "AtDestination" as the overall result.
+					local resolvedEndReason = context.encounterStage
+					for i, reason in ipairs(family.endReasonResults) do
+						-- Find the first endResult that is not "SelfSquadsEmpty".
+						if reason ~= AIFormationPhaseEncounter_EndReason_SelfSquadsEmpty then
+							resolvedEndReason = reason
+							break
+						end
+					end
+					
+					-- send out original callback
+					context.encounterID = family.originalCBID
+					context.encounterStage = resolvedEndReason
+					_Encounter_AINotificationCallback(context)
+					
+					-- Clean up temporary data for this encounter family.
+					_Cardinal_CleanUpTemporaryGlobalDataForEncounterFamily(family)
+					
+					-- remove the family as it is now dead
+					table.remove(t_cardinalEncounters_allFamilies, index)
+				end
+				return
+			end
+		end
+	elseif notificationType == AIEncounterNotification_SquadReleased_Count then
+		-- Check if entry already exists (it shouldn't if statetree data is set up correctly).
+		local existingEntry = false
+		for releasedInfoIndex, releasedInfo in ipairs(t_cardinalEncounters_allReleasedSquadsInfo) do
+			if releasedInfo._callbackID == callbackID then
+				existingEntry = true
+			end
+		end
+		
+		if not existingEntry then
+			-- The "Count" notification comes before the individual "Squad ID" notifications.
+			local squadReleaseInfo = {
+				_callbackID = callbackID,
+				_releaseCount = context.encounterStage, -- this value is released count
+				_releasedSquadIDs = {}
+			}
+			
+			table.insert(t_cardinalEncounters_allReleasedSquadsInfo, squadReleaseInfo)
+		else
+			print("WARNING: Duplicate AIEncounterNotification_SquadReleased_Count was received on callbackID:"..calbackID..". Check StateTree setup.")
+		end
+	elseif notificationType == AIEncounterNotification_SquadReleased_ID then
+		local entryFound = false
+		for index, info in ipairs(t_cardinalEncounters_allReleasedSquadsInfo) do
+			if info._callbackID == callbackID then
+				table.insert(info._releasedSquadIDs, context.encounterStage) -- this value is released squad ID
+				
+				-- If all squad released notifications have been received, create add a new child AIEncounter using all released squads.
+				if info._releaseCount == #info._releasedSquadIDs then
+					local hasNonSiegeTowerUnits = false
+					local releasedSGroup = SGroup_CreateUnique()
+					for index2, squadID in ipairs(info._releasedSquadIDs) do
+						SGroup_Add(releasedSGroup, Squad_FromID(squadID))
+						-- Check if released squads still contain non siege towers.
+						if not hasNonSiegeTowerUnits and not Squad_IsOfType(Squad_FromID(squadID), "siege_tower") then
+							hasNonSiegeTowerUnits = true
+						end
+					end
+					
+					-- [SIEGE TOWER SPECIAL CASE]
+					-- If the released squads only contain siege towers, don't recreate encounters for them because
+					-- the current AIStateTree setup will just release them right away again without creating an encounter instance.
+					if hasNonSiegeTowerUnits then
+						_CardinalEncounter_AddAndTriggerChildToExistingFamily(callbackID, releasedSGroup)
+					end
+					
+					-- Done handling this batch of released squads. Clean up temporary stored info.
+					table.remove(t_cardinalEncounters_allReleasedSquadsInfo, index)
+				end
+				
+				entryFound = true
+				break
+			end
+		end
+		
+		if not entryFound then
+			print("WARNING: AIEncounterNotification_SquadReleased_Count was not received in the correct order, on callbackID:"..calbackID..". Check StateTree setup.")
+		end
+		
+	elseif notificationType == AIEncounterNotification_SquadAdded_Count or notificationType == AIEncounterNotification_SquadAdded_ID then
+		for index, family in ipairs(t_cardinalEncounters_allFamilies) do 
+			if family:hasCallbackID(callbackID) then
+				-- send out original callback, to be handled in the original SCAR encounter
+				context.encounterID = family.originalCBID
+				_Encounter_AINotificationCallback(context)					
+				return
+			end
+		end
+
+	end	
+end
+
+-- Helper function that adds a parent or child encounter to a refEncounterFamily and triggers it.
+-- PARAMS:	`refEncounterFamily` - the encounter family to add the parent/child to. 
+--			`skipParent` - if True, adds a child encounter.
+--			`squadsToUse` - the overriding SGroup to use to create the encounter with.
+function _CardinalEncounter_AddAndTriggerParentOrChildEncounter(
+		refEncounterFamily,
+		skipParent,
+		squadsToUse,
+		player,
+		name,
+		keepAlive,
+		tuningsBP,
+		sgroupTunings,
+		egroupTunings,
+		positionTunings,
+		markerTunings,
+		entitytypesTunings,
+		coordinatorPbgTunings,
+		booleanTunings,
+		floatTunings,
+		integerTunings)	
+	
+	sgroupTunings.ai_best_available_squads = squadsToUse
+	
+	-- recalc the formup position for just these guys 
+	local formUpPosition = Util_GetPosition(squadsToUse)
+	if SGroup_CountSpawned(squadsToUse) >= 1 then 									-- try and find a spawnable position
+		local squad = SGroup_GetSpawnedSquadAt(squadsToUse, 1)
+		if Squad_Count(squad) >= 1 then 
+			local entity = Squad_GetFirstEntity(squad)
+			formUpPosition = World_GetSpawnablePosition(formUpPosition, entity)
+		end
+	end	
+	positionTunings.ai_best_formup_targets = {formUpPosition}
+	
+	-- note we are not recalculating the scan or destination areas as these
+	-- are set for the entire mass of the original encounter and scaling them
+	-- would change the distances expected by the scripter
+	
+	local nextEncounterID = AI_GetAndReserveNextTaskID(player)
+	integerTunings.ai_phase_encounter_override_encounter_id = nextEncounterID
+		
+	if skipParent == false then
+		refEncounterFamily.parent = nextEncounterID
+		refEncounterFamily.callbackID = EventRule_GetNextUniqueRuleID()
+		integerTunings.ai_phase_encounter_notify_rule_id = refEncounterFamily.callbackID
+	else
+		refEncounterFamily:addChild(nextEncounterID)
+		integerTunings.ai_phase_encounter_notify_rule_id = refEncounterFamily.children[#refEncounterFamily.children].callbackID 
+	end
+	
+	AIStateTree_SpawnRootControllerWithStateModelTunings(
+		player,
+		name,
+		keepAlive,
+		tuningsBP,
+		sgroupTunings,
+		egroupTunings,
+		positionTunings,
+		markerTunings,
+		entitytypesTunings,
+		coordinatorPbgTunings,
+		booleanTunings,
+		floatTunings,
+		integerTunings		
+		)
+	
+	-- hook up all AI notifications for this encounterID to the encounter systems's callback (which then farms it out to the script for the current plan & phase)
+	UnsavedEventRule_AddRuleIDEvent(_CardinalEncounter_AINotificationCallback, integerTunings.ai_phase_encounter_notify_rule_id, GE_AIPlayer_EncounterNotification)
+	
+end
+
+-- Find the encounter family who has any family member using the specified refCallbackID.
+-- If found, add a child encounter to that family and trigger the encounter using the same statemodel parameters
+-- as the parent but with the specified list of child available squads.
+-- PARAMS:	`refCallbackID` - ID to look up encounter family to add child to.
+--			`squadsToUse` - the overriding SGroup to use to create the encounter with.
+function _CardinalEncounter_AddAndTriggerChildToExistingFamily(refCallbackID, squadsToUse)
+
+	-- Find the family corresponding to the refCallbackID.
+	for indexFamily, family in ipairs(t_cardinalEncounters_allFamilies) do
+		local familyFound = false
+		if family.callbackID == refCallbackID then
+			familyFound = true
+		else
+			for indexFamilyChild, familyChild in ipairs(family.children) do
+				if familyChild.callbackID == refCallbackID then
+					familyFound = true
+					break
+				end
+			end
+		end
+		
+		if familyFound then
+			-- Find encounter creation parameters corresponding to this family.
+			local isSuccess = false
+			for creationInfoIndex, creationInfo in ipairs(t_cardinalEncounters_allCreationParams) do
+				if creationInfo._callbackID == family.originalCBID then
+					_CardinalEncounter_AddAndTriggerParentOrChildEncounter(
+						family,
+						true,	-- add child encounter
+						squadsToUse,
+						creationInfo._player,
+						creationInfo._name,
+						creationInfo._keepAlive,
+						creationInfo._tuningsBP,
+						creationInfo._sgroupTunings,
+						creationInfo._egroupTunings,
+						creationInfo._positionTunings,
+						creationInfo._markerTunings,
+						creationInfo._entitytypesTunings,
+						creationInfo._coordinatorPbgTunings,
+						creationInfo._booleanTunings,
+						creationInfo._floatTunings,
+						creationInfo._integerTunings)
+					
+					isSuccess = true
+					break
+				end
+			end
+			
+			if isSuccess then
+				break
+			end
+		end
+	end
+end
+
+function Cardinal_CreateAIEncounterWithStateModelTunings(
+		player,
+		name,
+		keepAlive,
+		tuningsBP,
+		sgroupTunings,
+		egroupTunings,
+		positionTunings,
+		markerTunings,
+		entitytypesTunings,
+		coordinatorPbgTunings,
+		booleanTunings,
+		floatTunings,
+		integerTunings		
+	)
+	
+	local parentID = integerTunings.ai_phase_encounter_override_encounter_id 
+	local callbackID = integerTunings.ai_phase_encounter_notify_rule_id
+	local spawnedCount = SGroup_CountSpawned(sgroupTunings.ai_best_available_squads)
+	
+	if sgroupTunings.ai_best_available_squads == nil or spawnedCount == 0 then 
+		AIStateTree_SpawnRootControllerWithStateModelTunings(
+			player,
+			name,
+			keepAlive,
+			tuningsBP,
+			sgroupTunings,
+			egroupTunings,
+			positionTunings,
+			markerTunings,
+			entitytypesTunings,
+			coordinatorPbgTunings,
+			booleanTunings,
+			floatTunings,
+			integerTunings		
+			)
+		return
+	end
+		
+	-- [SIEGE TOWER SPECIAL CASE]
+	-- For certain edge cases where a child encounter is expected be added later due to AIStateTree releasing squads,
+	-- we force create an encounter family with one parent with all squads.
+	-- (e.g. when encounter includes siege towers where squads not on walls get released upon dropoff).
+	local forceCreateEncounterFamily = false
+	for i = 1, spawnedCount do
+		local squad = SGroup_GetSquadAt(sgroupTunings.ai_best_available_squads, i)
+		if Squad_IsOfType(squad, "siege_tower") then
+			forceCreateEncounterFamily = true
+			break
+		end
+	end
+	
+	-- If force create, need to store the creation statemodel tunings so later when a child is added and triggered,
+	-- it knows what original parameters to use.
+	if forceCreateEncounterFamily then
+		-- Check for existing entry.
+		local existingEntry = false
+		for creationInfoIndex, creationInfo in ipairs(t_cardinalEncounters_allCreationParams) do
+			if creationInfo._callbackID == callbackID then
+				existingEntry = true
+				break
+			end
+		end
+		
+		if not existingEntry then
+			local creationTuningData = {
+				_callbackID = callbackID, -- This is the lookup key.
+				_player = player,
+				_name = name,
+				_keepAlive = keepAlive,
+				_tuningsBP = tuningsBP,
+				_sgroupTunings = sgroupTunings,
+				_egroupTunings = egroupTunings,
+				_positionTunings = positionTunings,
+				_markerTunings = markerTunings,
+				_entitytypesTunings = entitytypesTunings,
+				_coordinatorPbgTunings = coordinatorPbgTunings,
+				_booleanTunings = booleanTunings,
+				_floatTunings = floatTunings,
+				_integerTunings = integerTunings,	
+			}
+			
+			table.insert(t_cardinalEncounters_allCreationParams, creationTuningData)			
+		end
+	end
+	
+	-- split up the SGroups as needed  
+	local arraySGroups = SGroup_DivideIntoClusters(sgroupTunings.ai_best_available_squads,
+	true,
+	50)
+	
+	if #arraySGroups <= 1 and not forceCreateEncounterFamily then
+		AIStateTree_SpawnRootControllerWithStateModelTunings(
+			player,
+			name,
+			keepAlive,
+			tuningsBP,
+			sgroupTunings,
+			egroupTunings,
+			positionTunings,
+			markerTunings,
+			entitytypesTunings,
+			coordinatorPbgTunings,
+			booleanTunings,
+			floatTunings,
+			integerTunings		
+			)
+	else
+		local skipParent = false
+		
+		local ef = EncounterFamily:new(nil, parentID, callbackID)
+		table.insert(t_cardinalEncounters_allFamilies, ef) 	
+		
+		-- for each new cluster, create a separate encounter with their own callbacks and ids
+		-- once all of these encounters are done, send out the callback for the original 
+		-- encounter
+		
+		for i, v in ipairs(arraySGroups) do
+			
+			_CardinalEncounter_AddAndTriggerParentOrChildEncounter(
+				ef,
+				skipParent,
+				v,
+				player,
+				name,
+				keepAlive,
+				tuningsBP,
+				sgroupTunings,
+				egroupTunings,
+				positionTunings,
+				markerTunings,
+				entitytypesTunings,
+				coordinatorPbgTunings,
+				booleanTunings,
+				floatTunings,
+				integerTunings		
+			)
+				
+			if skipParent == false then
+				skipParent = true
+			end
+		end
+	end
+end
+
+function Cardinal_CleanupAIEncounter(encounter)
+-- if this is an encounter that we are currently running as a family - we need to potentially tear
+-- down all of its children.  However, if this is being called for one of our family encounters, 
+-- we can ignore this. This is only important to catch for the encounters we replaced with a family
+-- of encounters
+
+	for index, family in ipairs(t_cardinalEncounters_allFamilies) do 
+		if family.originalID == encounter.encounterID and family.parentStatus == true then
+			
+			-- Clean up temporary family data first.
+			_Cardinal_CleanUpTemporaryGlobalDataForEncounterFamily(family)
+			
+			-- kill the parented encounter
+			local aiEncounter = AIEncounter_GetEncounterFromID(encounter.player, family.parent)
+			if aiEncounter ~= nil then 
+				AIEncounter_LogDebug(encounter.player, family.parent, "Teardown by script")
+				AIEncounter_Cancel(aiEncounter)
+			end
+			family.parentStatus = false
+			
+			-- kill the children 
+			if #family.children > 0 then
+				for i, child in ipairs(family.children) do
+					aiEncounter = AIEncounter_GetEncounterFromID(encounter.player, child.encounterID)
+					if aiEncounter ~= nil then 
+						AIEncounter_LogDebug(encounter.player, child.encounterID, "Teardown of child by script")
+						AIEncounter_Cancel(aiEncounter)
+					end
+				end
+			end
+
+			table.remove(t_cardinalEncounters_allFamilies, index)
+			return
+		end
+	end
+end
+
+function _Cardinal_CleanUpTemporaryGlobalDataForEncounterFamily(family)
+	-- Clean up the associated creationParams for this encounter family.
+	for creationInfoIndex, creationInfo in ipairs(t_cardinalEncounters_allCreationParams) do
+		if creationInfo._callbackID == family.originalCBID then
+			table.remove(t_cardinalEncounters_allCreationParams, creationInfoIndex)
+			break
+		end
+	end
+	
+	-- Clean up the associated pending released squads info for this encounter family.
+	for releasedSquadsInfoIndex, releasedSquadsInfo in ipairs(t_cardinalEncounters_allReleasedSquadsInfo) do
+		local callbackIDmatches = false
+		if family.callbackID == releasedSquadsInfo._callbackID then
+			callbackIDmatches = true
+		else
+			for indexFamilyChild, familyChild in ipairs(family.children) do
+				if familyChild.callbackID == releasedSquadsInfo._callbackID then
+					callbackIDmatches = true
+					break
+				end
+			end
+		end
+		
+		if callbackIDmatches then
+			table.remove(t_cardinalEncounters_allReleasedSquadsInfo, releasedSquadsInfoIndex)
+		end
+	end	
+end

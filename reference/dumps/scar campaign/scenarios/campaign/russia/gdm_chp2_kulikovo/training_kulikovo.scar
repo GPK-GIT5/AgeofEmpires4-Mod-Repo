@@ -1,0 +1,165 @@
+--
+-- Kulikovo - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+
+local goal_sequence_hidden_cavalry = "campaign_gdm_chp2_kulikovo_hidden_cavalry"
+local goal_sequence_huntingbounty = "campaign_gdm_chp2_kulikovo_hunting_bounty"
+local goal_blacksmith = "blacksmith"
+
+----------------------------------------------------------------------------------
+-- CAVALRY TRAINING HINTS
+----------------------------------------------------------------------------------
+
+function Kulikovo_InitializeCavalryTrainingHints()
+	
+	--Goals
+	local GoalUI = {
+		ID = "The hidden cavalry are ready to be called in.",
+		Message = 11194953, 
+		DataTemplate = "GenericTrainingDataTemplate",
+	}
+	local GoalCallCavalry = Training_Goal("CavalryButtonAdorner", GoalUI, Kulikovo_CavalryIsCalled)
+	
+	--Goal Sequence
+	local GoalSequenceCallCavalry = Training_GoalSequence(
+		goal_sequence_hidden_cavalry, 						-- id
+		1,													-- repeatMax
+		0, 													-- remindMax
+		Kulikovo_CavalryIsAssembled, 						-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		Kulikovo_CavalryIsCalled, 							-- bypass
+		false, 												-- canRegress
+		{GoalCallCavalry}									-- goals
+	)
+	
+	--Initialize
+	Training_AddGoalSequence(GoalSequenceCallCavalry)
+	Training_EnableGoalSequenceByID(goal_sequence_hidden_cavalry, true)
+	
+end
+
+function Kulikovo_CavalryIsAssembled(goalSequence)
+	return cavalry_current >= cavalry_maximum
+end
+
+function Kulikovo_CavalryIsCalled(goal)
+	return Objective_IsComplete(OBJ_SignalCavalry)
+end
+
+
+----------------------------------------------------------------------------------
+-- BOUNTY TRAINING HINTS
+----------------------------------------------------------------------------------
+
+function MissionTutorial_AddHintToHuntingBounties()
+	
+	local GoalViewHuntingAbility = Training_Goal(
+		"RusBountyTag", 
+		{
+			ID = "Rus units receive bounties for hunting wild animals. View the bounties here.", 
+			Message = "$11201840",
+			DataTemplate = "LeftClickTrainingDataTemplate"
+		}, 
+		Predicate_UserHasViewedHuntingAbility				-- isComplete
+	)
+	
+	local scoutViewsHuntingAbility = Training_GoalSequence(
+		goal_sequence_huntingbounty, 						-- id
+		1,													-- repeatMax
+		0, 													-- remindMax
+		Trigger_WolfIsOnScreen,								-- trigger
+		nil,				 								-- ignore
+		nil, 												-- remind
+		UserHasHunted,										-- bypass 
+		true,												-- canRegress
+		{GoalViewHuntingAbility}				
+	)
+	Training_AddGoalSequence(scoutViewsHuntingAbility)	
+	
+	Training_EnableGoalSequenceByID(goal_sequence_huntingbounty, true)	
+	
+end
+
+function Trigger_WolfIsOnScreen(goalSequence)
+	
+	return Misc_IsSGroupOnScreen(sg_gaia_kulikovo, 0.8, ANY) and Player_CanSeeSGroup(player1, sg_gaia_kulikovo, ANY)
+	
+end
+
+function Predicate_UserHasViewedHuntingAbility(goal)
+	if _g_tempHuntingTimer == nil then
+		_g_tempHuntingTimer = Training_GetNewTimerID()
+		Timer_Start(_g_tempHuntingTimer, 20)
+	else
+		local currentTime = Timer_GetRemaining(_g_tempHuntingTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_tempHuntingTimer)
+			_g_tempHuntingTimer = nil
+			return true	
+		end
+	end
+end
+
+--------------------------------------------------------------
+-- Blacksmith training hints - Courtesy of Bremule
+--------------------------------------------------------------
+
+function MissionTutorial_Blacksmith()
+	
+	--local selectBlacksmith = Training_Goal("Entity", {Message="LEFT CLICK to select the blacksmith.", DataTemplate="LeftClickTrainingDataTemplate"}, Blacksmith_BlacksmithIsSelected)
+	local hoverInfo = Training_Goal("Entity", {Message = "$11191767", DataTemplate="LeftClickTrainingDataTemplate"}, Blacksmith_BlacksmithIsSelected) --"The blacksmith offers several upgrades for your army throughout the ages."
+
+	blacksmithSequence = Training_GoalSequence(goal_blacksmith, 1, 0, Blacksmith_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, nil, false, {hoverInfo})
+	
+	Training_AddGoalSequence(blacksmithSequence)
+	Training_EnableGoalSequenceByID(blacksmithSequence, true)
+end
+
+function Blacksmith_TriggerPredicate(goalSequence)
+	--if Player_CanConstruct(player1, BP_GetUpgradeBlueprint("upgrade_melee_damage_ii"))
+		--or Player_CanConstruct(player1, BP_GetUpgradeBlueprint("upgrade_melee_damage_iii"))
+		--or Player_CanConstruct(player1, BP_GetUpgradeBlueprint("upgrade_melee_armor_ii"))
+		--or Player_CanConstruct(player1, BP_GetUpgradeBlueprint("upgrade_melee_armor_iii")) then
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "blacksmith", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		goalSequence.goals[1].key = EGroup_GetEntityAt(eg_allentities, 1)
+		return true
+	end
+end
+
+function Blacksmith_BypassPredicate(goalSequence)
+	if Player_HasUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_ARMOR_I) or Player_HasUpgrade(player1, UPG.COMMON.UPGRADE_MELEE_DAMAGE_I) then
+		return true
+	else
+		return false
+	end
+end
+
+function Blacksmith_BlacksmithIsSelected(goal)
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	EGroup_Filter(eg_currentSelection, "blacksmith", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+-- after a timer, remove hint about blacksmith upgrades
+function UserHasViewedBlacksmithBuilding(goal)
+	if _g_BlacksmithBuildingTimer == nil then
+		_g_BlacksmithBuildingTimer = Training_GetNewTimerID()
+		Timer_Start(_g_BlacksmithBuildingTimer, 20)
+	else
+		local currentTime = Timer_GetRemaining(_g_BlacksmithBuildingTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_BlacksmithBuildingTimer)
+			_g_BlacksmithBuildingTimer = nil
+			return true	
+		end
+	end
+end

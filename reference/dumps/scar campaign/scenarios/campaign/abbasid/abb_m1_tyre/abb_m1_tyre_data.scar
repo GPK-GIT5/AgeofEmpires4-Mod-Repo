@@ -1,0 +1,452 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+function Tyre_InitData1()
+	log("Tyre_InitData1")
+	
+	sg_enemy_villagers = SGroup_CreateIfNotFound("sg_enemy_villagers")
+	
+	sg_ram_builders = SGroup_CreateIfNotFound("sg_ram_builders")
+	sg_ram_builders_right = SGroup_CreateIfNotFound("sg_ram_builders_right")
+	sg_ram_builders_left = SGroup_CreateIfNotFound("sg_ram_builders_left")
+	sg_scuttle_removed = SGroup_CreateIfNotFound("sg_scuttle_removed")
+	
+	sg_p1_horse_archers = SGroup_CreateIfNotFound("sg_p1_horse_archers")
+	sg_p1_raiders = SGroup_CreateIfNotFound("sg_p1_raiders")
+	sg_p1_defenders = SGroup_CreateIfNotFound("sg_p1_defenders")
+	sg_p1_attackers = SGroup_CreateIfNotFound("sg_p1_attackers")
+	
+	sg_trade_ships = SGroup_CreateIfNotFound("sg_trade_ships")
+	
+	sg_p3_wall_archers = SGroup_CreateIfNotFound("sg_p3_wall_archers")
+	
+	eg_house_of_wisdom = EGroup_Create("eg_house_of_wisdom")
+	
+	leader_tent_training_triggered = false
+	
+	entity_siege_tower = nil
+	ram_has_spawned = false
+	
+	enemy_villagers_init = 0
+	enemy_villagers_prev = 0
+	
+	--count of total resources gathered by player
+	player_resource_total = 0
+	
+	--count of total resources gathered by enemy
+	enemy_resource_total = 0
+	enemy_resource_total_prev = 0
+	
+	--enemy resource stockpile (used for purchasing units)
+	enemy_resource_stockpile = 0
+	
+	final_retreat_started = false
+	base_phase_started = false
+	house_of_wisdom_complete = false
+	wing_started = false
+	outpost_hint_triggered = false
+	
+	unit_count_prev = 0
+	unit_count_current = 0
+	unit_count_target = 80
+	
+	--resource totals used for the 'harvest resources' objective
+	START_PREP_TARGET = 3000
+	HARVEST_TARGET = 6000
+	
+	NUM_STARTING_HORSE_ARCHERS = 12
+	
+	VILLAGER_GATHER_SPEED = 0.1
+	VILLAGER_SPEED = BP_GetEntityBPDefaultSpeed(EBP.CRUSADER_CMP.UNIT_VILLAGER_CRU, true, player2)
+	
+	-- Misc.
+	RAM_GARRISON_SPAWNS = {mkr_ram_garrison1, mkr_ram_garrison2, mkr_ram_garrison3, mkr_ram_garrison4, mkr_ram_garrison5}
+	NUM_RAM_TARGETS = 23
+	ARMY_INACTIVE_RANGE = 25
+	FIRST_OBJECTIVE_AT = 2 --10
+	
+	ARMY_WAIT_NONE = 0
+	ARMY_WAIT_SHORT = 2
+	ARMY_WAIT_LONG = 5
+	
+	
+	t_diff = {
+		
+		villager_speed = Util_DifVar({ 0.8, 0.9, 0.95, 1 }),
+		villager_reaction_delay = Util_DifVar({ 4, 3.5, 3, 2.5 }),
+		camp_max_garrison = Util_DifVar({ 1, 2, 3, 4 }),
+		skirmish_spawn_delay = Util_DifVar({ 15, 11, 7, 4 }),
+		skirmish_attack_threshold = Util_DifVar({ 10, 14, 18, 20 }),
+		skirmish_unit_mix_cap = Util_DifVar({ 1, 2, 4, 6 }),
+		ram_weapon_cooldown = Util_DifVar({ 2, 1.5, 1.25, 1 }),
+		ram_health_multiplier = Util_DifVar({ 1, 1, 1.25, 1.5 }),
+		research_level = Util_DifVar({ 1, 2, 3, 4 }),
+		ambushes_trigger = Util_DifVar({ false, false, true, true }),
+		ambush_delay = Util_DifVar({ 120, 120, 60, 30 }),
+		
+		enemy_resource_target = Util_DifVar({ 2000, 3000, 4000, 5000 }),
+		enemy_gather_delay = Util_DifVar({ 20, 14, 10, 7 }),
+		
+		numSquads_0_to_1 = Util_DifVar({ 0, 0, 1, 1 }),
+		numSquads_0_to_3 = Util_DifVar({ 0, 1, 2, 3 }),
+		numSquads_0_to_4 = Util_DifVar({ 0, 0, 2, 4 }),
+		numSquads_1_to_4 = Util_DifVar({ 1, 2, 3, 4 }),
+		numSquads_2_to_5 = Util_DifVar({ 2, 3, 4, 5 }),
+		numSquads_3_to_6 = Util_DifVar({ 3, 4, 5, 6 }),
+		numSquads_4_to_7 = Util_DifVar({ 4, 5, 6, 7 }),
+		numSquads_5_to_8 = Util_DifVar({ 5, 6, 7, 8 }),
+		--
+		numSquads_3_to_12 = Util_DifVar({ 3, 6, 9, 12 }),
+		numSquads_8_to_14 = Util_DifVar({ 8, 10, 12, 14 }),
+		--
+		numSquads_0_to_2 = Util_DifVar({ 0, 0, 1, 2 }),
+		numSquads_1_to_2 = Util_DifVar({ 1, 1, 2, 2 }),
+		numSquads_3_to_4 = Util_DifVar({ 3, 3, 4, 4 }),
+		--
+		numSquads_2_to_8 = Util_DifVar({ 2, 4, 6, 8 }),
+		numSquads_4_to_10 = Util_DifVar({ 4, 6, 8, 10 }),
+		numSquads_5_to_12 = Util_DifVar({ 5, 7, 9, 12 }),
+		numSquads_6_to_15 = Util_DifVar({ 6, 9, 12, 15 }),
+		numSquads_8_to_18 = Util_DifVar({ 8, 11, 14, 18 }),
+		
+		--initial escort units
+		numSquads_escort_maa = Util_DifVar({ 1, 2, 3, 4 }),
+		numSquads_escort_archer = Util_DifVar({ 3, 4, 6, 8 }),
+		numSquads_escort_militia = Util_DifVar({ 14, 14, 12, 10 }),
+		numSquads_escort_horseman = Util_DifVar({ 8, 8, 4, 0 }),
+		numSquads_escort_knight = Util_DifVar({ 0, 0, 4, 8 }),
+		
+		numSquads_ram = Util_DifVar({ 20, 25, 30, 30 }), --total unit count
+		numSquads_ram_wave_maa = Util_DifVar({ 0, 1, 2, 3 }), --units per wave
+		numSquads_ram_wave_militia = Util_DifVar({ 5, 4, 3, 2 }), --units per wave
+	}
+end
+
+function GetRecipe()
+	local recipe = {		
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,
+		
+		onStart = {
+			titleCard = {
+				title = "$11234478",
+				date = "$11252166",
+				icon = "icons/campaign/campaign_invasion",
+			},
+		},
+		modules = {
+			
+			------------- 1 --------------
+			{
+				type = "Army",
+				name = "army_1_1",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_1_1_1 },
+				units = { type = "scar_militia", numSquads = t_diff.numSquads_1_to_4 },
+				idleTime = ARMY_WAIT_SHORT,
+				reinforce = false,
+			},
+			
+			------------- 2 --------------
+			{
+				type = "Army",
+				name = "army_2_1",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_2_1_1 },
+				units = { type = "scar_militia", numSquads = t_diff.numSquads_2_to_5 },
+				idleTime = ARMY_WAIT_SHORT,
+				reinforce = false,
+			},
+			
+			------------- 3 --------------
+			{
+				type = "Army",
+				name = "army_3_1",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_3_1_1 },
+				units = { type = "scar_horseman", numSquads = t_diff.numSquads_1_to_4 },
+				idleTime = ARMY_WAIT_SHORT,
+				reinforce = false,
+			},
+			
+			------------- 4 --------------
+			{
+				type = "Army",
+				name = "army_4_1",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_4_1_1, mkr_army_4_1_2, mkr_army_4_1_3 },
+				units = { type = "scar_spearman", numSquads = t_diff.numSquads_2_to_5 },
+				idleTime = ARMY_WAIT_SHORT,
+				reinforce = false,
+			},
+			
+			------------- Siege --------------
+			{
+				type = "Army",
+				name = "army_siege_1",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_siege_1_1 },
+				units = { type = "scar_archer", numSquads = t_diff.numSquads_2_to_8 },
+				idleTime = ARMY_WAIT_SHORT,
+				reinforce = false,
+			},
+			{
+				type = "Army",
+				name = "army_siege_2",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_siege_2_1 },
+				units = { type = "scar_horseman", numSquads = t_diff.numSquads_1_to_4 },
+				idleTime = ARMY_WAIT_SHORT,
+				reinforce = false,
+			},
+			{
+				type = "Army",
+				name = "army_siege_3",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_siege_3_1, mkr_army_siege_3_2 },
+				units = {
+					{ type = "scar_spearman", numSquads = t_diff.numSquads_2_to_8 },
+					{ type = "scar_archer", numSquads = t_diff.numSquads_1_to_4 }
+				},
+				idleTime = ARMY_WAIT_SHORT,
+				reinforce = false,
+			},
+			
+			------------ Main -------------
+			{
+				type = "Army",
+				name = "army_main_1",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_main_1_1, mkr_army_main_1_2, mkr_army_main_1_3 },
+				units = {
+					{ type = "scar_manatarms", numSquads = t_diff.numSquads_5_to_8 },
+					{ type = "scar_archer", numSquads = t_diff.numSquads_4_to_7 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			{
+				type = "Army",
+				name = "army_main_2",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_main_2_1, mkr_army_main_2_2 },
+				units = {
+					{ type = "scar_manatarms", numSquads = t_diff.numSquads_5_to_8 },
+					{ type = "scar_archer", numSquads = t_diff.numSquads_4_to_7 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			{
+				type = "Army",
+				name = "army_main_3",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_army_main_3_1, mkr_army_main_3_2 },
+				units = {
+					{ type = "scar_manatarms", numSquads = t_diff.numSquads_5_to_8 },
+					{ type = "scar_archer", numSquads = t_diff.numSquads_4_to_7 },
+				},
+				idleTime = ARMY_WAIT_LONG,
+			},
+			
+			------------ Ambush -------------
+			{
+				type = "Army",
+				name = "ambush_1_guard",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_ambush_1_guard },
+				units = {
+					{ type = "scar_scout", numSquads = t_diff.numSquads_0_to_1 },
+					{ type = "scar_militia", numSquads = t_diff.numSquads_0_to_2 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			{
+				type = "Army",
+				name = "ambush_1_attack",
+				player = player2,
+				targetOrder = TARGET_ORDER_LINEAR,
+				targets = { mkr_ambush_1_source },
+				units = {
+					{ type = "scar_scout", numSquads = t_diff.numSquads_0_to_1 },
+					{ type = "scar_horseman", numSquads = t_diff.numSquads_0_to_4 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			{
+				type = "Army",
+				name = "ambush_3_guard",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_ambush_3_guard },
+				units = {
+					{ type = "scar_scout", numSquads = t_diff.numSquads_0_to_1 },
+					{ type = "scar_archer", numSquads = t_diff.numSquads_0_to_4 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			{
+				type = "Army",
+				name = "ambush_3_attack",
+				player = player2,
+				targetOrder = TARGET_ORDER_LINEAR,
+				targets = { mkr_ambush_3_source },
+				units = {
+					{ type = "scar_scout", numSquads = t_diff.numSquads_0_to_1 },
+					{ type = "scar_horseman", numSquads = t_diff.numSquads_0_to_4 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			{
+				type = "Army",
+				name = "ambush_4_guard",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_ambush_4_guard },
+				units = {
+					{ type = "scar_scout", numSquads = t_diff.numSquads_0_to_1 },
+					{ type = "scar_spearman", numSquads = t_diff.numSquads_0_to_4 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			{
+				type = "Army",
+				name = "ambush_4_attack",
+				player = player2,
+				targetOrder = TARGET_ORDER_LINEAR,
+				targets = { mkr_ambush_4_source },
+				units = {
+					{ type = "scar_scout", numSquads = t_diff.numSquads_0_to_1 },
+					{ type = "scar_manatarms", numSquads = t_diff.numSquads_0_to_4 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			{
+				type = "Army",
+				name = "ambush_5_guard",
+				player = player2,
+				targetOrder = TARGET_ORDER_PATROL,
+				targets = { mkr_ambush_5_guard },
+				units = {
+					{ type = "scar_scout", numSquads = t_diff.numSquads_0_to_1 },
+					{ type = "scar_manatarms", numSquads = t_diff.numSquads_0_to_4 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			{
+				type = "Army",
+				name = "ambush_5_attack",
+				player = player2,
+				targetOrder = TARGET_ORDER_LINEAR,
+				targets = { mkr_ambush_5_source },
+				units = {
+					{ type = "scar_scout", numSquads = t_diff.numSquads_0_to_1 },
+					{ type = "scar_knight", numSquads = t_diff.numSquads_0_to_4 },
+				},
+				idleTime = ARMY_WAIT_SHORT,
+			},
+			
+			------------ Escort -------------
+			{
+				type = "Army",
+				name = "escort_1",
+				player = player2,
+				combatRange = 20,
+				combatRangeEnRoute = 20,
+				targetOrder = TARGET_ORDER_LINEAR,
+				attackBuildings = BUILDINGS_THREATENING,
+				targets = { mkr_escort_dest1 },
+				spawn = mkr_escort_spawn1,
+				useCustomDirection = true,
+				units = {
+					{ type = "scar_horseman", numSquads = t_diff.numSquads_escort_horseman },
+					{ type = "scar_knight", numSquads = t_diff.numSquads_escort_knight },
+					{ type = "scar_archer", numSquads = t_diff.numSquads_escort_archer }
+				},
+				idleTime = 0,
+			},
+			{
+				type = "Army",
+				name = "escort_2",
+				player = player2,
+				combatRange = 20,
+				combatRangeEnRoute = 20,
+				targetOrder = TARGET_ORDER_LINEAR,
+				attackBuildings = BUILDINGS_THREATENING,
+				targets = { mkr_escort_dest2 },
+				spawn = mkr_escort_spawn2,
+				useCustomDirection = true,
+				units = {
+					{ type = "scar_militia", numSquads = t_diff.numSquads_escort_militia },
+					{ type = "scar_manatarms", numSquads = t_diff.numSquads_escort_maa },
+					{ type = "scar_archer", numSquads = t_diff.numSquads_escort_archer },
+				},
+				idleTime = 0,
+			},
+			{
+				type = "Army",
+				name = "escort_3",
+				player = player2,
+				combatRange = 20,
+				combatRangeEnRoute = 20,
+				targetOrder = TARGET_ORDER_LINEAR,
+				attackBuildings = BUILDINGS_THREATENING,
+				targets = { mkr_escort_dest3 },
+				spawn = mkr_escort_spawn3,
+				useCustomDirection = true,
+				units = {
+					{ type = "scar_militia", numSquads = t_diff.numSquads_escort_militia },
+					{ type = "scar_archer", numSquads = t_diff.numSquads_escort_archer }
+				},
+				idleTime = 0,
+			},
+		},
+	}
+	for i, army in ipairs(recipe.modules) do
+		if #army.targets == 1 then
+			
+			army.activeRange = Marker_GetProximityRadiusOrDefault(army.targets[1], 45)
+			army.targets[1] = {
+				position = Marker_GetPosition(army.targets[1]),
+				combatRange = ARMY_INACTIVE_RANGE,
+			}
+			army.useCustomDirection = true
+		end
+	end
+	return recipe
+end
+
+--called after prefabs are made and recipe is processed
+function Tyre_InitData2()
+	log("Tyre_InitData2")
+	Camps_Init()
+	
+	if t_diff.ambushes_trigger then
+		Ambushes_Init()
+	else
+		--give allied monks
+		Ambushes_SpawnAlliedMonks()
+	end
+end
+
+function Tyre_GetMarkers(markerStem, numMarkers)
+	
+	local markers = {}
+	for i = 1, numMarkers do
+		if Marker_Exists(markerStem..tostring(i),"") then
+			local marker = Marker_FromName(markerStem..tostring(i), "")
+			table.insert(markers, marker)
+		end
+	end
+	return markers
+end
+

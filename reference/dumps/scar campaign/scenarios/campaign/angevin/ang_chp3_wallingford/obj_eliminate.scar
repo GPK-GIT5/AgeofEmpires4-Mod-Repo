@@ -1,0 +1,109 @@
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+
+function Eliminate_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_Eliminate = {
+		Title = 11184555, -- Destroy the English camps
+		Type = OT_Primary,	
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_Eliminate, ALL)
+		end,
+	}
+	
+	SOBJ_Defenders = {
+		Title = 11184556, -- Camps remaining
+		Type = OT_Secondary,
+		Parent = OBJ_Eliminate,
+		--OnStart = Defenders_OnStart,
+		SetupUI = Defenders_SetupUI,
+		StartAlongsideParent = true,
+		IsComplete = Defenders_IsComplete,
+		OnComplete = Defenders_OnComplete,
+	}
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Player_GetAll(player2)
+			SGroup_DestroyAllSquads(sg_allsquads)
+			Eliminate_OnComplete()
+		end,
+    }
+	Objective_Register(OBJ_Eliminate)
+	Objective_Register(SOBJ_Defenders)
+	
+    Objective_Register(OBJ_DebugComplete)	
+	
+	camp_data = { 
+		{ egroup = camp_1 }, 
+		{ egroup = camp_2 }, 
+		{ egroup = camp_3 }, 
+		{ egroup = camp_4 }, 
+		{ egroup = camp_5 }, 
+	}
+
+end
+
+function Defenders_SetupUI()
+	for i = #camp_data, 1, -1 do
+		camp_data[i].ui_element = Objective_AddUIElements(SOBJ_Defenders, EGroup_GetPosition(camp_data[i].egroup), true, nil, false)
+		
+	end
+	Defenders_UpdateCount()
+	--Sound_SetMinimumMusicCombatIntensity(801, 0)
+end
+
+function Defenders_UpdateCount()
+	defender_count = 0
+	for i = #camp_data, 1, -1 do
+		local egroup = camp_data[i].egroup
+		if EGroup_CountSpawned(egroup) > 0 then
+			defender_count = defender_count + 1 
+		else
+			Objective_RemoveUIElements(SOBJ_Defenders, camp_data[i].ui_element)
+			table.remove(camp_data, i)
+		end
+	end
+	Objective_SetCounter(SOBJ_Defenders, defender_count)
+end
+
+function Defenders_IsComplete()
+	Defenders_UpdateCount()
+	return defender_count == 0
+end
+
+function Defenders_OnComplete()
+	for i = #incoming_assault_modules, 1, -1 do
+		local assault_module = incoming_assault_modules[i]
+		if assault_module.status ~= ARMY_STATUS_DISSOLVED then 
+			RovingArmy_SetTarget(assault_module, assault_module.origin)
+			table.remove(incoming_assault_modules, i)
+		end
+	end
+	
+	for i, wave in ipairs({wave_ne, wave_n, wave_nw}) do
+		Wave_Pause(wave)
+	end
+	
+	if second_attack_launched ~= true then
+		RovingArmy_SetTarget(intro_assault_2, intro_assault_2.origin)
+	end
+	if third_attack_launched ~= true then
+		RovingArmy_SetTarget(intro_assault_3, intro_assault_3.origin)
+	end
+	if fourth_attack_launched ~= true then
+		RovingArmy_SetTarget(intro_assault_4, intro_assault_4.origin)
+	end
+	
+	
+	Objective_Start(OBJ_EliminateWaves)
+end

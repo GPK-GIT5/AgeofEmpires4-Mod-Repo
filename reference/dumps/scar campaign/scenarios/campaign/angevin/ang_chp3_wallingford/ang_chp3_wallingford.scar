@@ -1,0 +1,409 @@
+import("MissionOMatic/MissionOMatic.scar")
+import("ang_chp3_wallingford_objectives.scar")
+import("ang_chp3_wallingford_data.scar")
+import("missionomatic/missionomatic_wave.scar")
+import("training_wallingford.scar")
+
+function Mission_SetupPlayers()
+	player1 = World_GetPlayerAt(1) 
+	player2 = World_GetPlayerAt(2) 
+		
+	Setup_SetPlayerName(player1, Loc_GetString(11179796)) --Matilda
+	Player_SetCurrentAge(player1, AGE_CASTLE)
+	Player_SetMaximumAge(player1, AGE_CASTLE)
+
+	Setup_SetPlayerName(player2, Loc_GetString(11179797)) --Stephen
+	Player_SetCurrentAge(player2, AGE_CASTLE)
+	Player_SetMaximumAge(player2, AGE_CASTLE)	
+	
+	PlayerColour_Enable()
+	Game_SetPlayerSlotColour(player1, 1)   
+    Game_SetPlayerUISlotColour(player1, 1) 
+	Game_SetPlayerSlotColour(player2, 2)   
+    Game_SetPlayerUISlotColour(player2, 2) 
+end
+
+function Mission_SetupVariables()	-- create any extra sgroups, egroups, and mission variables in here
+	Wallingford_InitData1()
+end
+
+function Mission_Preset()
+	Wallingford_InitData2()
+	SetupWaves()
+	
+	Music_LockIntensity(MUSIC_COMBAT)
+
+	PlayerUpgrades_Auto(player1, false)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_RANGED_INCENDIARY, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_RANGED_ARCHER_SILKSTRING, ITEM_REMOVED)
+	
+	PlayerUpgrades_Auto(player2, false, { UPG.COMMON.UPGRADE_RANGED_ARCHER_SILKSTRING, UPG.COMMON.UPGRADE_RANGED_INCENDIARY })
+	Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_SIEGE_WEAPON_SPEED)
+	Player_GetAll(player2)
+	EGroup_Filter(eg_allentities, EBP.ENGLISH.BUILDING_DEFENSE_TOWER_ENG, FILTER_KEEP)
+	Cmd_InstantUpgrade(eg_allentities, UPG.COMMON.UPGRADE_TOWER_SPRINGALD)
+	Cmd_InstantUpgrade(eg_stone_outposts, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_manatarms", numSquads = 9, destination = mkr_player_garrison_1_dest}, mkr_player_garrison_1)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_archer", numSquads = 9, destination = mkr_player_garrison_2_dest}, mkr_player_garrison_2)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_horseman", numSquads = 9, destination = mkr_player_garrison_3_dest}, mkr_player_garrison_3)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_archer", numSquads = 3 }, mkr_player_archers_1)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_archer", numSquads = 3 }, mkr_player_archers_2)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_archer", numSquads = 3 }, mkr_player_archers_3)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_archer", numSquads = 3 }, mkr_player_archers_4)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = 2 }, mkr_player_villagers_idle)
+	UnitEntry_DeploySquads(player1, sg_player_villagers_food, {type = "scar_villager", numSquads = 8 }, mkr_player_villagers_food)
+	UnitEntry_DeploySquads(player1, sg_player_villagers_wood, {type = "scar_villager", numSquads = Util_DifVar({ 6, 4, 4, 4 }) }, mkr_player_villagers_wood)
+	UnitEntry_DeploySquads(player1, sg_player_villagers_gold, {type = "scar_villager", numSquads = Util_DifVar({ 4, 3, 3, 3 }) }, mkr_player_villagers_gold)
+	UnitEntry_DeploySquads(player1, sg_player_villagers_stone, {type = "scar_villager", numSquads = Util_DifVar({ 2, 1, 1, 1 }) }, mkr_player_villagers_stone)
+	
+	AssignVillagersToFarms(sg_player_villagers_food)
+	AssignVillagersToGold(sg_player_villagers_gold)
+	AssignVillagersToStone(sg_player_villagers_stone)
+	AssignVillagersToWood(sg_player_villagers_wood)	
+	
+	Entity_SetRemainingResourceDepositAmount(EGroup_GetEntityAt(eg_player_gold, 1), 7000)
+	Entity_SetRemainingResourceDepositAmount(EGroup_GetEntityAt(eg_player_stone, 1), 2500)
+	
+	Modify_PlayerMaxPopCap(player1, -50, MUT_Addition)
+		
+	Wallingford_InitObjectives()
+	
+	Wallingford_LaunchIntroWave(nil, { wave_number = 1 })
+end
+
+function Mission_Start()
+	Util_StartIntel(EVENTS.AFTER_INTRO)
+
+	Player_SetResource(player2, RT_Food, 100000)
+	Player_SetResource(player2, RT_Wood, 100000)
+	Player_SetResource(player2, RT_Stone,100000)
+	Player_SetResource(player2, RT_Gold, 100000)
+	
+	if Game_GetSPDifficulty() == GD_EASY then
+		Player_SetResource(player1, RT_Food, 800)
+		Player_SetResource(player1, RT_Wood, 800)
+		Player_SetResource(player1, RT_Stone,800)
+		Player_SetResource(player1, RT_Gold, 800)
+	elseif Game_GetSPDifficulty() == GD_NORMAL then
+		Player_SetResource(player1, RT_Food, 600)
+		Player_SetResource(player1, RT_Wood, 600)
+		Player_SetResource(player1, RT_Stone,600)
+		Player_SetResource(player1, RT_Gold, 600)
+	elseif Game_GetSPDifficulty() == GD_HARD then
+		Player_SetResource(player1, RT_Food, 400)
+		Player_SetResource(player1, RT_Wood, 400)
+		Player_SetResource(player1, RT_Stone,400)
+		Player_SetResource(player1, RT_Gold, 400)
+	else --GD_EXPERT
+		Player_SetResource(player1, RT_Food, 200)
+		Player_SetResource(player1, RT_Wood, 200)
+		Player_SetResource(player1, RT_Stone,200)
+		Player_SetResource(player1, RT_Gold, 200)	
+	end
+	
+	Rule_AddOneShot(Wallingford_StartOutpostObjective, 30)
+	Rule_AddOneShot(Wallingford_ReinforcementsAlmostHere, REINFORCEMENTS_DELAY - 60)
+	Rule_AddOneShot(Wallingford_ReinforcementsArrive, REINFORCEMENTS_DELAY)
+	
+	Rule_AddOneShot(Wallingford_LaunchIntroWave, LAUNCH_ATTACK_2, { wave_number = 2 }) --n   30s walk
+	Rule_AddOneShot(Wallingford_LaunchIntroWave, LAUNCH_ATTACK_3, { wave_number = 3 })  --nw  40s walk
+	Rule_AddOneShot(Wallingford_TryPrepare, LAUNCH_ATTACK_4_APPROX - PREPARE_TIME, { lanes = { "nw", "n", "ne" } })
+	Rule_AddOneShot(Wallingford_TryPrepare, LAUNCH_ATTACK_5_APPROX - PREPARE_TIME, { lanes = { "nw", "n", "ne" } })
+	Rule_AddOneShot(Wallingford_TryPrepare, LAUNCH_ATTACK_6_APPROX - PREPARE_TIME, { lanes = { "nw", "n" } }) 
+	Rule_AddOneShot(Wallingford_TryPrepare, LAUNCH_ATTACK_7_APPROX - PREPARE_TIME, { lanes = { "nw", "n" } })
+	
+	Rule_AddInterval(Wallingford_TryPrepare, { delay = LAUNCH_ATTACK_7_APPROX - PREPARE_TIME, interval = ATTACK_INTERVAL }, { lanes = { "nw", "n", "ne" } }) 
+	
+	Rule_AddInterval(Wallingford_Mainloop, 1)
+	Rule_AddInterval(Wallingford_MonitorEnemyReinforcements, 1)
+	
+	Rule_AddEGroupEvent(WallsBreached, eg_player_walls, GE_EntityKilled)
+	
+	Wallingford_AddHintToRepair()
+	--Wallingford_AddHintIncendiaryArrows()
+	Wallingford_AddHintToKeep()
+	Wallingford_AddHintToGarrisonWall()
+	Wallingford_AddHintToBuildTower()
+	
+	--view(wallingford_seconds)
+end
+
+----------------------------------------------------------------------------------------------------
+--------------------------------------------- GAME LOGIC -------------------------------------------
+----------------------------------------------------------------------------------------------------
+function Wallingford_ReinforcementsArrive(context)
+	if finished_waiting ~= true then
+		Util_AutoSave()
+		Rule_AddInterval(Util_AutoSave, 600)
+		Objective_Complete(OBJ_Survive)
+		finished_waiting = true
+	end
+end
+
+function Wallingford_LaunchIntroWave(context, data)
+	local wave_number = data.wave_number
+	local module = intro_assault_modules[wave_number]
+	local lane = module.lane
+	module.wave_number = wave_number
+	if Objective_IsComplete(OBJ_DestroyOutposts) == false and intro_wave_launched[wave_number] == false then
+		intro_wave_launched[wave_number] = true
+		print("wave "..wave_number.." manually launched at "..wallingford_seconds[1].." - "..lane.." lane")
+		RovingArmy_SetTargets(module, intro_targets[wave_number])
+		Rule_AddInterval(Wallingford_MonitorWave, 1, { module = module })
+	end
+end
+
+function Wallingford_TryPrepare(context, data)
+	local lanes = data.lanes
+	--print("try spawn "..World_GetGameTime())
+	if Objective_IsComplete(OBJ_DestroyOutposts) == false then
+		local lane = ChooseLane(lanes)
+		if lane ~= nil then
+			lane_3_ago = lane_2_ago
+			lane_2_ago = lane_1_ago
+			lane_1_ago = lane
+			local units = Wallingford_GetWaveUnits()
+			Wallingford_PrepareWave(lane, units)
+		else
+			print("no lane found")
+		end
+	end
+end
+
+function Wallingford_PrepareWave(lane, units)
+	waves_prepared = waves_prepared + 1
+	print("wave "..waves_prepared.." prepared at "..wallingford_seconds[1].." - "..lane.." lane")
+	local wave = Wave_FindWave("wave_"..lane)
+
+	Wave_SetUnits(wave, units)
+	local queued_wave = Wave_Prepare(wave)
+	local module = queued_wave.assault_module
+	module.lane = lane
+	module.wave_number = waves_prepared
+	module.prepared_at = wallingford_seconds[1]
+	table.insert(incoming_assault_modules, module)
+	Rule_AddInterval(Wallingford_MonitorWave, 1, { lane = lane, module = module })
+end
+
+function ChooseLane(lanes)
+	local lane = nil
+	--remove lanes that are defeated or have no production buildings
+	for i = #lanes, 1, -1 do
+		lane = lanes[i] 
+		Wave_ValidateSpawns(Wave_FindWave(spawn_info[lanes[i]].wave))
+		spawn_info[lanes[i]].categories = Wave_GetSpawnableCategories(Wave_FindWave(spawn_info[lanes[i]].wave))
+		if #spawn_info[lanes[i]].categories == 0 then
+			table.remove(lanes, i)
+		end
+	end
+	--sort by number of categories
+	table.sort(lanes, CompareLanes)
+	if #lanes > 0 then
+		local most_categories = #spawn_info[lanes[1]].categories
+		--remove lanes with less categories
+		for i = #lanes, 1, -1 do
+			lane = lanes[i]
+			if #spawn_info[lanes[i]].categories < most_categories then
+				table.remove(lanes, i)
+			end
+		end
+		--remove previous lanes if there is more than 1 lane left
+		if #lanes > 1 and lane_1_ago ~= nil then
+			for i = #lanes, 1, -1 do
+				if lanes[i] == lane_1_ago then
+					table.remove(lanes, i)
+				end
+			end
+		end
+		--return the first lane
+		if #lanes > 0 then
+			return Table_GetRandomItem(lanes)
+		end
+	end
+	return nil
+end
+
+function Wallingford_GetWaveUnits()
+	wave_unit_index = wave_unit_index + 1
+	if wave_unit_index > #wave_units then 
+		wave_unit_index = #wave_units - 5
+	end
+	return wave_units[wave_unit_index]
+end
+
+function Wallingford_OnLaunch(module)
+	local lane = module.lane
+	if SGroup_CountSpawned(module.sgroup) > 0 then
+		--print("wave "..module.wave_number.." auto launched at "..wallingford_seconds[1].." - "..lane.." lane")
+	else
+		print("wave "..module.wave_number.." auto launched DEAD at "..wallingford_seconds[1].." - "..lane.." lane")
+	end
+end
+
+function Wallingford_OnComplete(module)
+	if module.real_launched ~= true then
+		local time_since_prepare = wallingford_seconds[1] - module.prepared_at
+		print("wave "..module.wave_number.." in position after "..time_since_prepare.." seconds at "..wallingford_seconds[1])
+	end
+end
+
+function Wallingford_MonitorWave(context, data)
+	local module = data.module
+	local wave_number = module.wave_number
+	local lane = module.lane
+	if module.status == ARMY_STATUS_DISSOLVED then
+		Table_RemoveFirstItem(incoming_assault_modules, module)
+		Table_RemoveFirstItem(arrived_assault_modules, module)
+		Player_GetAllSquadsNearMarker(player1, sg_temp, module.last_known_position, 40)
+		Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+		print("wave "..wave_number.." is dead at "..wallingford_seconds[1].." - "..lane.." lane")
+		if module.dead_event ~= nil then
+			Util_StartIntel(module.dead_event)
+			--print("wave "..wave_number.." playing dead_event at "..wallingford_seconds[1].." - "..lane.." lane")
+		end
+		Rule_RemoveMe() --dead and gone
+		return
+	elseif SGroup_CountSpawned(module.sgroup) > 0 then
+		module.last_known_position = SGroup_GetPosition(module.sgroup) --update position
+
+		if Table_Contains(incoming_assault_modules, module) then
+			--if Marker_InProximity(mkr_incoming_army_threshold, module.last_known_position) then
+			if Prox_AreSquadsNearMarker(module.sgroup, mkr_incoming_army_threshold, false) then
+				if Objective_IsComplete(OBJ_DestroyOutposts) then
+					RovingArmy_SetTarget(module, module.origin) --retreat
+					Table_RemoveFirstItem(incoming_assault_modules, module)
+					Rule_RemoveMe()
+					print("wave "..wave_number.." retreating at "..wallingford_seconds[1].." - "..lane.." lane")
+					return
+				else
+					Table_RemoveFirstItem(incoming_assault_modules, module) --transfer to arrived
+					table.insert(arrived_assault_modules, module)
+					print("wave "..wave_number.." arrived at "..wallingford_seconds[1].." - "..lane.." lane")
+				end
+			end
+		elseif Table_Contains(arrived_assault_modules, module) then
+			if module.is_intro_module ~= true and module.real_launched ~= true then
+				local time_since_prepare = wallingford_seconds[1] - module.prepared_at
+				if module.isComplete and time_since_prepare > PREPARE_TIME then
+					module.real_launched = true
+					RovingArmy_AddTargets(module, wave_targets_b[lane])
+					print("wave "..wave_number.." real_launched at "..wallingford_seconds[1].." - "..lane.." lane")
+				end
+			end
+			
+			if module.is_close ~= true and wave_number ~= 1 then
+				--if Marker_InProximity(mkr_player_base_narrative, module.last_known_position) then
+				if Prox_AreSquadsNearMarker(module.sgroup, mkr_player_base_narrative, false) then
+					module.is_close = true
+					ThreatArrow_CreateGroup("attack_wave", module.sgroup)
+					print("wave "..wave_number.." is close at "..wallingford_seconds[1].." - "..lane.." lane")
+					if module.close_event ~= nil then
+						Util_StartIntel(module.close_event) --play arrive event
+						--print("wave "..wave_number.." playing close_event at "..wallingford_seconds[1].." - "..lane.." lane")
+					end
+				end
+			end
+			
+			if module.within_walla_range ~= true then
+				--if Marker_InProximity(mkr_player_base_walla, module.last_known_position) then
+				if Prox_AreSquadsNearMarker(module.sgroup, mkr_player_base_walla, false) then
+					module.within_walla_range = true
+					Sound_PlayWallaChargeOnSGroup(module.sgroup) --play walla charge
+					--print("wave "..wave_number.." playing walla charge at "..wallingford_seconds[1].." - "..lane.." lane")
+				end
+			end
+		else
+			fatal(module.descriptor.." being monitored when not in a tracking table")
+		end
+	end
+end
+
+-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------- ENEMY REINFORCEMENTS -----------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------
+function Wallingford_MonitorEnemyReinforcements(context)
+	if Objective_IsComplete(OBJ_DestroyOutposts) == false then
+		for i = 1, 4 do
+			if defender_info[i].is_half == false then
+				if SGroup_CountSpawned(defender_info[i].module.sgroup) < 0.5 * defender_info[i].initial_count then
+					defender_info[i].is_half = true
+					groups_reduced_to_half = groups_reduced_to_half + 1
+					if groups_reduced_to_half == 1 then
+						ReinforceFirst()
+					end
+					if groups_reduced_to_half == 2 then
+						ReinforceSecond()
+						Rule_RemoveMe()
+					end
+				end
+			end
+		end
+	end
+end
+
+function GetReinforcementSource(round)
+	reinforcement_indexes[round] = reinforcement_indexes[round] + 1
+	return reinforcement_sources[round][reinforcement_indexes[round]]
+end
+
+function ReinforceFirst()
+	print("first enemy reinforce at "..wallingford_seconds[1])
+	for i = 1, #defender_info do
+		if defender_info[i].is_half == false then
+			local source_module = GetReinforcementSource(1)
+			local dest_module = defender_info[i].module
+			local new_unit_count = SGroup_CountSpawned(source_module.sgroup)
+			print("dissolving "..source_module.descriptor.." into "..dest_module.descriptor)
+			DissolveModuleIntoModule(source_module, dest_module)
+			defender_info[i].initial_count = defender_info[i].initial_count + new_unit_count
+		end
+	end
+	-- move up the next round of reinforcements
+	Defend_UpdateTargetLocation(MissionOMatic_FindModule("reinforcements_second_1"), mkr_reinforcements_first_2)
+	Defend_UpdateTargetLocation(MissionOMatic_FindModule("reinforcements_second_2"), mkr_reinforcements_first_3)
+end
+
+function ReinforceSecond()
+	print("second enemy reinforce at "..wallingford_seconds[1])
+	for i = 1, #defender_info do
+		if defender_info[i].is_half == false then
+			local source_module = GetReinforcementSource(2)
+			local dest_module = defender_info[i].module
+			DissolveModuleIntoModule(source_module, dest_module)
+		end
+	end	
+end
+
+	
+-----------------------------------------------------------------------------------------------------------------------
+------------------------------------------------- UTILITY -------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------
+function CompareLanes(lane_a, lane_b)
+	return #spawn_info[lane_a].categories > #spawn_info[lane_b].categories
+end
+
+function WallsBreached(context)
+	if startingWallDestroyed == false then
+		startingWallDestroyed = true
+		Util_StartIntel(EVENTS.WALL_BREACHED)
+		Rule_RemoveEGroupEvent(WallsBreached, eg_player_walls)	
+	end
+end
+
+function DoneWaiting()
+	wallingford_seconds[1] = REINFORCEMENTS_DELAY - 1
+end
+
+function Wallingford_Mainloop()
+	wallingford_seconds[1] = wallingford_seconds[1] + 1
+end
+
+function Wallingford_StartOutpostObjective(context)
+	Objective_Start(OBJ_DestroyOutposts, true, true)
+end
+
+function Wallingford_ReinforcementsAlmostHere(context)
+	Music_LockIntensity(MUSIC_TENSE, 20, MUSIC_COMBAT, 20, MUSIC_COMBAT_RARE, 20)
+	Util_StartIntel(EVENTS.HENRY_ONEMINUTE)
+end

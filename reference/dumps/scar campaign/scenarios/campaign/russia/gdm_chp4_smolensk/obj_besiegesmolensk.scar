@@ -1,0 +1,798 @@
+--
+-- Moscow vs Lithuania 1514 - Besiege Smolensk
+--
+
+function BesiegeSmolensk_InitObjectives()
+	
+	--------------------------------------------------------------------------------------------------------------------------------------
+	--													Breach Smolensk's Walls Sequence
+	--------------------------------------------------------------------------------------------------------------------------------------
+	
+	local location = LOCATION("smolensk")
+	
+	OBJ_BesiegeSmolensk = {
+		Title = "$11172377", --Breach Smolensk's walls
+		Type = ObjectiveType_Battle,
+		
+		Intel_Start = EVENTS.Destroy_Walls,
+		
+		SetupUI = function()
+			hpid_besiegesmolensk = Objective_AddUIElements(OBJ_BesiegeSmolensk, mkr_smolensk, true, "$11172381", true)
+			World_SetInteractionStage(1)
+		end,
+		
+		PreStart = function()
+			Rule_AddGlobalEvent(BesiegeSmolensk_EntityKilled, GE_EntityKilled)
+			BesiegeSmolensk_SpawnWallDefenders()	
+		end,
+		
+		OnStart = function()
+			Util_StartIntel(EVENTS.Starve_Smolensk)
+			Objective_Start(OBJ_StopAttacks)
+			Rule_AddOneShot(BesiegeSmolensk_DelayKrasnyStart, 30)
+			Smolensk_GetTimeScaledAmount(1, 10)	-- don't care about the result here, but calling this now will mark the time for the scaling function to start
+			Rule_AddInterval(Smolensk_ProximityCallFunction, 1, {marker = mkr_smolensk, range = 120, function_name = Smolensk_SpawnSmolenskVillagerLife})
+		end,
+		
+		PreComplete = function()
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+			Music_LockIntensity(MUSIC_COMBAT_RARE, 20)
+			if Objective_IsStarted(OBJ_StopAttacks) and not Objective_IsComplete(OBJ_StopAttacks) then
+				Objective_Complete(OBJ_StopAttacks, false, false)
+			end
+		end,
+		
+		OnComplete = function()
+			Objective_Start(OBJ_ForceSurrender)
+		end,
+		
+		IsFailed = function()
+			return Smolensk_IsPlayerEconomyTrapped()
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+
+	}
+	
+	OBJ_StopAttacks = {
+		
+		Title = "$11185731", --Cut off supplies into Smolensk to stop attacks from the city
+		Type = ObjectiveType_Battle,
+		
+		Intel_Complete = EVENTS.Traders_Complete,
+		
+		SetupUI = function()
+			Objective_Start(OBJ_SmolenskSupply)
+		end,
+		
+		PreStart = function()
+			BesiegeSmolensk_SpawnWaveAttack(roslavl_wave, true)
+			BesiegeSmolensk_SpawnWaveAttack(yelnya_wave, true)
+			BesiegeSmolensk_SpawnWaveAttack(vyazma_wave, true)
+		end,
+		
+		OnStart = function()
+			--Begin tracking for caravan deaths
+			TrackTradeCartsForPlayers({player2})
+			
+			--Spawn caravans
+			BesiegeSmolensk_SpawnCaravan()
+			Rule_AddInterval(BesiegeSmolensk_SpawnCaravan, 48)
+		end,
+		
+		IsComplete = function()
+			--Check if the traders are gone
+			return (smolensk_supply.west_killed + smolensk_supply.east_killed) == smolensk_supply.death_limit * 2
+		end,
+		
+		PreComplete = function()
+			--Music_StopMedium()
+		end,
+		
+		OnComplete = function()
+			Objective_Complete(OBJ_SmolenskSupply, false, false)
+			
+			--Clean up any leftover trader logic
+			if west_path_active then
+				MarkerPaths_ClearIcons("west_caravan_ui")
+				west_path_active = false
+			end
+			
+			if east_path_active then
+				MarkerPaths_ClearIcons("east_caravan_ui")
+				east_path_active = false
+			end
+			
+			Util_AutoSave()
+		end,
+		
+	}
+	SOBJ_StopTraders = {
+		
+		Title = "$11185732", --Intercept traders from both routes
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_StopAttacks,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			--Objective_SetCounter(SOBJ_StopTraders, (smolensk_supply.west_killed + smolensk_supply.east_killed), smolensk_supply.death_limit * 2)
+		end,
+		
+		OnStart = function()
+			Rule_AddGlobalEvent(BesiegeSmolensk_TrackCaravanDeath, GE_SquadKilled)
+		end,
+		
+	}
+	OBJ_SmolenskSupply = {
+		
+		Title = "$11172378", --Enemy supply level for next attack
+		Type = ObjectiveType_Information,
+		showTitle = false,
+		--Parent = OBJ_StopAttacks,
+		--StartAlongsideParent = true,
+		
+		SetupUI = function()
+			Obj_SetProgressVisible(OBJ_SmolenskSupply.ID, true)
+			Obj_SetProgress(OBJ_SmolenskSupply.ID, smolensk_supply.current / smolensk_supply.max)
+			Rule_AddInterval(BesiegeSmolensk_UpdateSupplyUI, 0.5)
+			
+			MarkerPaths_GenerateIcons("west_caravan_ui", AllMarkers_FromName("west_caravan_ui", ""), "military_route_enemy")
+			MarkerPaths_GenerateIcons("east_caravan_ui", AllMarkers_FromName("east_caravan_ui", ""), "military_route_enemy")
+			
+			west_path_active = true
+			east_path_active = true
+			
+			Rule_AddInterval(BesiegeSmolensk_PathReveal, 0.125, {markers = AllMarkers_FromName("west_caravan", "")})
+			Rule_AddInterval(BesiegeSmolensk_PathReveal, 0.125, {markers = AllMarkers_FromName("east_caravan", "")})
+		end,
+		
+	}
+	
+	--------------------------------------------------------------------------------------------------------------------------------------
+	--														Smolensk Capture Sequence
+	--------------------------------------------------------------------------------------------------------------------------------------
+	
+	OBJ_ForceSurrender = {
+		
+		Title = "$11172379", --Capture Smolensk
+		Type = ObjectiveType_Capture,
+
+		Intel_Start = EVENTS.Capture_Smolensk,	-- this was the Intel_Complete of the breach walls objective... moved here so the PreStart function (which spawns units inside the walls) is called before the speech	
+		
+		SetupUI = function()
+			Location_SetCapturable(LOCATION("smolensk"), true)
+		end,
+		
+		PreStart = function()
+			--Lock the music intensity to combat rare for about a minute, then just make sure minimum intensity is at tension
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+			Music_LockIntensity(MUSIC_COMBAT_RARE, 60)
+			
+			
+			--local smolensk_units = {
+				--{ type = "scar_spearman", 		numSquads = Util_DifVar({8, 8, 10, 12}) },
+				--{ type = "scar_manatarms", 		numSquads = Util_DifVar({8, 8, 10, 12}) },
+				--{ type = "scar_archer", 		numSquads = Util_DifVar({6, 6, 10, 12}) },
+				--{ type = "scar_crossbowman", 	numSquads = Util_DifVar({6, 6, 8, 12}) },
+				--{ type = "scar_handcannon", 	numSquads = Util_DifVar({0, 0, 6, 10}), difficulty = {GD_HARD, GD_EXPERT} },
+			--}
+			--SpawnUnitsToModule(smolensk_units, "smolensk_defend", mkr_smolensk)
+			
+			--Set up unit tables to be spawned in the Smolensk defend modules
+			local smolensk_melee = {															-- one occurance
+				{ type = "scar_spearman",		numSquads = Util_DifVar({4, 4, 6, 8}) },
+				{ type = "scar_manatarms",		numSquads = Util_DifVar({2, 4, 6, 8}) },
+			}
+			
+			local smolensk_ranged = {															-- two occurances
+				{ type = "scar_crossbowman",	numSquads = Util_DifVar({5, 6, 8, 12}) },
+				{ type = "scar_handcannon",		numSquads = Util_DifVar({3, 4, 8, 12}) },
+			}
+			
+			local smolensk_cavalry = {															-- one occurance
+				{ type = "scar_horseman",		numSquads = Util_DifVar({6, 8, 8, 16}) },
+			}
+			
+			local smolensk_siege = {															-- one occurance
+				--{ type = "scar_springald",		numSquads = 2 },
+				{ type = "scar_cannon",			numSquads = Util_DifVar({1, 2, 4, 4}) },
+			}
+			
+			local smolensk_trebuchet = { { type = "scar_trebuchet_cw", numsquads = 1 } }		-- three occurances
+			
+			--Spawn in defenders near relevant buildings
+			SpawnUnitsToModule(smolensk_melee, "smolensk_melee", mkr_smolensk_melee)
+			SpawnUnitsToModule(smolensk_ranged, "smolensk_ranged_1", mkr_smolensk_ranged_1)
+			SpawnUnitsToModule(smolensk_ranged, "smolensk_ranged_2", mkr_smolensk_ranged_2)
+			SpawnUnitsToModule(smolensk_cavalry, "smolensk_cavalry", mkr_smolensk_cavalry)
+			SpawnUnitsToModule(smolensk_siege, "smolensk_siege", mkr_smolensk_siege)
+			
+			SpawnUnitsToModule(smolensk_trebuchet, "smolensk_trebuchet_1", mkr_smolensk_trebuchet_1)
+			SpawnUnitsToModule(smolensk_trebuchet, "smolensk_trebuchet_2", mkr_smolensk_trebuchet_2)
+			SpawnUnitsToModule(smolensk_trebuchet, "smolensk_trebuchet_3", mkr_smolensk_trebuchet_3)
+			
+			--Dissolve any surviving wall defenders into the city fight
+			DissolveModuleIntoModule(MissionOMatic_FindModule("smolensk_defend_e_1"), MissionOMatic_FindModule("smolensk_wall"))
+			DissolveModuleIntoModule(MissionOMatic_FindModule("smolensk_defend_e_2"), MissionOMatic_FindModule("smolensk_wall"))
+			DissolveModuleIntoModule(MissionOMatic_FindModule("smolensk_defend_w_1"), MissionOMatic_FindModule("smolensk_wall"))
+			DissolveModuleIntoModule(MissionOMatic_FindModule("smolensk_defend_w_2"), MissionOMatic_FindModule("smolensk_wall"))
+		end,
+		
+		IsFailed = function()
+			return Smolensk_IsPlayerEconomyTrapped()
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+		
+		PreComplete = function()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			-- Music_StopMedium()
+		end,
+		OnComplete = function()
+			--Music_Stop()
+			--Music_StopMedium()
+			Mission_Complete()			
+		end,
+	}
+	
+	SOBJ_DefeatSmolenskResistance = {
+		Title = "$11172380", --Defeat Smolensk resistance
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ForceSurrender,
+	}
+	
+	SOBJ_LocationSmolensk = {
+		Title = "$11172381", --Smolensk
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_ForceSurrender,
+	}
+	
+	Objective_Register(OBJ_SmolenskSupply)
+	
+	Objective_Register(OBJ_StopAttacks)
+	Objective_Register(SOBJ_StopTraders)
+	Objective_Register(OBJ_BesiegeSmolensk)
+	
+	Objective_Register(OBJ_ForceSurrender)
+	Objective_Register(SOBJ_DefeatSmolenskResistance)
+	Objective_Register(SOBJ_LocationSmolensk)
+	
+	location.objectivePrimary = OBJ_ForceSurrender
+	location.objectiveSecondary = SOBJ_DefeatSmolenskResistance
+	location.objectiveCapture = SOBJ_LocationSmolensk
+	
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Mission_Complete()
+	       end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+
+	
+end
+
+--------------------------------------------------------------------------------------------------------------------------------------
+	--														Krasny
+--------------------------------------------------------------------------------------------------------------------------------------
+
+function BesiegeSmolensk_InitKrasny()
+	
+	local location = LOCATION("krasny")
+	
+	OBJ_CaptureKrasny = {
+		Title = "$11173469", --Visit Krasny to receive cannons
+		Type = ObjectiveType_Optional,
+		
+		Intel_Start = EVENTS.Find_Cannons,
+		Intel_Complete = EVENTS.Claim_Cannons,
+		
+		SetupUI = function()
+			Objective_AddUIElements(OBJ_CaptureKrasny, mkr_krasny, true, "$11173472")
+			AudioTrigger_InitAreaTrigger({
+				marker = mkr_krasny,
+				audioCue = MUSIC_COMBAT,
+				triggeringPlayer = player1,
+				startAboveUnitCount = 5,
+				duration = 30
+			})
+		end,
+		
+		PreStart = function()
+			Music_UnlockIntensity()
+			Sound_SetMinimumMusicCombatIntensity(0, 0)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_krasny)
+			if SGroup_CountSpawned(sg_temp) > 0 then
+				return true
+			else
+				return false
+			end
+		end,
+		
+		PreComplete = function()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			Modify_PlayerMaxPopCap(player1, 20, MUT_Addition)
+			
+			local units = {
+				{ sbp = SBP.RUS.UNIT_CANNON_4_RUS, numSquads = 4, destination = mkr_cannon_destination },
+			}
+			local options = { spawnInFormation = true }
+			
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player1, sg_temp, units, mkr_cannon_spawn, nil, nil, options)
+			
+			Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_TECH_UNIVERSITY_CONTROL_RUS, ITEM_UNLOCKED)
+			EGroup_SetPlayerOwner(eg_krasny, player1)
+			
+			--Convert villagerlife to be player owned
+			local villagerlife = VillagerLife_Find("villagerlife_krasny")
+			SGroup_Clear(sg_temp)
+			SGroup_AddGroups(sg_temp, {villagerlife.sg_roaming, villagerlife.sg_food})
+			SGroup_Clear(villagerlife.sg_roaming)
+			SGroup_Clear(villagerlife.sg_food)
+			SGroup_Clear(villagerlife.sg_villagers)
+			SGroup_SetPlayerOwner(sg_temp, player1)
+
+			hpid_krasny = HintPoint_Add(mkr_krasny, true, "$11173472", LOCATION_LABEL_HEIGHT)
+		end,
+		
+		OnComplete = function()
+			Util_AutoSave()
+		end,
+	}
+	
+	Objective_Register(OBJ_CaptureKrasny)
+	
+end
+
+--------------------------------------------------------------------------------------------------------------------------------------
+	--														Smolensk Siege Functions
+--------------------------------------------------------------------------------------------------------------------------------------
+
+function BesiegeSmolensk_SpawnWallDefenders()
+	local _units = {
+		{ type = "scar_archer", numSquads = 4, difficulty = {GD_EASY, GD_NORMAL} },
+		{ type = "scar_crossbowman", numSquads = Util_DifVar({8, 8, 10, 10}) },
+		{ type = "scar_handcannon", numSquads = Util_DifVar({4, 4, 6, 8}) },
+	}
+	
+	SpawnUnitsToModule(_units, "smolensk_defend_e_1", mkr_smolensk_wall_e_1s)
+	SpawnUnitsToModule(_units, "smolensk_defend_e_2", mkr_smolensk_wall_e_2s)
+	--SpawnUnitsToModule(_units, "smolensk_defend_e_2", mkr_smolensk_wall_e_4)
+	--SpawnUnitsToModule(_units, "smolensk_defend_e_4", mkr_smolensk_wall_e_4)
+	SpawnUnitsToModule(_units, "smolensk_defend_w_1", mkr_smolensk_wall_w_1s)
+	SpawnUnitsToModule(_units, "smolensk_defend_w_2", mkr_smolensk_wall_w_2s)
+	--SpawnUnitsToModule(_units, "smolensk_defend_w_2", mkr_smolensk_wall_w_2s)
+	--SpawnUnitsToModule(_units, "smolensk_defend_w_4", mkr_smolensk_wall_w_4)
+end
+
+--? @shortdesc Wrapper to start krasny with a Rule_OneShot. Checks if it's already active/complete first. 
+function BesiegeSmolensk_DelayKrasnyStart()
+	if not Objective_IsVisible(OBJ_CaptureKrasny) and not Objective_IsComplete(OBJ_CaptureKrasny) then
+		Objective_Start(OBJ_CaptureKrasny)
+	end
+end
+
+--? @shortdesc Interval Rule: Checks if the player is near Krasny and plays VO, as well as starts the objective if it's ahead of time.
+function BesiegeSmolensk_CheckNearbyKrasny()
+	
+	local trigger = false
+	
+	local markers = {
+		mkr_krasny_vo1,
+		mkr_krasny_vo2,
+		mkr_krasny_vo3
+		}
+	
+	for k,mkr in pairs (markers) do
+		Player_GetAllSquadsNearMarker(player1, sg_temp, mkr, Marker_GetProximityRadiusOrDefault(mkr, 0))
+		if SGroup_CountSpawned(sg_temp) > 0 then
+			trigger = true
+		end
+	end
+	
+	if (trigger) then
+		Util_StartIntel(EVENTS.Guarded_Cannons)
+		
+		if not Objective_IsVisible(OBJ_CaptureKrasny) and not Objective_IsComplete(OBJ_CaptureKrasny) then
+			Objective_Start(OBJ_CaptureKrasny, nil, false)
+		end
+		
+		Rule_RemoveMe()
+	end
+end
+
+--Checks whether Smolensk's wall has been breached
+function BesiegeSmolensk_EntityKilled(context)
+	if context.victim ~= nil then
+		
+		local victimBP = Entity_GetBlueprint(context.victim)
+		
+		if victimBP == EBP.HRE.BUILDING_DEFENSE_WALL_GATE_HRE
+				or victimBP == EBP.HRE.BUILDING_DEFENSE_WALL_HRE 
+				or victimBP == EBP.HRE.BUILDING_DEFENSE_WALL_BASTION_HRE then
+			
+			Rule_AddOneShot(Smolensk_DelayedAudioStinger, 1, {position = Util_GetPosition(context.victim)})
+			Rule_AddOneShot(BesiegeSmolensk_DelayedObjectiveCall, 3)
+			
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function BesiegeSmolensk_DelayedObjectiveCall()
+	Objective_Complete(OBJ_BesiegeSmolensk)
+end
+
+--Updates UI elements
+function BesiegeSmolensk_UpdateSupplyUI()
+	
+	if Objective_IsComplete(OBJ_SmolenskSupply) then
+		Obj_SetProgressVisible(OBJ_SmolenskSupply.ID, false)
+		Rule_RemoveMe()
+	else		
+		Obj_SetProgress(OBJ_SmolenskSupply.ID, smolensk_supply.current / smolensk_supply.max)
+	end
+	
+end
+
+function BesiegeSmolensk_RevealTraderPath()
+	local _westMarkers = AllMarkers_FromName("west_caravan", "")
+	local _eastMarkers = AllMarkers_FromName("east_caravan", "")
+	
+	for i, marker in ipairs(_westMarkers) do
+		FOW_PlayerRevealArea(player1, Marker_GetPosition(marker), 10, 1)
+	end
+	
+	for i, marker in ipairs(_eastMarkers) do
+		FOW_PlayerRevealArea(player1, Marker_GetPosition(marker), 10, 1)
+	end
+end
+
+function BesiegeSmolensk_PathReveal(context, data)
+	if #data.markers > 0 then
+		FOW_RevealArea( Marker_GetPosition(data.markers[1]), 15, 5)
+		table.remove(data.markers, 1)
+	else
+		Rule_RemoveMe()
+	end
+end
+
+--Supply functions
+
+function BesiegeSmolensk_SpawnCaravan()
+	
+	if not Objective_IsComplete(OBJ_StopAttacks) then
+		
+		--Set up units to spawn for the traders
+		local units = {
+			{sbp = SBP.HRE.UNIT_TRADE_CART_HRE, numSquads = 1},
+			{sbp = SBP.HRE.UNIT_SPEARMAN_4_HRE, numSquads = 2},
+		}
+		
+		local additional_units = { sbp = SBP.HRE.UNIT_SPEARMAN_4_HRE, numSquads = 6 }
+		local additional_elite_units = { sbp = SBP.HRE.UNIT_LANDSKNECHT_4_HRE, numSquads = 8 }
+		local additional_elite_ranged = { sbp = SBP.HRE.UNIT_CROSSBOWMAN_4_HRE, numSquads = 4 }
+		
+		if smolensk_supply.west_killed + smolensk_supply.east_killed >= 2 then
+			table.insert(units, additional_units)
+		end
+		
+		if smolensk_supply.west_killed + smolensk_supply.east_killed >= 6 then
+			table.insert(units, additional_elite_units)
+		end
+		
+		if smolensk_supply.west_killed + smolensk_supply.east_killed >= 8 then
+			table.insert(units, additional_elite_ranged)
+		end
+		
+		--Spawn traders
+		if smolensk_supply.west_killed < smolensk_supply.death_limit then
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player2, sg_temp, units, mkr_caravan_left)
+			Objective_AddUIElements(OBJ_StopAttacks, SGroup_GetSpawnedSquadAt(sg_temp, 1), false, "$11191836", true)
+			MarkerPaths_AttackMoveSGroupAlongPath(sg_temp, "west_caravan")
+			Cmd_FormationMoveToAndDestroy(sg_temp, mkr_smolensk_spawn_gate_left, true, nil, Caravan_ReachedDestination)
+			SGroup_AddGroup(sg_smolensk_trader_west, sg_temp)
+		end
+		
+		if smolensk_supply.east_killed < smolensk_supply.death_limit then
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player2, sg_temp, units, mkr_caravan_right)
+			Objective_AddUIElements(OBJ_StopAttacks, SGroup_GetSpawnedSquadAt(sg_temp, 1), false, "$11191836", true)
+			MarkerPaths_AttackMoveSGroupAlongPath(sg_temp, "east_caravan")
+			Cmd_FormationMoveToAndDestroy(sg_temp, mkr_smolensk_spawn_gate_right, true, nil, Caravan_ReachedDestination)
+			SGroup_AddGroup(sg_smolensk_trader_east, sg_temp)
+		end
+		
+		SGroup_Clear(sg_temp)
+	else
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Caravan_ReachedDestination(data)
+	
+	--Check if the deleted squad is a trader that has arrived at its destination
+	if Squad_GetBlueprint(data) == SBP.HRE.UNIT_TRADE_CART_HRE then
+		if SGroup_ContainsSquad(sg_smolensk_trader_west, Squad_GetID(data), true) and not Objective_IsComplete(SOBJ_StopTraders) then
+			smolensk_supply.current = smolensk_supply.current + smolensk_supply.increase
+		elseif SGroup_ContainsSquad(sg_smolensk_trader_east, Squad_GetID(data), true) and not Objective_IsComplete(SOBJ_StopTraders) then
+			smolensk_supply.current = smolensk_supply.current + smolensk_supply.increase
+		end
+		
+		--Pop up an event cue
+		local cue = {						 
+			lifetime = 10.0,
+			repeatTime = 20.0,
+			title = Loc_Empty(),
+			desc = Loc_Empty(),
+			sfx = "sfx_ui_event_queue_low_priority_play",
+			icon = "",
+			color = {r = 255, g = 255, b = 255, a = 255},
+			template = "low_priority", 
+			style = ECV_Queue,
+		}
+		
+		UI_CreateEventCueClickable(-1, cue.lifetime, 0, cue.repeatTime, "$11192465", cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, nothing)
+		
+		--Check if supply has increased, and spawn some things if its true
+		if smolensk_supply.current >= smolensk_supply.max then
+			Music_PlayStinger(MUS_STINGER_WARNING)
+			smolensk_supply.current = 0
+			
+			--Set the first wave lighter to make it easier for players to realize they can get attacked from Smolensk now
+			if first_wave == nil then
+				Util_StartIntel(EVENTS.Smolensk_Attack)
+				first_wave = false
+			end
+			
+			--Launch the previous wave set
+			if #roslavl_wave.queued_waves > 0 then Wave_Launch(roslavl_wave) end
+			if #yelnya_wave.queued_waves > 0 then Wave_Launch(yelnya_wave) end
+			if #vyazma_wave.queued_waves > 0 then Wave_Launch(vyazma_wave) end
+			
+			--Prepares up to three (randomly selected) attacks depending on the difficulty
+			if difficulty <= GD_NORMAL then
+				local attackOption = World_GetRand(1, 3)
+				
+				if attackOption == 1 then
+					BesiegeSmolensk_SpawnWaveAttack(roslavl_wave, first_wave)
+				elseif attackOption == 2 then
+					BesiegeSmolensk_SpawnWaveAttack(yelnya_wave, first_wave)
+				elseif attackOption == 3 then
+					BesiegeSmolensk_SpawnWaveAttack(vyazma_wave, first_wave)
+				end
+				
+			elseif difficulty == GD_HARD then
+				local attackOption = World_GetRand(1, 3)
+				
+				if attackOption == 1 then
+					BesiegeSmolensk_SpawnWaveAttack(roslavl_wave, first_wave)
+					BesiegeSmolensk_SpawnWaveAttack(yelnya_wave, first_wave)
+				elseif attackOption == 2 then
+					BesiegeSmolensk_SpawnWaveAttack(yelnya_wave, first_wave)
+					BesiegeSmolensk_SpawnWaveAttack(vyazma_wave, first_wave)
+				elseif attackOption == 3 then
+					BesiegeSmolensk_SpawnWaveAttack(vyazma_wave, first_wave)
+					BesiegeSmolensk_SpawnWaveAttack(roslavl_wave, first_wave)
+				end
+				
+			elseif difficulty == GD_EXPERT then
+				
+				BesiegeSmolensk_SpawnWaveAttack(roslavl_wave, first_wave)
+				BesiegeSmolensk_SpawnWaveAttack(yelnya_wave, first_wave)
+				BesiegeSmolensk_SpawnWaveAttack(vyazma_wave, first_wave)
+				
+			end
+			
+		end
+	end
+end
+
+function BesiegeSmolensk_TrackCaravanDeath(context, data)
+	
+	if context.victim ~= nil then
+		if Squad_GetBlueprint(context.victim) == SBP.HRE.UNIT_TRADE_CART_HRE then
+			Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+			--Sound_Play2D("mus_stinger_campaign_positive")
+			
+			--Play narrative line for first cart killed
+			if first_caravan_death ~= true then
+				first_caravan_death = true
+				Util_StartIntel(EVENTS.First_Caravan)
+			end
+			
+			--Is it a west trader
+			if SGroup_ContainsSquad(sg_smolensk_trader_west, context.victim.SquadID, true) then
+				if smolensk_supply.west_killed < smolensk_supply.death_limit then
+					smolensk_supply.west_killed = smolensk_supply.west_killed + 1
+					
+					if smolensk_supply.west_killed >= smolensk_supply.death_limit and west_path_active then
+						MarkerPaths_ClearIcons("west_caravan_ui")
+						west_path_active = false
+						-- if the other route is still active, play a stinger and VO for this path (if not the objective will complete instead)
+						if east_path_active then
+							Music_PlayStinger (MUS_STING_POSITIVE)
+							Util_StartIntel(EVENTS.West_Route_Closed)
+						end
+					end
+					
+				end
+			end
+			
+			--Is it an east trader
+			if SGroup_ContainsSquad(sg_smolensk_trader_east, context.victim.SquadID, true) then
+				if smolensk_supply.east_killed < smolensk_supply.death_limit then
+					smolensk_supply.east_killed = smolensk_supply.east_killed + 1
+					
+					if smolensk_supply.east_killed >= smolensk_supply.death_limit and east_path_active then
+						MarkerPaths_ClearIcons("east_caravan_ui")
+						east_path_active = false
+						-- if the other route is still active, play a stinger and VO for this path (if not the objective will complete instead)
+						if west_path_active then
+							Music_PlayStinger (MUS_STING_POSITIVE)
+							Util_StartIntel(EVENTS.East_Route_Closed)
+						end
+					end
+					
+				end
+			end
+			
+			--Stop tracking if the player has killed the required amount of trade carts
+			if smolensk_supply.west_killed + smolensk_supply.east_killed == smolensk_supply.death_limit * 2 then
+				Rule_RemoveMe()
+			end
+		end
+	end
+	
+end
+
+--Attacks from Smolensk
+function BesiegeSmolensk_SpawnWaveAttack(wave, first_attack)
+
+	local _units = {
+		{type = "scar_spearman", 	numSquads = Util_DifVar({4, 4, 4, 8})},
+		{type = "scar_manatarms", 	numSquads = Util_DifVar({4, 4, 4, 2})},
+		{type = "scar_archer", 		numSquads = Util_DifVar({6, 6, 6, 4})},
+		{type = "scar_crossbowman", numSquads = Util_DifVar({2, 2, 4, 6})}}
+	
+	BesiegeSmolensk_TimeScaleUnitTable(_units)
+	
+	if first_attack then
+		_units = {
+			{type = "scar_spearman", numSquads = 2},
+			{type = "scar_archer", numSquads = 2}}
+	end
+	
+	--Prepare the wave
+	Wave_SetUnits(wave, _units)
+	local queued_wave = Wave_Prepare(wave)
+	
+	if EGroup_CountSpawned(eg_player_built_landmark) > 0 then
+		RovingArmy_AddTarget(queued_wave.assault_module, EGroup_GetPosition(eg_player_built_landmark))
+	end
+	
+end
+
+function BesiegeSmolensk_SetUpWaves()
+	
+	--Roslavl
+	local moduleData = {
+		type = "RovingArmy",
+		descriptor = "smolensk_left_wave_assault",
+		player = player2,
+		--sgroup = sg_smolensk_to_roslavl,
+		spawnLocation = mkr_smolensk_spawn_gate_left,
+		units = {},
+		targets = {
+			mkr_wpt_left_01,
+			mkr_wpt_left_02,
+			mkr_wpt_left_03,
+			mkr_roslavl,
+			mkr_yelnya,
+			mkr_vyazma},
+		targetingType = ARMY_TARGETING_DISCARD,
+		onDeathDissolve = true}
+	
+	local wave_data = {
+		descriptor = "smolensk_left_wave",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_smolensk,
+		units = {},
+		staging_module = "gather_smolensk_left",
+		assault_module_data = moduleData,
+		auto_launch = false,
+	}
+	
+	roslavl_wave = Wave_New(wave_data)
+	
+	
+	--Yelnya
+	local moduleData = {
+		type = "RovingArmy",
+		descriptor = "smolensk_center_wave_assault",
+		player = player2,
+		--sgroup = sg_smolensk_to_roslavl,
+		spawnLocation = mkr_smolensk_spawn_gate_right,
+		units = {},
+		targets = {
+			mkr_wpt_right_01,
+			mkr_wpt_center_01,
+			mkr_wpt_center_02,
+			mkr_yelnya,
+			mkr_roslavl,
+			mkr_vyazma},
+		targetingType = ARMY_TARGETING_DISCARD,
+		onDeathDissolve = true}
+	
+	local wave_data = {
+		descriptor = "smolensk_center_wave",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_smolensk,
+		units = {},
+		staging_module = "gather_smolensk_center",
+		assault_module_data = moduleData,
+		auto_launch = false,
+	}
+	
+	yelnya_wave = Wave_New(wave_data)
+	
+	
+	--Vyazma
+	local moduleData = {
+		type = "RovingArmy",
+		descriptor = "smolensk_right_wave_assault",
+		player = player2,
+		--sgroup = sg_smolensk_to_roslavl,
+		spawnLocation = mkr_smolensk_spawn_gate_right,
+		units = {},
+		targets = {
+			mkr_wpt_right_01,
+			mkr_wpt_center_01,
+			mkr_wpt_center_02,
+			mkr_wpt_right_02,
+			mkr_vyazma,
+			mkr_yelnya,
+			mkr_roslavl},
+		targetingType = ARMY_TARGETING_DISCARD,
+		onDeathDissolve = true}
+	
+	local wave_data = {
+		descriptor = "smolensk_right_wave",
+		player = player2,
+		use_separate_spawns = true,
+		spawn = mkr_smolensk,
+		units = {},
+		staging_module = "gather_smolensk_right",
+		assault_module_data = moduleData,
+		auto_launch = false,
+	}
+	
+	vyazma_wave = Wave_New(wave_data)
+	
+end
+
+--Uses the time scale function in the smolensk.scar script to scale the table by up to 3x the original amount
+function BesiegeSmolensk_TimeScaleUnitTable(table)
+	for index, unit_values in pairs(table) do
+		unit_values.numSquads = Smolensk_GetTimeScaledAmount(unit_values.numSquads, unit_values.numSquads * 3)
+	end
+end

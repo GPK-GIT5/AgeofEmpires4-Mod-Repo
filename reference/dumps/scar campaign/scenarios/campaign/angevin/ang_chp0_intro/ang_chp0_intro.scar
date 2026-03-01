@@ -1,0 +1,864 @@
+--
+-- Mission Title and Date (i.e. Norman Intro mission)
+--
+-- Campaign, mission number ( Mission 0 )
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("obj_economy_darkage.scar")
+import("obj_explore_darkage.scar")
+import("obj_progress_feudalage.scar")
+import("obj_tip_darkage.scar")
+import("obj_military_feudal.scar")
+import("obj_attackenemycavalry.scar")
+import("obj_attack_enemyarchery.scar")
+import("obj_attack_enemyinfantry.scar")
+import("obj_progress_castleage.scar")
+import("obj_tip_feudal.scar")
+import("training_missionzero.scar")
+
+
+function Mission_SetupPlayers()
+	
+	--
+	-- get player IDs for each player
+	-- 
+	
+	player1 = World_GetPlayerAt(1) -- English
+	player2 = World_GetPlayerAt(2) -- French
+	player3 = World_GetPlayerAt(3) --allies
+
+	
+	-- player 1 - english
+	Setup_SetPlayerName(player1, 11119080) --English
+	Player_SetCurrentAge(player1, AGE_DARK)
+	Player_SetMaximumAge(player1, AGE_DARK)
+	
+	-- player 2 - french
+	Setup_SetPlayerName(player2, 11144801) --FRENCH
+	Player_SetCurrentAge(player2, AGE_DARK)
+	Player_SetMaximumAge(player2, AGE_DARK)
+
+	Player_SetRelationship(player1, player2,R_ENEMY)
+	Player_SetRelationship(player2, player1,R_ENEMY)
+	--
+	-- player 3 - neutral holder	
+	Setup_SetPlayerName(player3, 11172025) --Neutral
+	Player_SetCurrentAge(player3, AGE_DARK)
+	Player_SetMaximumAge(player3, AGE_FEUDAL)
+	
+	-- set player relationships	
+	--
+	Player_SetRelationship(player1,player3,R_ALLY)
+	Player_SetRelationship(player3,player1,R_ALLY)
+	Player_SetRelationship(player2,player3,R_ALLY)
+
+	
+end
+
+
+function Mission_SetupVariables()	-- create any extra sgroups, egroups, and mission variables in here
+	
+	eg_CastleLandmark = EGroup_CreateIfNotFound("eg_CastleLandmark")
+	
+	--player units
+	sg_villagers_player = SGroup_CreateIfNotFound("sg_villagers_player")
+	sg_eng_villagers_stables = SGroup_CreateIfNotFound("sg_eng_villagers_stables")
+	sg_eng_villagers_archeryrange = SGroup_CreateIfNotFound("sg_eng_villagers_archeryrange")
+	
+	-- VILLAGES
+	sg_horsemanVillage_villagers = SGroup_CreateIfNotFound("sg_horsemanVillage_villagers")
+	sg_horsemanVillage_horseman = SGroup_CreateIfNotFound("sg_horsemanVillage_horseman")
+	sg_fre_attackMove_scout = SGroup_CreateIfNotFound("sg_fre_attackMove_scout")
+	
+	sg_archerVillage_villagers = SGroup_CreateIfNotFound("sg_archerVillage_villagers")
+	sg_archerVillage_archers = SGroup_CreateIfNotFound("sg_archerVillage_archers")
+	
+	sg_spearmanVillage_villagers = SGroup_CreateIfNotFound("sg_spearmanVillage_villagers")
+	sg_spearmanVillage_spearman = SGroup_CreateIfNotFound("sg_spearmanVillage_spearman")
+	sg_spearmanVillage_count = SGroup_CreateIfNotFound("sg_spearmanVillage_count")
+	
+	sg_fre_spearman_attackCliff = SGroup_CreateIfNotFound("sg_fre_spearman_attackCliff")
+	
+	sg_cheer = SGroup_CreateIfNotFound("sg_cheer")
+	
+	
+
+	bIntroSkipped = false
+	i_lastCheckedFoodAmount = 250
+	i_desiredFoodAmount = 50
+	
+	i_desired_Villagers = 5
+	i_lastCheckedVillagers = 3 --initial villagers
+	
+	i_built_Farms = 0
+	i_desired_Farms = 3
+	
+	i_desiredWoodAmount = 50
+	i_lastCheckedWoodAmount = 250
+	
+	i_built_Houses = 0
+	i_desired_Houses = 3
+	
+	i_built_Mills = 0
+	i_built_LumberCamps = 0
+	i_built_MiningCamps = 0
+	
+	i_desired_scouts = 1
+	i_lastCheckedScouts = 0
+	
+	i_desiredGoldAmount = 50
+	i_lastCheckedGoldAmount = 350
+	b_gotgold = false
+	b_foundGoldDeposit = false
+	
+	i_desiredSpearmen = 10
+	i_lastCheckedSpearmen = 0
+	
+	b_barracks_built = false
+	
+	b_attackMoving = false
+	
+	i_maxHorsemenKill = 6
+	i_amountCavalryBuildings = 5
+	
+	i_amount_stables = 2
+	i_amount_horsemen_produce = 15
+	b_stables_built = false
+	i_lastCheckedHorsemen = 0
+	
+	i_deathArcheryEncampment = 0
+	i_maxArcheryKill = 15
+	i_amountArcheryBuildings = 7
+	
+	i_amount_archeryranges = 3
+	i_amount_longbowman_produce = 20
+	b_archeryRange_built = false
+	i_lastCheckedLongbowmen = 0
+
+	i_deathInfantryEncampment = 0
+	i_maxInfantryKill = 14
+	i_amountInfantryBuildings = 8
+	
+	StableHint_Sent = false
+	
+	bHintUsedPopCap = false
+	clickedCTAStables = false
+	clickedCTAArcheryRange = false
+	
+	b_producedArcher = false
+	b_producedSpearman = false
+	b_producedHorseman = false
+	
+	longbowmanCliffObjCompleted = false
+	killedSpearmanObj = false
+	destroyedBarracksObj = false
+	
+	feudalAgeStartedConstruction = false
+	castleAgeStartedConstruction = false
+	
+	-- variables used for training tips
+	eg_bestFarm = EGroup_CreateIfNotFound("eg_bestFarm")
+	eg_TC = EGroup_CreateIfNotFound("eg_TC")
+	
+	eg_stablesForTutorial = EGroup_CreateIfNotFound("eg_stablesForTutorial")
+	eg_landmarkForTutorial = EGroup_CreateIfNotFound("eg_landmarkForTutorial")
+	sg_spearmenForTutorial = SGroup_CreateIfNotFound("sg_spearmenForTutorial")
+	
+	sg_control_group = SGroup_CreateIfNotFound("sg_control_group")
+	eg_control_group = EGroup_CreateIfNotFound("eg_control_group")
+	user_has_selected_control_group_1 = false
+	control_group_1_has_spearmen = false
+
+
+	g_training_log = {
+		phase = "no phase",
+		BP = "none",
+		blueprint_name = "none"
+	}
+
+	g_training_timers = {
+		very_short = 1,
+		short = 5,
+		mid = 10,
+		normal = 15,
+		long = 30,
+	}
+	
+	g_training_markers = {
+		mineHint = mkr_hint_mine01,
+		vein = mkr_gold_mine_01,
+	}
+	
+	g_GoalVillagerSelectedHidden = Training_Goal("Squad", {ID = "HiddenVillagerSelect",Message= "",DataTemplate="GenericTrainingDataTemplate",},MissionZero_Predicate_VillagerSelected)
+	
+	b_attackOrderIssued = false
+	b_rallySet = false
+end
+
+
+function Mission_SetRestrictions()	-- set up any restrictions (i.e. locking out units, etc) in here
+
+
+end
+
+function Mission_Preset()	-- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)
+	
+	
+	
+	PlayerColour_Enable()
+	
+	--MISSIONS SPECIFIC OBJECTIVES/TRAINING--
+	IntroEconomyDarkAge_InitObjectives()
+	IntroExploreDarkAge_InitObjectives()
+	IntroProgressFeudalAge_InitObjectives()
+	IntroLearnSpearman_InitObjectives()
+	IntroAttackCavalry_InitObjectives()
+	IntroAttackArchery_InitObjectives()
+	IntroAttackInfantry_InitObjectives()
+	IntroProgressCastleAge_InitObjectives()
+	IntroTipsDarkAge_InitObjectives()
+	IntroTipsFeudal_InitObjectives()
+	
+	
+	UI_SetModalConstructionPhaseCallback(MissionZero_TrainingContructionCallback)
+
+	
+	--player 1 restrictions and upgrades
+	
+	PlayerUpgrades_Auto(player1)
+--	PlayerUpgrades_Auto(player2)
+	
+	--ITEM_DEFAULT
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("deploy_palings"), ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1,EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG,ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1,EBP.ENGLISH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_ENG,ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1,EBP.ENGLISH.BUILDING_TECH_UNIT_RANGED_CONTROL_ENG,ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1,EBP.ENGLISH.BUILDING_UNIT_RELIGIOUS_CONTROL_ENG,ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_villager_1_eng"), ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_scout_1_eng"), ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_manatarms_1_eng"), ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_spearman_2_eng"), ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_horseman_2_eng"), ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_archer_2_eng"), ITEM_REMOVED)
+	
+	-- Remove buildings
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_unit_infantry_control_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_unit_ranged_control_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_unit_cavalry_control_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_unit_siege_control_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_keep_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_palisade_gate_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_palisade_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_tower_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_wall_gate_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_wall_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_tech_unit_ranged_control_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_unit_naval_eng"), ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_outpost_eng"), ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprintsWithType("town_center"), ITEM_REMOVED)
+	
+	-- lock house production
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprintsWithType("house"), ITEM_REMOVED)
+		-- lock farm production
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, ITEM_REMOVED)
+		-- lock mill production
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_ECON_FOOD_CONTROL_ENG, ITEM_REMOVED)
+		-- lock wood econ production
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_ECON_WOOD_CONTROL_ENG, ITEM_REMOVED)
+		-- lock mine econ production
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_ECON_MINING_CAMP_CONTROL_ENG, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_VILLAGER_HUNTING_GEAR_1, ITEM_REMOVED)
+	
+	-- Hide Dark Age Landmarks
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_ABBEY_ENG, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_HALL_ENG, ITEM_REMOVED)
+	-- Hide Feudal Age Landmarks
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE2_WESTMINSTER_PALACE_ENG, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE2_WHITE_TOWER_ENG, ITEM_REMOVED)
+	
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("age_up_feudal"), ITEM_REMOVED)
+	
+	-- Hide Repair
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("villager_repair"), ITEM_REMOVED)
+	-- Hide Seek Shelter
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("villager_town_bell"), ITEM_REMOVED)
+	-- Hide Return to Work
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("villager_return_to_work"), ITEM_REMOVED)
+	-- Hide Hold Position
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("combat_unit_hold_position"), ITEM_REMOVED)
+
+	
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("drop_attached_entity"), ITEM_REMOVED)
+
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("scout_drop_off_herd_at_entity"), ITEM_REMOVED)
+	-- Hide Formations
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_line"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_spread"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_formation_wedge"), ITEM_REMOVED)
+	-- Hide Death
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_unit_death"), ITEM_REMOVED)
+	
+	ChangeBuildTimes()
+	
+	
+--	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("villager_garrison"), ITEM_REMOVED)
+	
+	
+		
+--	AssignVillagersToFarms(sg_villagers_enemytown)
+--	AssignVillagersToWood(sg_villagers_enemytown_wood)
+--	AssignVillagersToFarms(sg_villagers_enemytown02)
+		
+--	SetupAttackWaves()
+
+	
+	print("Mission_Preset -- MZ")
+
+end
+
+function Mission_PreStart()
+
+	print ("Mission_PreStart -- MZ")
+end
+
+function Mission_Start()	-- this is triggered after the intro, just as control is passed to the player
+	
+	print ("Mission_Start -- MZ")
+	
+
+	Player_SetResource( player1, RT_Gold, i_lastCheckedGoldAmount) 
+	Player_SetResource( player1, RT_Wood, i_lastCheckedWoodAmount) 
+	Player_SetResource( player1, RT_Food, i_lastCheckedFoodAmount)
+	
+	--Action_SetResources_Do({ player = player2, resources = { food = 30000, wood = 30000, stone = 30000, gold = 30000 } })
+	
+	--FILTER CUSTOM CORE TUTORIALS LIST
+	Disable_CoreTutorials_MinusExceptions()
+	Objective_Start(OBJ_DevelopEconomy,true, true)
+	
+	Villagers_StartingUnits()
+	Music_LockIntensity(MUSIC_EXPLORE)
+
+	Rule_AddInterval(FindGoldDeposit_Monitor, 1)
+		
+end
+
+
+function GetRecipe()
+
+	local recipe = {
+		
+		audioSettings = { 
+			campaignName = "ang",
+			missionName = "ang_chp0_intro",
+		},
+		
+		introNIS = EVENTS.IntroMovie,
+		outroNIS = EVENTS.MissionZeroOutro,
+		
+		-- Locations
+		locations = {
+			
+			{ descriptor = "playertown", marker = mkr_player_town, player = player1 },
+			{ 	descriptor = "horseman_village", marker = mkr_horseman_village, player = player2},
+			{ 	descriptor = "archer_village", marker = mkr_archer_village, player = player2},
+			{ 	descriptor = "spearman_village", marker = mkr_spearman_village, player = player2},
+			
+			
+		},
+		
+		
+		-- Modules
+		modules = {
+
+			
+	-- HORSEMAN VILLAGE		
+			{
+				type = "UnitSpawner",
+				player = player2,
+				descriptor = "Enemy_Horseman_guards",
+				location = "horseman_village",
+				spawnLocation = mkr_horseman_village_units_spawn01,
+				sgroup = sg_horsemanVillage_horseman,
+				
+				units = {
+					{type = "scar_horseman", numSquads = 6, tag = "CavalryEncampment"},
+				},
+			},
+			
+	------VILLAGE ARCHER
+			{
+				type = "UnitSpawner",
+				player = player2,
+				descriptor = "Enemy_Archer_guards",
+				location = "archer_village",
+				spawnLocation = mkr_archer_village_archers01,
+				sgroup = sg_archerVillage_archers,
+				
+				units = {
+					{type = "scar_archer", numSquads = 15, tag = "ArcheryEncampment"},
+				},
+			},
+			
+		-- VILLAGE SPEARMAN
+			--			 Defend Enemy town 03
+			{ 
+				type = "Defend",
+				descriptor = "Enemy_spearman_guards",
+				location = "spearman_village",
+				player = player2,
+				sgroup = sg_spearmanVillage_spearman,
+				useCustomDirection = true,
+				combatRange = 60,
+				leashRange = 85,
+
+				units = {
+					{type = "scar_spearman", numSquads = 5, spawn = mkr_spearman_village_spearman01, tag = "SpearmanEncampment"}, 
+					{type = "scar_spearman", numSquads = 5, spawn = mkr_spearman_village_spearman02, tag = "SpearmanEncampment"}, 
+					{type = "scar_spearman", numSquads = 2, spawn = mkr_spearman_village_spearman03, tag = "SpearmanEncampment"}, 					
+				},
+				
+			},
+
+			
+			{
+				type = "RovingArmy",
+				descriptor = "Cavalry_AttackMove_Scout",
+				spawnLocation = mkr_horseman_attackMove_target_spawn,
+				player = player2,
+				targetingType = ARMY_TARGETING_REVERSE,
+				attackMove = attackMoveStyle_attackEverything,
+				sgroup = sg_fre_attackMove_scout,
+				useCustomDirection = true,
+				targets = {
+					mkr_horseman_attackMove_target_destination,
+					mkr_horseman_attackMove_target_spawn,
+				},
+				fallbacks = {},
+			},
+			
+			{
+				type = "RovingArmy",
+				descriptor = "Spearman_village_attack_roving",
+				spawnLocation = mkr_spearman_village_spearman01,
+				player = player2,
+				targetingType = ARMY_TARGETING_REVERSE,
+				attackMove = attackMoveStyle_attackEverything,
+				sgroup = sg_fre_spearman_attackCliff,
+				useCustomDirection = true,
+				idleTime = 0.5,
+				targets = {
+					mkr_spearman_village_rovingarmy_dest01,
+					mkr_spearman_village_rovingarmy_dest02,
+					mkr_spearman_village_rovingarmy_dest03,
+					mkr_horseman_clifftop,
+				},
+				fallbacks = {},
+			},
+		
+			
+		},
+		
+		--pre start
+		preStart = {
+			actions =
+			{
+				
+				{
+				},
+				
+			}
+		},
+		
+		-- Playbill
+		playbill = { --playbill
+			
+		},
+		
+		-- Presentation things for the start or end of a mission
+		onStart = {
+			intelEvent = "",
+			expositionCamera = {},
+			titleCard = {
+				icon = "icons/campaign/campaign_angevin_the_conquest",
+				title = 11160630,		--
+				date =   11160631,	-- 1066
+			},
+			actions = {},
+		},
+	}
+			
+	return recipe
+
+end
+
+function Villagers_StartingUnits()
+		
+	local villagers = {
+	 {type = "scar_villager", numSquads = 3, spawn = mkr_player_town, destination = mkr_player_town_villagers_moveto},
+	}
+	
+	UnitEntry_DeploySquads(player1, sg_villagers_player, villagers, mkr_player_town_villagers_moveto)
+	
+end
+
+--? @shortdesc Watches for construction in dark age
+function EconDarkAge_OnConstructionComplete(context)
+	
+	local buildingOwner = Entity_GetPlayerOwner(context.entity)
+	if buildingOwner == player1 then
+		
+		if not Objective_IsComplete(SOBJ_BuildFarms) and Entity_IsOfType(context.entity, "farm") then
+			
+			i_built_Farms = i_built_Farms + 1
+			
+			if Objective_IsStarted(SOBJ_BuildFarms) then
+				Objective_SetCounter(SOBJ_BuildFarms, i_built_Farms, i_desired_Farms)
+				if i_built_Farms < i_desired_Farms then
+					Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+				end
+			end
+		elseif not Objective_IsComplete(SOBJ_BuildMill) and Entity_IsOfType(context.entity, "mill") then
+			i_built_Mills = i_built_Mills + 1
+		
+		elseif not Objective_IsComplete(SOBJ_BuildLumberCamp) and Entity_IsOfType(context.entity, "lumber_camp") then
+			i_built_LumberCamps = i_built_LumberCamps + 1	
+
+		elseif not Objective_IsComplete(SOBJ_BuildHouses) and Entity_IsOfType(context.entity, "house") then
+			i_built_Houses = i_built_Houses + 1	
+			if Objective_IsStarted(SOBJ_BuildHouses) then
+				Objective_SetCounter(SOBJ_BuildHouses, i_built_Houses, i_desired_Houses)
+				if i_built_Houses < i_desired_Houses then
+					Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+				end
+			end
+
+		elseif not Objective_IsComplete(SOBJ_BuildMine) and Entity_IsOfType(context.entity, "mining_camp") then
+			i_built_MiningCamps = i_built_MiningCamps + 1			
+		end
+		
+		
+	end
+	
+	
+end
+
+
+--? @shortdesc Watches for construction in feudal age
+--? 
+function MilitaryFeudal_OnConstructionComplete(context)
+	
+	local buildingOwner = Entity_GetPlayerOwner(context.entity)
+	if buildingOwner == player1 then
+		
+		EGroup_Clear(eg_temp)
+		EGroup_Add(eg_temp, context.entity)
+		
+		if not Objective_IsComplete(SOBJ_BuildBarrack) then
+			if Entity_IsOfType(context.entity, "barracks") then
+				b_barracks_built = true
+				Objective_Complete(SOBJ_BuildBarrack)
+				
+			end
+		end
+		
+		
+		
+		--if not Objective_IsComplete(SOBJ_BuildHouses) and Objective_IsCounterSet(SOBJ_BuildHouses) then
+			--if Entity_IsOfType(context.entity, "house") then
+				
+				--Objective_IncreaseCounter(SOBJ_BuildHouses, 1)
+				
+				--if Obj_GetCounterCount(SOBJ_BuildHouses.ID) >= Obj_GetCounterMax(SOBJ_BuildHouses.ID) then
+					
+					--Objective_Complete(SOBJ_BuildHouses)
+					
+				--else
+					--Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+				--end
+			--end
+		--end
+		
+		if not Objective_IsComplete(SOBJ_BuildStables) then
+			if Entity_IsOfType(context.entity, "stable") and Prox_AreEntitiesNearMarker(eg_temp, mkr_stables_buildarea, ANY, 30)then
+				
+				if not b_stables_built then
+					b_stables_built = true			
+				end
+				
+				Objective_IncreaseCounter(SOBJ_BuildStables, 1)
+				EGroup_Add(eg_stablesForTutorial, context.entity)
+				
+
+				
+				if Obj_GetCounterCount(SOBJ_BuildStables.ID) >= Obj_GetCounterMax(SOBJ_BuildStables.ID) then
+					-- we add this callback here so the the egroup is full when we do
+					-- if we add it earlier it gets confused when we add things to the egroup
+					if not Rule_Exists(ListenForRallyPoint) then
+						Rule_AddEGroupEvent(ListenForRallyPoint, eg_stablesForTutorial, GE_EntityCommandIssued)
+					end
+					
+					Objective_Complete(SOBJ_BuildStables)
+			
+				else
+					Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+				end
+				
+			end
+		end
+		
+		if not Objective_IsComplete(SOBJ_BuildArcheryRange) then
+			if Entity_IsOfType(context.entity, "archery_range") and Prox_AreEntitiesNearMarker(eg_temp, mkr_archeryrange_buildarea, ANY, 30) then
+				
+				if not b_archeryRange_built then
+					b_archeryRange_built = true			
+				end
+				
+				Objective_IncreaseCounter(SOBJ_BuildArcheryRange, 1)
+				
+				if Obj_GetCounterCount(SOBJ_BuildArcheryRange.ID) >= Obj_GetCounterMax(SOBJ_BuildArcheryRange.ID) then
+					
+					Objective_Complete(SOBJ_BuildArcheryRange)
+					Rule_RemoveMe()
+				else
+					Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+				end
+			end
+		end
+		
+		
+	end
+	
+end
+
+function ChangeBuildTimes()
+
+--	Modify_PlayerProductionRate(player1,2.2)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_ECON_FOOD_CONTROL_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_ECON_MINING_CAMP_CONTROL_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_ECON_WOOD_CONTROL_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_HOUSE_CONTROL_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_ABBEY_ENG, 0.4)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE2_WESTMINSTER_PALACE_ENG, 0.4)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_LANDMARK_AGE2_WHITE_TOWER_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_UNIT_CAVALRY_CONTROL_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_UNIT_INFANTRY_CONTROL_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_UNIT_RANGED_CONTROL_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.UNIT_ARCHER_2_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.UNIT_HORSEMAN_2_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.UNIT_SCOUT_1_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.UNIT_SPEARMAN_2_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.UNIT_VILLAGER_1_ENG, 0.5)
+	Modify_EntityBuildTime(player1, EBP.ENGLISH.BUILDING_TOWN_CENTER_CAPITAL_ENG, 0.1)
+	
+end
+
+
+function FindGoldDeposit_Monitor()
+	
+	Player_GetAll(player1,sg_allsquads)
+	
+	if Prox_AreSquadsNearMarker(sg_allsquads,mkr_gold_mine_01,ANY,30) then
+		b_foundGoldDeposit = true
+		hintpoint_Gold = HintPoint_Add(mkr_gold_mine_01, true, "$11119542", 5)
+		g_training_markers.vein = mkr_gold_mine_01
+		g_training_markers.mineHint = mkr_hint_mine01
+		Rule_RemoveMe()
+	elseif Prox_AreSquadsNearMarker(sg_allsquads,mkr_gold_mine_02,ANY,30) then
+		b_foundGoldDeposit = true
+		hintpoint_Gold = HintPoint_Add(mkr_gold_mine_02, true, "$11119542", 5)
+		g_training_markers.vein = mkr_gold_mine_02
+		g_training_markers.mineHint = mkr_hint_mine02
+		Rule_RemoveMe()
+	end
+end	
+
+
+function ApproachingMaxPop_Monitor()
+	
+	local pop = Player_GetCurrentPopulation(player1, CT_Personnel)
+	
+	if pop >= 180 then
+		Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_unit_death"), ITEM_DEFAULT)
+		Rule_RemoveMe()
+	end
+	
+	
+end
+
+
+---------- cheat functions for starting mid mission ----
+
+
+
+function Cheat_Explore_DarkAge ()
+	
+	Sound_Play2D(MIX_RETURN_TO_GAME)
+	
+	Util_CreateEntities(player1, eg_TC, EBP.ENGLISH.BUILDING_TOWN_CENTER_CAPITAL_ENG, mkr_player_town, 1)
+	
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_villager_1_eng"), ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprintsWithType("house"), ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_ECON_FOOD_CONTROL_ENG, ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_ECON_WOOD_CONTROL_ENG, ITEM_UNLOCKED)
+
+	Player_SetResource( player1, RT_Food, 500) 
+	Player_SetResource( player1, RT_Wood, 500) 
+
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_ECON_FOOD_CONTROL_ENG, mkr_cheat_mill, 1)	
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_ECON_WOOD_CONTROL_ENG, mkr_cheat_lumber, 1)	
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_HOUSE_CONTROL_ENG, mkr_cheat_house1, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_HOUSE_CONTROL_ENG, mkr_cheat_house2, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_HOUSE_CONTROL_ENG, mkr_cheat_house3, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, mkr_cheat_farm1, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, mkr_cheat_farm2, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, mkr_cheat_farm3, 1)
+
+	AssignVillagersToBerries(sg_villagers_player)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type="scar_villager", numSquads = 3}, mkr_cheat_farm1)
+	AssignVillagersToFarms(sg_temp)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type="scar_villager", numSquads = 5}, mkr_cheat_lumber)
+	AssignVillagersToWood(sg_temp)
+
+	Disable_CoreTutorials_MinusExceptions()
+	Tutorials_MissionZero_BuildHouseIncreasePopCap()
+	
+	Rule_AddInterval(FindGoldDeposit_Monitor, 1)
+	Rule_AddGlobalEvent(EconDarkAge_OnConstructionComplete, GE_ConstructionComplete)
+
+	Player_GetAll(player1, sg_allsquads, eg_TC)
+	EGroup_Filter(eg_TC, EBP.ENGLISH.BUILDING_TOWN_CENTER_CAPITAL_ENG, FILTER_KEEP)
+	hptc = HintPoint_Add(eg_TC, true, "$11119069", 7)
+	
+end
+
+function Cheat_Progress_Feudalage()
+	
+	Cheat_Explore_DarkAge ()
+	
+	Rule_Remove(FindGoldDeposit_Monitor)
+	Rule_RemoveGlobalEvent(EconDarkAge_OnConstructionComplete)
+	hintpoint_Gold = HintPoint_Add(mkr_gold_mine_01, true, 11119542, 5)
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_scout_1_eng"), ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_ECON_MINING_CAMP_CONTROL_ENG, ITEM_UNLOCKED)
+	
+	Player_SetResource( player1, RT_Gold, 500)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, mkr_cheat_farm4, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, mkr_cheat_farm5, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_ECON_MINING_CAMP_CONTROL_ENG, mkr_cheat_mine, 1)
+
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type="scar_villager", numSquads = 2}, mkr_cheat_farm4)
+	AssignVillagersToFarms(sg_temp)
+	
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type="scar_villager", numSquads = 5}, mkr_cheat_mine)
+	AssignVillagersToGold(sg_temp)
+	
+	UnitEntry_DeploySquads(player1, sg_temp, {type="scar_scout", numSquads = 1}, mkr_cheat_mine)
+	
+	Camera_MoveTo(mkr_gold_mine_01)
+end
+
+function Cheat_FeudalMilitary ()
+	
+	Cheat_Progress_Feudalage()
+	
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_HOUSE_CONTROL_ENG, mkr_cheat_house4, 1)
+	
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, mkr_cheat_farm6, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, mkr_cheat_farm7, 1)
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_RESOURCE_FARM_ENG, mkr_cheat_farm8, 1)
+	
+	EGroup_Clear(eg_temp)
+	Util_CreateEntities(player1, eg_landmarkForTutorial, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_ABBEY_ENG, mkr_cheat_landmark, 1)
+	hpid_landmark = HintPoint_Add(eg_landmarkForTutorial, true, "$11197254", 3)
+	
+	Player_SetMaximumAge(player1, AGE_FEUDAL)
+
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type="scar_villager", numSquads = 3}, mkr_cheat_farm6)
+	AssignVillagersToFarms(sg_temp)
+
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type="scar_villager", numSquads = 3}, mkr_cheat_lumber)
+	AssignVillagersToWood(sg_temp)
+	
+	Camera_MoveTo(mkr_cheat_landmark)
+	
+end
+
+
+function Cheat_AttackCavalry()
+	
+	Cheat_FeudalMilitary()
+	
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_spearman_2_eng"), ITEM_UNLOCKED)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_unit_infantry_control_eng"), ITEM_UNLOCKED)
+		
+	Util_CreateEntities(player1, eg_temp, EBP.ENGLISH.BUILDING_UNIT_INFANTRY_CONTROL_ENG, mkr_cheat_barracks, 1)
+	
+	UnitEntry_DeploySquads(player1, sg_temp, {type="scar_spearman", numSquads = 10}, mkr_cheat_spearmen)
+	
+	--remove pallisade	
+	Player_GetAllEntitiesNearMarker(player2, eg_temp, mkr_cheat_destroy, 10)
+	EGroup_DestroyAllEntities(eg_temp)
+	Player_GetAllEntitiesNearMarker(player3, eg_temp, mkr_cheat_destroy, 10)
+	EGroup_DestroyAllEntities(eg_temp)
+	--EGroup_Kill(eg_allied_palisade)
+	
+	--move camera
+	Camera_MoveTo(mkr_cheat_spearmen)
+	
+	
+	-- tutorials & rules
+	Rule_AddGlobalEvent(MilitaryFeudal_OnConstructionComplete, GE_ConstructionComplete)
+	
+	--Map and FOW
+	World_SetInteractionStage(1)
+	FOW_PlayerRevealArea(player1,Util_GetPosition(mkr_closeToGate), 25, -1)
+end
+
+function Cheat_AttackArchery()
+	Cheat_AttackCavalry()
+	World_SetInteractionStage(2)
+	FOW_RevealMarker(mkr_horseman_village,-1)
+	Camera_MoveTo(mkr_horseman_village_lookat)
+	EGroup_DestroyAllEntities(eg_enemy_village1)
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_horseman_village, 80)
+	SGroup_Kill(sg_temp)
+end
+
+function Cheat_AttackInfantry()
+	Cheat_AttackArchery()
+	World_SetInteractionStage(3)
+	Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_unit_cavalry_control_eng"), ITEM_DEFAULT)
+	Player_SetSquadProductionAvailability(player1, BP_GetSquadBlueprint("unit_horseman_2_eng"), ITEM_DEFAULT)
+	FOW_RevealMarker(mkr_archer_village,-1)
+	Camera_MoveTo(mkr_archer_village_lookat)
+	EGroup_DestroyAllEntities(eg_enemy_village2)
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_archer_village, 80)
+	SGroup_Kill(sg_temp)
+end
+
+function Cheat_Progress_Castleage()
+	Cheat_AttackInfantry()
+	Camera_MoveTo(mkr_player_town)
+	World_SetInteractionStage(4)
+	Rule_RemoveGlobalEvent(MilitaryFeudal_OnConstructionComplete)
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_spearman_village, 80)
+	SGroup_Kill(sg_temp)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_UNIT_RANGED_CONTROL_ENG, ITEM_DEFAULT)
+	Player_SetSquadProductionAvailability(player1, SBP.ENGLISH.UNIT_ARCHER_2_ENG, ITEM_DEFAULT)
+	Player_SetResource( player1, RT_Food, 3000)
+	Player_SetResource( player1, RT_Wood, 3000)
+	Player_SetResource( player1, RT_Gold, 3000)
+end

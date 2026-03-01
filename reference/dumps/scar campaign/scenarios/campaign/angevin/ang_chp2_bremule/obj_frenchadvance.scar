@@ -1,0 +1,437 @@
+--
+-- Bremule 1119 - French Advance
+--
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+
+
+function FrenchAdvance_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_FrenchAdvance = {
+	
+		Title = "$11178818", --Hold off the French
+		Type = ObjectiveType_Battle,
+		PreStart = FrenchAdvance_PreStart,
+		OnStart = FrenchAdvance_OnStart,
+		IsComplete = FrenchAdvance_IsComplete,
+		OnComplete = FrenchAdvance_OnComplete,
+		IsFailed = FrenchAdvance_IsFailed,
+		OnFail = FrenchAdvance_OnFail,
+	}
+		
+	SOBJ_HoldingFleury  = {
+		
+		Title = "$11178819", --Hold Fleury until King Henry arrives
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_FrenchAdvance,
+		StartAlongsideParent = true,
+		OnStart = HoldingFleury_OnStart,
+		showTitle = false,
+	}
+	
+	SOBJ_ClearFleury  = {
+		
+		Title = "$11178820", --Push the French out of Fleury
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_FrenchAdvance,
+		StartAlongsideParent = false,
+		IsComplete = ClearFleury_IsComplete,
+		PreComplete = ClearFleury_PreComplete,
+		OnComplete = ClearFleury_OnComplete,
+		showTitle = false,
+	}
+	
+	OBJ_DebugComplete_Min = {
+		Title = LOC("Debug Complete Min"),
+		Type = OT_Primary,
+		showTitle = false,
+		Cheat = function()
+			bremuleTotalDefenders = 0
+			EGroup_Kill(eg_village_bremule)
+			Util_StartIntel(EVENTS.Victory)
+		end,
+	}
+	
+	OBJ_DebugComplete_Mid = {
+		Title = LOC("Debug Complete Mid"),
+		Type = OT_Primary,
+		showTitle = false,
+		Cheat = function()
+			bremuleTotalDefenders = 30
+			EGroup_Kill(eg_village_bremule)
+			Util_StartIntel(EVENTS.Victory)
+		end,
+	}
+	
+	OBJ_DebugComplete = {
+		Title = LOC("Debug Complete Max"),
+		Type = OT_Primary,
+		showTitle = false,
+		Cheat = function()
+			bremuleTotalDefenders = 100
+			EGroup_Kill(eg_village_bremule)
+			Util_StartIntel(EVENTS.Victory)
+		end,
+	}
+	
+	Objective_Register(OBJ_DebugComplete_Min)
+	Objective_Register(OBJ_DebugComplete_Mid)
+	Objective_Register(OBJ_DebugComplete)
+	Objective_Register(OBJ_FrenchAdvance)
+	Objective_Register(SOBJ_LosingGrainville)
+	Objective_Register(SOBJ_HoldingFleury)
+	Objective_Register(SOBJ_ClearFleury)
+end
+
+--FRENCH ADVANCE--
+
+function FrenchAdvance_IsComplete()
+	if Objective_IsComplete(SOBJ_HoldingFleury) and (Objective_IsStarted(SOBJ_ClearFleury) == false or Objective_IsComplete(SOBJ_ClearFleury)) then
+		Sound_Play2D(MUS_STING_POSITIVE)
+		Player_GetAll(player1)
+		
+		Util_StartIntel(EVENTS.Defend_Fleury_Success)
+		
+		-- Audio request: Stop music for a whlie -- this doesn't have any effect on the music...?
+		-- Music_Stop()
+		-- Music_RestartAfterObjective(60)
+	
+		return true
+	end
+end
+
+function FrenchAdvance_OnStart()
+	Bremule_Intro_Parade()
+	EventCues_CallToAction("$11191495",CTA_UNIQUE_CHANGE, EVENTS.Defend_Fleury, nil, sg_intro_horseman, 20) --"Defenders have arrived to hold Fleury"
+	Sound_Play2D(MUS_STING_TRIUMPHANT)
+	Sound_PlayWallaCelebrateOnSGroup(sg_intro_horseman)
+	--Rule_AddInterval(GameOver, 1)
+	Rule_AddInterval(FrenchNotify,1)
+	hint_grainville = HintPoint_Add(mkr_village_grainville, true, "$11178836", LOCATION_LABEL_HEIGHT, nil, nil, nil, true, nil) --Grainville
+	hint_cressenville = HintPoint_Add(mkr_village_cressenville, true, "$11179196", LOCATION_LABEL_HEIGHT, nil, nil, nil, true, nil) --Cressenville
+	
+	Rule_AddOneShot(Bremule_ChangeBurningFarmsteadOwnership, 10)
+	
+end
+
+function FrenchAdvance_OnComplete()
+	CheckCaptures()
+	Objective_Start(OBJ_DefeatTheFrench, false)
+	Rule_AddInterval(EnglishPushBack, 3)
+	hint_fleury = HintPoint_Add(mkr_village_fleury, true, "$11179197", LOCATION_LABEL_HEIGHT, nil, nil, nil, true, nil) -- Fleury
+	HintPoint_SetVisible(hint_grainville, false)
+	HintPoint_SetVisible(hint_cressenville, false)
+	AmbushSpawn()
+	--Rule_AddOneShot(InitHuntingLoop, 60)
+	--Rule_AddOneShot(FleuryScoutGroup, 120)
+	if Game_GetSPDifficulty() >= GD_NORMAL then
+		Init_Hunting_RovingArmy()
+		Rule_AddInterval(RovingLastPosition, 1.5)
+		Rule_AddOneShot(Init_FrenchWaves, 120)
+		Rule_AddOneShot(Init_Ram_RovingArmy, 150)
+		NewScoutGroup()
+	end
+	Rule_AddOneShot(UpdateWaveTarget, 1)
+	Music_StopAfterObjective()
+	
+	if Game_GetSPDifficulty() <= GD_NORMAL then
+		Objective_Start(OBJ_FuncKeys, false, false)
+	end
+end
+
+function HoldingFleury_OnStart()
+	Fleury_IconFleury = Objective_AddUIElements(SOBJ_HoldingFleury, mkr_village_fleury, true, "$11179197", true, 5, nil, nil, "icons/objectives/objective") --Fleury
+end
+
+function ClearFleury_IsComplete()
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_village_fleury)
+	local french_StillInFleury = (rovfren_remaining-SGroup_CountSpawned(sg_temp))/rovfren_remaining
+	Obj_SetProgress(SOBJ_ClearFleury.ID, french_StillInFleury)
+	--Objective_SetCounter(SOBJ_ClearFleury, SGroup_CountSpawned(sg_temp))
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		return false
+	else
+		if Objective_IsComplete(SOBJ_HoldingFleury) ~= true then
+			Objective_Complete(SOBJ_HoldingFleury)
+		end
+		return true
+	end
+end
+
+function ClearFleury_PreComplete()
+
+end
+
+function FleuryObjective_InitialUpdate()
+	rovfren_remaining = SGroup_CountSpawned(sg_french_rovingarmy)
+	if rovfren_remaining <= 20 then
+		Rule_Remove(FrenchArrival)
+		Rule_RemoveMe()	
+		KingHenry_Reinforcements()	
+	elseif b_endGame == true then
+		Rule_RemoveMe()
+	end
+end
+
+function IsFlueryClear()
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_village_fleury)
+	rovfren_remaining = SGroup_CountSpawned(sg_temp)
+	
+	if  rovfren_remaining <= 0 then
+		Objective_Complete(SOBJ_HoldingFleury, false)
+	else
+		Objective_Start(SOBJ_ClearFleury, false)
+		Obj_SetProgressVisible(SOBJ_ClearFleury.ID, true)
+	end
+end
+
+--French conquer the passed in locaiton if no player units are present
+function FrenchArrival(context, data) 
+		
+	Player_GetAllSquadsNearMarker(player2, sg_temp, data.currentMarker)
+	local frenchattackers = SGroup_CountSpawned(sg_temp)
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, data.currentMarker)
+	local enlishdefenders = SGroup_CountSpawned(sg_temp)
+	
+	if frenchattackers > 0 and enlishdefenders <= 0  then
+		Rule_RemoveMe()
+		if data.currentMarker == mkr_village_cressenville then
+			OnCapture_CancelProductionQueue(mkr_village_cressenville)
+			Transfer_Defenders("FrenchArmy1", "FrenchCressenville", 0.10, sg_louis_retinue)
+			Util_StartIntel(EVENTS.Cressenville_Destroyed)
+			
+			Location_SetBuildingAssociation(MissionOMatic_FindLocation("Cressenville"), true)
+			Location_SetPlayerOwner(MissionOMatic_FindLocation("Cressenville"), player2)
+			
+			b_CressenvilleFrench = true
+			Cressenville_Loot()
+		elseif data.currentMarker == mkr_village_grainville then
+			OnCapture_CancelProductionQueue(mkr_village_grainville)
+			Transfer_Defenders("FrenchArmy1", "FrenchGrainville", 0.115, sg_louis_retinue)
+			Util_StartIntel(EVENTS.Grainville_Destroyed)
+			FOW_PlayerUnRevealArea(player2, Marker_GetPosition(mkr_village_grainville))
+			Location_SetBuildingAssociation(MissionOMatic_FindLocation("Grainville"), true)
+			Location_SetPlayerOwner(MissionOMatic_FindLocation("Grainville"), player2)
+			
+			b_GrainvilleFrench = true
+			Grainville_Loot()
+		end
+		if b_CressenvilleFrench == true and b_GrainvilleFrench == true then
+			Transfer_Defenders("FrenchArmy1", "LouisRetinue", 0.69, sg_louis_retinue)
+			RovingArmy_RemoveSGroup(FrenchArmy1, sg_louis_retinue, true)
+			RovingArmy_AddSGroup(Louis_Retinue, sg_louis_retinue, true)
+			Init_FrenchBackfill()
+			Rule_AddOneShot(Rules_Delay, 5)
+			--SGroup_SetInvulnerable(g_leaderLouis.sgroup, 0.05, -1)
+		end
+	end
+end
+
+function Check_GroupsArrived()
+	if Prox_AreSquadsNearMarker(sg_louis_army, mkr_village_bremule, ANY, 30) and Prox_AreSquadsNearMarker(sg_louis_reup, mkr_village_bremule, ANY, 30) then
+		Rule_RemoveMe()
+		LiquidateLouisArmy()
+	end
+end
+
+function Rules_Delay()
+	Rule_AddInterval(GateBreach, 1)
+	Rule_AddInterval(Louis_Weakened, 1)
+	Rule_AddInterval(Check_GroupsArrived, 5)	
+end
+
+
+
+function Transfer_Defenders(transferFrom, transferTo, transferPercent, exceptionSgroup)
+	local bigArmy = MissionOMatic_FindModule(transferFrom) 
+	local smallArmy = MissionOMatic_FindModule(transferTo)
+		
+	local bigArmy_Units = UnitTable_GenerateFromSGroup(bigArmy.sgroup)
+	
+	local leftBehind_Units = {}
+	SGroup_Clear(sg_transfer)
+	SGroup_Clear(sg_sorting)
+	
+	for key, value in ipairs(bigArmy_Units) do
+		
+		SGroup_Duplicate(bigArmy.sgroup, sg_sorting)
+		if exceptionSgroup ~= nil and scartype(exceptionSgroup) == ST_SGROUP then
+			SGroup_RemoveGroup(sg_sorting, exceptionSgroup)
+		end
+		SGroup_Filter(sg_sorting, value.type, FILTER_KEEP)
+		SGroup_FilterCount(sg_sorting, math.floor(SGroup_CountSpawned(sg_sorting)*transferPercent))
+		SGroup_AddGroup(sg_transfer, sg_sorting)
+		
+		--table.insert(leftBehind_Units, {type = value.type, numSquads = math.floor(value.numSquads*transferPercent)})
+	end
+	
+	--Defend_RequestUnits(smallArmy, leftBehind_Units, nil, "high")
+	Prefab_DoAction(bigArmy, "RemoveSGroup", sg_transfer)
+	Prefab_DoAction(smallArmy, "AddSGroup", sg_transfer)
+	--Reinforcement_UpdateIdealComposition(bigArmy)
+	SGroup_Clear(sg_transfer)
+	SGroup_Clear(sg_sorting)
+end
+
+function SpinUp_CounterAttack(name, target, percent)
+	
+	local diffBased_TargetingType = ARMY_TARGETING_DISCARD
+	if Game_GetSPDifficulty() <= GD_EASY then
+		diffBased_TargetingType = ARMY_TARGETING_CYCLE
+	end
+	
+	local moduleData = 
+	{
+		descriptor = name,
+		
+		type = "RovingArmy",
+		player = player2,
+		onDeathDissolve = true,
+		attackMove = attackMoveStyle_attackEverything,
+		targetingType = diffBased_TargetingType,
+		targets = Siege_Targets(),
+	}
+	
+	local counterModule = RovingArmy_Init(moduleData)
+	
+	SGroup_Duplicate(sg_louis_army, sg_temp)
+	SGroup_Filter(sg_temp, SBP.FRENCH.UNIT_KING_LOUIS_CMP_FRE, FILTER_REMOVE)
+	local percentNum = SGroup_CountSpawned(sg_temp)*percent
+	SGroup_FilterCount(sg_temp, percentNum)
+ 	SGroup_RemoveGroup(sg_louis_army, sg_temp)
+	Modifier_RemoveAllFromSGroup(sg_temp)
+	RovingArmy_AddSGroup(counterModule, sg_temp ,true)
+	EventCues_CallToAction("$11195679", CTA_ALARM, EVENTS.KingLouis_CounterAttack, nil, counterModule.sgroup, 20) --King Louis is Counter-Attacking!
+	Sound_Play2D("mus_stinger_campaign_warning")
+	Sound_Play2D("sfx_campaign_scripted_large_group_engage")
+	
+	ThreatArrow_CreateGroup("counter attack", counterModule.sgroup)
+	UI_CreateMinimapBlip(counterModule.sgroup, 10, "threat_group")
+end
+
+function KingHenry_Reinforcements()
+	local henryKnights =
+	{
+		{ type = "scar_knight", numSquads = 9 },
+		{ sbp = SBP.ENGLISH.UNIT_KING_HENRY_CMP_ENG, numSquads = 1, tag = "king_henry", sgroup = g_leaderHenry.sgroup },
+	}
+	
+		local reinforcments =
+	{
+		{ type = "scar_archer", numSquads = 14 },
+		{ type = "scar_spearman", numSquads = 10 },
+		{ type = "scar_manatarms", numSquads = 6 },
+		
+	}
+	
+	sg_henryretinue = SGroup_CreateIfNotFound("sg_henryretinue")
+	sg_henryreinforcments = SGroup_CreateIfNotFound("sg_henryreinforcments")
+	
+	UnitEntry_DeploySquads(player1, sg_henryretinue, henryKnights, mkr_english_reinforcments)
+	UnitEntry_DeploySquads(player1, sg_henryreinforcments, reinforcments, mkr_english_reinforcments)
+	Modifier_Remove(popCapLimit)
+	Cmd_FormationAttackMove(sg_henryretinue, mkr_village_fleury_spawn)
+	Cmd_FormationAttackMove(sg_henryreinforcments, mkr_village_fleury_offspawn)
+	
+	EventCues_CallToAction("$11180361", CTA_CELEBRATE, EVENTS.KingHenry, nil, sg_henryretinue, 20) --King Henry has arrived with reinforcements!
+	Sound_Play2D(MUS_STING_TRIUMPHANT)
+	Player_GetAll(player1)
+	SGroup_RemoveGroup(sg_allsquads, sg_henryretinue)
+	Sound_PlayWallaCelebrateOnSGroup(sg_allsquads)
+	Sound_PlayWallaEngageOnSGroup(sg_henryretinue)
+
+	IsFlueryClear()
+end
+
+function FrenchNotify()
+	if Player_AreSquadsNearMarker(player2, mkr_frencharrival) then
+		Music_LockIntensity(MUSIC_TENSE_COMBAT, 15)
+		Rule_RemoveMe()
+	end
+end
+
+function CheckCaptures()
+	if b_CressenvilleFrench == true or b_GrainvilleFrench == true then 
+		Util_StartIntel(EVENTS.RetakeTowns)
+		
+		if b_CressenvilleFrench == true then
+			FOW_PlayerRevealArea(player2, Util_GetPosition(mkr_village_cressenville), Marker_GetProximityRadiusOrDefault(mkr_village_cressenville, 50), 10)
+			Rebuild_Location(cressenville_EntityTable, sg_rebuilders_cressenville, mkr_village_cressenville)
+			Objective_Start(SOBJ_CaptureCressenville, false)
+		end
+		
+		if b_GrainvilleFrench == true then
+			FOW_PlayerRevealArea(player2, Util_GetPosition(mkr_village_grainville), Marker_GetProximityRadiusOrDefault(mkr_village_grainville, 50), 10)
+			Rebuild_Location(grainville_EntityTable, sg_rebuilders_grainville, mkr_village_grainville)
+			Objective_Start(SOBJ_CaptureGrainville, true)
+		end
+		
+		Rule_AddInterval(RecapturesComplete, 1)
+	else
+		--Objective_Start(OBJ_DefeatTheFrench)
+	end
+	
+
+end
+
+function RecapturesComplete()
+	if b_CressenvilleFrench == false and b_GrainvilleFrench == false then
+		Rule_RemoveMe()
+		Util_StartIntel(EVENTS.Recapture_Village2)
+		b_endGame = true
+		--Objective_Start(OBJ_DefeatTheFrench)
+	end
+end
+	
+function RecaptureEvent()
+	if (b_CressenvilleFrench == false or b_GrainvilleFrench == false) and b_RecaptureIntelPlayed == false then
+		b_RecaptureIntelPlayed = true
+		Music_Stop()
+		Sound_SetMusicRaceCode("english")
+		Music_LockIntensity(TENSE_COMBAT_RARE, 45)
+		Rule_AddOneShot(Music_SetIntense, 45)
+		Util_StartIntel(EVENTS.Recapture_Village1)
+	end
+end
+
+function Music_SetIntense()
+	Sound_SetMinimumMusicCombatIntensity(801, 0)
+end
+
+
+function GateBreach()
+	if Objective_IsComplete(OBJ_FrenchAdvance) ~= true then
+		Player_GetAllEntitiesNearMarker(player1, eg_temp, mkr_audio_breach)
+		EGroup_Filter(eg_temp, "gate", FILTER_KEEP)
+		if EGroup_Count(eg_temp) <= 0 then
+			Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_audio_breach)
+			if SGroup_Count(sg_temp) > 0 then
+				Rule_RemoveMe()
+				Sound_PlayWallaEngageOnSGroup(sg_temp)
+				Sound_Play2D(MUS_STING_NEGATIVE)
+			end
+		end
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function OnCapture_CancelProductionQueue(townMarker)
+	Player_GetAllEntitiesNearMarker(player1, eg_temp, townMarker)
+	local _GetProdQueue = function(gid, index, eid)
+		if Entity_HasProductionQueue(eid) then
+			local prodQueueLength = Entity_GetProductionQueueSize(eid)
+			for i = 1, prodQueueLength do
+				Entity_CancelProductionQueueItem(eid, 0)
+			end
+		end
+	end
+	EGroup_ForEach(eg_temp, _GetProdQueue)
+end
+
+-- to prevent automated villagers from trying to use this farmstead in harm's way, we move it be neutral
+function Bremule_ChangeBurningFarmsteadOwnership()
+	
+	EGroup_SetWorldOwned(eg_burning_farmstead)
+	
+end

@@ -1,0 +1,282 @@
+import("rogue/rogue_rounds.scar")
+import("rogue/rogue_tech_tree.scar")
+import("rogue/rogue_factions.scar")
+import("rogue/rogue_roamers.scar")
+import("rogue/rogue_misc.scar")
+
+EVENT_TYPE_START_GATHERING = 1
+EVENT_TYPE_ROUND_ARRIVE = 2
+EVENT_TYPE_AGE_UP = 3
+EVENT_TYPE_INCREASE_MAX_LANES = 4
+EVENT_TYPE_UNLOCK_LANE = 5
+EVENT_TYPE_ROUND_SPAWN = 6
+EVENT_TYPE_SUBWAVE_LAUNCH = 7
+EVENT_TYPE_GRANT_COMBAT_UPGRADES = 8
+EVENT_TYPE_SPAWN_ROAMERS = 9
+EVENT_TYPE_INCREASE_MIN_LANES = 10
+
+------------------------------------------------------------
+----------------------- INIT EVENT -------------------------
+------------------------------------------------------------
+
+function Event_InitStartGathering(time)
+	ValidateInteger(time)
+	local event = {}
+	event.time = time
+	event.name = "start gathering"
+	event.event_type = EVENT_TYPE_START_GATHERING
+	Events_InsertEventAtCorrectTime(states.sim.events, event)
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+end
+
+function Event_InitRoundSpawn(time, round)
+	ValidateInteger(time)
+	local event = {}
+	event.time = time
+	event.name = "round spawn"
+	event.event_type = EVENT_TYPE_ROUND_SPAWN
+	event.round = round
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+end
+
+function Event_InitSubwaveLaunch(time, subwave)
+	ValidateInteger(time)
+	local event = {}
+	event.time = time
+	event.name = "subwave launch"
+	event.event_type = EVENT_TYPE_SUBWAVE_LAUNCH
+	event.subwave = subwave
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+	return event
+end
+
+function Event_InitRoundArrive(time, round)
+	ValidateInteger(time)
+	local event = {}
+	event.time = time
+	event.name = "round arrive"
+	event.event_type = EVENT_TYPE_ROUND_ARRIVE
+	event.round = round
+	Events_InsertEventAtCorrectTime(states.sim.events, event)
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+	return event
+end
+
+function Event_InitAgeUp(time)
+	ValidateInteger(time)
+	local event = {}
+	event.time = time
+	event.name = "age up"
+	event.event_type = EVENT_TYPE_AGE_UP
+	Events_InsertEventAtCorrectTime(states.sim.events, event)
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+	return event
+end
+
+function Event_InitIncreaseMinLanes(time)
+	ValidateInteger(time)
+	local event = {}
+	event.name = "set min lanes"
+	event.time = time
+	event.event_type = EVENT_TYPE_INCREASE_MIN_LANES
+	Events_InsertEventAtCorrectTime(states.sim.events, event)
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+	return event
+end
+
+function Event_InitIncreaseMaxLanes(time)
+	ValidateInteger(time)
+	local event = {}
+	event.name = "set max lanes"
+	event.time = time
+	event.event_type = EVENT_TYPE_INCREASE_MAX_LANES
+	Events_InsertEventAtCorrectTime(states.sim.events, event)
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+	return event
+end
+
+function Event_InitUnlockLane(time, lane_name)
+	ValidateInteger(time)
+	local event = {}
+	event.time = time
+	event.name = "unlock lane"
+	event.event_type = EVENT_TYPE_UNLOCK_LANE
+	event.lane_name = lane_name
+	Events_InsertEventAtCorrectTime(states.sim.events, event)
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+	return event
+end
+
+function Event_InitGrantCombatUpgrades(time, age)
+	ValidateInteger(time)
+	local event = {}
+	event.name = "grant combat upgrades"
+	event.event_type = EVENT_TYPE_GRANT_COMBAT_UPGRADES
+	event.time = time
+	event.age = age
+	Events_InsertEventAtCorrectTime(states.sim.events, event)
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+	return event
+end
+
+function Event_InitSpawnRoamers(time, value)
+	ValidateInteger(time)
+	local event = {}
+	event.name = "spawn roamer"
+	event.time = time
+	event.value = value
+	event.event_type = EVENT_TYPE_SPAWN_ROAMERS
+	Events_InsertEventAtCorrectTime(states.sim.events, event)
+	Events_InsertEventAtCorrectTime(states.game.events, event)
+	return event
+end
+
+------------------------------------------------------------
+------------------------- EVENTS ---------------------------
+------------------------------------------------------------
+
+function Events_InsertEventAtCorrectTime(events, event)
+	for i = 1, #events + 1 do
+		if i > #events or event.time <= events[i].time then
+			table.insert(events, i, event)
+			break
+		end
+	end
+end
+
+function Events_OnSecond(context, data)
+	local state = states[data.state_name]
+	time_string = Util_ConvertIntegerSecondsToStringTime(state.second)
+	if state.gathering_has_started then
+		state.seconds_since_gathering_started = state.seconds_since_gathering_started + 1
+		if state.second < RESOURCE_SCALING_UNTIL then
+			local s = state.seconds_since_gathering_started
+			state.r_equation_previous = state.r_equation
+			state.r_equation = R_0 + R_1*s + R_2*(s^2) + R_3*(s^3) + R_4*(s^4) + R_5*(s^5) + R_6*(s^6)
+			state.resources_per_second = (state.r_equation - state.r_equation_previous) * state.resource_lane_multiplier
+		end
+		state.resources_current = state.resources_current + state.resources_per_second
+		state.resources_total = state.resources_total + state.resources_per_second
+	end
+	if debug_resources and state.second % 60 == 0 then
+		print(time_string.."  Resources/Second: "..math.floor(state.resources_per_second).."   Total: "..math.floor(state.resources_total))
+	end
+	while(true) do
+		local event = Events_GetCurrentEvent(state) 
+		if event == nil then
+			break
+		else
+			Events_ProcessEvent(state, event)
+		end
+	end
+	
+	if player_has_been_killed ~= true and state == states.game and current_medal_objective and current_medal_objective.KPI == state.second then
+		UI_CreateEventCue(current_medal_objective.event_queue_string, Loc_Empty(), "", "", current_medal_objective.event_queue_sound)
+		if current_medal_objective.showTitle == false then
+			Objective_Complete(current_medal_objective, false, true)
+		else
+			Objective_Complete(current_medal_objective, true, true)
+		end
+		current_medal_objective = current_medal_objective.next_objective
+	end
+
+	if state == states.game and state.second >= RESOURCE_SCALING_UNTIL then
+		if scaling_upgrade_applied ~= true then
+			scaling_upgrade_applied = true
+			Player_CompleteUpgrade(ROGUE_ENEMY_WAVE_PLAYER, BP_GetUpgradeBlueprint("enemy_scaling_rogue"))
+		end
+	end
+	
+	if state == states.game and state.second % 60 == 10 then
+		Debug_PrintUnitCounts()
+	end
+	
+	if state == states.game and state.second >= MASTERY_ENDLESS_MODE_COMPLETE_AT then
+		if mastery_event_fired ~= true then
+			mastery_event_fired = true
+			for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+				Game_SendCustomChallengeEvent(player, CE_ROGUEEMPIRECOMPLETED, 1)
+			end
+		end
+	end
+	
+	state.second = state.second + 1
+end
+
+function Events_GetCurrentEvent(state)
+	if #state.events == 0 or state.event_index > #state.events then
+		return nil
+	end
+	local event = state.events[state.event_index]
+	if event.time == state.second then
+		state.event_index = state.event_index + 1
+		return event
+	else
+		return nil
+	end
+end
+	
+function Events_ProcessEvent(state, event)
+	local event_type = event.event_type
+	local print_debug = ((debug_sim_events and state == states.sim) or (debug_game_events and state == states.game))
+	if event_type == EVENT_TYPE_START_GATHERING then
+		state.gathering_has_started = true
+		if print_debug then
+			print(time_string.." Start Gathering Resources")
+		end
+	elseif event_type == EVENT_TYPE_ROUND_ARRIVE then
+		Round_Arrive(state, event.round, event.is_boss_round)
+	elseif event_type == EVENT_TYPE_AGE_UP then
+		state.current_age = state.current_age + 1
+		if state == states.sim then
+			Events_GrantEnemyUpgrade(state.current_age)
+		end
+		if print_debug then
+			print(time_string.." Age = "..state.current_age)
+		end
+		assert(state.current_age <= 4, "age cannot be advanced beyond 4")
+	elseif event_type == EVENT_TYPE_GRANT_COMBAT_UPGRADES then
+		TechTree_GrantCombatUpgrades(state, event.age)
+	elseif event_type == EVENT_TYPE_INCREASE_MIN_LANES then
+		state.min_lanes = state.min_lanes + 1 
+		if state.next_lane_count < state.min_lanes then
+			state.next_lane_count = state.min_lanes
+		end
+		if print_debug then
+			print(time_string.." Min Lanes = "..state.min_lanes)
+		end
+	elseif event_type == EVENT_TYPE_INCREASE_MAX_LANES then
+		state.max_lanes = state.max_lanes + 1
+		state.next_lane_count = state.max_lanes
+		state.resource_lane_multiplier = state.resource_lane_multiplier * LANE_RESOURCE_MODIFIER
+		if print_debug then
+			print(time_string.." Max Lanes = "..state.max_lanes)
+		end
+	elseif event_type == EVENT_TYPE_UNLOCK_LANE then
+		state.lane_is_locked[event.lane_name] = false
+		state.lane_is_prioritized[event.lane_name] = true
+		if print_debug then
+			print(time_string.." Lane Unlocked: "..event.lane_name)
+		end
+	elseif event_type == EVENT_TYPE_ROUND_SPAWN then
+		Round_Spawn(state, event.round)
+	elseif event_type == EVENT_TYPE_SUBWAVE_LAUNCH then
+		Subwave_Launch(state, event.subwave)
+	elseif event_type == EVENT_TYPE_SPAWN_ROAMERS then
+		if conqueror_is_enabled then
+			Roamer_Spawn(state, event.value)
+		end
+	else
+		fatal("invalid event type")
+	end
+		
+end
+
+function Events_GrantEnemyUpgrade(age_index)
+	local upgrade_names = { "dark_age", "feudal_age", "castle_age", "imperial_age" }
+	local upgrade = BP_GetUpgradeBlueprint(upgrade_names[age_index])
+	Player_CompleteUpgrade(ROGUE_ENEMY_WAVE_PLAYER, upgrade)
+end
+
+
+

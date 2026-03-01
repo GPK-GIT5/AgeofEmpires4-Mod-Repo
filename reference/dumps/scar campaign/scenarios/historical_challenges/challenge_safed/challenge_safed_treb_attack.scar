@@ -1,0 +1,191 @@
+-- Developed by Forgotten Empires
+
+--trebuchets arrive in timed intervals and attack
+function Safed_Init_Treb_Attack(spawn_points, move_points, sgroup_prefix)
+	
+	local treb_data = {
+		spawn_i = 0,
+		arrived_index = 0, --track arriving trebs
+		attack_index = 1, --start from 1 to match array indexing
+		track = {},
+		spawn_points = spawn_points,
+		move_points = move_points,
+		sgroup_prefix = sgroup_prefix,
+		first_treb_attacked = false --to track if the first treb has attacked
+	}
+	
+	--initialize arrived and attack tracking for this instance
+	for i = 1, #spawn_points do
+		treb_data.track[i] = {
+			arrived = false,
+			attacking = false
+		}
+	end
+	
+	--give vision to the enemy player
+	FOW_PlayerRevealArea(player2, Entity_GetPosition(SAFED_FORTRESS_ENTITY), 60, -1)
+	
+	--spawns and command moves trebs in intervals
+	--first treb spawn
+	Rule_AddOneShot(Safed_Treb_Spawn, 0, { treb_data = treb_data })
+	--remaining treb spawns
+	Rule_AddInterval(Safed_Treb_Spawn, SAFED_TREB_SPAWN_INTERVAL, { treb_data = treb_data })
+	
+	--monitors when trebs arrive at destination to flag "ready to attack"
+	Rule_Add(Safed_Treb_Arrived, { treb_data = treb_data })
+	
+	--trebs that sit in the siege yard, these trebs don't attack the fortress and are meant for easy destroying
+	if (SAFED_CM_ACTIVATED == false) then --so we don't spawn them twice when CM is triggered
+		local treb_props = Marker_GetSequence("mkr_treb_prop", "")
+		for key, marker in ipairs(treb_props) do
+			UnitEntry_DeploySquads(
+				player2,
+				sg_treb_props,
+				{ type = "scar_trebuchet", numSquads = 1 },
+				marker
+				)
+		end
+		Cmd_HoldPosition(sg_treb_props, true)
+		SGroup_AddGroup(sg_enemy_siege_camp, sg_treb_props)
+	end
+	
+end
+
+
+
+
+function Safed_Treb_Spawn(context, data)
+
+	--last objective remove respawning
+	if (Objective_IsComplete(SOBJ_SecureStone) == true) then
+		Rule_RemoveMe()
+	end
+	
+	--access the instance
+	local treb_data = data.treb_data
+	
+	--increment spawn index for this instance
+	treb_data.spawn_i = treb_data.spawn_i + 1
+	local spawn_index = treb_data.spawn_i
+	
+	--check if the index exceeds the number of spawn points
+	if (spawn_index > #treb_data.spawn_points) then
+		treb_data.spawn_i = 1 --reset to the first spawn point
+		spawn_index = treb_data.spawn_i
+	end
+	
+	--create unique sgroup based on prefix and spawn index
+	local sgroup_name = treb_data.sgroup_prefix .. spawn_index
+	if (SGroup_Exists(sgroup_name) ~= true) then
+		SGroup_Create(sgroup_name)
+	end
+	
+	local current_sgroup = SGroup_FromName(sgroup_name)
+	
+	--check if the group exists but no unit is present (deleted scenario)
+	if (SGroup_CountSpawned(current_sgroup) == 0) then
+	    
+		--spawn and move the trebuchet
+		UnitEntry_DeploySquads(
+			player2,
+			current_sgroup,
+			{ type = "scar_trebuchet_cw", count = 1 },
+			treb_data.spawn_points[spawn_index]
+		)
+		
+		SGroup_AddGroup(sg_enemy_trebuchets, current_sgroup)
+		Cmd_Move(current_sgroup, treb_data.move_points[spawn_index])
+		
+		--the state is reset for the newly spawned treb
+		treb_data.track[spawn_index].attacking = false
+		treb_data.track[spawn_index].arrived = false
+		
+	end
+
+end
+
+
+
+
+function Safed_Treb_Arrived(context, data)
+	
+	local treb_data = data.treb_data
+
+	if (Objective_IsComplete(SOBJ_SecureStone) == true) then
+		Rule_RemoveMe()
+		return
+	end
+
+    --increment the index to track the next arriving trebuchet
+	treb_data.arrived_index = treb_data.arrived_index + 1
+
+	if (treb_data.arrived_index > #treb_data.spawn_points) then
+		treb_data.arrived_index = 1 --reset to the first index if it exceeds
+	end
+
+	if (SGroup_Exists(treb_data.sgroup_prefix .. treb_data.arrived_index)) then
+		
+		local current_sgroup = SGroup_FromName(treb_data.sgroup_prefix .. treb_data.arrived_index)
+		
+		if (SGroup_CountSpawned(current_sgroup) > 0) then
+		
+			--check if the trebuchet has arrived at the marker
+			if (Prox_AreSquadsNearMarker(current_sgroup, treb_data.move_points[treb_data.arrived_index], ALL, 0)
+				and treb_data.track[treb_data.arrived_index].arrived == false) then
+				
+				treb_data.track[treb_data.arrived_index].arrived = true
+
+				--first trebuchet should attack immediately
+				if (not treb_data.first_treb_attacked) then
+					treb_data.first_treb_attacked = true
+					
+					treb_data.track[treb_data.arrived_index].attacking = true
+					Cmd_Attack(current_sgroup, eg_fortress, false, false, "", false)
+					FOW_PlayerRevealArea(player1, Util_GetPosition(current_sgroup), 20, -1)
+					--attack interval runs after first attack
+					Rule_AddInterval(Safed_Treb_Attack_Begin, SAFED_TREB_ATTACK_INTERVAL, { treb_data = treb_data })
+					
+				end
+				
+			end
+			
+		end
+		
+    end
+	
+end
+
+
+
+
+function Safed_Treb_Attack_Begin(context, data)
+	
+	local treb_data = data.treb_data
+	
+	if (Objective_IsComplete(SOBJ_SecureStone) == true) then
+	    Rule_RemoveMe()
+	    return
+	end
+
+	treb_data.attack_index = treb_data.attack_index + 1
+	
+	if (treb_data.attack_index > #treb_data.spawn_points) then
+		treb_data.attack_index = 1 --reset to the first index if it exceeds
+	end
+	
+	if (SGroup_Exists(treb_data.sgroup_prefix .. treb_data.attack_index)) then
+	    
+		local current_sgroup = SGroup_FromName(treb_data.sgroup_prefix .. treb_data.attack_index)
+	
+		--only attack if the trebuchet has arrived and is not already attacking
+		if (treb_data.track[treb_data.attack_index].arrived == true and 
+				treb_data.track[treb_data.attack_index].attacking == false) then
+			if (SGroup_CountSpawned(current_sgroup) > 0) then
+				treb_data.track[treb_data.attack_index].attacking = true
+				Cmd_Attack(current_sgroup, eg_fortress, false, false, "", false)
+				FOW_PlayerRevealArea(player1, Util_GetPosition(current_sgroup), 20, -1)
+			end
+		end
+		
+	end
+end

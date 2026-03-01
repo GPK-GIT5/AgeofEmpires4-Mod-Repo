@@ -1,0 +1,235 @@
+function BuildLandmark_InitObjectives()
+
+	OBJ_BuildLandmark = {
+		Title = "$999577", --Build a Landmark & Advance to the Next Age
+		Type = ObjectiveType_Primary,
+		--Intel_Start = EVENTS.GatherFoodStart,
+		
+		--OnStart = BuildLandmark_Start(), -- May be needed if design change the starting amount of food back
+
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_WaitFinish, ALL)
+		end
+	}
+
+	SOBJ_GatherFood = {
+		Title = LOC("Gather 400 Food"),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BuildLandmark,
+		StartAlongsideParent = false,
+		SetupUI = GatherFood_UI,
+		OnStart = GatherFood_Start,
+		--Intel_Start = EVENTS.GatherFoodStart,
+	}
+
+	SOBJ_GatherGold = {
+		Title = LOC("Gather 200 Gold"),
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BuildLandmark,
+		StartAlongsideParent = false,
+		SetupUI = GatherGold_UI,
+		OnStart = GatherGold_Start,
+		--Intel_Start = EVENTS.GatherGoldStart,
+	}
+
+	SOBJ_PlaceLandmark = {
+		Title = "$999578", --Place a Landmark
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BuildLandmark,
+		StartAlongsideParent = true,
+		SetupUI = PlaceLandmark_UI,
+		OnStart = PlaceLandmark_Start,
+		Intel_Complete = EVENTS.PlaceLandmark,
+
+		OnComplete = function()
+			Objective_Start(SOBJ_Make3Villagers, true, true)
+		end
+	}
+
+	SOBJ_Make3Villagers = {
+		Title = "$999582", --Make 3 Villagers
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BuildLandmark,
+		StartAlongsideParent = false,
+		SetupUI = Make3Villagers_UI,
+		OnStart = Make3Villagers_Start,
+		--Intel_Start = EVENTS.Make3VillagersStart,
+
+		OnComplete = function()
+			Objective_Start(SOBJ_WaitFinish, true, true)
+		end
+	}
+
+	SOBJ_WaitFinish = {
+		Title = "$999584", --Wait for the Landmark to finish
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BuildLandmark,
+		StartAlongsideParent = false,
+		SetupUI = WaitFinish_UI,
+		OnStart = WaitFinish_Start,
+		--Intel_Start = EVENTS.WaitFinishStart,
+
+		OnComplete = function()
+			Objective_Start(OBJ_ResearchTech, true, true)
+		end
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_BuildLandmark)
+	Objective_Register(SOBJ_GatherFood)
+	Objective_Register(SOBJ_GatherGold)
+	Objective_Register(SOBJ_PlaceLandmark)
+	Objective_Register(SOBJ_Make3Villagers)
+	Objective_Register(SOBJ_WaitFinish)
+end
+
+
+function BuildLandmark_Start()
+
+	if Player_GetResource(player1, RT_Food) < 400 or Player_GetResource(player1, RT_Gold) < 200 then
+		
+		Rule_AddOneShot(StartGatherObjectives)
+	else
+		
+		Objective_Start(SOBJ_PlaceLandmark, true, true)
+	end
+end
+
+function StartGatherObjectives()
+	Objective_Start(SOBJ_GatherFood, false, true)
+	Objective_Start(SOBJ_GatherGold, false, true)
+	
+	Rule_Add(HasResources_Monitor)
+end
+	
+function HasResources_Monitor() 
+	
+	if (Objective_IsComplete(SOBJ_GatherFood) and Objective_IsComplete(SOBJ_GatherGold)) then
+		Objective_Start(SOBJ_PlaceLandmark, true, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// GatherFood //////////////////////////////////////////////
+function GatherFood_UI()
+	
+	local current_food = Player_GetResource(player1, RT_Food)
+	
+	Objective_SetProgressBar(SOBJ_GatherFood, current_food/400)
+end
+
+function GatherFood_Start()
+
+	--Goals_GatherFood()
+	Rule_Add(GatherFood_Monitor)
+end
+
+function GatherFood_Monitor()
+
+	local current_food = Player_GetResource(player1, RT_Food)
+	
+	Objective_SetProgressBar(SOBJ_GatherFood, current_food/400)
+	
+	if current_food >= 400 then
+
+		Objective_Complete(SOBJ_GatherFood, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// GatherGold //////////////////////////////////////////////
+function GatherGold_UI()
+	
+	local current_gold = Player_GetResource(player1, RT_Gold)
+	
+	Objective_SetProgressBar(SOBJ_GatherGold, current_gold/400)
+end
+
+function GatherGold_Start()
+
+	--Goals_GatherGold()
+	Rule_Add(GatherGold_Monitor)
+end
+
+function GatherGold_Monitor()
+
+	local current_gold = Player_GetResource(player1, RT_Gold)
+	
+	Objective_SetProgressBar(SOBJ_GatherGold, current_gold/200)
+	
+	if current_gold >= 200 then
+
+		Objective_Complete(SOBJ_GatherGold, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// PlaceLandmark //////////////////////////////////////////////
+function PlaceLandmark_UI()
+	
+	
+end
+
+function PlaceLandmark_Start()
+
+	Rule_AddInterval(LandmarkHint_WaitForSpeechToFinish, 0.5)
+	Rule_Add(PlaceLandmark_Monitor)
+end
+
+function LandmarkHint_WaitForSpeechToFinish()
+	
+	if not Event_IsAnyRunning() then
+		Rule_RemoveMe()
+
+		Goals_BuildLandmark()
+	end
+end
+
+function PlaceLandmark_Monitor()
+
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "wonder_dark_age", FILTER_KEEP)
+	
+	if EGroup_CountSpawned(eg_allentities) > 0	then
+		EGroup_AddEGroup(eg_landmark, eg_allentities)
+		Objective_Complete(SOBJ_PlaceLandmark, true, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// Make3Villagers //////////////////////////////////////////////
+function Make3Villagers_UI()
+	
+	Objective_SetCounter(SOBJ_Make3Villagers, 0, 3)
+end
+
+function Make3Villagers_Start()
+
+	Goals_FasterLandmark()
+	Player_AddResource(player1, RT_Food, 150)
+	Rule_AddOneShot(ProduceUnitsObjectiveTracker, 0, {objective = SOBJ_Make3Villagers, unit_type = "villager", desired_amount = 3})
+end
+
+-- ///// WaitFinish //////////////////////////////////////////////
+function WaitFinish_UI()
+	
+	
+end
+
+function WaitFinish_Start()
+
+	--Goals_WaitFinish()
+	Rule_Add(WaitFinish_Monitor)
+end
+
+function WaitFinish_Monitor()
+
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "wonder_dark_age", FILTER_KEEP)
+	 EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	if EGroup_CountSpawned(eg_allentities) > 0	then
+
+		Objective_Complete(SOBJ_WaitFinish, true, true)
+		Rule_RemoveMe()
+	end
+end

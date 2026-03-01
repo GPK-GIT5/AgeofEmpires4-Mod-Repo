@@ -1,0 +1,504 @@
+--
+-- Tribute 1375 - Pay the Mongols objective
+--
+
+
+
+
+function PayTheMongols_InitObjectives()
+
+	OBJ_PayTheMongols = {
+		
+		Title = "$11180239", -- Pay the Mongols
+		Type = ObjectiveType_Primary,
+		
+		Intel_Complete = EVENTS.PayTheMongols_ObjectiveComplete,
+		Intel_Fail = EVENTS.PayTheMongols_ObjectiveFailed,
+
+		SetupUI = PayTheMongols_SetupUI,
+		
+		PreStart = function()
+			if i_mongolPaymentCycle >= 2 then				-- no need to autosave at the beginning of the first pay cycle
+				Util_AutoSave(true, true)
+			end
+		end,
+		OnStart = PayTheMongols_OnStart, 
+		
+		PreComplete = function()
+			if b_autoPayEventCueShowing ~= true then 		-- autopay will show what happened as a CTA (which we need to leave on screen) so only clear the CTA if it ISN'T because of an autopay (and a flag will have been set to denote that) 
+				EventCues_ClearCallToAction()
+			end
+			b_autoPayEventCueShowing = nil
+		end,
+		OnComplete = function()
+			OBJ_PayTheMongols.Intel_Complete = nil			-- remove the intel event so it doesn't play again for future activations of this objective
+			Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+		end,
+		
+		PreFail = function()
+			EventCues_ClearCallToAction()
+		end,
+		OnFail = function()
+			MongolArmy_Start()
+		end,
+		
+	}
+	
+	SOBJ_PayTheMongols_GoldAmount = {
+
+		Title = "$11180243", -- Pay Gold in Tribute
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_PayTheMongols,
+		StartAlongsideParent = true, 
+		
+		SetupUI = PayTheMongols_GoldAmount_SetupUI,
+		
+	}
+
+	Objective_Register(OBJ_PayTheMongols)
+	Objective_Register(SOBJ_PayTheMongols_GoldAmount)
+	
+	i_mongolTributeDemanded = 0 
+	i_mongolTributePaid = 0
+	i_mongolPaymentCycle = 0
+	
+	b_mongolTributeWarningGiven = false 
+	b_mongolTributeTimerExpired = false 
+	b_mongolTributeSecondCycleWarningGiven = false
+	b_mongolTributeIncreaseWarningGiven = false 
+	
+	-- consts
+	PAYMONGOLS_TIMELIMIT = 7.5 * 60				-- 7 1/2 minutes
+	PAYMONGOLS_TIMEBETWEENCYCLES = 1.5 * 60		-- 1 1/2 minutes
+	PAYMONGOLS_GRACEPERIOD = 25					-- how long after the time limit expires do you have to pay up before the ban hammer comes down on you
+	PAYMONGOLS_AUTOPAY = true					-- enable or disable the auto-pay script whereby if the timer expires and you have the cash, you pay it automatically. This stops you failing because you didn't notice the timer or couldn't parse the UI
+	
+end
+
+
+
+function PayTheMongols_StartObjective()
+	
+	if Objective_IsFailed(OBJ_PayTheMongols) or Objective_IsComplete(OBJ_BuySettlements) then
+		return
+	elseif Objective_IsComplete(OBJ_PayTheMongols) then 
+		Objective_Stop(OBJ_PayTheMongols)
+		if Objective_IsStarted(OBJ_BuySettlements) == false then 
+			Rule_AddOneShot(BuySettlements_Start, 10)
+		end
+	end
+
+	local previousTributeDemand = i_mongolTributeDemanded
+	
+	i_mongolPaymentCycle = i_mongolPaymentCycle + 1
+
+	-- calculate the gold amount demanded this cycle
+	if i_mongolPaymentCycle == 1 then
+		i_mongolTributeDemanded = t_difficulty.payTheMongols_BaseAmount
+	elseif i_mongolPaymentCycle >= 3 then 
+		i_mongolTributeDemanded = i_mongolTributeDemanded + t_difficulty.payTheMongols_ExtraAmountPerCycle
+	end
+	
+	if i_mongolTributePaid >= i_mongolTributeDemanded then
+		
+		-- they already paid enough in overspend from last time - deduct that and wait for the next cycle
+		i_mongolTributePaid = i_mongolTributePaid - i_mongolTributeDemanded
+		
+	else
+		
+		-- start the objective
+		
+		if i_mongolPaymentCycle >= 2 and b_mongolTributeIncreaseWarningGiven == false and i_mongolTributeDemanded > previousTributeDemand then 
+			OBJ_PayTheMongols.Intel_Start = EVENTS.PayTheMongols_ObjectiveStart_IncreasedDemand
+			b_mongolTributeIncreaseWarningGiven = true
+			b_mongolTributeSecondCycleWarningGiven = true
+		elseif i_mongolPaymentCycle >= 2 and b_mongolTributeSecondCycleWarningGiven == false then 
+			OBJ_PayTheMongols.Intel_Start = EVENTS.PayTheMongols_ObjectiveStart_SecondTime
+			b_mongolTributeSecondCycleWarningGiven = true
+		else
+			OBJ_PayTheMongols.Intel_Start = nil
+		end
+		
+		Objective_Start(OBJ_PayTheMongols)
+		
+		b_mongolTributeWarningGiven = false 
+		b_mongolTributeTimerExpired = false 
+		
+		Rule_AddInterval(PayTheMongols_Monitor, 0.25)		
+		
+		if Rule_Exists(PayTheMongols_TriggerMarketHint) == false then 
+			Rule_AddInterval(PayTheMongols_TriggerMarketHint, 5)
+		end
+		
+	end
+	
+	Rule_AddOneShot(PayTheMongols_StartObjective, PAYMONGOLS_TIMELIMIT + PAYMONGOLS_TIMEBETWEENCYCLES)		-- queue up the next round
+
+	
+end
+
+
+function PayTheMongols_SetupUI()
+	Objective_StartTimer(OBJ_PayTheMongols, COUNT_DOWN, PAYMONGOLS_TIMELIMIT, 30)	
+end
+function PayTheMongols_GoldAmount_SetupUI()
+	Objective_SetCounter(SOBJ_PayTheMongols_GoldAmount, i_mongolTributePaid, i_mongolTributeDemanded)	
+end
+
+
+function PayTheMongols_OnStart()
+
+	if i_mongolPaymentCycle == 1 then 
+		
+		Music_UnlockIntensity()
+		Sound_SetMinimumMusicCombatIntensity(0, 0)		-- on first pay cycle
+		
+		Rule_AddOneShot(MissionTutorial_AddHintToPayMongols, 30)
+		
+	else
+		
+		Sound_SetMinimumMusicCombatIntensity(801, 0)	-- on all subsequent pay cycles
+		
+	end
+	
+end
+
+
+
+function PayTheMongols_Monitor()
+	
+	Objective_SetCounter(SOBJ_PayTheMongols_GoldAmount, i_mongolTributePaid, i_mongolTributeDemanded)	
+	
+	if Objective_IsComplete(OBJ_PayTheMongols) then 
+		
+		Rule_RemoveMe()		-- probably the end of the mission, we completed this obj silently so we need to kill the monitor rule as well
+		
+	elseif i_mongolTributePaid >= i_mongolTributeDemanded then
+		
+		-- Achievement - check if pay mongols tribute has happened before 3 minutes have expired
+		if Objective_IsTimerSet(OBJ_PayTheMongols) and Objective_GetTimerSeconds(OBJ_PayTheMongols) >= (PAYMONGOLS_TIMELIMIT - 180) then
+			Game_SendCustomChallengeEvent(player1, CE_ACHIEVPAYMONGOLTRIBUTEEARLY, 1)	
+			
+		end
+		
+		Objective_Complete(OBJ_PayTheMongols)
+		i_mongolTributePaid = i_mongolTributePaid - i_mongolTributeDemanded
+
+		Music_Stop()
+		Music_RestartAfterObjective(30)
+		
+		Rule_RemoveMe()				
+
+	elseif Objective_IsTimerSet(OBJ_PayTheMongols) and Objective_GetTimerSeconds(OBJ_PayTheMongols) <= 60 and b_mongolTributeWarningGiven == false then 
+
+		local speechEvent = nil 
+		
+		if b_firstPaymentDueWarningGiven == nil then 
+			speechEvent = EVENTS.FirstPaymentWarning
+			b_firstPaymentDueWarningGiven = true
+		end
+
+		local duration = Objective_GetTimerSeconds(OBJ_PayTheMongols) - 5	 -- this should clear *just* before the "demand payment now" CTA appears
+		
+		Music_LockIntensity(MUSIC_TENSE_RARE, 10)
+		EventCues_CallToAction("$11180240", CTA_UNIQUE_STAKES, speechEvent, PayTheMongols_OnCallToActionClicked, nil, duration, "icons/cta/illustrations/15_pay_tribute_b", "mus_stinger_campaign_warning") -- The Mongols demand their payment soon
+		Sound_Play2D("sfx_campaign_scripted_small_group_engage")
+		
+		b_mongolTributeWarningGiven = true 
+			
+	elseif Objective_IsTimerSet(OBJ_PayTheMongols) and Objective_GetTimerSeconds(OBJ_PayTheMongols) == 0 and b_mongolTributeTimerExpired == false then 
+
+		if PayTheMongols_AttemptAutoPay() == false then
+
+			local speechEvent = nil
+			
+			if b_firstMissedPaymentWarningGiven == nil then 
+				speechEvent = EVENTS.FirstMissedPayment
+				b_firstMissedPaymentWarningGiven = true
+			end
+			
+			Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE)
+
+			local duration = PAYMONGOLS_GRACEPERIOD - 5	 	-- this should clear *just* before the objective fails or the final chance for autopay goes through
+			EventCues_CallToAction("$11180241", CTA_UNIQUE_STAKES, speechEvent, PayTheMongols_OnCallToActionClicked, nil, duration, "icons/cta/illustrations/15_pay_tribute_b", "mus_stinger_campaign_warning") -- The Mongols demand payment now
+			Sound_Play2D("sfx_campaign_scripted_small_group_fear")
+			b_mongolTributeTimerExpired = true 
+			timeStamp_mongolTributeTimerExpired = World_GetGameTime()
+			
+		end
+		
+	elseif b_mongolTributeTimerExpired == true and (World_GetGameTime() - timeStamp_mongolTributeTimerExpired) >= PAYMONGOLS_GRACEPERIOD then 
+		
+		if PayTheMongols_AttemptAutoPay() == false then
+
+			Objective_Fail(OBJ_PayTheMongols)
+			
+			Objective_Fail(OBJ_CollectTaxes, false, false)			-- fail everything else silently. We just want all other objectives hidden while the Mongols attack.
+			Objective_Fail(OBJ_BuySettlements, false, false)
+			Objective_Fail(OBJ_TipTradeRouteLengths, false, false)
+			Objective_Fail(OBJ_TipManageGold, false, false)
+			Objective_Fail(OBJ_BanditCamps, false, false)
+			Objective_Fail(OBJ_BuildCabins, false, false)
+			
+			Rule_RemoveMe()
+			
+		end
+		
+	end
+			
+end
+
+
+function PayTheMongols_AttemptAutoPay()
+	
+	local amountToPay = i_mongolTributeDemanded - i_mongolTributePaid
+
+	if PAYMONGOLS_AUTOPAY == true and Player_GetResource(player1, RT_Gold) >= amountToPay then
+
+		-- subtract the amount they still need to pay and tell the player that's what we've done
+		
+		Player_AddResource(player1, RT_Gold, -amountToPay)	
+		i_mongolTributePaid = i_mongolTributePaid + amountToPay
+		
+		local displayString = Loc_FormatText("$11200309", Loc_FormatNumber(amountToPay, 0)) 
+		EventCues_CallToAction(displayString, CTA_UNIQUE_STAKES, nil, PayTheMongols_OnCallToActionClicked, nil, 7, "icons/cta/illustrations/15_pay_tribute_b") -- <amount> Gold has been paid to the Mongols	
+		b_autoPayEventCueShowing = true 
+		
+		Diplomacy_ShowDiplomacyUI(false)	-- this will close the diplomacy menu if it is open
+		
+		return true -- signal that the auto-payment was successful! No need to send the Mongols in... yet.
+		
+	end
+	
+	return false -- oh, you're in trouble...
+	
+end
+
+
+function PayTheMongols_OnCallToActionClicked()
+	
+	if UI_IsXboxUI() == false then
+		Diplomacy_ShowDiplomacyUI(true) -- this will open the diplomacy menu if it isn't open already
+	end
+end
+
+function Mission_OnTributeSent(tribute)
+	
+	for index, tributeData in pairs(tribute) do 
+		
+		if tributeData.sender.id == player1 and tributeData.receiver.id == player3 and tributeData.gold > 0 then
+			
+			i_mongolTributePaid = i_mongolTributePaid + tributeData.gold
+			
+		end
+		
+	end
+		
+end
+
+
+function PayTheMongols_TriggerMarketHint()
+	
+	if Objective_IsTimerSet(OBJ_PayTheMongols) and Objective_GetTimerSeconds(OBJ_PayTheMongols) <= 150 then
+		
+		if (i_mongolTributePaid + Player_GetResource(player1, RT_Gold)) < i_mongolTributeDemanded then 
+			
+			if UI_IsXboxControllerUI() then
+				MissionTutorial_AddHintToUseMarket_Xbox()
+			else
+				MissionTutorial_AddHintToUseMarket()
+			end
+			
+			Rule_RemoveMe()
+			
+		end
+		
+	end
+	
+end
+
+
+
+function MongolArmy_Start()
+
+	Rule_AddOneShot(MongolArmy_Start_PartB, 2)
+	
+end
+	
+function MongolArmy_Start_PartB()
+		
+	Music_PlayStinger("mus_camp_cust_mongol_drum_finalbattle")	
+	
+	local spawns = {
+	
+		{
+			attackMove = attackMoveStyle_normal,
+			units = {
+				{type = "scar_khan", numSquads = 1},				
+				{type = "scar_knight", numSquads = 8},				
+				{type = "scar_horsearcher", numSquads = 15},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_normal,
+			units = {
+				{type = "scar_spearman", numSquads = 5},				
+				{type = "scar_archer", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_normal,
+			units = {
+				{type = "scar_spearman", numSquads = 5},				
+				{type = "scar_archer", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_normal,
+			units = {
+				{type = "scar_spearman", numSquads = 5},				
+				{type = "scar_archer", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_normal,
+			units = {
+				{type = "scar_spearman", numSquads = 5},				
+				{type = "scar_archer", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_normal,
+			units = {
+				{type = "scar_horseman", numSquads = 5},				
+				{type = "scar_horsearcher", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_aggressive,
+			units = {
+				{type = "scar_knight", numSquads = 5},				
+				{type = "scar_spearman", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_aggressive,
+			units = {
+				{type = "scar_archer", numSquads = 5},				
+				{type = "scar_spearman", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_aggressive,
+			units = {
+				{type = "scar_knight", numSquads = 5},				
+				{type = "scar_horseman", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_aggressive,
+			units = {
+				{type = "scar_archer", numSquads = 5},				
+				{type = "scar_spearman", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_aggressive,
+			units = {
+				{type = "scar_knight", numSquads = 5},				
+				{type = "scar_horseman", numSquads = 10},				
+			},
+		},
+		{
+			attackMove = attackMoveStyle_aggressive,
+			units = {
+				{type = "scar_horseman", numSquads = 5},				
+				{type = "scar_horsearcher", numSquads = 10},				
+			},
+		},
+		
+		
+	}	
+	
+	local spawns = Table_GetRandomItem(spawns, #spawns)	-- shuffle the table
+	
+	local delay = 6
+	for index, spawn in ipairs(spawns) do 
+		local randomAmount = World_GetRand(5, 15) / 10
+		Rule_AddOneShot(MongolArmy_Spawn, delay + randomAmount, spawn)
+		delay = delay + 2.5
+	end
+	
+	Rule_AddOneShot(MongolArmy_Finish, delay + 20)
+	
+end
+
+
+function MongolArmy_Spawn(context, data)
+
+	Player_GetAll(player1)
+	
+	local potentialSpawns = {}
+	
+	for index, marker in pairs(t_banditSpawnMarkers) do 
+		
+		local distanceSGroup = 9999999
+		local distanceEGroup = 9999999
+		
+		if SGroup_CountSpawned(sg_allsquads) >= 1 then 
+			distanceSGroup = Util_GetDistance(marker, SGroup_GetClosestSquad(sg_allsquads, marker))
+		end
+		
+		if EGroup_CountSpawned(eg_allentities) >= 1 then 
+			distanceEGroup = Util_GetDistance(marker, EGroup_GetClosestEntity(eg_allentities, marker))
+		end
+		
+		local entry = {
+			marker = marker,
+			distance = math.min(distanceSGroup, distanceEGroup),
+		}
+		table.insert(potentialSpawns, entry)		
+	end
+	
+	table.sort(potentialSpawns, function(a, b) return a.distance > b.distance end)		-- sort them so the highest distance is first
+	
+	local rand = World_GetRand(1, math.ceil(#potentialSpawns * 0.5))
+	local spawnLocation =  potentialSpawns[rand].marker
+	
+	local hiddenPos = World_GetHiddenPositionOnPath(player1, spawnLocation, mkr_common_town_center, CHECK_IN_FOW)
+	if hiddenPos ~= nil then 
+		spawnLocation = hiddenPos
+	end
+		
+
+	local attackModule = {
+		type = "RovingArmy",
+		descriptor = MongolArmy_GetUniqueDescriptor(),
+		player = player3, 
+		target = mkr_common_town_center,
+		attackMove = data.attackMove,
+		spawnLocation = spawnLocation,
+		units = data.units,
+	}
+	RovingArmy_Init(attackModule)
+		
+end
+
+function MongolArmy_GetUniqueDescriptor()
+
+	if _mongolArmyID == nil then 
+		_mongolArmyID = 1 
+	else
+		_mongolArmyID = _mongolArmyID + 1 
+	end
+	
+	return "Mongol Army ".._mongolArmyID
+	
+end
+
+
+function MongolArmy_Finish()
+	
+	Mission_Fail()
+	
+end

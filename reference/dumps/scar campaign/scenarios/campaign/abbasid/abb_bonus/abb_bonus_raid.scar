@@ -1,0 +1,145 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+
+function AbbBonus_StartRaidersP2()
+	if player2_data.isActive == true then
+		rule_p2_raid_monitor1 = Rule_AddInterval(AbbBonus_MonitorRaiders, 2, { raiders = p2_raiders1 })
+	end
+end
+
+function AbbBonus_StartNavalRaiders()
+	rule_p5_raid_monitor1 = Rule_AddInterval(AbbBonus_MonitorRaiders, 2, { raiders = p5_naval_raiders1 })
+	rule_p5_raid_monitor2 = Rule_AddInterval(AbbBonus_MonitorRaiders, 2, { raiders = p5_naval_raiders2 })
+	rule_p5_raid_monitor3 = Rule_AddInterval(AbbBonus_MonitorRaiders, 2, { raiders = p5_naval_raiders3 })
+end
+
+function AbbBonus_StopRaidersP2()
+	Rule_RemoveWithID(rule_p2_raid_monitor1)
+end
+
+function AbbBonus_StopRaidersP5()
+	Rule_RemoveWithID(rule_p5_raid_monitor1)
+	Rule_RemoveWithID(rule_p5_raid_monitor2)
+	Rule_RemoveWithID(rule_p5_raid_monitor3)
+end
+
+function AbbBonus_MonitorRaiders(context, data)
+	local raiders = data.raiders
+	
+	if raiders.currentState == "reinforce" then
+		raiders.currentCount = SGroup_CountSpawned(raiders.sgroup)
+		
+		if raiders.currentCount < raiders.targetCount then
+			
+			if raiders.unitSource == nil then
+				--this raid has multiple spawn sources
+				raiders.spawnCounter = raiders.spawnCounter + 1
+				if raiders.spawnCounter >= raiders.spawnDelay then
+					raiders.spawnCounter = 0
+					
+					if raiders.spawnIndex > #raiders.spawns then
+						raiders.spawnIndex = 1
+					end
+					
+					local spawnTable = raiders.spawns[raiders.spawnIndex]
+					
+					if EGroup_CountSpawned(spawnTable.source) > 0 then
+						SGroup_Clear(sg_temp)
+						sg_temp = CreateUnits(raiders.player, {type = raiders.unitType, numSquads = 1}, spawnTable.marker, sg_temp)
+						SGroup_AttackMove(sg_temp, spawnTable.rally, false)
+						SGroup_AddGroup(raiders.sgroup, sg_temp)
+					end
+					
+					raiders.spawnIndex = raiders.spawnIndex + 1
+				end
+			
+			elseif EGroup_CountSpawned(raiders.unitSource) > 0 then
+				--to do: can the unitSource be rebuilt? (if not, remove this monitor when it's destroyed)
+				
+				raiders.spawnCounter = raiders.spawnCounter + 1
+				if raiders.spawnCounter >= raiders.spawnDelay then
+					raiders.spawnCounter = 0
+					SGroup_Clear(sg_temp)
+					sg_temp = CreateUnits(raiders.player, {type = raiders.unitType, numSquads = 1}, raiders.spawnMarker, sg_temp)
+					SGroup_AttackMove(sg_temp, raiders.rallyMarker, false)
+					SGroup_AddGroup(raiders.sgroup, sg_temp)
+				end
+			end
+		else
+			--the raiders are ready
+			
+			if raiders.army == nil then 
+				for i, marker in ipairs(raiders.targetMarkers) do
+					Cmd_AttackMove(raiders.sgroup, marker, true)
+				end
+			else
+				Army_AddSGroup(raiders.army, raiders.sgroup)
+				Army_SetTargets(raiders.army, raiders.targetMarkers)
+			end
+			
+			raiders.currentState = "raiding"
+		end
+	end
+	
+	if raiders.currentState == "raiding" then
+		raiders.currentCount = SGroup_CountSpawned(raiders.sgroup)
+		local playerUnitcount = 1
+		
+		if raiders.currentCount == 0 then
+			raiders.currentState = "reinforce"
+		else
+			--is the group locally outnumbered?
+			SGroup_Clear(sg_temp)
+			World_GetSquadsNearPoint(player1, sg_temp, SGroup_GetAvgPosition(raiders.sgroup), 25, OT_Player)
+			
+			if raiders.isNaval then
+				SGroup_Filter(sg_temp, {"scar_fishing_ship", "scar_trade_ship"}, FILTER_REMOVE)
+			else
+				SGroup_Filter(sg_temp, {"scar_villager", "scar_trade_cart"}, FILTER_REMOVE)
+			end
+			playerUnitcount = SGroup_CountSpawned(sg_temp)
+			
+			
+			if raiders.army == nil then
+				--raid groups without an army need to return home after clearing their targets
+				if raiders.currentCount * 2 < playerUnitcount or SGroup_IsIdle(raiders.sgroup, true) then
+					
+					Cmd_Stop(raiders.sgroup)
+					Cmd_Move(raiders.sgroup, raiders.rallyMarker, false)
+					
+					if raiders.targetCount < raiders.targetCountMax then
+						raiders.targetCount = raiders.targetCount + 1
+					end
+					
+					raiders.currentState = "reinforce"
+				end
+			else
+				--raid groups with an army only withdraw after finding themselves vastly outnumbered
+				if raiders.currentCount * 2 <= playerUnitcount then
+					
+					Army_RemoveSGroup(raiders.army, raiders.sgroup, AbbBonus_OnRaidSgroupRemoved, {data = raiders})
+					
+					if raiders.targetCount < raiders.targetCountMax then
+						raiders.targetCount = raiders.targetCount + 1
+					end
+					
+					raiders.currentState = "reinforce"
+				end
+			end
+		end
+		
+	end
+	
+end
+
+function AbbBonus_OnRaidSgroupRemoved(context, data)
+	local raiders = data.data
+	
+	Cmd_Stop(raiders.sgroup)
+	Cmd_Move(raiders.sgroup, raiders.rallyMarker, false)
+end
+
+
+
+

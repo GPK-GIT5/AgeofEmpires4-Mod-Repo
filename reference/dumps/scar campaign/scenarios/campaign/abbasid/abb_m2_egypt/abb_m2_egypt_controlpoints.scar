@@ -1,0 +1,431 @@
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("abb_m2_egypt_data.scar")
+import('abb_m2_egypt_quadrants.scar')
+import('abb_m2_egypt_armycontrol.scar')
+
+--Control Point Data Managment--
+
+--? @shortdesc Compiles the Control Point location data for all the control points in the mission.
+--? @extdesc Evaluates eg_villagecenters to find all the control points in the mission. 
+--  Then saves a table containing the location, owner, layout (nearby entities owned by the player owner), 
+--  spins up garrison armies for both the player and the enemy, and finally a villager life module.
+function Egypt_InitControlPointSystem()
+	
+	controlPoints = {}	
+	for i = 1, EGroup_CountSpawned(eg_villagecenters) do
+		local entity = EGroup_GetSpawnedEntityAt(eg_villagecenters, i)
+		ControlPoint_Init(entity)
+	end
+end
+
+function ControlPoint_GetID()
+	controlPoint_index = controlPoint_index or 0
+	controlPoint_index = controlPoint_index + 1
+	return controlPoint_index
+end
+
+function ControlPoint_Init(eid)
+	
+	local index = ControlPoint_GetID()
+	
+	local controlPoint = {
+		id = index,
+		entityID = eid,
+		currentowner = player5,
+		previousowner = player5,
+		deferedowner = player5,
+		villageLayout = {},
+		alliedGarrisonArmy = {},
+		enemyGarrisonArmy = {},
+		villageGarrisionType = "scar_militia",
+		villageGarrisionSpawn = Util_GetPosition(eid),
+		villageGarrisionSpawnRule = nil,
+		--villLifeModule = {},
+		villLifeMarker = {},
+	}
+	
+	if World_OwnsEntity(eid) then
+		controlPoint.currentowner = player5
+		controlPoint.previousowner = player5
+	else
+		controlPoint.currentowner = Entity_GetPlayerOwner(eid)
+		controlPoint.previousowner = controlPoint.currentowner 
+	end
+	
+	local defered_owner = player5
+	if controlPoint.currentowner == player1 then
+		defered_owner = player3
+	elseif controlPoint.currentowner == player2 then
+		defered_owner = player4
+	else
+		defered_owner = player5
+	end
+	controlPoint.defered_owner = defered_owner
+	
+	SaveVillageLayout(controlPoint, defered_owner)
+	
+	SGroup_MakeOrClear("sg_temp_vlife_roam")
+	SGroup_MakeOrClear("sg_temp_vlife_farm")
+	
+	local pos = Util_GetPosition(controlPoint.entityID)
+	controlPoint.villLifeMarker = Marker_Create("mkr_villhome_"..index, "Prefab", pos, pos, 40)
+	--controlPoint.villLifeModule = New_VillLife(controlPoint, defered_owner)
+	
+	--Save player allied garrison
+	Init_Garrison(controlPoint, player3)
+	--Save enemy allied garrison
+	Init_Garrison(controlPoint, player4)
+		
+	table.insert(controlPoints, controlPoint)
+	return controlPoint
+	
+end
+
+--? @shortdesc Monitoring function for Control Point owner changes.
+--? On change set new owner in the controlPoints table, rebuild structures, and convert/restart villager life.
+function _Egypt_ControlPoint_Monitor()
+	
+	if controlPoints ~= nil then
+		
+		local _ControlPoint_StatusUpdate = function(gid, index, eid)
+			local controlPoint = controlPoints[index]
+			if World_OwnsEntity(controlPoint.entityID) == false then
+				
+				controlPoint.currentowner = Entity_GetPlayerOwner(controlPoint.entityID)
+				if controlPoint.currentowner ~= controlPoint.previousowner and controlPoint.currentowner ~= player5 then
+					
+					-- DILLON: Look into why currentowner and previousowner are both being passed as player
+					VOCue_ControlPointTaken_MultiUse(controlPoint.currentowner, controlPoint.previousowner)
+					
+					controlPoint.previousowner = controlPoint.currentowner
+					Rebuild_Location(controlPoint)
+					Convert_Location_VillLife(controlPoint)
+				end
+			end
+		end
+		EGroup_ForEach(eg_villagecenters, _ControlPoint_StatusUpdate)
+	end
+	
+end
+
+--? @shortdesc Init function for Control Point status at mission start.
+function Egypt_ControlPoint_MissionStart()
+		
+	if controlPoints ~= nil then
+		
+		local _ControlPoint_StatusUpdate = function(gid, index, eid)
+			local controlPoint = controlPoints[index]
+			if World_OwnsEntity(controlPoint.entityID) == false then
+								
+				controlPoint.currentowner = Entity_GetPlayerOwner(controlPoint.entityID)
+				if controlPoint.currentowner ~= player5 then
+					
+					controlPoint.previousowner = controlPoint.currentowner
+					SaveVillageLayout(controlPoint, player5) 
+					Rebuild_Location(controlPoint)
+					Convert_Location_VillLife(controlPoint)
+				end
+			end
+		end
+		EGroup_ForEach(eg_villagecenters, _ControlPoint_StatusUpdate)
+	end
+end
+
+--? @shortdesc Used to create/remake a village life module at a specific location
+--? @args ControlPoint controlPoint, player defered_owner (the player who will own the buildings)
+--? @result the village life ID
+--function New_VillLife(controlPoint, defered_owner)
+	
+	--local pos = Util_GetPosition(controlPoint.entityID)
+	
+	--SGroup_Clear(sg_temp_vlife_roam)
+	--SGroup_Clear(sg_temp_vlife_farm)
+	--CreateUnits(defered_owner, {type = "scar_villager", numSquads = 4}, pos, sg_temp_vlife_roam)
+	--CreateUnits(defered_owner, {type = "scar_villager", numSquads = 2}, pos, sg_temp_vlife_farm)
+	--local thisVillLife = VillagerLife_Create(
+		--defered_owner, 
+		--"vLife_"..controlPoint.id, 
+		--sg_temp_vlife_roam, 
+		--nil, 
+		--sg_temp_vlife_farm, 
+		--nil, 
+		--nil, 
+		--"flee", 
+		--controlPoint.villLifeMarker, 
+		--controlPoint.villLifeMarker, 
+		--false, 
+		--nil
+	--)
+	--return thisVillLife
+--end
+
+--? @shortdesc Kills an active village life (kills all squads and removes active monitoring rules)
+--? @args string name (the name of the village life to kill)
+function Kill_VillLife(name)
+	if #t_villagerLifePrefabs > 0 then
+		for index, entry in pairs(t_villagerLifePrefabs) do
+			if entry.instanceName == name then
+				if Rule_ExistsWithID(entry.monitor_ruleID) then
+					Rule_RemoveWithID(entry.monitor_ruleID)
+				end
+				SGroup_Kill(entry.sg_villagers)
+			end
+		end
+	end
+end
+
+
+--? @shortdesc Saves and returns the entityID, blueprint, position, and facing of all entities in the provided egroup.
+--? @args ControlPoint controlPoint, Player defered_owner
+--? @result A table containing the entityID, blueprint, position, and facing of all entities in the provided egroup
+function SaveVillageLayout(controlPoint, defered_owner)
+	
+	local controlPoint = controlPoint
+	local completeTable = {}
+	
+	local _BuildTable = function(gid, index, item)
+		table.insert(completeTable, index, {
+			entityID = Entity_GetID(item), 
+			bp = Entity_GetBlueprint(item), 
+			pos = Entity_GetPosition(item),
+			facing = Util_GetFacingFromDirection(Entity_GetPosition(item), Entity_GetHeading(item)),
+				
+		})
+	end
+	
+	EGroup_Clear(eg_temp)			
+	Player_GetAllEntitiesNearMarker(defered_owner, eg_temp, Util_GetPosition(controlPoint.entityID), 40)
+	EGroup_Filter(eg_temp, Entity_GetBlueprint(controlPoint.entityID), FILTER_REMOVE)
+	EGroup_Filter(eg_temp, "house", FILTER_REMOVE)
+	
+	EGroup_SetTargetingType(eg_temp, Targeting_None)
+	EGroup_SetInvulnerable(eg_temp, true, -1)
+		
+	EGroup_ForEach(eg_temp, _BuildTable)
+	controlPoint.villageLayout = completeTable
+	
+	local _DetermineGarrisonType = function(gid, index, item)
+		if Entity_IsOfType(item, "town_center") then
+			controlPoint.villageGarrisionType = "scar_militia"
+			controlPoint.villageGarrisionSpawn = Util_GetPosition(item)
+			return			
+		elseif Entity_IsOfType(item, "scar_stable") then
+			controlPoint.villageGarrisionType = "scar_horseman"
+			controlPoint.villageGarrisionSpawn = Util_GetPosition(item)
+			return
+		elseif Entity_IsOfType(item, "scar_barracks") then
+			controlPoint.villageGarrisionType = "scar_spearman"
+			controlPoint.villageGarrisionSpawn = Util_GetPosition(item)
+			return
+		elseif Entity_IsOfType(item, "scar_archeryrange") then
+			controlPoint.villageGarrisionType = "scar_archer"
+			controlPoint.villageGarrisionSpawn = Util_GetPosition(item)
+			return
+		end
+	end
+	EGroup_ForEach(eg_temp, _DetermineGarrisonType)
+	
+end
+
+--? @shortdesc Repair and rebuild all buildings that belonging to the provided location and spawns a garrison to the correct player.
+--? @args Table villageLayout, Player currentowner, ControlPoint controlPoint (controlPoints index)
+function Rebuild_Location(controlPoint)
+	
+	local villageLayout = controlPoint.villageLayout
+	local currentowner = controlPoint.currentowner
+	
+	assert(villageLayout ~= nil, "villageLayout is Nil, check spelling and declarations")
+
+	local defered_owner = Get_DeferedOwner(currentowner)
+	
+	Player_SetResource(defered_owner, RT_Wood, 100000)
+	Player_SetResource(defered_owner, RT_Stone, 100000)
+	Player_SetResource(defered_owner, RT_Gold, 100000)
+	
+	local DelayedBuild_Queue = 1
+
+	for index, building in ipairs(villageLayout) do
+		if Query_NeedsRebuilding(building.entityID) then
+			Rule_AddOneShot(_DelayedRebuild, 0.125*DelayedBuild_Queue, {defered_owner = defered_owner, bp = building.bp, pos = building.pos})
+			DelayedBuild_Queue = DelayedBuild_Queue+1
+		else
+			local entity = Entity_FromID(building.entityID)
+			Entity_SetPlayerOwner(entity, defered_owner)
+			Entity_SetHealth(entity, 1.0)
+		end
+	end
+	
+	DelayedBuild_Queue = DelayedBuild_Queue+1
+	Rule_AddOneShot(_Update_LocationData, 0.125*DelayedBuild_Queue, {controlPoint = controlPoint, defered_owner = defered_owner})
+	
+	SpawnNewGarrison(controlPoint, defered_owner)
+end
+
+--A delayed function to resave the locations new buildings once they're built and start the villager life.
+function _Update_LocationData(context, data)
+	local controlPoint = data.controlPoint
+	local defered_owner = data.defered_owner
+	
+	SaveVillageLayout(controlPoint, defered_owner)
+	--Restart_Location_VillLife(controlPoint)
+end
+
+--Delated function to start the building construction one at a time to reduce performance hit
+function _DelayedRebuild(context, data)
+	local defered_owner = data.defered_owner
+	local bp = data.bp
+	local pos = data.pos
+	EGroup_Clear(eg_single)
+	CreateEntity(defered_owner, bp, pos, eg_single, nil, nil, true)
+	Modify_EntityConstructionTime(eg_single, 0.25)
+	Entity_ForceSelfConstruct(EGroup_GetEntityAt(eg_single, 1))
+end
+
+--Query function to check if a specific buildings needs to be remade.
+function Query_NeedsRebuilding(entityID)
+	if Entity_IsValid(entityID) == true then
+		local entity = Entity_FromID(entityID)
+		if Entity_IsAlive(entity) == true then
+			return false
+		end
+	end
+	return true
+end
+
+--? @shortdesc Spawns units to the garrison army of a specific location to the correct player.
+--? @args ControlPoint controlPoint(controlPoints index), Player defered_owner(palyer the army should belong to)
+function SpawnNewGarrison(controlPoint, defered_owner)
+		
+	local name = "garrison_"..World_GetPlayerIndex(defered_owner).."_"..controlPoint.id
+	local location = Util_GetPosition(controlPoint.entityID)
+	local unitType = controlPoint.villageGarrisionType
+	local spawn = controlPoint.villageGarrisionSpawn
+	
+	if controlPoint.villageGarrisionSpawnRule ~= nil then
+		Rule_RemoveWithID(controlPoint.villageGarrisionSpawnRule)
+	end
+	controlPoint.villageGarrisionSpawnRule = Rule_AddInterval(_SpawnGarrisonOverTime, 10, 
+		{controlPoint = controlPoint, defered_owner = defered_owner, unitType = unitType, spawn = spawn, location = location})
+	
+	--local SpawnUnits =  function(defered_owner, location)
+		--SGroup_Clear(sg_temp)
+		--local units = 	{
+			--{type="scar_archer", numSquads = 6},
+			--{type="scar_spearman", numSquads = 8},
+			--{type="scar_manatarms", numSquads = 1},
+		--}
+		--CreateUnits(defered_owner, units, location, sg_temp)
+	--end
+	
+	if defered_owner == player3 then
+		--VOCue_RegionAllies_OneShot() -- VO One shot line on first time allied garrison spawns
+		if SGroup_CountSpawned(controlPoint.enemyGarrisonArmy.sgroup) > 0 then
+			SGroup_Kill(controlPoint.enemyGarrisonArmy.sgroup)
+		end
+		SpawnGarrisonMember(controlPoint.entityID, unitType, defered_owner, controlPoint.alliedGarrisonArmy, spawn, location)
+	elseif defered_owner == player4 then
+		if SGroup_CountSpawned(controlPoint.alliedGarrisonArmy.sgroup) > 0 then
+			SGroup_Kill(controlPoint.alliedGarrisonArmy.sgroup)
+		end	
+		SpawnGarrisonMember(controlPoint.entityID, unitType, defered_owner, controlPoint.enemyGarrisonArmy, spawn, location)
+	end
+	
+end
+
+function _SpawnGarrisonOverTime(context, data)
+	local controlPoint = data.controlPoint
+	local defered_owner = data.defered_owner
+	local unitType = data.unitType
+	local spawn = data.spawn
+	local location = data.location
+	
+	if defered_owner == player3 then
+		SpawnGarrisonMember(controlPoint.entityID, unitType, defered_owner, controlPoint.alliedGarrisonArmy, spawn, location)
+	elseif defered_owner == player4 then
+		SpawnGarrisonMember(controlPoint.entityID, unitType, defered_owner, controlPoint.enemyGarrisonArmy, spawn, location)
+	end
+end
+
+function SpawnGarrisonMember(controlPointEntity, unitType, defered_owner, army, spawnLocation, moveLocation)
+	if Player_GetStrategicPointCaptureProgress(defered_owner, controlPointEntity) >= 1 then
+		local sgroup = army.sgroup
+		if SGroup_CountSpawned(sgroup) < 15 then
+			SGroup_Clear(sg_temp)
+			local units = 	{
+				{type=unitType, numSquads = 1},
+			}
+			local offSetSpawn = World_GetOffsetPositionRelativeToFacingTarget(spawnLocation, moveLocation, 3)
+			CreateUnits(defered_owner, units, offSetSpawn, sg_temp)
+			
+			Army_AddSGroup(army, sg_temp)
+			SGroup_AttackMove(sgroup, moveLocation)
+		end
+	end
+end
+
+--Spawns empty garrison armies at locations for both the enemy and ally players.
+function Init_Garrison(controlPoint, defered_owner)
+	
+	local name = "garrison_"..World_GetPlayerIndex(defered_owner).."_"..controlPoint.id
+	local location = Util_GetPosition(controlPoint.entityID)
+		
+	local garrison_data = {
+		name = name,
+		player = defered_owner,
+		targetOrder = TARGET_ORDER_LINEAR,
+		spawn = location, 
+		target = {
+			position = location,
+			combatRangeAtTarget = 40,
+			useCustomDirection = true,
+			direction = World_Pos(0, 1, 0),
+		},
+	}
+	
+	if defered_owner == player3 then
+		controlPoint.alliedGarrisonArmy = Army_Init(garrison_data)
+	elseif defered_owner == player4 then
+		controlPoint.enemyGarrisonArmy = Army_Init(garrison_data)
+	end	
+end
+
+--Checks if a location belongs to neutral and converts it to the new owner on capture.
+function Convert_Location_VillLife(controlPoint)
+	
+	local currentowner = controlPoint.currentowner
+	local defered_owner = Get_DeferedOwner(currentowner)
+	local thisVillage = VillagerLife_Find("vLife_"..controlPoint.id)
+	
+	if thisVillage ~= nil then
+		if SGroup_IsEmpty(thisVillage.sg_villagers) ~= true and thisVillage.player == player5 then
+			thisVillage.player = defered_owner
+			SGroup_SetPlayerOwner(thisVillage.sg_villagers, defered_owner)
+			VillagerLife_GoToWork(thisVillage)
+		end
+	end
+end
+
+--Kills any active villagers life for a location and remakes it.
+--function Restart_Location_VillLife(controlPoint)
+	
+	--local currentowner = controlPoint.currentowner
+	--local defered_owner = Get_DeferedOwner(currentowner)
+	--local thisVillage = VillagerLife_Find("vLife_"..controlPoint.id)
+	
+	--if thisVillage ~= nil then
+		--if thisVillage.player ~= defered_owner then
+			--Kill_VillLife(thisVillage.instanceName)
+			--controlPoint.villLifeModule = New_VillLife(controlPoint, defered_owner)
+		--end
+	--else
+		--controlPoint.villLifeModule = New_VillLife(controlPoint, defered_owner)
+	--end
+--end
+
+function Get_DeferedOwner(player)
+	local defered_owner = player3
+	if player == player2 then
+		defered_owner = player4
+	end
+	return defered_owner
+end

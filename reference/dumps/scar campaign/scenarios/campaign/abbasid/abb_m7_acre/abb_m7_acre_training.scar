@@ -1,0 +1,146 @@
+import("training/campaigntraininggoals.scar")
+
+--
+--Template Refrences--
+--"LeftClickTrainingDataTemplate"
+--"RightClickTrainingDataTemplate"
+--"GenericTrainingDataTemplate"
+--
+
+local goal_relic = "acre_monkrelic"
+local goal_siegecamp = "acre_siegecamp"
+
+
+function Acre_Tutorials_Init()
+	MissionTutorial_Relic()
+	MissionTutorial_SiegeCamp()
+end
+
+function StayOnGoal()
+	return false	
+end
+
+--------------------------------------------------------------
+-- Relic Tutorial
+--------------------------------------------------------------
+
+function MissionTutorial_Relic()
+	
+	eg_tutorial_relic = EGroup_CreateIfNotFound("eg_tutorial_relic")
+	sg_tutorial_monk = SGroup_CreateIfNotFound("sg_tutorial_monk")
+	
+	local GoalMarkRelic = Training_Goal(
+		"Entity", 
+		{
+			ID = "RelicMarker",
+			Message = "$11255637", --LOC("Relics can be deposited into mosques by Imams"), --"Relics can be deposited into mosques by Imams",
+			DataTemplate = "GenericTrainingDataTemplate"
+		}, 
+		StayOnGoal
+	)
+
+	relicSequence = Training_GoalSequence(
+		goal_relic, 
+		1, 
+		0, 
+		Relic_TutorialTrigger, 
+		Relic_IgnoreTrigger, 
+		nil, 
+		nil, 
+		false, 
+		{GoalMarkRelic}
+	)
+	
+	Training_AddGoalSequence(relicSequence)
+	Training_EnableGoalSequenceByID(relicSequence, true)	
+end
+
+function Relic_TutorialTrigger(goalSequence)
+	if EGroup_CountSpawned(eg_tutorial_relic) > 0 and SGroup_CountSpawned(sg_tutorial_monk) > 0 then
+		if EGroup_IsOnScreen(player1, eg_tutorial_relic, ANY, 0.9) then
+			goalSequence.goals[1].key = EGroup_GetEntityAt(eg_tutorial_relic, 1) --Util_GetPosition(EGroup_GetEntityAt(eg_tutorial_relic, 1))
+			goalSequence.goals[1].timeActivated = goalSequence.goals[1].timeActivated or World_GetGameTime()
+			return true
+		end
+	end
+	return false
+end
+
+function Relic_IgnoreTrigger(goalSequence)
+	if goalSequence.goals[1].timeActivated ~= nil then
+		local timeAtStart = goalSequence.goals[1].timeActivated
+		if World_GetGameTime() - timeAtStart >= 30 then
+			return true
+		else
+			eg_tutorial_mosque = EGroup_CreateIfNotFound("eg_tutorial_mosque")
+			eg_tutorial_mosque = Player_GetAllEntitiesFromType(player1, "scar_monastery")
+			if EGroup_CountSpawned(eg_tutorial_mosque) > 0 then
+				local playerRelicCounts = 0
+				local _CountRelicsInMosques = function(gid, index, eid)
+					playerRelicCounts = playerRelicCounts+Entity_GetStateModelFloat(eid, "relic_count")
+				end
+				EGroup_ForEach(eg_tutorial_mosque, _CountRelicsInMosques)
+				if playerRelicCounts > 1 then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+--------------------------------------------------------------
+-- SiegeCamp Tutorial
+--------------------------------------------------------------
+
+function MissionTutorial_SiegeCamp()
+	
+	eg_siegecamp = EGroup_CreateIfNotFound("eg_siegecamp")
+	
+	local markSiegeCamp = Training_Goal(
+		EGroup_GetEntityAt(eg_siegecamp, 1), --Util_GetPosition(eg_siegecamp),
+		{
+			ID = "SiegeCampMarker",
+			Message = "$11255636", --LOC("The Siege Camp can barrage anywhere on the map."), 
+			DataTemplate = "GenericTrainingDataTemplate"
+		}, 
+		StayOnGoal
+	)
+
+	siegeCampSequence = Training_GoalSequence(
+		goal_siegecamp, 
+		1, 
+		0, 
+		SiegeCamp_TutorialTrigger, 
+		SiegeCamp__IgnoreTrigger, 
+		nil, 
+		nil, 
+		false, 
+		{markSiegeCamp}
+	)
+	
+	Training_AddGoalSequence(siegeCampSequence)
+	Training_EnableGoalSequenceByID(siegeCampSequence, true)
+end
+
+function SiegeCamp_TutorialTrigger(goalSequence)
+	if EGroup_IsEmpty(eg_siegecamp) == false then
+		if EGroup_IsOnScreen(player1, eg_siegecamp, ALL, 0.9) then
+			goalSequence.goals[1].timeActivated = goalSequence.goals[1].timeActivated or World_GetGameTime()
+			return true
+		end
+	end
+	return false
+end
+
+function SiegeCamp__IgnoreTrigger(goalSequence)
+	if goalSequence.goals[1].timeActivated ~= nil then
+		local timeAtStart = goalSequence.goals[1].timeActivated
+		if World_GetGameTime() - timeAtStart >= 15 then 
+			return true
+		else
+			return bBarrageUsed			
+		end
+	end
+	return false
+end

@@ -1,0 +1,255 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("rogue/rogue.scar")
+import("rogue_forest_data.scar")
+
+function Mission_PreInit()
+	content_pack = CONTENT_PACK_ROGUE
+	mission_name = "Forest Lords"
+	print("------------------------------------------------------------------------")
+	print("------------- "..mission_name.." - Initializing -------------")
+	print("------------------------------------------------------------------------")
+	rogue_wave_strength = 0.85
+end
+
+function Mission_SetupPlayers()
+	Rogue_SetupPlayers_A()
+	
+	Rogue_AddHumanPlayer(1, COLOR_BLUE)
+	Rogue_AddEnemyWavePlayer(2, "$11146001", COLOR_RED)	-- Holy Roman Empire
+	Rogue_AddAllyPlayer(3, 	  "$11096698", COLOR_YELLOW)-- Allies
+	Rogue_AddEnemyAllyPlayer(4,  "$11146001", COLOR_RED)   -- Holy Roman Empire
+	Rogue_AddEnemyRaiderPlayer(5,"$11180223", COLOR_ORANGE)-- Bandits
+	Rogue_AddNeutralPlayer(6,    "$11096698", COLOR_YELLOW)-- Allies
+	
+	Rogue_SetupPlayers_B()
+end
+
+function Mission_SetupVariables()
+	sp_difficulty = Game_GetSPDifficulty()
+end
+
+function Mission_Preset()
+	Rogue_AddLane("west", true)
+	Rogue_AddLane("north", false)
+	Rogue_AddLane("east", true)
+	
+	Rogue_UseDefaultSchedule(true, false, 1.0)
+	
+	Players_RevealArea(ROGUE_HUMAN_PLAYERS, Util_GetPosition(mkr_tc), 65)
+	
+	Rogue_SimulateEvents()
+	
+	Rogue_Forest_SpawnRelics()
+	
+	EGroup_SetInvulnerable(eg_main_walls, true)
+	
+	-- Disable military naval ships and upgrades
+	Rogue_Forest_DisableNaval()
+	
+	Cmd_InstantUpgrade(eg_hre_outposts, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	
+	ResourceSpots_InitData({0,20,15,10,15,5,0})
+	ResourceSpots_Init("mkr_resource", "gaia", 12)
+	ResourceSpots_Init("mkr_pickup", "pickup", 15)
+	
+	local wolf_spawn_chance = Rogue_DifVar({0,0,10,35,50,65,80,100})
+	
+	if wolf_spawn_chance > 0 then
+		ResourceSpots_SpawnWolves("mkr_wolf", wolf_spawn_chance)
+	end
+	
+	-- Turn some T1 POI spots into bandit camps
+	bandit_camp_count = 5
+	Rogue_Forest_SpawnBanditCamps()
+	
+	-- Init outlaws data, neutral player, kidnap enabled
+	Outlaws_InitData(ROGUE_NEUTRAL_PLAYER, ROGUE_ENEMY_RAIDER_PLAYER, true, "$11269923", "$11269985")
+	
+	-- Setup bandit unit types
+	local t_unit_types_bandits = {
+		{scar_type = "scar_bandit_common", value = 70, score_multiplier = 1.2},
+		{scar_type = "scar_bandit_axeman", value = 90, score_multiplier = 1.0},
+		{scar_type = "scar_bandit_swordsman", value = 90, score_multiplier = 1.0},
+		{scar_type = "scar_bandit_horseman", value = 90, score_multiplier = 1.0},
+	}
+	
+	Outlaws_SetUnitTypes(t_unit_types_bandits)
+	
+	-- Setup bandit difficulty tuning
+	Outlaws_SetDefaultDifficultyTuning()
+	Outlaws_SetIncome(GetIntegerInExponentialRange(150, 450))
+	
+	Outlaws_FinalizeData("mkr_raid_spawn", "mkr_raid_def_spawn", bandit_camp_count, "eg_raid_house")
+	
+	-- Setup camp raid targets
+	local targets_west = AllMarkers_FromName("mkr_raid_target_west", "")
+	local targets_east = AllMarkers_FromName("mkr_raid_target_east", "")
+	
+	-- Set camp targets
+	for i = 1, bandit_camp_count do
+		
+		local camp_marker = Marker_FromName("mkr_raid_spawn"..tostring(i), "")
+		local dist_west = Util_GetDistance(camp_marker, mkr_tc_west)
+		local dist_east = Util_GetDistance(camp_marker, mkr_tc_east)
+		
+		if dist_west < dist_east then
+			Outlaws_SetCampTargets(i, targets_west)
+		else
+			Outlaws_SetCampTargets(i, targets_east)
+		end
+	end
+	
+	-- Custom POI data
+	Rogue_Forest_SetPOIData()
+	
+	-- Points of interest
+	Rogue_POI_SetRadii("mkr_poi_t1")
+	Rogue_POI_SetRadii("mkr_poi_t2")
+	Rogue_POI_SetRadii("mkr_poi_def")
+	
+	Rogue_POI_Init(ROGUE_ENEMY_ALLY_PLAYER, nil, t_poi_types_forest, 5, 3)
+	
+	-- Defensive points of interest
+	Rogue_POI_Spawn("mkr_poi_def", t_poi_types_def, 1, 1)
+	
+	Rogue_Forest_SetupSideBases()
+end
+
+function Mission_Start()
+	Rogue_SetupPlayers_C()
+end
+
+-- triggered when the player selects the first boon and gameplay actually begins
+function Mission_Unpause()
+	Outlaws_InitRaiding()	
+end
+
+function Rogue_Forest_SpawnBanditCamps()
+	
+	local ebp_camps = {
+		BP_GetEntityBlueprint("rogue_bandit_camp_01"),
+		BP_GetEntityBlueprint("rogue_bandit_camp_02"),
+		BP_GetEntityBlueprint("rogue_bandit_camp_03")
+	}
+	
+	local ebp_raider_house = BP_GetEntityBlueprint("building_rogue_raider_house")
+	
+	local poi_markers_all = AllMarkers_FromName("mkr_poi_t1", "")
+	local poi_markers = Table_GetRandomItem(poi_markers_all, bandit_camp_count)
+	
+	local marker_index = 1
+	for _, marker in ipairs(poi_markers) do
+		
+		local eg_raid_house = EGroup_Create("eg_raid_house"..tostring(marker_index))
+		
+		CreateEntity(nil, Table_GetRandomItem(ebp_camps), marker, nil, Rogue_POI_GetRandomDirection())
+		CreateEntity(ROGUE_ENEMY_RAIDER_PLAYER, ebp_raider_house, marker, eg_raid_house, Rogue_POI_GetRandomDirection())
+		
+		local spawn_marker = Marker_FromName("mkr_raid_spawn", "")
+		local spawn_def_marker = Marker_FromName("mkr_raid_def_spawn", "")
+		
+		Marker_Create("mkr_raid_spawn"..tostring(marker_index), "", Util_GetPosition(spawn_marker), Marker_GetDirection(spawn_marker), 30)
+		Marker_Create("mkr_raid_def_spawn"..tostring(marker_index), "", Util_GetPosition(spawn_def_marker), Marker_GetDirection(spawn_def_marker), 30)
+		
+		Marker_Destroy(marker)
+		Marker_Destroy(spawn_marker)
+		Marker_Destroy(spawn_def_marker)
+		
+		marker_index = marker_index + 1
+	end
+end
+
+function Rogue_Forest_SpawnRelics()
+	
+	Sites_Init("archer", "manatarms", "crossbowman")
+	Sites_CreateRelics("mkr_relic_close", 2)
+	Sites_CreateRelics("mkr_relic_far", 3)
+	
+	local relic_markers = AllMarkers_FromName("mkr_relic", "")
+	local relic_ebp = BP_GetEntityBlueprint("relic")
+	for _, marker in ipairs(relic_markers) do
+		CreateEntity(nil, relic_ebp, marker, nil, DIRECTION_BACK)
+	end
+end
+
+function Rogue_Forest_DisableNaval()
+	for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+		Player_SetSquadProductionAvailability(player, BP_GetSquadBlueprintsWithType("naval_unit"), ITEM_REMOVED)
+		Player_SetSquadProductionAvailability(player, BP_GetSquadBlueprintsWithType("naval_fishing_ship"), ITEM_DEFAULT)
+		
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_ADDSAILS, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_ARMORED_HULL, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_ARROWSLITS, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_CHAIN_SHOT, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_EXPLOSIVES, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_EXTRA_HAMMOCKS, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_FORECASTLE, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_GALLEY_CANNON, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_HEATED_SHOT, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_INCENDIARIES, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_MOUNTED_GUNS, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_NAVIGATOR, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_SHIPWRIGHTS, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_SPRINGALD_SHIP_UPGRADE_1, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.COMMON.UPGRADE_NAVAL_SWIVEL_CANNON, ITEM_REMOVED)
+		
+		Player_SetUpgradeAvailability(player, UPG.ENGLISH.UPGRADE_NAVAL_SHIPWRIGHTS_ENG, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.ABBASID.UPGRADE_NAVAL_TEAK_MASTS_ABB, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.FRENCH.UPGRADE_NAVAL_LONG_GUNS_FRE, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.FRENCH.UPGRADE_LANDMARK_NAVAL_LONG_GUNS_FRE, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.HRE.UPGRADE_NAVAL_FIRESTATIONS_HRE, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.CHINESE.UPGRADE_NAVAL_EXPLOSIVE_TECHNIQUES_CHI, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.CHINESE.UPGRADE_NAVAL_HAMMOCKS_CHI, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.BYZANTINE.UPGRADE_FIRESHIP_LIQUID_EXPLOSIVES_BYZ, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.OTTOMAN.UPGRADE_NAVAL_GRAND_GALLEY_MIL_SCHOOL_OTT, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.OTTOMAN.UPGRADE_NAVAL_IMPERIAL_FLEET_OTT, ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, UPG.OTTOMAN.UPGRADE_NAVAL_REINFORCED_HULLS_OTT, ITEM_REMOVED)
+	end
+end
+
+
+function Rogue_Forest_SetupSideBases()
+	base_army_index = 0
+	
+	Rogue_Forest_SetupSideBase(1)
+	Rogue_Forest_SetupSideBase(2)
+	Rogue_Forest_SetupSideBase(3)
+	Rogue_Forest_SetupSideBase(4)
+end
+
+function Rogue_Forest_SetupSideBase(base_index)
+	
+	local unit_budget = GetIntegerInExponentialRange(250, 500)
+	local eg_name = "eg_side_keep"..tostring(base_index)
+	
+	if EGroup_Exists(eg_name) then
+		local eg_keep = EGroup_FromName(eg_name)
+		Cmd_InstantUpgrade(eg_keep, UPG.COMMON.UPGRADE_KEEP_SPRINGALD)
+	end
+	
+	local base_army_markers = AllMarkers_FromName("mkr_hre_side_army"..tostring(base_index), "")
+	
+	for i, army_marker in ipairs(base_army_markers) do
+		
+		local unit_data = Rogue_POI_GetUnitData(unit_budget, 2)
+		
+		base_army_index = base_army_index + 1
+		Rogue_Forest_CreateBaseArmy(base_army_index, unit_data, army_marker)
+	end
+
+end
+
+function Rogue_Forest_CreateBaseArmy(index, unit_data, marker)
+	
+	local army_params = {
+		name = "base_army"..tostring(index),
+		player = ROGUE_ENEMY_WAVE_PLAYER,
+		spawn = marker,
+		targetOrder = TARGET_ORDER_PATROL,
+		targets = {Util_GetPosition(marker)},
+		units = unit_data
+	}
+	Army_Init(army_params)
+end
+

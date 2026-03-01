@@ -1,0 +1,300 @@
+-----------------------------------------------------------------------
+--
+-- Abbasid Training Conditions
+--
+-- (c) Relic Entertainment 2021
+--
+-----------------------------------------------------------------------
+
+import("training.scar")
+import("cardinal.scar")
+
+function UserCannotSeeEntityKey(goalSequence)
+	local key = goalSequence.goals[goalSequence.currentGoalIndex].key
+	
+	if scartype(key) == ST_NUMBER then 
+		
+		if Entity_IsValid(key) == false then
+			return true
+		elseif Entity_IsAlive(Entity_FromID(key)) == false then
+			return true
+		elseif Misc_IsEntityOnScreen(Entity_FromID(key), 100) == false then
+			return true
+		end
+	end
+	
+	return false
+end
+
+-------------------------------------------------------
+-- Build a House of Wisdom
+-------------------------------------------------------
+
+-- Predicate
+function TimeHasPassedWithoutBuildingAHouseOfWisdom(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingShortInterval then
+		local localPlayer = Game_GetLocalPlayer()
+		
+		local houseOfWisdomBP = Cardinal_ConvertTypeToEntityBlueprint("house_of_wisdom_abb", localPlayer)
+		
+		if houseOfWisdomBP ~= nil 
+			and training_currentConstructionBlueprint == nil 
+			and Player_CanConstruct(localPlayer, houseOfWisdomBP) then
+			
+			if(UI_IsXboxKBMUI() or UI_IsXboxControllerUI()) then
+				goalSequence.goals[3].key = houseOfWisdomBP
+			else
+				goalSequence.goals[2].key = houseOfWisdomBP
+			end
+			
+			local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+			local squads = Player_GetSquads(localPlayer)
+			
+			for i = 1, SGroup_Count(squads) do
+				local squad = SGroup_GetSquadAt(squads, i)
+				
+				if Squad_IsIdle(squad) and Squad_GetBlueprint(squad) == villagerBP and Misc_IsSquadOnScreen(squad, 100) then
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					return true
+				end
+			end
+		end
+	end
+	
+	return false
+end
+
+-- Goal Condition: User is going to build a House of Wisdom
+function UserIsGoingToBuildAHouseOfWisdom(goal)
+	return UserIsGoingToBuildBuildingType("house_of_wisdom_abb")
+end
+
+-- Goal Condition: User has started to build a House of Wisdom
+function UserHasStartedToBuildAHouseOfWisdom(goal)
+	return UserHasStartedToBuildABuilding("house_of_wisdom_abb")
+end
+
+-------------------------------------------------------
+-- Abbasid Age Up
+-------------------------------------------------------
+
+-- Predicate
+function TimeHasPassedAndUserCanAgeUp(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+		
+	-- Moderate amount of time has passed
+	if currentTime > __t_trainingModerateInterval then
+		
+		-- User has a House of Wisdom
+		local localPlayer = Game_GetLocalPlayer()
+		local houseofWisdomBP = Cardinal_ConvertTypeToEntityBlueprint("house_of_wisdom_abb", localPlayer, true)
+		
+		Player_GetAll(localPlayer)
+		EGroup_Filter(eg_allentities, houseofWisdomBP, FILTER_KEEP)
+		local aHouseOfWisdomExists = EGroup_Count(eg_allentities) > 0
+	
+		if aHouseOfWisdomExists == true then
+			local houseOfWisdom = EGroup_GetEntityAt(eg_allentities, 1)
+		
+			if Entity_IsValid(Entity_GetID(houseOfWisdom)) and Player_CanSeeEntity(localPlayer, houseOfWisdom) then
+				
+				--Check if player can build a Wing
+				local ecoWing = BP_GetUpgradeBlueprint("upgrade_add_economy_wing")
+				
+				-- Check that player does not already have Wing upgrade
+				if not Player_HasUpgrade(localPlayer, ecoWing) then
+					
+					--Check if user has enough resources to build any of the Wings
+					local playerResources = Player_GetResources(localPlayer)
+					local ecoWingCost = Player_GetUpgradeBPCost(localPlayer, ecoWing)
+					
+					if playerResources.food >= ecoWingCost.food and playerResources.wood >= ecoWingCost.wood and playerResources.gold >= ecoWingCost.gold and playerResources.stone >= ecoWingCost.stone then
+						
+						-- Assign goal keys
+						if ( UI_IsXboxControllerUI() ) then -- Xbox Only
+							goalSequence.goals[1].key = Entity_GetID(houseOfWisdom)
+							goalSequence.goals[2].key = Entity_GetID(houseOfWisdom)
+							goalSequence.goals[3].key = ecoWing
+							goalSequence.goals[3].houseEntity = houseOfWisdom
+						else
+							goalSequence.goals[1].key = Entity_GetID(houseOfWisdom)
+							
+							if(UI_IsXboxKBMUI()) then
+								goalSequence.goals[3].key = ecoWing
+								goalSequence.goals[3].houseEntity = houseOfWisdom
+							else
+								goalSequence.goals[2].key = ecoWing
+								goalSequence.goals[2].houseEntity = houseOfWisdom
+							end
+						end
+						
+						return true
+					end
+				end
+			end
+		end
+	end
+end
+
+-- Goal Condition: User has selected the House of Wisdom
+function UserHasSelectedHouseOfWisdom(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	
+	-- User has a House of Wisdom
+	local localPlayer = Game_GetLocalPlayer()
+	local houseofWisdomBP = Cardinal_ConvertTypeToEntityBlueprint("house_of_wisdom_abb", localPlayer, true)
+	
+	Player_GetAll(localPlayer)
+	EGroup_Filter(eg_allentities, houseofWisdomBP, FILTER_KEEP)
+	local aHouseOfWisdomExists = EGroup_Count(eg_allentities) > 0
+	
+	if aHouseOfWisdomExists == true then
+		
+		-- User has selected the House of Wisdom
+		local houseOfWisdom = EGroup_GetEntityAt(eg_allentities, 1)
+		local houseOfWisdom_id = Entity_GetID(houseOfWisdom)
+		
+		if Entity_IsValid(houseOfWisdom_id) then
+			
+			Misc_GetSelectedEntities(eg_currentSelection, false)
+			
+			for i = 1, EGroup_Count(eg_currentSelection) do
+				local entity = EGroup_GetEntityAt(eg_currentSelection, i)
+				if Entity_GetID(entity) == houseOfWisdom_id then
+					return true
+				end
+			end
+		end
+	end
+	
+	return false
+end
+
+function UserHasHouseOfWisdomCommandsCardTabOpen(goal)
+	return UserHasSelectedHouseOfWisdom(goal) and UI_GetXboxCommandCardTab() == XCCT_Command
+end
+
+-- Goal Condition: User has viewed Wing upgrades on the House of Wisdom
+function UserHasBegunWingUpgrade(goalSequence)
+	local entity = goalSequence.houseEntity
+	
+	if entity ~= nil then
+		if Entity_HasProductionQueue(entity) then
+			local num_items_in_queue = Entity_GetProductionQueueSize(entity)
+			for j = 0, (num_items_in_queue - 1) do
+				if Entity_GetProductionQueueItemType(entity, j) == PITEM_Upgrade  then
+					local upgrade_bp = Entity_GetProductionQueueItem(entity, j)
+					if BP_IsUpgradeOfType(upgrade_bp, "abbasid_wing_upgrade") then
+						return true
+					end
+				end
+			end
+		end
+	end
+	
+	return false
+end
+
+-- Goal Condition: User can build the House of Wisdom
+function UserCanBuildHouseOfWisdom(goalSequence)
+
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+		
+	-- Moderate amount of time has passed
+	if currentTime > __t_trainingModerateInterval then
+		
+		-- User has a House of Wisdom
+		local localPlayer = Game_GetLocalPlayer()
+		local houseOfWisdomBP = Cardinal_ConvertTypeToEntityBlueprint("house_of_wisdom_abb", localPlayer, true)
+		
+		Player_GetAll(localPlayer)
+		EGroup_Filter(eg_allentities, houseOfWisdomBP, FILTER_KEEP)
+		local aHouseOfWisdomExists = EGroup_Count(eg_allentities) > 0
+		
+		local playerResources = Player_GetResources(localPlayer)
+		local houseofWisdomCost = Player_GetEntityBPCost(localPlayer, houseOfWisdomBP[1])
+		
+		if aHouseOfWisdomExists == false
+			and playerResources.food >= houseofWisdomCost.food
+			and playerResources.wood >= houseofWisdomCost.wood
+			and playerResources.gold >= houseofWisdomCost.gold
+			and playerResources.stone >= houseofWisdomCost.stone then
+			
+			-- Set goal targets
+			local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+			local squads = Player_GetSquads(localPlayer)
+
+			for i = 1, SGroup_Count(squads) do
+				local squad = SGroup_GetSquadAt(squads, i)
+				
+				if Squad_GetBlueprint(squad) == villagerBP and Misc_IsSquadOnScreen(squad, 100) then
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[2].key = Squad_GetID(squad)
+				end
+			end
+			
+			goalSequence.goals[4].key = houseOfWisdomBP[1]
+			
+			return true;
+		end
+		
+	end
+	
+	return false
+end
+
+-------------------------------------------------------
+-- Abbasid Golden Age Mechanic
+-------------------------------------------------------
+
+-- Predicate
+function TimeHasPassedAndUserHasHouseOfWisdom(goalSequence)
+	
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+		
+	-- Moderate amount of time has passed
+	if currentTime > __t_trainingLongInterval then
+		
+		-- User has a House of Wisdom
+		local localPlayer = Game_GetLocalPlayer()
+		local houseofWisdomBP = Cardinal_ConvertTypeToEntityBlueprint("house_of_wisdom_abb", localPlayer, true)
+		
+		Player_GetAll(localPlayer)
+		EGroup_Filter(eg_allentities, houseofWisdomBP, FILTER_KEEP)
+		local aHouseOfWisdomExists = EGroup_Count(eg_allentities) > 0
+	
+		if aHouseOfWisdomExists == true then
+			local houseOfWisdom = EGroup_GetEntityAt(eg_allentities, 1)
+			local goldenAgeBP = BP_GetAbilityBlueprint("golden_age_passive_abb")
+		
+			if Entity_IsValid(Entity_GetID(houseOfWisdom)) and Player_CanSeeEntity(localPlayer, houseOfWisdom) then
+														
+				-- Assign goal keys
+				if ( UI_IsXboxUI() == false ) then -- PC Only
+					goalSequence.goals[1].key = Entity_GetID(houseOfWisdom)
+					goalSequence.goals[2].key = goldenAgeBP
+				end
+				
+				return true
+			end
+		end
+	end
+end
+
+function UserHasOpenedGoldenAgeMenu(goalSequence)
+	return UI_IsCivSpecificMenuOpen();
+end
+
+-- Goal Condition: User has viewed Golden Age requirements
+function UserHasViewedGoldenAge(goalSequence)
+	return Timer_GetElapsed(goalSequence.timerID) > __t_trainingShortInterval
+end
+
+function UserHasClosedGoldenAgeMenu(goalSequence)
+	return UI_IsCivSpecificMenuOpen() == false;
+end
+
+function UserHasOpenedEconomyRadialPage(goal)
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and UI_GetActiveRelicRadialMenuDirection() == RMD_Left
+end

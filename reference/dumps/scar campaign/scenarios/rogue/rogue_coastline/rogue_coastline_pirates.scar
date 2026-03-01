@@ -1,0 +1,79 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+function Pirates_SetNavalSpawnDelay()
+	naval_raid_spawn_delay = 300 - (sp_pirate_difficulty * 15)
+end
+
+--? @shortdesc Initializes the enemy naval raid army
+function Pirates_InitNavalRaidArmy()
+	
+	naval_raid_max = 2
+	
+	naval_raid_army_params = {
+		name = "naval_raid_army",
+		player = ROGUE_ENEMY_RAIDER_PLAYER,
+		spawn = mkr_pirate_dock_spawn1,
+		targetOrder = TARGET_ORDER_PATROL,
+		targets = {mkr_naval_raid1, mkr_naval_raid2, mkr_naval_raid3, mkr_naval_raid4},
+		units = {}
+	}
+	naval_raid_army = Army_Init(naval_raid_army_params)
+	sg_naval_raid = SGroup_CreateIfNotFound("sg_naval_raid")
+	
+	Rule_AddInterval(Pirates_SpawnShip, naval_raid_spawn_delay)
+end
+
+function Pirates_InitNavalTransports()
+	Rule_AddInterval(Pirates_SpawnTransportShip, naval_raid_spawn_delay * 2)
+end
+
+--? @shortdesc Spawns ships
+function Pirates_SpawnShip(context, data)
+	
+	if SGroup_CountSpawned(sg_naval_raid) < naval_raid_max then
+			
+		if EGroup_CountSpawned(eg_pirate_dock1) > 0 then
+			CreateUnits(ROGUE_ENEMY_RAIDER_PLAYER, {type = "scar_combat_ship", numSquads = 1}, mkr_pirate_dock_spawn1, sg_naval_raid)
+			Army_AddSGroup(naval_raid_army, sg_naval_raid)
+		end
+	end
+end
+
+
+--? @shortdesc Spawns transport ships
+function Pirates_SpawnTransportShip(context, data)
+		
+	-- spawn transport for naval landings
+	if EGroup_CountSpawned(eg_landing_dock2) > 0 then
+		if sg_naval_transport ~= nil then
+			
+			if SGroup_CountSpawned(sg_naval_transport) > 0 then
+				Cmd_Move(sg_naval_transport, mkr_naval_exit, true, true)
+				SGroup_Clear(sg_naval_transport)
+			end
+			
+			CreateUnits(ROGUE_ENEMY_RAIDER_PLAYER, {type = "scar_transport_ship", numSquads = 1}, mkr_landing_spawn2, sg_naval_transport)
+		end
+	end
+end
+
+function Pirates_TestNavalLanding()
+	FOW_RevealAll()
+	
+	Outlaws_StartRaids()
+	
+	Pirates_SpawnTransportShip(nil, nil)
+	
+	local camp = t_raid_camps[2]
+	
+	CreateUnits(ROGUE_ENEMY_RAIDER_PLAYER, Outlaws_GetUnitDataSplit(800), mkr_raid_spawn2, camp.sg_raiders)
+	SGroup_Clear(sg_landing_raiders)
+	SGroup_AddGroup(sg_landing_raiders, camp.sg_raiders)
+	
+	camp.retreats_from_tc = false
+	camp.phase = "raid"
+	
+	Outlaws_LaunchNavalLanding()
+end
+

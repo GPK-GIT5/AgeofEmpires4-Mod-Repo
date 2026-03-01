@@ -1,0 +1,553 @@
+--
+-- Moscow 1238 - Chase Off Mongols objective
+--
+
+
+
+
+function ProtectMoscow_InitObjectives()
+
+	OBJ_ProtectMoscow = {
+	
+		Title = "$11180196", -- Protect Moscow
+		Type = ObjectiveType_Battle,
+		
+		OnStart = function()
+			--Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE)
+			Sound_Play2D("sfx_campaign_scripted_large_group_fear")
+			Sound_Play2D("sfx_campaign_scripted_medium_group_engage")
+		end,
+		
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_ProtectMoscow, ALL)
+		end,
+		
+		PreComplete = function()
+			
+			Player_GetAll(player1)
+			Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sg_allsquads)
+			
+			--Music_UnlockIntensity()
+			Music_StopMedium()
+			
+		end,
+		
+	}
+	
+	SOBJ_ChaseOffMongols = {
+		
+		Title = "$11180197", -- Chase off the Mongols
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ProtectMoscow,
+		StartAlongsideParent = true, 
+		
+		Intel_Complete = EVENTS.ChaseOffMongols_ObjectiveComplete,
+		
+		SetupUI = function()
+			Objective_SetProgressBar(SOBJ_ChaseOffMongols, 0)
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(ChaseOffMongols_Monitor, 0.5)	
+		end,
+		
+		PreComplete = function()
+			if Objective_IsComplete(SOBJ_PutOutFires) == false then 	-- if we still have the put out fires objective, switch music to that
+				--Music_LockIntensity(MUSIC_EXPLORE_TENSE)				-- otherise we'll unlock the music in the parent objective close
+			end
+		end,
+		
+	}	
+	
+	SOBJ_PutOutFires = {
+		
+		Title = "$11180198", -- Put out the fires
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ProtectMoscow,
+		StartAlongsideParent = true, 
+		
+		Intel_Complete = EVENTS.PutOutFires_ObjectiveComplete,
+		
+		SetupUI = PutOutFires_SetupUI,
+		
+		OnStart = PutOutFires_Start,
+		
+		OnComplete = PutOutFires_Complete,
+		OnFail = PutOutFires_Fail,
+		
+	}	
+
+	Objective_Register(OBJ_ProtectMoscow)	
+	Objective_Register(SOBJ_ChaseOffMongols)
+	Objective_Register(SOBJ_PutOutFires)
+
+	
+	i_numMongolAttackers = SGroup_CountSpawned(sg_start_mongols) + SGroup_CountSpawned(sg_start_mongols_khan)
+	i_numMongolsChasedOff = 0 
+	i_numBuildingsOnFire = 0
+	i_numFiresPutOut = 0
+	
+	t_allGradBuildings = {}
+	
+	Rule_AddOneShot(ChaseOffMongols_Init, 0.125)
+
+
+end
+
+
+
+
+
+--
+-- Chase off Mongols
+--
+
+function ChaseOffMongols_Init()
+
+	t_allMongolAttackers = {}
+
+	local location = LOCATION("InnerCity")
+
+	EGroup_Clear(eg_temp)	
+	EGroup_AddEGroup(eg_temp, location.egroup)
+	EGroup_RemoveGroup(eg_temp, eg_destroyDuringIntro)
+	EGroup_RemoveGroup(eg_temp, eg_startOnFire)
+	EGroup_Filter(eg_temp, {"wall", "farm"}, FILTER_REMOVE)
+	
+	-- get mongols attacking the buildings, so they look like the guilty party
+	local _AttackBuilding = function(gid, idx, sid)
+		
+		local closestBuilding = EGroup_GetClosestEntity(eg_temp, Util_GetPosition(sid))
+		SGroup_Single(sg_single, sid)
+		EGroup_Single(eg_single, closestBuilding)
+		
+		local entry = {
+			mongolWorldID = Squad_GetID(sid),
+			targetWorldID = Entity_GetID(closestBuilding),
+			targetType = ST_ENTITY,
+		}
+		
+		if Squad_IsOfType(sid, "scar_khan") then 
+			entry.khan = true
+		end
+
+		Cmd_Attack(sg_single, eg_single)
+		
+		
+		table.insert(t_allMongolAttackers, entry)
+		
+	end
+	SGroup_ForEach(sg_start_mongols, _AttackBuilding)	
+	SGroup_ForEach(sg_start_mongols_khan, _AttackBuilding)		
+	
+
+	
+end
+
+
+function ChaseOffMongols_Monitor()
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_REMOVE)
+	
+	ChaseOffMongols_UpdateGradBuildingGroups()
+	
+	for index = #t_allMongolAttackers, 1, -1 do 
+		
+		local entry = t_allMongolAttackers[index]
+			
+		if Squad_IsValid(entry.mongolWorldID) == false then 
+
+			-- mongol is dead, apparently
+			
+			if entry.khan == true then 
+				b_chaseOffMongols_khanRunAway = true 				
+				--Music_PlayStinger("mus_camp_cust_mongol_drum_retreat")	
+			end
+			
+			table.remove(t_allMongolAttackers, index)
+			
+			i_numMongolsChasedOff = i_numMongolsChasedOff + 1
+			Objective_SetProgressBar(SOBJ_ChaseOffMongols, i_numMongolsChasedOff / i_numMongolAttackers)
+			
+		else
+			
+			local sid = Squad_FromID(entry.mongolWorldID)
+			
+			if entry.khan == true then 
+				
+				-- Khan behaviour
+
+				if Squad_GetHealthPercentage(sid, false) <= 0.2 					-- if the Khan is heavily damaged, 
+				   or #t_allMongolAttackers <= 3 then 								-- or only a few other Mongols remain
+					
+					ChaseOffMongols_RunAway(entry, index, sid)
+					
+					b_chaseOffMongols_khanRunAway = true 					
+					--Music_PlayStinger("mus_camp_cust_mongol_drum_retreat")	
+					
+				elseif entry.targetType == ST_ENTITY and (
+					Entity_IsValid(entry.targetWorldID) == false 																	-- if the target building is destroyed,
+					or (Entity_IsBurning(Entity_FromID(entry.targetWorldID)) and World_GetRand(1, 5) == 1)								-- or is already on fire,
+					or (Squad_IsMoving(sid) == false and Squad_IsUnderAttack(sid, 5) and World_GetRand(1, 6) == 1)						-- or a unit is attacking the Khan,
+					or World_GetRand(1, 100) == 1 ) then 																				-- or the Khan is just bored
+					
+					ChaseOffMongols_ChangeTarget(entry, index, sid)
+
+				elseif entry.targetType == ST_SQUAD and (
+					Squad_IsValid(entry.targetWorldID) == false 																	-- if the target squad is killed,
+					or (Squad_IsMoving(sid) == false and Squad_IsUnderAttack(sid, 5) and World_GetRand(1, 6) == 1)						-- or a unit is attacking the Khan,
+					or World_GetRand(1, 20) == 1 ) then 																				-- or the Khan is just bored
+					
+					ChaseOffMongols_ChangeTarget(entry, index, sid)
+
+				elseif entry.targetType == ST_ENTITY
+					and Squad_IsUnderAttack(sid, 1) 
+					and World_GetRand(1, 3) == 1 then				
+					
+					ChaseOffMongols_Retaliate(entry, index, sid)
+
+				end
+				
+			else
+				
+				-- Other mongol raider
+
+				if Squad_GetHealthPercentage(sid, false) <= 0.2 																		-- if the rider has taken damage,
+				   or (b_chaseOffMongols_khanRunAway == true and World_GetRand(1, 8) == 1) then												-- or the khan is dead / has run off,
+				   --or (Squad_IsMoving(sid) == false and Prox_AreSquadsNearMarker(sg_allsquads, Util_GetPosition(sid), ANY, 3)) then		-- or a player military unit is nearby
+					
+					ChaseOffMongols_RunAway(entry, index, sid)
+				
+				elseif entry.targetType == ST_ENTITY and (
+					Entity_IsValid(entry.targetWorldID) == false 																	-- if the target building is destroyed,
+					or (Entity_IsBurning(Entity_FromID(entry.targetWorldID)) and World_GetRand(1, 5) == 1)								-- or is already on fire,
+					or (Squad_IsMoving(sid) == false and Squad_IsUnderAttack(sid, 5) and World_GetRand(1, 3) == 1) 						-- or a unit is attacking the raider,					
+					or World_GetRand(1, 100) == 1 ) then 																					-- or the mongol is just bored
+					
+					ChaseOffMongols_ChangeTarget(entry, index, sid)
+
+
+				elseif entry.targetType == ST_SQUAD and (
+					Squad_IsValid(entry.targetWorldID) == false 																	-- if the target squad is killed,
+					or (Squad_IsMoving(sid) == false and Squad_IsUnderAttack(sid, 5) and World_GetRand(1, 6) == 1)						-- or a unit is attacking the raider,
+					or World_GetRand(1, 20) == 1 ) then 																				-- or the mongol is just bored
+					
+					ChaseOffMongols_ChangeTarget(entry, index, sid)
+
+				elseif entry.targetType == ST_ENTITY
+					and Squad_IsUnderAttack(sid, 1) 
+					and World_GetRand(1, 3) == 1 then				
+					
+					ChaseOffMongols_Retaliate(entry, index, sid)
+
+				end
+				
+			end
+			
+		end
+		
+	end
+	
+	if  #t_allMongolAttackers == 0 then 
+		Objective_Complete(SOBJ_ChaseOffMongols)
+		Rule_RemoveMe()
+	end
+	
+end
+
+-- make a mongol rider run away
+function ChaseOffMongols_RunAway(entry, index, sid)
+	
+	SGroup_Single(sg_single, sid)
+	Cmd_Move(sg_single, mkr_mongol_exit, false, true)
+	
+	table.remove(t_allMongolAttackers, index)
+	
+	i_numMongolsChasedOff = i_numMongolsChasedOff + 1	
+	Objective_SetProgressBar(SOBJ_ChaseOffMongols, i_numMongolsChasedOff / i_numMongolAttackers)
+	
+end
+
+-- make a mongol rider switch it's target building
+function ChaseOffMongols_ChangeTarget(entry, index, sid)
+	
+	local target = ChaseOffMongols_ChooseBuildingToAttack()
+	
+	if target ~= nil then 
+		
+		SGroup_Single(sg_single, sid)
+		EGroup_Single(eg_single, target)
+		Cmd_Attack(sg_single, eg_single)
+
+		entry.targetType = ST_ENTITY
+		entry.targetWorldID = Entity_GetID(target)
+		
+	end				
+	
+end
+
+function ChaseOffMongols_Retaliate(entry, index, sid)
+	
+	Squad_GetLastAttackers(sid, sg_temp, 2)
+	
+	local target
+	
+	if Game_GetSPDifficulty() >= GD_HARD and SGroup_HasSquadBlueprint(sg_temp, "scar_spearman", ANY) then
+		
+		SGroup_Filter(sg_temp, "scar_spearman", FILTER_KEEP)
+		target = SGroup_GetRandomSpawnedSquad(sg_temp)
+		
+	elseif Game_GetSPDifficulty() >= GD_EXPERT and SGroup_HasSquadBlueprint(sg_temp, "scar_villager", ANY) then
+		
+		SGroup_Filter(sg_temp, "scar_villager", FILTER_KEEP)
+		target = SGroup_GetRandomSpawnedSquad(sg_temp)
+		
+	end
+	
+	if target ~= nil then 
+		
+		SGroup_Single(sg_single, sid)
+		SGroup_Single(sg_blah, target)
+		Cmd_Attack(sg_single, sg_blah)
+
+		entry.targetType = ST_SQUAD
+		entry.targetWorldID = Squad_GetID(target)
+		
+	end	
+	
+end
+
+
+function ChaseOffMongols_UpdateGradBuildingGroups()
+	
+	--local _FindEntry = function(eid)
+		
+		--local worldID = Entity_GetID(eid)
+		
+		--for index, entry in pairs(t_allGradBuildings) do 
+			--if entry.worldID == worldID then 
+				--return entry 
+			--end
+		--end
+		
+		--local newEntry = {
+			--worldID = worldID,
+			--isOnFire = Entity_IsBurning(eid),
+			--hasEverBeenOnFire = Entity_IsBurning(eid),
+			--hasHadFirePutOut = false,
+		--}
+		--table.insert(t_allGradBuildings, newEntry)
+		
+		--return newEntry
+		
+	--end
+	
+	EGroup_Duplicate(eg_gradBuildings_onFire, eg_temp)
+	
+	EGroup_Clear(eg_gradBuildings)
+	EGroup_Clear(eg_gradBuildings_onFire)
+	EGroup_Clear(eg_gradBuildings_notOnFire)
+	
+	local location = LOCATION("InnerCity")	
+	EGroup_AddEGroup(eg_gradBuildings, location.egroup)
+	
+	local _CheckEntity = function(gid, idx, eid)
+		--local entry = _FindEntry(eid)
+		if Entity_IsBurning(eid) then 
+			--entry.isOnFire = true
+			--entry.hasEverBeenOnFire = true 
+			EGroup_Add(eg_gradBuildings_onFire, eid)
+		else
+			--entry.isOnFire = false
+			--if entry.hasEverBeenOnFire == true then 
+				--entry.hasHadFirePutOut = true  
+			--end
+			EGroup_Add(eg_gradBuildings_notOnFire, eid)
+		end
+	end
+	EGroup_ForEach(eg_gradBuildings, _CheckEntity)
+
+	EGroup_RemoveGroup(eg_temp, eg_gradBuildings_onFire)	-- figure out a group of only the things that _were_ one fire but are no longer
+	EGroup_AddEGroup(eg_gradBuildings_haveHadFiresPutOut, eg_temp)
+	EGroup_AddEGroup(eg_gradBuildings_haveHadFiresPutOut_sinceLastCheck, eg_temp)
+	EGroup_RemoveGroup(eg_gradBuildings_haveHadFiresPutOut, eg_gradBuildings_onFire)
+	
+	
+	
+	
+end
+
+function ChaseOffMongols_ChooseBuildingToAttack()
+	
+	EGroup_Duplicate(eg_gradBuildings_notOnFire, eg_temp)
+	EGroup_Filter(eg_temp, {"wall", "town_center", "farm"}, FILTER_REMOVE)
+	
+	if EGroup_CountSpawned(eg_temp) >= 1 then 	
+		return EGroup_GetRandomSpawnedEntity(eg_temp)	
+	end
+	
+	-- try a wall
+	EGroup_Duplicate(eg_gradBuildings_notOnFire, eg_temp)
+	EGroup_Filter(eg_temp, {"town_center", "farm"}, FILTER_REMOVE)	
+	
+	if EGroup_CountSpawned(eg_temp) >= 1 then 	
+		return EGroup_GetRandomSpawnedEntity(eg_temp)	
+	end
+	
+	-- try a town center
+	EGroup_Duplicate(eg_gradBuildings_notOnFire, eg_temp)
+	EGroup_Filter(eg_temp, "farm", FILTER_REMOVE)	
+	
+	if EGroup_CountSpawned(eg_gradBuildings_notOnFire) >= 1 then 	
+		return EGroup_GetRandomSpawnedEntity(eg_temp)	
+	end
+	
+	
+end
+
+
+
+
+
+--
+-- Put out Fires
+--
+
+function PutOutFires_SetupUI()
+	
+	ChaseOffMongols_UpdateGradBuildingGroups()
+
+	EGroup_Duplicate(eg_gradBuildings_onFire, eg_temp)
+	EGroup_Filter(eg_temp, "wall", FILTER_REMOVE)
+
+	Objective_SetCounter(SOBJ_PutOutFires, 0, EGroup_CountSpawned(eg_temp))
+		
+end
+
+function PutOutFires_Start() 
+	
+	Rule_AddInterval(PutOutFires_Monitor, 0.5)
+	Rule_AddInterval(Villager_FearWalla, 1)
+	
+end
+
+function PutOutFires_Monitor()
+
+	ChaseOffMongols_UpdateGradBuildingGroups()
+
+	EGroup_Duplicate(eg_gradBuildings_onFire, eg_temp)
+	EGroup_Filter(eg_temp, "wall", FILTER_REMOVE)		-- disregard the walls, we don't care if they're on fire
+	local numBuildingsOnFire = EGroup_CountSpawned(eg_temp)
+
+	EGroup_Duplicate(eg_gradBuildings_haveHadFiresPutOut, eg_temp)
+	EGroup_Filter(eg_temp, "wall", FILTER_REMOVE)		-- disregard the walls again
+	local numFiresPutOut = EGroup_CountSpawned(eg_temp)
+
+	if numBuildingsOnFire ~= i_numBuildingsOnFire or numFiresPutOut ~= i_numFiresPutOut then			-- update the counter if either value have changed 
+		
+		Objective_SetCounter(SOBJ_PutOutFires, numFiresPutOut, numFiresPutOut + numBuildingsOnFire)
+
+		if numFiresPutOut ~= i_numFiresPutOut then
+			Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		end	
+
+		EGroup_Duplicate(eg_gradBuildings_haveHadFiresPutOut_sinceLastCheck, eg_temp)
+		EGroup_Filter(eg_temp, "wall", FILTER_REMOVE)		-- disregard the walls again
+
+		local _PlaySoundOnRepairingVillager = function(gid, idx, eid)
+			Player_GetAllSquadsNearMarker(player1, sg_temp, Util_GetPosition(eid), 10)
+			SGroup_Filter(sg_temp, "scar_villager", FILTER_KEEP)
+			if SGroup_CountSpawned(sg_temp) >= 1 then 
+				Sound_PlayOnSquad("sfx_campaign_scripted_small_group_celebrate", sg_temp)
+			end
+		end
+		EGroup_ForEach(eg_temp, _PlaySoundOnRepairingVillager)
+
+		EGroup_Clear(eg_gradBuildings_haveHadFiresPutOut_sinceLastCheck)		
+		
+		i_numBuildingsOnFire = numBuildingsOnFire
+		i_numFiresPutOut = numFiresPutOut
+		
+	end
+	
+	if numBuildingsOnFire + numFiresPutOut < 3 or EGroup_CountSpawned(eg_townCenter) == 0 then 
+		
+		-- not enough fires were successfully put out 
+		
+		Objective_Fail(SOBJ_PutOutFires)
+		Rule_RemoveMe()
+		
+	elseif numBuildingsOnFire == 0 and Objective_IsComplete(SOBJ_ChaseOffMongols) then		
+		
+		-- all fires put out (but we won't complete this if the mongols are still around, as they may set other buildings on fire!)
+		
+		Objective_Complete(SOBJ_PutOutFires)
+		Rule_RemoveMe()
+	
+	end
+		
+end
+
+
+function PutOutFires_Complete()		-- Note: This only triggers if the Mongols have already been chased off (since they can start more fires)
+	
+	-- Put out any remaing fires 
+	local _PutOutFire = function(gid, idx, eid)
+		if Entity_IsBurning(eid) then 
+			Entity_StopFire(eid)
+			if Entity_GetHealthPercentage(eid) <= 0.25 then 
+				Entity_SetHealth(eid, 0.26)
+			end
+		end
+	end
+	EGroup_ForEach(eg_importantBuildings, _PutOutFire)
+	
+	-- remove fire threshold changes
+	if modid_fireDamageRate ~= nil then 
+		Modifier_Remove(modid_fireDamageRate)
+		modid_fireDamageRate = nil 
+	end
+	
+	if modid_fireThreshold ~= nil then 
+		Modifier_Remove(modid_fireThreshold)
+		modid_fireThreshold = nil 
+	end
+	
+	Game_TransitionToState("taiga_winter_day", 30)
+
+	-- start the generic mission fail check script 
+	Rule_AddInterval(Mission_CheckForFail, 1)
+	
+end
+
+
+function PutOutFires_Fail()
+	
+	Mission_Fail()
+	
+end
+
+-- Plays individual fear walla on player villagers.
+function Villager_FearWalla()
+	if i_numBuildingsOnFire < 1 or Objective_IsComplete(SOBJ_PutOutFires) then
+		Rule_RemoveMe()
+	else
+		screamTimer = screamTimer or World_GetGameTime()
+		screamDelay = screamDelay or 0
+		if World_GetGameTime()-screamTimer >= screamDelay then
+			Player_GetAll(player1)
+			SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+			if SGroup_CountSpawned(sg_allsquads) > 0 then
+				local t_fearSFX = {"sfx_walla_villager_panic_female", "sfx_walla_villager_panic_male"} --sfx_walla_villager_panic_femal, sfx_walla_villager_panic_male
+				local randSquad = SGroup_GetRandomSpawnedSquad(sg_allsquads)
+				Sound_PlayOnSquad(Table_GetRandomItem(t_fearSFX), randSquad)
+				screamTimer = World_GetGameTime()
+				screamDelay = World_GetRand(12,24)/i_numBuildingsOnFire
+			else
+				Rule_RemoveMe()
+			end
+		end
+	end
+end

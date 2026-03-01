@@ -1,0 +1,1655 @@
+
+-----------------------------------------------------------------------
+-- Imported Scripts
+-----------------------------------------------------------------------
+
+-- Import Utility Scripts
+import( "cardinal.scar" )							-- Contains sfx references, UI templates, and Civ/Age helper functions
+import( "ScarUtil.scar" )							-- Contains game helper functions
+
+Core_RegisterModule( "ChaoticClimate" )				-- Register the win condition (Some functions can be prepended with "Mod_" to be called automatically as part of the scripting framework)
+
+-- Import Gameplay Systems
+import( "gameplay/score.scar" )						-- Tracks player score
+import( "gameplay/diplomacy.scar" )					-- Manages Tribute
+import("gameplay/vision.scar")
+import("gameplay/cheat.scar") 
+
+-- Import Start Conditions
+import( "startconditions/classic_start.scar" )
+
+-- Import Win Conditions
+import( "winconditions/annihilation.scar" )			-- Support for eliminating a player when they can no longer fight or produce units
+import( "winconditions/elimination.scar" )			-- Support for player quitting or dropping (through pause menu or disconnection)
+import( "winconditions/surrender.scar" )			-- Support for player surrender (through pause menu)
+import( "winconditions/regicide.scar" )
+import( "winconditions/conquest.scar" )
+import( "winconditions/wonder.scar" )
+import( "winconditions/religious.scar" )
+
+-- training
+import("training/coretraininggoals.scar")
+import("training/frenchtraininggoals.scar")
+import("training/englishtraininggoals.scar")
+import("training/sultanatetraininggoals.scar")
+import("training/rustraininggoals.scar")
+import("training/mongoltraininggoals.scar")
+import("training/chinesetraininggoals.scar")
+import("training/abbasidtraininggoals.scar")
+
+-- Import UI Support
+import( "gameplay/event_cues.scar" )
+import( "gameplay/currentageui.scar" )
+import( "gameplay/chi/current_dynasty_ui.scar" )	-- Displays Chinese Dynasty UI
+import("gameplay/templar/templar_age_up_ui.scar")
+
+-----------------------------------------------------------------------
+-- Global Data
+-----------------------------------------------------------------------
+
+function INTERVAL_FROM_MINUTES( minutes ) return minutes * 60 end
+
+-- Global data table that can be referenced in script functions.
+_match = {
+	options = {},
+	is_cheat_enabled = false,
+	is_diplomacy_enabled = false,
+	is_tribute_enabled = true,
+	is_castermode_HUD_loaded = false,
+	
+	speed = {						-- modifier multipliers 
+		build = 1,
+		repair = 1,
+		gather = 1,		
+		upgrade = 1,
+		production = 1,
+		modifiers = {},
+	},
+	
+	climate = {
+		initial_delay_time = INTERVAL_FROM_MINUTES(0.5),
+		season_duration_time = INTERVAL_FROM_MINUTES(1), 
+		season_cooldown_time = INTERVAL_FROM_MINUTES(1),
+		season_duration_rule_id = 0,
+		season_cooldown_rule_id = 0,
+		is_season_active = false,
+		ui_widget_id = "ChaoticClimate_Widget",
+		season_index = 0,
+		active_effect = "",
+		active_effect_ui_info = "",
+		seasons = {"summer_atmosphere", "autumn_atmosphere", "winter_atmosphere", "spring_atmosphere"},
+		
+		forage_season = {
+			sheep_to_spawn = 0,
+			deer_to_spawn = 0,
+			boar_to_spawn = 0,
+			sheep_blueprint = "gaia_herdable_sheep",
+			deer_blueprint = "gaia_huntable_deer",
+			boar_blueprint = "gaia_huntable_boar",
+			init_sheep_spawn_points = {},
+			init_deer_spawn_points = {},
+			init_boar_spawn_points = {},
+			gaia_spawn_percentage = 0.4
+		},
+		
+		heat_stress = {
+			gaia_death_percentage = 0.5
+		},
+		
+		atmosphere = {
+			summer = "mediterranean_standard",
+			autumn = "steppes_sunset_a",
+			winter = "seasonal_variations/winter_dusk",
+			spring = "Japanese_spring_standard",
+			transition_duration_seconds = 3
+		}
+	},
+	
+	data_context = {
+		season_progress = 0.5,
+		has_active_season = false,
+		current_season_index = 0,
+		season_time_left = -1,
+	},
+}
+
+_notificationData = {
+	season_start_title = {"$11270985", "$11270986", "$11270987", "$11270988"},
+	season_ended_title = "$11270989",
+	sfx = "sfx_ui_event_queue_med_priority_play",
+	position = ECV_Title,
+	lifetime = 15,
+	template = "notificationCueWithBackground",
+	
+}
+
+-----------------------------------------------------------------------
+-- Standard Callbacks 
+-----------------------------------------------------------------------
+
+-- Called during load as part of the game setup sequence.
+function ChaoticClimate_OnGameSetup()
+
+	Setup_GetWinConditionOptions( _match.options )
+	
+	-- Win condition options
+	if _match.options.section_inner_win_conditions then
+		if not _match.options.section_inner_win_conditions.option_win_condition_conquest then
+			Core_UnregisterModule( "Conquest" )
+		end	
+	
+		if not _match.options.section_inner_win_conditions.option_win_condition_religious then
+			Core_UnregisterModule( "Religious" )
+		end
+		
+		if not _match.options.section_inner_win_conditions.option_win_condition_wonder then
+			Core_UnregisterModule( "Wonder" )
+		end	
+		
+		if not _match.options.section_inner_win_conditions.option_win_condition_regicide and not Game_HasMatchTypeFlag( MTF_FFA8 ) then
+			Core_UnregisterModule( "Regicide" )
+		end	
+	end
+
+	
+	--Shared vision
+	if not _match.options.section_starting_conditions
+		or not _match.options.section_starting_conditions.option_vision
+		or _match.options.section_starting_conditions.option_vision.enum_value == _match.options.section_starting_conditions.option_vision.enum_items.option_vision_default then
+		Core_UnregisterModule( "Vision" )	
+	end
+	
+	--Diplomacy options
+	if _match.options.section_diplomacy then
+		_match.is_diplomacy_enabled = not _match.options.section_diplomacy.option_diplomacy_teams		
+		_match.is_tribute_enabled = _match.options.section_diplomacy.option_diplomacy_tribute
+	end
+	
+	-- Set player behaviour when eliminated
+	if _match.options.section_endgame then 
+		allow_spectators = _match.options.section_endgame.option_allow_spectators
+	end
+	
+	_match.is_cheat_enabled = Misc_IsCommandLineOptionSet( "cheat" )
+	_match.revealMap = Misc_IsCommandLineOptionSet( "no_fow" )
+	
+	-- Set the correct season/ buff timing settings from the match options
+	if _match.options.section_starting_conditions then
+		_match.climate.season_duration_time = INTERVAL_FROM_MINUTES(_match.options.section_starting_conditions.option_season_duration)
+	end
+end
+
+-- Called before initialization, preceding other module OnInit functions.
+function ChaoticClimate_PreInit()
+	
+end
+
+-- Called on match initialization before handing control to the player.
+function ChaoticClimate_OnInit()
+	
+	-- Get local player
+	player_local = Core_GetPlayersTableEntry(Game_GetLocalPlayer())
+	
+	UI_AllTerritoryHide()
+
+	Core_CallDelegateFunctions( "DiplomacyEnabled", _match.is_diplomacy_enabled )
+	Core_CallDelegateFunctions( "TributeEnabled", _match.is_tribute_enabled )
+	
+	ReplayStatViewer_PopulateReplayStatTabs( {"CurrentResourcesTemplate", "IncomeTemplate", "MilitaryTemplate"} )
+
+	
+	if _match.options.section_starting_conditions and 
+		_match.options.section_starting_conditions.option_speed and 
+		_match.options.section_starting_conditions.option_speed.enum_value == _match.options.section_starting_conditions.option_speed.enum_items.option_speed_2x then
+		ChaoticClimate_SetSpeed( 2 )
+	elseif _match.options.section_starting_conditions and 
+		_match.options.section_starting_conditions.option_speed and 
+		_match.options.section_starting_conditions.option_speed.enum_value == _match.options.section_starting_conditions.option_speed.enum_items.option_speed_3x then
+		StandardMode_SetSpeed( 3 )
+	else
+		ChaoticClimate_SetSpeed()
+	end
+	
+	for _, player in pairs( PLAYERS ) do
+	
+		-- Debug options
+		if player.isHuman then
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_high_resources ) or _match.is_cheat_enabled then
+				Player_SetResource( player.id, RT_Food, 20000 )
+				Player_SetResource( player.id, RT_Wood, 20000 )
+				Player_SetResource( player.id, RT_Stone, 5000 )
+				Player_SetResource( player.id, RT_Gold, 10000 )				
+			end
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_high_popcap ) or _match.is_cheat_enabled then
+				Player_SetMaxPopulation( player.id, CT_Personnel, 200 )
+			end
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_reveal_map ) or _match.revealMap then
+				FOW_PlayerRevealAll( player.id )
+			end		
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_instant_build ) or _match.is_cheat_enabled then
+				local n = World_GetPossibleEntitiesCount( player.race )        
+        		for j = 0, n-1 do 
+		        	Modifier_ApplyToPlayer( Modifier_Create( MAT_EntityType, "cost_ticks_modifier", MUT_Set, false, 0.01, World_GetPossibleEntitiesBlueprint( player.race, j ) ), player.id, 0.0 )    
+				end
+			end
+		end		
+	end
+	
+	if ( _match.options.section_debug_options and _match.options.section_debug_options.option_instant_build ) or _match.is_cheat_enabled then
+		Rule_AddGlobalEvent( ChaoticClimate_OnConstructionComplete, GE_ConstructionComplete )
+	end	
+	
+	-- Optionally remove initial units
+	if Misc_IsCommandLineOptionSet( "no_units" ) then
+        for _, player in pairs( PLAYERS ) do              
+            SGroup_DestroyAllSquads( Player_GetSquads( player.id ) )
+            print( string.format( "ChaoticClimate_OnInit() - Removed all squads owned by Player %d", player.index ) )
+        end         
+    end
+	
+	-- Optionally remove gaia animals
+	if Misc_IsCommandLineOptionSet( "no_gaia" ) then    
+        local egroup = EGroup_CreateUnique()
+        World_GetAllNeutralEntities( egroup )
+        EGroup_Filter( egroup, "animal", FILTER_KEEP )
+        EGroup_DestroyAllEntities( egroup )    		
+		EGroup_Destroy( egroup )
+		print( string.format( "ChaoticClimate_OnInit() - All neutral animal entities removed" ) )
+    end
+	
+	LoadAtmospheres()
+end
+
+-- Called after initialization is done when game is fading up from black.
+function ChaoticClimate_Start()
+	
+	-- Fog of war options
+	if ( _match.options.section_starting_conditions and _match.options.section_starting_conditions.option_fow ) then
+		if ( _match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_explore ) then 
+			FOW_ExploreAll()
+		elseif ( _match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_reveal ) then
+			FOW_ForceRevealAllUnblockedAreas()
+		end
+	end
+
+	-- UI Options
+	if ( _match.options.section_starting_conditions and _match.options.section_starting_conditions.option_score ) then
+		for _, player in pairs( PLAYERS ) do
+			player.scarModel.show_actual_score = true
+			UI_SetPlayerDataContext( player.id, player.scarModel )
+		end
+	end
+	
+	ChaoticClimate_CreateWidget()
+	
+	Rule_Add(ChaoticClimate_UpdateUI)
+	
+	Rule_AddOneShot(ChaoticClimate_SendSeasonStartingNotification, _match.climate.initial_delay_time  - INTERVAL_FROM_MINUTES(0.25))
+	
+	Rule_AddOneShot(ChaoticClimate_StartPositiveSummer, _match.climate.initial_delay_time)
+	ChaoticClimate_SetInitialGaiaSpawnData()
+	
+	if UI_IsReplay() and not UI_IsXboxUI() then
+		Rule_AddInterval(CheckHUDReloads, 1.0)
+	end	
+end
+
+-- Called when Core_SetPlayerDefeated() is invoked. Signals that a player has been eliminated from play due to defeat.
+function ChaoticClimate_OnPlayerDefeated( player, reason )
+	
+end
+
+-- When a victory condition is met, a module must call Core_OnGameOver() in order to invoke this delegate and notify all modules that the match is about to end. Generally used for clean up (removal of rules, objectives, and UI elements specific to the module).
+function ChaoticClimate_OnGameOver()
+	
+	Rule_RemoveGlobalEvent( ChaoticClimate_OnConstructionComplete )
+end
+
+function LoadAtmospheres()
+	Game_LoadAtmosphereSettings(_match.climate.atmosphere.summer, "summer_atmosphere")
+	Game_LoadAtmosphereSettings(_match.climate.atmosphere.autumn, "autumn_atmosphere")
+	Game_LoadAtmosphereSettings(_match.climate.atmosphere.winter, "winter_atmosphere")
+	Game_LoadAtmosphereSettings(_match.climate.atmosphere.spring, "spring_atmosphere")
+end
+
+-----------------------------------------------------------------------
+-- Custom Functions
+-----------------------------------------------------------------------
+
+-- Global event callback for GE_ConstructionComplete
+function ChaoticClimate_OnConstructionComplete( context )	
+
+	local player = Core_GetPlayersTableEntry( context.player )
+	local entity = context.entity
+
+	-- Accelerate unit production if cheat/option enabled
+	if ( _match.options.section_debug_options and _match.options.section_debug_options.option_instant_build ) or _match.is_cheat_enabled then
+		if player.isHuman then
+			Modifier_ApplyToEntity( Modifier_Create( MAT_Entity, "production_speed_modifier", MUT_Multiplication, false, 100.0, nil ), entity, 0.0 )
+			Modifier_ApplyToEntity( Modifier_Create( MAT_Entity, "cost_ticks_modifier", MUT_Multiplication, false, 0.01, nil ), entity, 0.0 )
+		end
+	else 
+		-- Reduce unit production and upgrade times  
+		if _match.speed.production ~= 1 and Entity_HasProductionQueue( entity ) then 
+			Modifier_ApplyToEntity( Modifier_Create( MAT_Entity, "production_speed_modifier", MUT_Multiplication, false, _match.speed.production, nil ), entity, 0.0 )
+		end
+		if _match.speed.upgrade ~= 1 then 
+			Modifier_ApplyToEntity( Modifier_Create(MAT_Entity, "cost_ticks_modifier", MUT_Multiplication, false, 1/_match.speed.upgrade, nil ), entity, 0.0 )
+		end
+	end
+end
+
+-- Modifies the default gathering, construction, production, and upgrade speeds for all units and players.
+function ChaoticClimate_SetSpeed( speed )
+	
+	-- Removed existing speed modifiers
+	for _, modifier in pairs( _match.speed.modifiers ) do
+		Modifier_RemoveInternal( modifier.ModifierID )
+	end
+	_match.speed.modifiers = {}
+	
+	-- Determine new modifier value(s)
+	local GetCommandLineNumber = function( arg, default_value )
+		local arg_value = tonumber( Util_GetCommandLineArgument( arg ) )
+		if arg_value == nil or arg_value == 0 then 
+			arg_value = default_value
+		end
+		return math.abs( arg_value )
+	end
+	
+	local default_speed = speed or GetCommandLineNumber( "speed", 1 )
+	_match.speed.build = GetCommandLineNumber( "build_speed", default_speed )
+	_match.speed.repair = GetCommandLineNumber( "repair_speed", default_speed )
+	_match.speed.gather = GetCommandLineNumber( "gather_speed", default_speed )
+	_match.speed.upgrade = GetCommandLineNumber( "upgrade_speed", default_speed )
+	_match.speed.production = GetCommandLineNumber( "production_speed", default_speed )
+	
+	local ApplyModifier = function( player_id, modifier_ebp, modifier_type, modifier_value )
+		if modifier_value ~= 1 then 
+			local modifier = Modifier_Create( MAT_EntityType, modifier_type, MUT_Multiplication, false, modifier_value, modifier_ebp )
+			Modifier_ApplyToPlayer( modifier, player_id, 0.0 )
+			table.insert( _match.speed.modifiers, modifier )
+		end
+	end
+	
+	-- Apply new modifiers
+	for _, player in pairs( PLAYERS ) do	
+		local villager_ebp = Cardinal_ConvertTypeToEntityBlueprint( "villager", player.id )		
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_food", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_wood", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_gold", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_stone", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "construction_rate", _match.speed.build )
+	end
+end
+
+function ChaoticClimate_SendSeasonStartingNotification()
+	
+	UI_CreateEventCue
+	(
+		--[[ title --]] 		_notificationData.season_start_title[_match.climate.season_index + 1],
+		--[[ description --]] 	Loc_Empty(),
+		--[[ data_template --]] _notificationData.template,
+		--[[ icon_path --]] 	"",
+		--[[ sound_path --]] 	_notificationData.sfx,
+		--[[ visibility --]]	_notificationData.position,
+		--[[ lifetime --]] 		_notificationData.lifetime
+		)
+end
+
+function ChaoticClimate_SendSeasonEndingNotification()
+	
+	UI_CreateEventCue
+	(
+		--[[ title --]] 		_notificationData.season_ended_title,
+		--[[ description --]] 	Loc_Empty(),
+		--[[ data_template --]] _notificationData.template,
+		--[[ icon_path --]] 	"",
+		--[[ sound_path --]] 	_notificationData.sfx,
+		--[[ visibility --]]	_notificationData.position,
+		--[[ lifetime --]] 		_notificationData.lifetime
+		)
+end
+
+function ChaoticClimate_GrantedBuffDetailsNotification()
+	
+	UI_CreateEventCue
+	(
+		--[[ title --]] 		_match.climate.active_effect_ui_info.screenName,
+		--[[ description --]] 	_match.climate.active_effect_ui_info.briefText,
+		--[[ data_template --]] _notificationData.template,
+		--[[ icon_path --]] 	"",
+		--[[ sound_path --]] 	_notificationData.sfx,
+		--[[ visibility --]]	_notificationData.position,
+		--[[ lifetime --]] 		_notificationData.lifetime
+		)
+end
+
+function ChaoticClimate_SetInitialGaiaSpawnData()
+
+	local sheep_count = 0
+	local deer_count = 0
+	local boar_count = 0
+	
+	for entityIndex = 0, World_GetNumEntities() - 1 do
+		
+		local entity = World_GetEntity(entityIndex)
+		
+		if Entity_IsOfType(entity, "animal") then
+			
+			local entity_position = Util_GetOffsetPosition(Entity_GetPosition(entity), 5, 10)
+			
+			if Entity_IsOfType(entity, "scar_sheep") then
+				sheep_count = sheep_count + 1
+				local entity_position = Util_GetOffsetPosition(Entity_GetPosition(entity), 5, 10)
+				table.insert(_match.climate.forage_season.init_sheep_spawn_points, entity_position)
+				
+			elseif Entity_IsOfType(entity, "scar_deer") then
+				deer_count = deer_count + 1
+				local entity_position = Util_GetOffsetPosition(Entity_GetPosition(entity), 5, 10)
+				table.insert(_match.climate.forage_season.init_deer_spawn_points, entity_position)
+				
+			elseif Entity_IsOfType(entity, "scar_boar") then
+				boar_count = boar_count + 1	
+				local entity_position = Util_GetOffsetPosition(Entity_GetPosition(entity), 5, 10)
+				table.insert(_match.climate.forage_season.init_boar_spawn_points, entity_position)
+				
+			end
+		end
+	end
+	
+	 _match.climate.forage_season.sheep_to_spawn = GetPercentageFromCount(_match.climate.forage_season.gaia_spawn_percentage, sheep_count)
+	 _match.climate.forage_season.deer_to_spawn = GetPercentageFromCount(_match.climate.forage_season.gaia_spawn_percentage, deer_count)
+	 _match.climate.forage_season.boar_to_spawn = GetPercentageFromCount(_match.climate.forage_season.gaia_spawn_percentage, boar_count)
+end
+
+function ChaoticClimate_SpawnGaia()
+	
+	local sheep_bp = BP_GetSquadBlueprint(_match.climate.forage_season.sheep_blueprint)
+	if(sheep_bp ~= nil) then
+		SpawnIndividualGaiaType(sheep_bp, _match.climate.forage_season.sheep_to_spawn, _match.climate.forage_season.init_sheep_spawn_points)
+	end
+		
+	local deer_bp = BP_GetSquadBlueprint(_match.climate.forage_season.deer_blueprint)
+	if(deer_bp ~= nil) then
+		SpawnIndividualGaiaType(deer_bp, _match.climate.forage_season.deer_to_spawn, _match.climate.forage_season.init_deer_spawn_points)
+	end
+	
+	local boar_bp = BP_GetSquadBlueprint(_match.climate.forage_season.boar_blueprint)
+	if(boar_bp ~= nil) then
+		SpawnIndividualGaiaType(boar_bp, _match.climate.forage_season.boar_to_spawn, _match.climate.forage_season.init_boar_spawn_points)
+	end
+end
+
+function ChaoticClimate_KillGaia()
+
+	local sheep_entities = {}
+	local deer_entities = {}
+	local boar_entities = {}
+	
+	for entityIndex = 0, World_GetNumEntities() - 1 do
+		
+		local entity = World_GetEntity(entityIndex)
+			
+		if Entity_IsOfType(entity, "scar_sheep") then
+			table.insert(sheep_entities, entity)
+			
+		elseif Entity_IsOfType(entity, "scar_deer") then
+			table.insert(deer_entities, entity)
+			
+		elseif Entity_IsOfType(entity, "scar_boar") then
+			table.insert(boar_entities, entity)	
+		end
+	end
+	
+	local sheep_to_kill = GetPercentageFromCount(_match.climate.heat_stress.gaia_death_percentage, #sheep_entities)
+	KillRandomGaiaType(sheep_to_kill, sheep_entities)
+	
+	local deer_to_kill = GetPercentageFromCount(_match.climate.heat_stress.gaia_death_percentage, #deer_entities)
+	KillRandomGaiaType(deer_to_kill, deer_entities)
+	
+	local boar_to_kill = GetPercentageFromCount(_match.climate.heat_stress.gaia_death_percentage, #boar_entities)
+	KillRandomGaiaType(boar_to_kill, boar_entities)
+end
+
+function GetPercentageFromCount(percentage, count)
+	return math.ceil(count * percentage)
+end
+
+function SpawnIndividualGaiaType(blueprint, spawn_count, positions)
+	for i=1, spawn_count do	
+		local randomPosition = Table_GetRandomItem(positions)
+		local offset = Util_GetOffsetPosition(randomPosition, i, .5)
+		Squad_CreateAndSpawnTowardENV(blueprint, 0, offset, randomPosition)
+	end
+end
+
+function KillRandomGaiaType(count, entities)
+	local random_entities = {}
+	random_entities = Table_GetRandomItem(entities, count)
+	
+	for i=1, #random_entities - 1 do
+		Entity_Kill(random_entities[i])
+	end
+end
+
+-----------------------------------------------------------------------
+-- Rules
+-----------------------------------------------------------------------
+
+function ChaoticClimate_StartPositiveSummer()
+	
+	SelectInitialBuff()
+	RunOnAllPlayers(GrantActualBuff, PLAYERS)
+	
+	ChaoticClimate_GrantedBuffDetailsNotification();
+	
+	Rule_AddOneShot(ChaoticClimate_SendSeasonEndingNotification, _match.climate.season_duration_time - INTERVAL_FROM_MINUTES(0.75))
+	
+	_match.climate.season_duration_rule_id = Rule_AddOneShot(ChaoticClimate_EndSeason,_match.climate.season_duration_time)
+	_match.climate.is_season_active = true
+	
+	Game_TransitionToState("summer_atmosphere", _match.climate.atmosphere.transition_duration_seconds)
+end
+
+function ChaoticClimate_EndSeason()
+	
+	RunOnAllPlayers(RemoveActualBuff, PLAYERS)
+	
+	_match.climate.season_cooldown_rule_id = Rule_AddOneShot(ChaoticClimate_StartNextSeason, _match.climate.season_cooldown_time)
+	_match.climate.is_season_active = false
+	_match.climate.season_index = math.fmod( _match.climate.season_index + 1, 4)
+	
+	Rule_AddOneShot(ChaoticClimate_SendSeasonStartingNotification, _match.climate.season_cooldown_time - INTERVAL_FROM_MINUTES(0.75))
+	
+	local player_local = Game_GetLocalPlayer()
+	Game_SendCustomChallengeEvent( player_local, CE_CHAOTICCLIMATESEASONPASSED, 1 ) 
+end
+
+function ChaoticClimate_StartNextSeason()
+	
+	SelectCurrentSeasonBuff()
+	RunOnAllPlayers(GrantActualBuff, PLAYERS)
+
+	ChaoticClimate_GrantedBuffDetailsNotification();	
+	
+	Rule_AddOneShot(ChaoticClimate_SendSeasonEndingNotification, _match.climate.season_duration_time - INTERVAL_FROM_MINUTES(0.75))
+	
+	_match.climate.season_duration_rule_id = Rule_AddOneShot(ChaoticClimate_EndSeason, _match.climate.season_duration_time)
+	_match.climate.is_season_active = true
+	-- lua arrays start at 1, so we need to access index + 1
+	Game_TransitionToState(_match.climate.seasons[_match.climate.season_index + 1], _match.climate.atmosphere.transition_duration_seconds)
+end
+
+function ChaoticClimate_UpdateUI()
+	
+	if Rule_ExistsWithID(_match.climate.season_duration_rule_id) then
+		local interval = Rule_GetIntervalWithID(_match.climate.season_duration_rule_id)
+		local timer = Rule_GetTimeWithID(_match.climate.season_duration_rule_id)
+		_match.data_context.season_progress = timer / interval
+		_match.data_context.season_time_left = interval - timer
+	else
+		-- if the season has reached its end the rule does not exist anymore, set to 1
+		_match.data_context.season_progress = 1.0
+		_match.data_context.season_time_left = -1
+	end
+	
+	_match.data_context.has_active_season = _match.climate.is_season_active
+	_match.data_context.current_season_index = _match.climate.season_index
+	UI_SetDataContext(_match.climate.ui_widget_id, _match.data_context)
+end
+
+function SelectInitialBuff()
+	local effect = Table_GetRandomItem({"WINDS_OF_CHANGE_WARM_GLOW", "WINDS_OF_CHANGE_POTENTIAL_ENERGY"})
+	_match.climate.active_effect = BP_GetUpgradeBlueprint(effect)
+	_match.climate.active_effect_ui_info = BP_GetUpgradeUIInfo(_match.climate.active_effect)
+end
+
+function SelectCurrentSeasonBuff()	
+	local effect = {""}
+	local seasonEffectTable = {}
+	local allSeasonEffectTable = {
+				"WINDS_OF_CHANGE_CALMING_BREEZE",
+				"WINDS_OF_CHANGE_CLEAR_SKIES",
+				"WINDS_OF_CHANGE_DELUGE",
+				"WINDS_OF_CHANGE_EARTHQUAKE",
+				"WINDS_OF_CHANGE_FIERCE_GALES",
+		}
+	
+	if _match.climate.season_index == 0 then		-- Summer
+			seasonEffectTable = {
+				"WINDS_OF_CHANGE_PRODUCTIVE_ATMOSPHERE",
+				"WINDS_OF_CHANGE_HEAT_STRESS",
+				"WINDS_OF_CHANGE_INTENSE_HEAT",
+				"WINDS_OF_CHANGE_POTENTIAL_ENERGY",
+				"WINDS_OF_CHANGE_WARM_GLOW"
+			}
+	elseif _match.climate.season_index == 1 then	-- Autumn
+			seasonEffectTable = {
+				"WINDS_OF_CHANGE_PRODUCTIVE_ATMOSPHERE",
+				"WINDS_OF_CHANGE_ABUNDANT_KINDLING",
+				"WINDS_OF_CHANGE_FORAGE_SEASON",
+				"WINDS_OF_CHANGE_PILFERED_FIELDS",
+				"WINDS_OF_CHANGE_SHORTER_DAYS"
+			}
+	elseif _match.climate.season_index == 2 then	-- Winter
+			seasonEffectTable = {
+				"WINDS_OF_CHANGE_PRODUCTIVE_ATMOSPHERE",
+				"WINDS_OF_CHANGE_COLD_STEEL",
+				"WINDS_OF_CHANGE_FROSTED_BLANKET",
+				"WINDS_OF_CHANGE_SNOW_STORM",
+				"WINDS_OF_CHANGE_WARM_PELTS"
+			}
+	elseif _match.climate.season_index == 3 then	-- Spring
+			seasonEffectTable = {
+				"WINDS_OF_CHANGE_PRODUCTIVE_ATMOSPHERE",
+				"WINDS_OF_CHANGE_DAYLIGHT_SAVINGS",
+				"WINDS_OF_CHANGE_NEW_BEGINNINGS",
+				"WINDS_OF_CHANGE_POLLEN_CLOUDS",
+				"WINDS_OF_CHANGE_SWARM_OF_INSECTS"
+			}
+	end
+	
+	local usedEffectTable = Table_GetRandomItemWeighted({
+			[allSeasonEffectTable] = 0.3,
+			[seasonEffectTable] = 0.7
+		})
+	effect = Table_GetRandomItem(usedEffectTable)
+	
+	_match.climate.active_effect = BP_GetUpgradeBlueprint(effect)
+	_match.climate.active_effect_ui_info = BP_GetUpgradeUIInfo(_match.climate.active_effect)
+	
+	if effect == "WINDS_OF_CHANGE_FORAGE_SEASON" then
+		ChaoticClimate_SpawnGaia()
+	end
+	
+	if effect == "WINDS_OF_CHANGE_HEAT_STRESS" then
+		ChaoticClimate_KillGaia()
+	end
+end
+
+function RunOnAllPlayers(func, player_list)
+	for id=1, #player_list do
+		func(player_list[id].id)
+	end
+end
+
+function GrantActualBuff(player)
+    Player_CompleteUpgrade(player, _match.climate.active_effect)
+end
+
+function RemoveActualBuff(player)
+    Player_RemoveUpgrade(player, _match.climate.active_effect)
+end
+
+-----------------------------------------------------------------------
+-- Custom Functions UI widget.
+-----------------------------------------------------------------------
+
+function CheckHUDReloads()	
+	
+	local is_castermode_HUD_present = false;
+	if UI_IsLayerContentLoaded(FEL_Hud, "hud/pages/CasterModeHUDPage.xaml") then
+		is_castermode_HUD_present = true;
+	end
+	
+	if _match.is_castermode_HUD_loaded ~= is_castermode_HUD_present then
+		_match.is_castermode_HUD_loaded = is_castermode_HUD_present;
+		ChaoticClimate_CreateWidget()
+	end
+end
+
+function ChaoticClimate_CreateWidget()
+	
+	if UI_IsXboxUI() then
+		ChaoticClimate_CreateWidgetXbox()
+	else
+		if _match.is_castermode_HUD_loaded then
+			ChaoticClimate_CreateWidgetCaster()
+		else
+			ChaoticClimate_CreateWidgetPC()
+		end
+	end
+end
+
+function ChaoticClimate_CreateWidgetPC()
+	
+	local SeasonWidgetXaml = 
+	[[<Grid x:Name="ChaoticClimate_SeasonWidgetUI"
+		xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" 
+		xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+		xmlns:sys="clr-namespace:System;assembly=mscorlib"
+		xmlns:esControls="clr-namespace:WPFGUI.Shared.Controls;assembly=EngineUI"
+		xmlns:sysConfigModels="clr-namespace:SystemConfigModelTypes"
+		xmlns:model="clr-namespace:HUDModelTypes"
+		SnapsToDevicePixels="True" Background="Transparent">
+		<Grid VerticalAlignment="Top" HorizontalAlignment="Center">
+			<Grid.Resources>
+				<sys:Double x:Key="ProgressBarOuterRadius">26</sys:Double>
+	            <sys:Double x:Key="ProgressBarInnerRadius">20</sys:Double>
+				<SolidColorBrush x:Key="PrimaryColorBrush" Color="#FFE18B" />
+				<SolidColorBrush x:Key="BackgroundColorBrush" Color="{StaticResource PrimaryColorTransparent}" />
+				<Style x:Key="SeasonProgressBar"
+						BasedOn="{StaticResource FrontEndCircularProgressBar}"
+						TargetType="{x:Type esControls:CircularProgressBar}">
+					<Style.Setters>
+						<Setter Property="Template">
+							<Setter.Value>
+								<ControlTemplate TargetType="{x:Type esControls:CircularProgressBar}">
+									<Grid MinWidth="{TemplateBinding MinHeight}" MinHeight="{TemplateBinding MinHeight}" 
+										HorizontalAlignment="Center" VerticalAlignment="Center"
+										Opacity="{TemplateBinding Opacity}">
+										<esControls:Ring EndAngle="270"
+											Fill="{DynamicResource BackgroundColorBrush}"
+											InnerRadius="{TemplateBinding InnerRadius}"
+											OuterRadius="{TemplateBinding OuterRadius}"
+											StartAngle="-90" Stretch="None"/>
+										<esControls:Ring x:Name="PART_Indicator"
+											EndAngle="270"
+											Fill="{DynamicResource PrimaryColorBrush}"
+											InnerRadius="{TemplateBinding InnerRadius}"
+											OuterRadius="{TemplateBinding OuterRadius}"
+											StartAngle="-90" Stretch="None"/>
+									</Grid>
+								</ControlTemplate>
+							</Setter.Value>
+						</Setter>
+					</Style.Setters>
+				</Style>
+			</Grid.Resources>
+		<Grid.Style>
+			<Style TargetType="Grid">
+				<Style.Triggers>
+					<!-- PC Positions -->
+					<!-- Without Game Timer -->
+					<!-- Aging up -->
+					<MultiDataTrigger>
+						<MultiDataTrigger.Conditions>
+							<Condition Binding="{Binding SettingValueLookup[LandmarkConstructionProgressVisibilityMode], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="True"/>
+							<Condition Binding="{Binding LocalPlayer.AgeUpProvider, Source={x:Static model:CardinalHUDModel.Instance}, Converter={StaticResource NotNullConverter}}" Value="True"/>
+							<Condition Binding="{Binding SettingValueLookup[ShowGameTimer], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="False"/>
+						</MultiDataTrigger.Conditions>
+						<MultiDataTrigger.Setters>
+							<Setter Property="Margin" Value="0,75,0,0"/>
+						</MultiDataTrigger.Setters>
+					</MultiDataTrigger>
+					<!-- No age up progress bar -->
+					<MultiDataTrigger>
+						<MultiDataTrigger.Conditions>
+							<Condition Binding="{Binding LocalPlayer.AgeUpProvider, Source={x:Static model:CardinalHUDModel.Instance}, Converter={StaticResource NotNullConverter}}" Value="False"/>
+							<Condition Binding="{Binding SettingValueLookup[ShowGameTimer], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="False"/>
+						</MultiDataTrigger.Conditions>
+						<MultiDataTrigger.Setters>
+							<Setter Property="Margin" Value="0,25,0,0"/>
+						</MultiDataTrigger.Setters>
+					</MultiDataTrigger>
+					<!-- Age up progress UI disabled -->
+					<MultiDataTrigger>
+						<MultiDataTrigger.Conditions>
+							<Condition Binding="{Binding SettingValueLookup[LandmarkConstructionProgressVisibilityMode], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="False"/>
+							<Condition Binding="{Binding SettingValueLookup[ShowGameTimer], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="False"/>
+						</MultiDataTrigger.Conditions>
+						<MultiDataTrigger.Setters>
+							<Setter Property="Margin" Value="0,25,0,0"/>
+						</MultiDataTrigger.Setters>
+					</MultiDataTrigger>
+					
+					<!-- With Game Timer Enabled -->
+					<!-- Aging up -->
+					<MultiDataTrigger>
+						<MultiDataTrigger.Conditions>
+							<Condition Binding="{Binding SettingValueLookup[LandmarkConstructionProgressVisibilityMode], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="True"/>
+							<Condition Binding="{Binding LocalPlayer.AgeUpProvider, Source={x:Static model:CardinalHUDModel.Instance}, Converter={StaticResource NotNullConverter}}" Value="True"/>
+							<Condition Binding="{Binding SettingValueLookup[ShowGameTimer], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="True"/>
+						</MultiDataTrigger.Conditions>
+						<MultiDataTrigger.Setters>
+							<Setter Property="Margin" Value="0,110,0,0"/>
+						</MultiDataTrigger.Setters>
+					</MultiDataTrigger>
+					<!-- No age up progress bar -->
+					<MultiDataTrigger>
+						<MultiDataTrigger.Conditions>
+							<Condition Binding="{Binding LocalPlayer.AgeUpProvider, Source={x:Static model:CardinalHUDModel.Instance}, Converter={StaticResource NotNullConverter}}" Value="False"/>
+							<Condition Binding="{Binding SettingValueLookup[ShowGameTimer], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="True"/>
+						</MultiDataTrigger.Conditions>
+						<MultiDataTrigger.Setters>
+							<Setter Property="Margin" Value="-0,65,0,0"/>
+						</MultiDataTrigger.Setters>
+					</MultiDataTrigger>
+					<!-- Age up progress UI disabled -->
+					<MultiDataTrigger>
+						<MultiDataTrigger.Conditions>
+							<Condition Binding="{Binding SettingValueLookup[LandmarkConstructionProgressVisibilityMode], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="False"/>
+							<Condition Binding="{Binding SettingValueLookup[ShowGameTimer], Source={x:Static sysConfigModels:SystemConfigModel.Instance}}" Value="True"/>
+						</MultiDataTrigger.Conditions>
+						<MultiDataTrigger.Setters>
+							<Setter Property="Margin" Value="0,65,0,0"/>
+						</MultiDataTrigger.Setters>
+					</MultiDataTrigger>
+				</Style.Triggers>
+			</Style>
+		</Grid.Style>
+			<Grid>			
+				<Grid Width="200"
+					Height="200"
+					HorizontalAlignment="Center" VerticalAlignment="Center">
+				
+									
+					<Image x:Name="Background"
+						Width="56" Height="56"
+						VerticalAlignment="Center"
+						Source="pack://application:,,,/WPFGUI;component/icons/objectives/s11_dial_background.png"/>
+				
+					<Grid Opacity="0">
+						<esControls:CircularProgressBar
+							x:Name="SeasonProgress"
+							InnerRadius="{DynamicResource ProgressBarInnerRadius}"
+							Maximum="1" Minimum="0"
+							OuterRadius="{DynamicResource ProgressBarOuterRadius}"
+							Style="{DynamicResource SeasonProgressBar}"
+							Value="{Binding [season_progress]}">
+						</esControls:CircularProgressBar>
+						<Grid.Style>
+							<Style>
+								<Style.Triggers>
+									<DataTrigger Binding="{Binding [has_active_season]}" Value="True">
+										<DataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard>
+													<DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.15" />
+												</Storyboard>
+											</BeginStoryboard>
+										</DataTrigger.EnterActions>
+									<DataTrigger.ExitActions>
+										<BeginStoryboard>
+											<Storyboard>
+												<DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.75" />
+											</Storyboard>
+										</BeginStoryboard></DataTrigger.ExitActions>
+									</DataTrigger>
+								</Style.Triggers>
+							</Style>
+						</Grid.Style>
+					</Grid>
+				
+				<Rectangle Width="84" Height="84" Opacity="0" RenderTransformOrigin="0.5,0.5">
+					<Rectangle.Fill>
+						<ImageBrush ImageSource="pack://application:,,,/WPFGUI;component/icons/objectives/s10_cc_shockwave.png"/>
+					</Rectangle.Fill>
+					<Rectangle.RenderTransform>
+                    	<TransformGroup>
+                    	    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                    	</TransformGroup>
+                    </Rectangle.RenderTransform>
+					<Rectangle.Style>
+						<Style TargetType="Rectangle">
+							<Style.Triggers>
+								<MultiDataTrigger>
+									<MultiDataTrigger.Conditions>
+										<Condition Binding="{Binding [has_active_season]}" Value="True"/>
+									</MultiDataTrigger.Conditions>
+									<!-- Exit action instead of begin on the inverse of the condition to avoid triggering the animation at the start of the mode -->
+									<MultiDataTrigger.ExitActions>
+										<BeginStoryboard>
+											<Storyboard>
+												<DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleX)">
+													<EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.5"/>
+													<EasingDoubleKeyFrame KeyTime="0:0:0.5" Value="1">
+														<EasingDoubleKeyFrame.EasingFunction>
+															<CircleEase EasingMode="EaseOut"/>
+														</EasingDoubleKeyFrame.EasingFunction>
+													</EasingDoubleKeyFrame>
+												</DoubleAnimationUsingKeyFrames>
+													
+												<DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleY)">
+													<EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.5"/>
+													<EasingDoubleKeyFrame KeyTime="0:0:0.5" Value="1">
+														<EasingDoubleKeyFrame.EasingFunction>
+															<CircleEase EasingMode="EaseOut"/>
+														</EasingDoubleKeyFrame.EasingFunction>
+													</EasingDoubleKeyFrame>
+												</DoubleAnimationUsingKeyFrames>
+												<DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="Opacity" >
+													<EasingDoubleKeyFrame KeyTime="0:0:00" Value="1" />
+													<EasingDoubleKeyFrame KeyTime="0:0:0.39" Value="1" />
+													<EasingDoubleKeyFrame KeyTime="0:0:0.4" Value="0.7" />
+													<EasingDoubleKeyFrame KeyTime="0:0:0.7" Value="0" />
+												</DoubleAnimationUsingKeyFrames>
+											</Storyboard>
+										</BeginStoryboard>
+									</MultiDataTrigger.ExitActions>
+								</MultiDataTrigger>
+							</Style.Triggers>
+						</Style>
+					</Rectangle.Style>
+				</Rectangle>			
+					
+				<Image x:Name="Dial"
+					Width="56" Height="56"
+					VerticalAlignment="Center"
+					Source="pack://application:,,,/WPFGUI;component/icons/objectives/s11_dial_circle.png"/>
+				
+				<!-- Grid need to be large enough to maintain the rotation-->
+				<!-- if the grid expands or shrinks due to the rotation the mask will warp/move and the icon could be visible outside the dial -->
+				<Grid HorizontalAlignment="Center" VerticalAlignment="Center">
+					<Grid.OpacityMask>
+						<ImageBrush ImageSource="pack://application:,,,/WPFGUI;component/icons/objectives/s11_dial_circle_mask"
+							Viewport="72,72,56,56"
+							ViewportUnits="Absolute"
+							TileMode="None"
+							Stretch="UniformToFill"/>
+					</Grid.OpacityMask>
+					<!-- invisible object to keep the parent Grid at a large enough size to maintain its mask using minwidth or height on the grid did not guarantuee the size -->
+					<Rectangle Fill="Transparent"
+						MinWidth="200" MinHeight="200"/>
+					<Image x:Name="SeasonIndicator"
+						Source="pack://application:,,,/WPFGUI;component/icons/objectives/s11_dial_season_summer.png"
+						RenderTransformOrigin="0.5,1"
+						Width="56" Height="56"
+						HorizontalAlignment="Center"
+						VerticalAlignment="Center">
+						<Image.RenderTransform>
+							<TransformGroup>
+								<RotateTransform Angle="0"/>
+							</TransformGroup>
+						</Image.RenderTransform>
+						<Image.Style>
+							<Style TargetType="{x:Type Image}">
+								<Style.Triggers>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [has_active_season]}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard>
+													<DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(RotateTransform.Angle)" 
+														From="0" To="360"
+														Duration="0:0:1">
+														<DoubleAnimation.EasingFunction>
+															<BackEase Amplitude="0.3" EasingMode="EaseInOut" />
+														</DoubleAnimation.EasingFunction>
+													</DoubleAnimation>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=0}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:0.5" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/s11_dial_season_autumn.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:0.5" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/s11_dial_season_winter.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=2}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:0.5" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/s11_dial_season_spring.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=3}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:0.5" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/s11_dial_season_summer.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+								</Style.Triggers>
+							</Style>
+						</Image.Style>
+					</Image>
+				</Grid>					
+				</Grid>
+			</Grid>
+		</Grid>
+	</Grid>]]
+	
+	UI_AddChild("ScarDefault", "XamlPresenter", _match.climate.ui_widget_id, { IsHitTestVisible = false, Xaml = SeasonWidgetXaml, DataContext = UI_CreateDataContext(_match.data_context) })
+end
+
+
+function ChaoticClimate_CreateWidgetXbox()
+		
+	local SeasonWidgetXaml = 
+	[[<Grid x:Name="ChaoticClimate_SeasonWidgetUI"
+		xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" 
+		xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+		xmlns:sys="clr-namespace:System;assembly=mscorlib"
+		xmlns:esControls="clr-namespace:WPFGUI.Shared.Controls;assembly=EngineUI"
+		xmlns:sysConfigModels="clr-namespace:SystemConfigModelTypes"
+		xmlns:model="clr-namespace:HUDModelTypes"
+		SnapsToDevicePixels="True" Background="Transparent">
+		<Grid VerticalAlignment="Top" HorizontalAlignment="Right">
+		<Grid.Style>
+			<Style TargetType="{x:Type Grid}">
+				<Setter Property="Margin" Value="0,120,-30,0" />
+				<Style.Triggers>
+					<DataTrigger Binding="{Binding IsReplay, Source={x:Static model:HUDModel.Instance}, Mode=OneWay}" Value="True">
+						<Setter Property="Margin" Value="0,270,-30,0" />
+					</DataTrigger>
+				</Style.Triggers>
+			</Style>
+		</Grid.Style>
+			<Grid.Resources>
+				<sys:Double x:Key="ProgressBarOuterRadius">38</sys:Double>
+	            <sys:Double x:Key="ProgressBarInnerRadius">29</sys:Double>
+				<SolidColorBrush x:Key="PrimaryColorBrush" Color="#FFE18B" />
+				<SolidColorBrush x:Key="BackgroundColorBrush" Color="{StaticResource PrimaryColorTransparent}" />
+				<Style x:Key="SeasonProgressBar"
+						BasedOn="{StaticResource FrontEndCircularProgressBar}"
+						TargetType="{x:Type esControls:CircularProgressBar}">
+					<Style.Setters>
+						<Setter Property="Template">
+							<Setter.Value>
+								<ControlTemplate TargetType="{x:Type esControls:CircularProgressBar}">
+									<Grid MinWidth="{TemplateBinding MinHeight}" MinHeight="{TemplateBinding MinHeight}" 
+										HorizontalAlignment="Center" VerticalAlignment="Center"
+										Opacity="{TemplateBinding Opacity}">
+										<esControls:Ring EndAngle="270"
+											Fill="{DynamicResource BackgroundColorBrush}"
+											InnerRadius="{TemplateBinding InnerRadius}"
+											OuterRadius="{TemplateBinding OuterRadius}"
+											StartAngle="-90" Stretch="None"/>
+										<esControls:Ring x:Name="PART_Indicator"
+											EndAngle="270"
+											Fill="{DynamicResource PrimaryColorBrush}"
+											InnerRadius="{TemplateBinding InnerRadius}"
+											OuterRadius="{TemplateBinding OuterRadius}"
+											StartAngle="-90" Stretch="None"/>
+									</Grid>
+								</ControlTemplate>
+							</Setter.Value>
+						</Setter>
+					</Style.Setters>
+				</Style>
+			</Grid.Resources>
+			<Grid>			
+				<Grid Width="200"
+					Height="200"
+					HorizontalAlignment="Center" VerticalAlignment="Center">
+				
+									
+					<Image x:Name="Background"
+						Width="82" Height="82"
+						VerticalAlignment="Center"
+						Source="pack://application:,,,/WPFGUI;component/icons/objectives/xbox/s11_dial_background_xbox.png"/>
+				
+					<Grid Opacity="0">
+						<esControls:CircularProgressBar
+							x:Name="SeasonProgress"
+							InnerRadius="{DynamicResource ProgressBarInnerRadius}"
+							Maximum="1" Minimum="0"
+							OuterRadius="{DynamicResource ProgressBarOuterRadius}"
+							Style="{DynamicResource SeasonProgressBar}"
+							Value="{Binding [season_progress]}">
+						</esControls:CircularProgressBar>
+						<Grid.Style>
+							<Style>
+								<Style.Triggers>
+									<DataTrigger Binding="{Binding [has_active_season]}" Value="True">
+										<DataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard>
+													<DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.15" />
+												</Storyboard>
+											</BeginStoryboard>
+										</DataTrigger.EnterActions>
+									<DataTrigger.ExitActions>
+										<BeginStoryboard>
+											<Storyboard>
+												<DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.75" />
+											</Storyboard>
+										</BeginStoryboard></DataTrigger.ExitActions>
+									</DataTrigger>
+								</Style.Triggers>
+							</Style>
+						</Grid.Style>
+					</Grid>
+				
+				<Rectangle Width="124" Height="124" Opacity="0" RenderTransformOrigin="0.5,0.5">
+					<Rectangle.Fill>
+						<ImageBrush ImageSource="pack://application:,,,/WPFGUI;component/icons/objectives/s10_cc_shockwave.png"/>
+					</Rectangle.Fill>
+					<Rectangle.RenderTransform>
+                    	<TransformGroup>
+                    	    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                    	</TransformGroup>
+                    </Rectangle.RenderTransform>
+					<Rectangle.Style>
+						<Style TargetType="Rectangle">
+							<Style.Triggers>
+								<MultiDataTrigger>
+									<MultiDataTrigger.Conditions>
+										<Condition Binding="{Binding [has_active_season]}" Value="True"/>
+									</MultiDataTrigger.Conditions>
+									<!-- Exit action instead of begin on the inverse of the condition to avoid triggering the animation at the start of the mode -->
+									<MultiDataTrigger.ExitActions>
+										<BeginStoryboard>
+											<Storyboard>
+												<DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleX)">
+													<EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.5"/>
+													<EasingDoubleKeyFrame KeyTime="0:0:0.5" Value="1">
+														<EasingDoubleKeyFrame.EasingFunction>
+															<CircleEase EasingMode="EaseOut"/>
+														</EasingDoubleKeyFrame.EasingFunction>
+													</EasingDoubleKeyFrame>
+												</DoubleAnimationUsingKeyFrames>
+													
+												<DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleY)">
+													<EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.5"/>
+													<EasingDoubleKeyFrame KeyTime="0:0:0.5" Value="1">
+														<EasingDoubleKeyFrame.EasingFunction>
+															<CircleEase EasingMode="EaseOut"/>
+														</EasingDoubleKeyFrame.EasingFunction>
+													</EasingDoubleKeyFrame>
+												</DoubleAnimationUsingKeyFrames>
+												<DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="Opacity" >
+													<EasingDoubleKeyFrame KeyTime="0:0:00" Value="1" />
+													<EasingDoubleKeyFrame KeyTime="0:0:0.39" Value="1" />
+													<EasingDoubleKeyFrame KeyTime="0:0:0.4" Value="0.7" />
+													<EasingDoubleKeyFrame KeyTime="0:0:0.7" Value="0" />
+												</DoubleAnimationUsingKeyFrames>
+											</Storyboard>
+										</BeginStoryboard>
+									</MultiDataTrigger.ExitActions>
+								</MultiDataTrigger>
+							</Style.Triggers>
+						</Style>
+					</Rectangle.Style>
+				</Rectangle>			
+					
+				<Image x:Name="Dial"
+					Width="82" Height="82"
+					VerticalAlignment="Center"
+					Source="pack://application:,,,/WPFGUI;component/icons/objectives/xbox/s11_dial_circle_xbox.png"/>
+				
+				<!-- Grid need to be large enough to maintain the rotation-->
+				<!-- if the grid expands or shrinks due to the rotation the mask will warp/move and the icon could be visible outside the dial -->
+				<Grid HorizontalAlignment="Center" VerticalAlignment="Center">
+					<Grid.OpacityMask>
+						<ImageBrush ImageSource="pack://application:,,,/WPFGUI;component/icons/objectives/xbox/s11_dial_circle_mask_xbox"
+							Viewport="58,58,82,82"
+							ViewportUnits="Absolute"
+							TileMode="None"
+							Stretch="UniformToFill"/>
+					</Grid.OpacityMask>
+					<!-- invisible object to keep the parent Grid at a large enough size to maintain its mask using minwidth or height on the grid did not guarantuee the size -->
+					<Rectangle Fill="Transparent"
+						MinWidth="200" MinHeight="200"/>
+					<Image x:Name="SeasonIndicator"
+						Source="pack://application:,,,/WPFGUI;component/icons/objectives/xbox/s11_dial_season_summer_xbox.png"
+						RenderTransformOrigin="0.5,1"
+						Width="82" Height="82"
+						HorizontalAlignment="Center"
+						VerticalAlignment="Center">
+						<Image.RenderTransform>
+							<TransformGroup>
+								<RotateTransform Angle="0"/>
+							</TransformGroup>
+						</Image.RenderTransform>
+						<Image.Style>
+							<Style TargetType="{x:Type Image}">
+								<Style.Triggers>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [has_active_season]}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard>
+													<DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(RotateTransform.Angle)" 
+														From="0" To="360"
+														Duration="0:0:1">
+														<DoubleAnimation.EasingFunction>
+															<BackEase Amplitude="0.3" EasingMode="EaseInOut" />
+														</DoubleAnimation.EasingFunction>
+													</DoubleAnimation>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=0}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:0.5" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/xbox/s11_dial_season_autumn_xbox.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:0.5" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/xbox/s11_dial_season_winter_xbox.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=2}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:0.5" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/xbox/s11_dial_season_spring_xbox.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=3}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:0.5" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/xbox/s11_dial_season_summer_xbox.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+								</Style.Triggers>
+							</Style>
+						</Image.Style>
+					</Image>
+				</Grid>					
+				</Grid>
+			</Grid>
+		</Grid>
+	</Grid>]]
+	
+	UI_AddChild("ScarDefault", "XamlPresenter", _match.climate.ui_widget_id, { IsHitTestVisible = false, Xaml = SeasonWidgetXaml, DataContext = UI_CreateDataContext(_match.data_context) })
+end
+
+function ChaoticClimate_CreateWidgetCaster()
+	
+	local SeasonWidgetXaml = 
+	[[<Grid x:Name="ChaoticClimate_SeasonWidgetUI"
+		xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" 
+		xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+		xmlns:sys="clr-namespace:System;assembly=mscorlib"
+		xmlns:esControls="clr-namespace:WPFGUI.Shared.Controls;assembly=EngineUI"
+		xmlns:sysConfigModels="clr-namespace:SystemConfigModelTypes"
+		xmlns:model="clr-namespace:HUDModelTypes"
+		Margin="0,75,0,0"
+		SnapsToDevicePixels="True" Background="Transparent">
+		<Grid VerticalAlignment="Top" HorizontalAlignment="Center">
+			<Grid.Resources>
+				<sys:Double x:Key="ProgressBarOuterRadius">26</sys:Double>
+	            <sys:Double x:Key="ProgressBarInnerRadius">20</sys:Double>
+				<SolidColorBrush x:Key="PrimaryColorBrush" Color="#FFE18B" />
+				<SolidColorBrush x:Key="BackgroundColorBrush" Color="{StaticResource PrimaryColorTransparent}" />
+				<Style x:Key="SeasonProgressBar"
+						BasedOn="{StaticResource FrontEndCircularProgressBar}"
+						TargetType="{x:Type esControls:CircularProgressBar}">
+					<Style.Setters>
+						<Setter Property="Template">
+							<Setter.Value>
+								<ControlTemplate TargetType="{x:Type esControls:CircularProgressBar}">
+									<Grid MinWidth="{TemplateBinding MinHeight}" MinHeight="{TemplateBinding MinHeight}" 
+										HorizontalAlignment="Center" VerticalAlignment="Center"
+										Opacity="{TemplateBinding Opacity}">
+										<esControls:Ring EndAngle="270"
+											Fill="{DynamicResource BackgroundColorBrush}"
+											InnerRadius="{TemplateBinding InnerRadius}"
+											OuterRadius="{TemplateBinding OuterRadius}"
+											StartAngle="-90" Stretch="None"/>
+										<esControls:Ring x:Name="PART_Indicator"
+											EndAngle="270"
+											Fill="{DynamicResource PrimaryColorBrush}"
+											InnerRadius="{TemplateBinding InnerRadius}"
+											OuterRadius="{TemplateBinding OuterRadius}"
+											StartAngle="-90" Stretch="None"/>
+									</Grid>
+								</ControlTemplate>
+							</Setter.Value>
+						</Setter>
+					</Style.Setters>
+				</Style>
+			</Grid.Resources>
+			<Grid>			
+				<Grid Width="200"
+					Height="200"
+					HorizontalAlignment="Center" VerticalAlignment="Center">
+				
+									
+					<Image x:Name="Background"
+						Width="56" Height="56"
+						VerticalAlignment="Center"
+						Source="pack://application:,,,/WPFGUI;component/icons/objectives/s11_dial_background.png"/>
+				
+					<Grid Opacity="0">
+						<esControls:CircularProgressBar
+							x:Name="SeasonProgress"
+							InnerRadius="{DynamicResource ProgressBarInnerRadius}"
+							Maximum="1" Minimum="0"
+							OuterRadius="{DynamicResource ProgressBarOuterRadius}"
+							Style="{DynamicResource SeasonProgressBar}"
+							Value="{Binding [season_progress]}">
+						</esControls:CircularProgressBar>
+						<Grid.Style>
+							<Style>
+								<Style.Triggers>
+									<DataTrigger Binding="{Binding [has_active_season]}" Value="True">
+										<DataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard>
+													<DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.15" />
+												</Storyboard>
+											</BeginStoryboard>
+										</DataTrigger.EnterActions>
+									<DataTrigger.ExitActions>
+										<BeginStoryboard>
+											<Storyboard>
+												<DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.75" />
+											</Storyboard>
+										</BeginStoryboard></DataTrigger.ExitActions>
+									</DataTrigger>
+								</Style.Triggers>
+							</Style>
+						</Grid.Style>
+					</Grid>
+				
+				<Rectangle Width="84" Height="84" Opacity="0" RenderTransformOrigin="0.5,0.5">
+					<Rectangle.Fill>
+						<ImageBrush ImageSource="pack://application:,,,/WPFGUI;component/icons/objectives/s10_cc_shockwave.png"/>
+					</Rectangle.Fill>
+					<Rectangle.RenderTransform>
+                    	<TransformGroup>
+                    	    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                    	</TransformGroup>
+                    </Rectangle.RenderTransform>
+					<Rectangle.Style>
+						<Style TargetType="Rectangle">
+							<Style.Triggers>
+								<MultiDataTrigger>
+									<MultiDataTrigger.Conditions>
+										<Condition Binding="{Binding [has_active_season]}" Value="True"/>
+									</MultiDataTrigger.Conditions>
+									<!-- Exit action instead of begin on the inverse of the condition to avoid triggering the animation at the start of the mode -->
+									<MultiDataTrigger.ExitActions>
+										<BeginStoryboard>
+											<Storyboard>
+												<DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleX)">
+													<EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.5"/>
+													<EasingDoubleKeyFrame KeyTime="0:0:0.5" Value="1">
+														<EasingDoubleKeyFrame.EasingFunction>
+															<CircleEase EasingMode="EaseOut"/>
+														</EasingDoubleKeyFrame.EasingFunction>
+													</EasingDoubleKeyFrame>
+												</DoubleAnimationUsingKeyFrames>
+													
+												<DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleY)">
+													<EasingDoubleKeyFrame KeyTime="0:0:0" Value="0.5"/>
+													<EasingDoubleKeyFrame KeyTime="0:0:0.5" Value="1">
+														<EasingDoubleKeyFrame.EasingFunction>
+															<CircleEase EasingMode="EaseOut"/>
+														</EasingDoubleKeyFrame.EasingFunction>
+													</EasingDoubleKeyFrame>
+												</DoubleAnimationUsingKeyFrames>
+												<DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="Opacity" >
+													<EasingDoubleKeyFrame KeyTime="0:0:00" Value="1" />
+													<EasingDoubleKeyFrame KeyTime="0:0:0.39" Value="1" />
+													<EasingDoubleKeyFrame KeyTime="0:0:0.4" Value="0.7" />
+													<EasingDoubleKeyFrame KeyTime="0:0:0.7" Value="0" />
+												</DoubleAnimationUsingKeyFrames>
+											</Storyboard>
+										</BeginStoryboard>
+									</MultiDataTrigger.ExitActions>
+								</MultiDataTrigger>
+							</Style.Triggers>
+						</Style>
+					</Rectangle.Style>
+				</Rectangle>			
+					
+				<Image x:Name="Dial"
+					Width="56" Height="56"
+					VerticalAlignment="Center"
+					Source="pack://application:,,,/WPFGUI;component/icons/objectives/s11_dial_circle.png"/>
+				
+				<!-- Grid need to be large enough to maintain the rotation-->
+				<!-- if the grid expands or shrinks due to the rotation the mask will warp/move and the icon could be visible outside the dial -->
+				<Grid HorizontalAlignment="Center" VerticalAlignment="Center">
+					<Grid.OpacityMask>
+						<ImageBrush ImageSource="pack://application:,,,/WPFGUI;component/icons/objectives/s11_dial_circle_mask"
+							Viewport="72,72,56,56"
+							ViewportUnits="Absolute"
+							TileMode="None"
+							Stretch="UniformToFill"/>
+					</Grid.OpacityMask>
+					<!-- invisible object to keep the parent Grid at a large enough size to maintain its mask using minwidth or height on the grid did not guarantuee the size -->
+					<Rectangle Fill="Transparent"
+						MinWidth="200" MinHeight="200"/>
+					<Image x:Name="SeasonIndicator"
+						Source="pack://application:,,,/WPFGUI;component/icons/objectives/s11_dial_season_summer.png"
+						RenderTransformOrigin="0.5,1"
+						Width="56" Height="56"
+						HorizontalAlignment="Center"
+						VerticalAlignment="Center">
+						<Image.RenderTransform>
+							<TransformGroup>
+								<RotateTransform Angle="0"/>
+							</TransformGroup>
+						</Image.RenderTransform>
+						<Image.Style>
+							<Style TargetType="{x:Type Image}">
+								<Style.Triggers>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [has_active_season]}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard>
+													<DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(RotateTransform.Angle)" 
+														From="0" To="360"
+														Duration="0:0:1">
+														<DoubleAnimation.EasingFunction>
+															<BackEase Amplitude="0.3" EasingMode="EaseInOut" />
+														</DoubleAnimation.EasingFunction>
+													</DoubleAnimation>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=0}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:3" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/s11_dial_season_autumn.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:3" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/s11_dial_season_winter.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=2}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:3" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/s11_dial_season_spring.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+									<MultiDataTrigger>
+										<MultiDataTrigger.Conditions>
+											<Condition Binding="{Binding [current_season_index], Converter={StaticResource EqualityCompare}, ConverterParameter=3}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource LEqualCompare}, ConverterParameter=1}" Value="True"/>
+											<Condition Binding="{Binding [season_time_left], Converter={StaticResource GEqualCompare}, ConverterParameter=0.6}" Value="True"/>
+										</MultiDataTrigger.Conditions>
+										<MultiDataTrigger.EnterActions>
+											<BeginStoryboard>
+												<Storyboard FillBehavior="HoldEnd">
+													<ObjectAnimationUsingKeyFrames Duration="0:0:3" Storyboard.TargetProperty="Source">
+														<DiscreteObjectKeyFrame KeyTime="0:0:0.5">
+															<DiscreteObjectKeyFrame.Value>
+																<BitmapImage UriSource="/WPFGUI;component/icons/objectives/s11_dial_season_summer.png"/>
+															</DiscreteObjectKeyFrame.Value>
+														</DiscreteObjectKeyFrame>
+													</ObjectAnimationUsingKeyFrames>
+												</Storyboard>
+											</BeginStoryboard>
+										</MultiDataTrigger.EnterActions>
+									</MultiDataTrigger>
+								</Style.Triggers>
+							</Style>
+						</Image.Style>
+					</Image>
+				</Grid>					
+				</Grid>
+			</Grid>
+		</Grid>
+	</Grid>]]
+	UI_AddChild("ScarChaoticClimate", "XamlPresenter", _match.climate.ui_widget_id, { IsHitTestVisible = false, Xaml = SeasonWidgetXaml, DataContext = UI_CreateDataContext(_match.data_context) })
+end

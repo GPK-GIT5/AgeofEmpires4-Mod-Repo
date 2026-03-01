@@ -1,0 +1,703 @@
+----------------------------------------------------------------------------------------------------------------
+-- Unit Entry system
+-- (c) 2015 Relic Entertainment Inc.
+
+-- Local functions
+local __GetTempGroup
+local UnitEntry_NoTypeFunc, UnitEntry_InvalidTypeFunc 
+local UnitEntry_Create, UnitEntry_PostSpawn
+local DeploysInProgress = {}
+
+
+
+--------------------------------------------------------------------------------------
+-- Local function definitions
+--------------------------------------------------------------------------------------
+
+--------------- Helper functions
+-- returns a temp egroup or sgroup containing the item (entity/squad) passed in, or nil if you couldn't follow instructions
+
+__GetTempGroup = function(item)
+	local groupcaller = __GetGroupCaller(item)
+	if groupcaller then
+		local group = groupcaller.CreateIfNotFound("temp!")
+		groupcaller.ClearItems(group)
+		groupcaller.AddItem(group, item)
+		return group
+	end
+	
+end
+
+--------------- Spawn type functions
+
+-- Definitions of the different spawn type functions
+-- We do different things depending on the spawn type
+
+UnitEntry_SpawnClosetFunc = function (dataTable)
+	
+	local spawnTable = dataTable.spawnData
+	
+	radius = 5
+	
+	local nearbySpawnClosets = {}
+	local added = false
+	
+	for index, instance in ipairs(_SpawnCloset_List) do
+		
+		if instance.closet_type == "small" then
+			radius = 5
+		elseif instance.closet_type == "medium" then
+			radius = 10
+		elseif instance.closet_type == "large" then
+			radius = 15
+		end
+		
+		if Util_GetDistance(instance.location, dataTable.location) <= radius then
+			nearbySpawnClosets[1] = instance
+			added = true
+			break
+		end
+		
+	end
+	
+	if not added then
+		print("There is no spawn closet nearby! Exiting Early!")
+		Util_RemoveValueFromArray(DeploysInProgress, dataTable.index)
+		if dataTable.callback then
+			Util_RemoveValueFromInProcessSpawns(dataTable.callback.enc.inProcessSpawns, dataTable.index)
+		end
+
+		for k,v in pairs(spawnTable) do														-- delete the already-created (but not-yet-spawned) units, as they aren't going to be coming onto the map
+			local sid = Squad_FromID(v.squad)
+			Squad_Destroy(sid)
+		end
+		
+		return
+	end
+	
+	-- use the spawn closets position
+	dataTable.location = nearbySpawnClosets[1].location
+	
+	-- set the destination as well
+	for key, squadTable in next, dataTable.spawnData do
+		squadTable.destination = nearbySpawnClosets[1].destination
+	end	
+	
+	-- Set up callback
+	dataTable.rule = Rule_AddOneShot(UnitEntry_Spawn, 0, dataTable)
+end
+	
+UnitEntry_InvalidTypeFunc = function (dataTable)
+	print("Warning: Undefined spawn type in Util_DeploySquads")
+	UnitEntry_Spawn(0, dataTable)
+end	
+
+UnitEntry_NoTypeFunc = function (dataTable)
+	UnitEntry_Spawn(0, dataTable)
+end	
+
+--------------- Others
+
+-- Creates the squads deployed and sets up and returns the spawnTable
+-- args SPAWN spawntype, PlayerID player, SGroupID/Table/String sgroup, Position location, Spawntype spawntype, Table squadlist. More details in UnitEntry.scar
+-- See function below for details on parameters. The only change exists within:
+-- Table squadlist -
+-- 	This function deals with one squadlist only (i.e. one squadBlueprint).
+-- result table
+UnitEntry_Create = function (spawntype, player, sgroup, location, squadlist, pathfindingIgnoreList)
+
+	if squadlist.sbp == nil then
+		print("UnitEntry_Create: Squad list has no squad blue print! Returning nil")
+		return nil
+	end
+		
+	local lplayer	-- Do this because it uses the squadlist player if it has one, if not, it uses the parent player parameter
+	if squadlist.player ~= nil then
+		lplayer = squadlist.player
+	elseif player ~= nil then
+		lplayer = player
+	else
+		print("UnitEntry_Create: No player found. Returning nil")
+		return nil
+	end	
+	
+	local llocation -- Same thing as player (see above)
+	if squadlist.location ~= nil and spawntype.forceLocation == false then
+		llocation = squadlist.location
+	elseif location ~= nil then
+		if squadlist.location ~= nil and squadlist.destination == nil and Util_GetDistance(location, squadlist.location) >= 8 then	-- seems to crash occasionally?
+			squadlist.destination = squadlist.location
+		end
+		llocation = location
+	else
+		print("UnitEntry_Create: No location found. Returning nil")
+		return nil
+	end
+	
+	if scartype(llocation) == ST_TABLE then
+		llocation = Table_GetRandomItem(llocation)
+	end 
+	
+	local lloadout
+	if squadlist.loadout ~= nil then
+		lloadout = squadlist.loadout
+	else
+		lloadout = 0
+	end
+	
+	-- This spawnpos and spawntoward are based on the llocation variable (which could either be the parent location or the child override if it exists)
+	local spawnpos
+	local spawntoward
+	local loctype = scartype(llocation)
+	if loctype == ST_SGROUP then
+		spawnpos = SGroup_GetPosition(llocation)
+		spawntoward = spawnpos
+	elseif loctype == ST_EGROUP then
+		spawnpos = EGroup_GetPosition(llocation)
+		spawntoward = spawnpos
+	elseif loctype == ST_MARKER then
+		spawnpos = Marker_GetPosition(llocation)
+		local dir = Marker_GetDirection(llocation)
+		spawntoward = Marker_GetPosition(llocation)
+		spawntoward.x = spawntoward.x + (dir.x * 100)
+		spawntoward.y = spawntoward.y + (dir.y * 100)
+		spawntoward.z = spawntoward.z + (dir.z * 100)
+	elseif loctype == ST_SCARPOS then
+		spawnpos = llocation
+		spawntoward = spawnpos
+	else
+		fatal("UnitEntry_Create: invalid location type " .. scartype_tostring(llocation))
+	end
+		
+	local lnumsquads = 1 -- default numsquads is 1
+	if squadlist.numsquads ~= nil and squadlist.numsquads > 0 then
+		lnumsquads = squadlist.numsquads
+	end
+	
+	local lsgroups = {}
+	if (sgroup ~= nil) then
+		table.insert(lsgroups, sgroup)
+	end
+	if (squadlist.sgroup ~= nil) then
+		table.insert(lsgroups, squadlist.sgroup)
+	end
+	
+	local squadtable = {}
+	for i = 1, lnumsquads do
+		-- Create the squad here. This C++ function DOES NOT spawn the squad
+		local lsquad = Squad_CreateToward(squadlist.sbp, lplayer, lloadout, spawnpos, spawntoward)
+		
+		if lsquad ~= nil then
+
+			-- add the squad to all the sgroups requested
+			Util_SGroupAdd(lsgroups, lsquad)
+			
+			-- Setting up table of data for processing the squad post-spawn (They've only been created so far)
+			
+			-- convert marker to position/facing if necessary
+			if scartype(squadlist.destination) == ST_MARKER then
+				if squadlist.facing == nil then
+					local dir = Marker_GetDirection(squadlist.destination)
+					squadlist.facing = Marker_GetPosition(squadlist.destination)
+					squadlist.facing.x = squadlist.facing.x + dir.x
+					squadlist.facing.y = squadlist.facing.y + dir.y
+					squadlist.facing.z = squadlist.facing.z + dir.z
+				end
+				squadlist.destination = Marker_GetPosition(squadlist.destination)
+			end
+			
+			local squadID = Squad_GetID(lsquad)
+		
+			-- Add the squad to the squad table
+			table.insert(squadtable, {squad = squadID, spawntype = spawntype, player = lplayer, upgrades = squadlist.upgrades, location = spawnpos, toward = spawntoward, destination = squadlist.destination, destfacing = squadlist.facing, attackmove = squadlist.attackmove, spawnType = spawntype, ignorelist = pathfindingIgnoreList, idle_behaviour = squadlist.idle_behaviour})
+		end
+	end
+	
+	return squadtable
+end
+
+-- DO NOT CALL THIS FUNCTION EXTERNALLY. Helper function to implement Util_DeploySquads. Details can be found in UnitEntry.scar
+-- args Number id, Table squadTable. More details in UnitEntry.scar
+-- This function acts as the callback for Util_DeploySquads().
+-- It triggers the spawning of units that were created earlier and also executes
+-- any commands that were registered to the squad(s) in the dataTable
+function UnitEntry_Spawn (id, dataTable) -- This function is global only because it needs to be called from c++
+	
+	squadTables = dataTable.spawnData
+	dataTable.numberOfSquadsFinished = 0
+	
+	local wasInstantlySpawned = false
+	if dataTable.stagger == 0 then
+		-- run through each squad, spawn them and do all post-spawn actions
+		-- We do it backwards so we can remove elements one by one in the postspawn
+		local i = #squadTables
+		while i >= 1 do
+			local squadTable = squadTables[i]
+			wasInstantlySpawned = false
+			
+			if Squad_IsValid(squadTable.squad) then
+				if squadTable.spawntype.formation == nil then squadTable.spawntype.formation = '' end
+				
+				local squadP = Squad_FromID(squadTable.squad)
+
+				Squad_SpawnFormationToward(
+					squadP,
+					dataTable.ignorelist,
+					squadTable.location,
+					squadTable.toward,
+					squadTable.spawntype.formation,
+					false,
+					dataTable.ignoreformation,
+					dataTable.ignorepathfindingpos,
+					squadTable.spawntype.event)
+
+				wasInstantlySpawned = UnitEntry_PostSpawn(dataTable, dataTable.callback, i)
+			end
+			
+			i = i - 1
+		end
+		
+		if scartype(dataTable.spawnType.end_func) == ST_FUNCTION then
+			dataTable.spawnType.end_func(dataTable)
+		end
+
+	else
+		-- if there's a stagger, we spawn the first squad and either:
+		-- 		set up oneshot rule with the next squad to spawn
+		-- 		do nothing if there are no more squads to spawn
+		
+		if (dataTable.nextIndexToSpawn == nil) then
+			dataTable.nextIndexToSpawn = #squadTables
+		end
+		
+		squadTable = squadTables[dataTable.nextIndexToSpawn]
+		
+		if Squad_IsValid(squadTable.squad) then
+			if squadTable.spawntype.formation == nil then squadTable.spawntype.formation = '' end
+			
+			local squadP = Squad_FromID(squadTable.squad)
+			
+			Squad_SpawnFormationToward(
+				squadP, 
+				dataTable.ignorelist,
+				squadTable.location,
+				squadTable.toward,
+				squadTable.spawntype.formation,
+				false,
+				dataTable.ignoreformation,
+				dataTable.ignorepathfindingpos,
+				squadTable.spawntype.event)
+
+			wasInstantlySpawned = UnitEntry_PostSpawn(dataTable, dataTable.callback, dataTable.nextIndexToSpawn)
+		end
+		
+		
+		dataTable.nextIndexToSpawn = dataTable.nextIndexToSpawn - 1
+		
+		if squadTables[dataTable.nextIndexToSpawn] ~= nil then		
+			-- Set up callback to spawn the next guy
+			Rule_AddOneShot(UnitEntry_Spawn, dataTable.stagger, dataTable)
+		else
+			-- That was the last guy, call the finalize function
+			if scartype(dataTable.spawnType.end_func) == ST_FUNCTION then
+				dataTable.spawnType.end_func(dataTable)
+			end
+		end
+	end
+end
+
+-- Clean up function
+UnitEntry_CompletePostSpawnMove = function(dataTable)
+
+	if (dataTable.numberOfSquadsFinished == #dataTable.spawnData) then
+		
+		-- no more to spawn, clean up
+		-- Remove this unit entry from the deploys in progress
+		Util_RemoveValueFromArray(DeploysInProgress, dataTable.index) 
+		if dataTable.callback then
+			Util_RemoveValueFromInProcessSpawns(dataTable.callback.enc.inProcessSpawns, dataTable.index)
+		end
+	end
+end
+
+local ruleTable = {}
+
+-- Helper function to implement Util_DeploySquads. Details can be found in UnitEntry.scar
+-- args Table dataTable, includes squadTable and encounterCallback. More details in UnitEntry.scar
+-- This checks to see if a squad has finished moving to a location before passing it over to the encounter
+UnitEntry_HasFinishedMoving = function (contextDataTable, userDataTable)
+	
+	local encounterCallback = userDataTable.encounterCallback
+	local dataTable = userDataTable.dataTable
+	local squadTable = dataTable.spawnData[userDataTable.squadTableIndex]
+
+	local destination = squadTable.destination
+	if destination == nil or encounterCallback == nil or not Squad_IsValid(squadTable.squad) then
+		
+		dataTable.numberOfSquadsFinished = dataTable.numberOfSquadsFinished + 1
+		UnitEntry_CompletePostSpawnMove(dataTable)
+		
+		return
+	end
+	
+	-- check to see if the squad has finished moving to its destination.
+	-- NOTE: We do not move the squad in this function. 
+	local squadP = Squad_FromID(squadTable.squad)
+	local distanceCheck = 15
+	
+	local distance = Util_GetDistance(destination, squadP)
+	
+	if distance < distanceCheck then -- If we're close enough, pass it over to the encounter
+		encounterCallback.func(encounterCallback.enc, squadP)
+		
+		dataTable.numberOfSquadsFinished = dataTable.numberOfSquadsFinished + 1
+		UnitEntry_CompletePostSpawnMove(dataTable)
+		
+	else
+		local sg_util_temp = __GetTempGroup(squadP)
+		if attackmove == true then
+			Cmd_AttackMove(sg_util_temp, Util_GetPosition(destination), true)
+		else
+			Cmd_Move(sg_util_temp, Util_GetPosition(destination), true, nil, squadTable.destfacing)
+		end
+		SGroup_Destroy(sg_util_temp)
+		
+		Rule_AddOneShot(UnitEntry_HasFinishedMoving, 0.5, userDataTable)
+	end
+	
+end
+
+-- Helper function to implement Util_DeploySquads. Details can be found in UnitEntry.scar
+-- args Table squadTable, Table encounterCallback, Table squadTables. More details in UnitEntry.scar
+-- This executes any commands on the squad just spawned that could only happen post-spawn. Includes upgrades / movement / orders / etc
+-- Returns true if the unit was immediately spawned and removed from the table
+UnitEntry_PostSpawn = function (dataTable, encounterCallback, squadTableIndex)
+	
+	local squadTable = dataTable.spawnData[squadTableIndex]
+	local squadP = Squad_FromID(squadTable.squad)
+
+	local sg_util_temp = __GetTempGroup(squadP)
+	
+	-- run any spawn-related functionality
+	if squadTable.spawntype ~= nil and squadTable.spawntype.onSpawnFunc ~= nil then
+		squadTable.spawntype.onSpawnFunc(squadTable, dataTable)
+	end
+	
+	-- apply requested upgrades
+	if squadTable.upgrades and scartype(squadTable.upgrades) == ST_PBG  then
+		Cmd_InstantUpgrade(sg_util_temp, squadTable.upgrades)
+	end
+	
+	-- move it to its destination (if any)
+	local destination = squadTable.destination
+	local attackmove = squadTable.attackmove
+	local waitingOnMove = false
+	if destination ~= nil then
+		
+		local groupcaller = __GetGroupCaller(destination)
+		if groupcaller ~= nil then
+			local relationship = Util_GetRelationship(squadTable.player, destination)
+			if relationship == R_ALLY then
+				-- try to load into it
+				if GroupCanLoadSquad(destination, squadP) then
+					Cmd_Garrison(sg_util_temp, destination, true, true)
+				else
+					destination = groupcaller.GetPosition(destination) -- just move here
+				end
+			elseif relationship == R_ENEMY then
+				-- attack enemy sgroup
+				Cmd_AttackMove(sg_util_temp, destination, true)
+			elseif relationship == nil then
+				-- check if it's an available sync weapon
+				local swid = groupcaller.GetSyncWeaponID(destination)
+				if SyncWeapon_IsOwnedByPlayer(swid, nil) then
+					Cmd_CaptureTeamWeapon(sg_util_temp, destination)
+				else
+					destination = Util_GetPosition(destination) -- just move here (syncweapon not available)
+				end
+			end
+		end
+		
+		-- fallback on a regular move (possibly attackmove)
+		if scartype(destination) == ST_SCARPOS or scartype(destination) == ST_MARKER then
+			if attackmove == true then
+				Cmd_AttackMove(sg_util_temp, Util_GetPosition(destination), true)
+			else
+				Cmd_Move(sg_util_temp, Util_GetPosition(destination), true, nil, squadTable.destfacing)
+			end
+			
+			-- If we order the squad to move to a location, we need to wait till it gets there before passing it over to the encounter
+			if (encounterCallback) then				
+				ruleTable = {}
+				ruleTable["dataTable"] = dataTable
+				ruleTable["encounterCallback"] = encounterCallback
+				ruleTable["squadTableIndex"] = squadTableIndex
+				
+				print("We have an encounter callback! Start the Rule HasFinishedMoving")
+			
+				Rule_AddOneShot(UnitEntry_HasFinishedMoving, 0.5, ruleTable)
+				waitingOnMove = true
+			end
+		end
+	
+	end
+	
+	SGroup_Destroy(sg_util_temp)
+	
+	_idleBehaviour_queue(squadTable)
+	
+	if (encounterCallback) then
+		if not waitingOnMove then
+			dataTable.numberOfSquadsFinished = dataTable.numberOfSquadsFinished + 1
+			UnitEntry_CompletePostSpawnMove(dataTable)
+
+			encounterCallback.func(encounterCallback.enc, squadP)
+			return true
+			
+		end
+	else
+		dataTable.numberOfSquadsFinished = dataTable.numberOfSquadsFinished + 1
+		UnitEntry_CompletePostSpawnMove(dataTable)		
+		return true
+	end
+	
+	return false
+end
+
+
+
+--
+-- This spawn table defines the different unit entry types as well as functions / attributes specific to them
+--
+
+--	event 			the name passed into the motion tree as its spawntype
+-- 	func 				the function called after the units creation. This can either spawn the unit immediately, or do any associated actions and delays
+--  onSpawnFunc	the function called after the units are spawned
+--  forceLocation	if true, any unit's individual spawn location is overridden by the location given for the overall deploy (i.e. makes every unit appear at the warp gate)
+--	formation 		the name of a formation override the squad will spawn into
+
+SPAWN = {
+
+	-- generic types
+	Spawn_Closet = 
+	{
+		event = "none",
+		func = UnitEntry_SpawnClosetFunc,
+		forceLocation = true
+	},
+	
+	No_Type =
+	{
+		event = "none",
+		func = UnitEntry_NoTypeFunc,
+		forceLocation = false
+	},		-- Passing in "none" makes a unit just appear, regardless of its default spawn appearance
+	Default =
+	{
+		event = "",
+		func = UnitEntry_InvalidTypeFunc,
+		forceLocation = false
+	}		-- Passing in "" make a unit use its default spawn appearance
+}
+
+
+
+
+
+
+--------------------------------------------------------------------------------------
+-- Global function definitions
+--------------------------------------------------------------------------------------
+
+--? @group scardoc;Util
+
+
+--? @shortdesc Forces all in-process spawns / deploys to complete instantly.
+--? @result Void
+function UnitEntry_CompleteAllImmediately()
+	
+	-- Run the spawn and post spawn functions for all deploys in progress
+	for index, deployment in next, DeploysInProgress do
+	
+		-- We set all the spawn types to no type, because we want units to appear without an animation
+		for key, squadTable in next, deployment.spawnData do
+			squadTable.spawntype = SPAWN.No_Type
+		end
+		
+		deployment.stagger = 0
+		UnitEntry_Spawn(0, deployment)
+	end
+	
+	-- Remove the rules already in place
+	Rule_Remove(UnitEntry_Spawn)
+end
+
+--? @shortdesc Forces a specific index of the deploy table to complete instantly.
+--? @result Void
+function UnitEntry_CompleteImmediately(index)
+
+	-- check index to make sure its not null
+	if not index then
+		return
+	end
+	
+	-- Run the spawn and post spawn functions for a specific deploy in progress
+	local deployment = DeploysInProgress[index]
+	if deployment then
+	
+		-- We set all the spawn types to no type, because we want units to appear without an animation
+		for key, squadTable in next, deployment.spawnData do
+			squadTable.spawntype = SPAWN.No_Type
+		end
+		
+		deployment.stagger = 0
+		UnitEntry_Spawn(0, deployment)
+	end
+	
+	-- Remove that specific deployment's rule
+	if deployment.rule then
+		Rule_RemoveWithID(deployment.rule)
+	end
+end
+
+
+--? @shortdesc High level function to deploy squads in different ways. Details can be found in UnitEntry.scar
+--? @args Spawntype spawntype, PlayerID player, SGroupID/Table/String sgroup, Position location, Table squadlist, Number stagger, Func callback, EGroup ignorepathfindinggroup. More details in UnitEntry.scar
+--? @extdesc Spawntype spawntype - enum of the spawn type (ex: SPAWN.Race_Teleport). SPAWN.No_Type can be used to force a spawn with no type\n
+--~ --? PlayerID player - player who will own the squads
+--~ --? SGroupID/Table/String sgroup - sgroup that receives the new squads. 
+--~ --?		Can be nil if you don't need to manage the new squads or a string if you want to create a new sgroup with that name.
+--~ --?		If a table is given, the first item will be used as the return sgroup.
+--~ --? Position location - where to spawn the squads (can be any parameter type whose position can be queried)
+--~ --? 	SGroup - If the sgroup is a Hold Entity then the squad is spawned inside of it.
+--~ --? 	EGroup - If the egroup is a hold entity then the squad is spawned inside of it.
+--~ --? 	NOTE: if the hold is destroyed, or is full, or due to any other misc. failure case, then the squad is spawned at the player's map entry point.
+--~ --? 	Pos - the squad is spawned at this location.
+--~ --? 	Marker - the squad is spawned at the marker and facing the direciton of the marker.
+--~ --? Table squadlist - This includes one or multiple SquadBlueprints with further parameters (listed below)
+--~ --? 	SquadBlueprint sbp - the blueprint for the new squads.
+--~ --? 	PlayerID player - (OPTIONAL) player who will own the squads. Overrides the parent value (see above).
+--~ --? 	Position location - (OPTIONAL) where to spawn the squads (see above). Overrides the parent value.
+--~ --? 	SGroupID/Table/String sgroup - (OPTIONAL) sgroup(s) that receives the new squads (see above). Overrides the parent value. 
+--~ --? 	Position destination - (OPTIONAL) where the squads will move to, load into, or attack
+--~ --? 		SGroup can mean two different things, if the Sgroup is owned by the player and a hold then try to enter it.  Or if the SGroup is an enemy squad, then the spawned squad should attack move the enemy.  If neither is true, then the squad just moves to the location.
+--~ --? 		EGroup should be treated the same as the SGroup.
+--~ --? 		Position/Marker: the squad moves to the location.
+--~ --? 		Sync weapon: the squad captures the sync weapon.
+--~ --? 	Integer numsquads - (OPTIONAL) how many squads to spawn
+--~ --? 	Integer loadout - (OPTIONAL) max amount of units to spawn per squad
+--~ --? 	Boolean attackmove - (OPTIONAL) in cases where the squads do a simple move to their destination (not attacking or loading into anything), this determines whether they attack move or not
+--~ --? 	Position facing - (OPTIONAL) End facing after spawn or after the squad reaches its destination. If facing is not specified and the squad is moving to a marker, the marker's facing is used.
+--~ --? 	UpgradeBlueprint upgrades - (OPTIONAL) upgrade(s) to instantly apply to squads when they spawn
+--~ --? Number stagger - This indicates whether the units deployed are staggered or not (and by what amount)
+--~ --? Table callback - This is a callback function and a parameter in one table (meant for the encounter system to use). See Encounter.scar
+--~ --? EGroup ignorepathfindinggroup - Entities which should be ignored when we want to find pathfinding cells to spawn into
+--~ --? bool ignorepathfindingpos - entities will not use pathfinding to reposition after spawning
+--? @result SGroup_comma_Number
+function Util_DeploySquads(spawntype, player, sgroup, location, squadlist, stagger, callback, ignorepathfindinggroup, ignorepathfindingpos, ignoreformation)
+	-- If there's no spawn type, sets it to invalid (This will spawn the squad instantly with no effect)
+	if spawntype == nil then
+		spawntype = SPAWN.Default
+	elseif scartype(spawntype) == ST_STRING then
+		spawntype = {event = spawntype, func = NoTypeFunc, forceLocation = false} -- create an on-the-fly spawntype using the string as the event
+	end
+	
+	if stagger == nil or stagger == false then
+		stagger = 0
+	elseif stagger == true then
+		stagger = 1
+	end
+	
+	if ignorepathfindinggroup == nil then ignorepathfindinggroup = EGroup_CreateUnique() end
+	if ignorepathfindingpos == nil then ignorepathfindingpos = false end
+	if ignoreformation == nil then ignoreformation = false end
+
+	if type(squadlist) ~= "table" then
+		print("Util_DeploySquads: squadlist is not a table, returning nil")
+		return nil
+	end
+	
+	local sg_tempSgroup = SGroup_CreateIfNotFound("DeployedSGroup")
+	SGroup_Clear(sg_tempSgroup)
+	
+	local spawnTable = {}
+	if squadlist[1] == nil then -- This implies that the squadlist is a single squad blueprint
+		
+		spawnTable = UnitEntry_Create(spawntype, player, sgroup, location, squadlist)
+	else -- This implies that the squadlist is a set / table of squad blueprints
+	
+		-- We put the squadlists in backwards so that we can remove them later, one at a time, from the end of the table
+		-- This stops any bugs that occur because the table shifts backwards every time you remove from the start.
+		local k = #squadlist
+		while k >= 1 do
+			local squadSet = squadlist[k]
+			local ldtable = UnitEntry_Create(spawntype, player, sgroup, location, squadSet)
+			for key, squad in next, ldtable do
+				table.insert(spawnTable, squad)
+			end
+			
+			k = k - 1
+		end
+	end
+	
+	-- spawnTable is now a list of squads with their related data
+	
+	-- set up the full temporary sgroup that holds all squads created so far
+	for key, squadTable in next, spawnTable do
+		SGroup_Add(sg_tempSgroup, Squad_FromID(squadTable.squad))
+	end
+	
+	-- get a new ID number
+	if _UnitDeploy_LastUsedID == nil then
+		_UnitDeploy_LastUsedID = 0
+	end
+	_UnitDeploy_LastUsedID = _UnitDeploy_LastUsedID + 1
+	
+	-- set up the callback function
+	local dataTable = {}
+	dataTable.callback = callback
+	dataTable.stagger = stagger
+	dataTable.spawnData = spawnTable
+	dataTable.location = location
+	dataTable.player = player
+	dataTable.index = _UnitDeploy_LastUsedID
+	dataTable.ignorelist = ignorepathfindinggroup
+	dataTable.spawnType = spawntype
+	dataTable.ignorepathfindingpos = ignorepathfindingpos
+	dataTable.ignoreformation = ignoreformation
+	
+	if scartype(dataTable.location) == ST_TABLE then
+		dataTable.location = Table_GetRandomItem(dataTable.location)	
+	end
+	
+	-- Add the dataTable to the current in progress deploys
+	table.insert(DeploysInProgress, dataTable)
+	
+	-- Call the spawn types execution function (This does different things depending on the spawn type)
+	spawntype.func(dataTable)
+	
+	return sg_tempSgroup, dataTable.index	-- This second return value is for the Encounter to keep track.
+end
+
+
+
+
+function Util_RemoveValueFromArray(array, value)
+	for i=#array,1,-1 do 
+		local v = array[i].index
+		if v == value then 
+			table.remove(array, i)
+		end 
+	end 
+end
+
+
+
+function Util_RemoveValueFromInProcessSpawns(array, value)
+	for i=#array,1,-1 do 
+		local v = array[i]
+		if v == value then 
+			table.remove(array, i)
+		end 
+	end 
+end

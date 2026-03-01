@@ -1,0 +1,1094 @@
+--
+-- Mission-o-Matic 1000
+--
+-- Run-time script module that takes a "recipe" and initializes all of the modules, etc. 
+--
+
+import("Cardinal.scar")
+
+Core_RegisterModule("MissionOMatic")
+
+
+-- High-level organizing structures
+import("MissionOMatic/MissionOMatic_Leader.scar")
+import("MissionOMatic/MissionOMatic_LeaderTent.scar")
+import("MissionOMatic/MissionOMatic_Location.scar")
+import("MissionOMatic/MissionOMatic_Utility.scar")
+import("MissionOMatic/MissionOMatic_AudioTrigger.scar")
+import("MissionOMatic/MissionOMatic_UnitRequests.scar")
+import("MissionOMatic/MissionOMatic_Raiding.scar")
+import("MissionOMatic/MissionOMatic_AllyBanners.scar")
+
+-- Behaviour modules
+import("MissionOMatic/Modules/Module_Common.scar")		-- contains helper functions that are used by other modules 
+import("MissionOMatic/Modules/Module_TownLife.scar")	-- handles gathering resources, growing a village, building units (skirmish driven)
+import("MissionOMatic/Modules/Module_Defend.scar")		-- defends a location
+import("MissionOMatic/Modules/Module_Attack.scar")		-- Manages units attacking a location
+import("MissionOMatic/Modules/Module_RovingArmy.scar")	-- Manages a mobile force of military units
+import("MissionOMatic/Modules/Module_Siege.scar")		-- Manages a force of besieging units
+import("MissionOMatic/Modules/Module_UnitSpawner.scar")	-- Spawns units that don't belong in a module
+
+-- Objectives
+import("MissionOMatic/MissionOMatic_Objectives.scar")
+import("MissionOMatic/MissionOMatic_ConditionList.scar")
+import("MissionOMatic/MissionOMatic_ActionList.scar")
+import("MissionOMatic/MissionOMatic_Playbills.scar")
+import("Missionomatic/MissionOMatic_Wave.scar")
+import("ai/wave_generator.scar")
+import("ai/army.scar")
+
+import("core_encounter.scar")
+
+-- Other stuff
+import("gameplay/currentageui.scar")					-- makes the Age UI appear on screen
+import("GroupCallers.scar")
+import("formation.scar")
+import("MissionOMatic/missionomatic_upgrades.scar")
+import("unit_trainer.scar")
+
+import("gathering_utility.scar") -- For setting up resource groups that missionomatic_utility is dependent on.
+
+CONTENT_PACK_VANILLA_CAMPAIGN = 1
+CONTENT_PACK_ART_OF_WAR = 2
+CONTENT_PACK_ABBASID_CAMPAIGN = 3
+CONTENT_PACK_ROGUE = 4
+
+
+--? @group MissionOMatic
+
+function MissionOMatic_OnInit()
+	--print("MissionOMatic OnInit")
+	
+	if content_pack == nil then
+		content_pack = CONTENT_PACK_VANILLA_CAMPAIGN
+	end
+	
+	if content_pack ~= CONTENT_PACK_ROGUE then
+		Game_FadeToBlack(FADE_OUT, 0)
+	end
+	
+	Game_SetGameRestoreCallback(VerifyAllDissolves)
+	
+	MissionOMatic_InitMusicSettings()
+	Sound_Play2D("mus_shared_set_gamemode_state_to_campaign") -- sets a state in wwise to mute the stinger when landmarks get destroyed in campaign
+	
+	sg_startingUnits = SGroup_CreateIfNotFound("sg_startingUnits")
+	eg_startingBuildings = EGroup_CreateIfNotFound("eg_startingBuildings")
+
+	sg_scriptSpawnedUnits = SGroup_CreateIfNotFound("sg_scriptSpawnedUnits")
+	eg_scriptSpawnedBuildings = EGroup_CreateIfNotFound("eg_scriptSpawnedBuildings")
+	
+	sg_ignoreForUnitComposition = SGroup_CreateIfNotFound("sg_ignoreForUnitComposition")
+	sg_waveManagerStagedUnits = SGroup_CreateIfNotFound("sg_waveManagerStagedUnits")
+	
+	eg_allWoodResources = EGroup_CreateIfNotFound("eg_allWoodResources")
+	eg_allStoneResources = EGroup_CreateIfNotFound("eg_allStoneResources")
+	eg_allGoldResources = EGroup_CreateIfNotFound("eg_allGoldResources")
+	eg_allBerriesAtStart = EGroup_CreateIfNotFound("eg_allBerriesAtStart")
+	eg_allDeerAtStart = EGroup_CreateIfNotFound("eg_allDeerAtStart")
+	eg_allsheepAtStart = EGroup_CreateIfNotFound("eg_allSheepAtStart")
+	eg_allShoreFishResources = EGroup_CreateIfNotFound("eg_allShoreFishResources")
+	eg_allDeepFishResources = EGroup_CreateIfNotFound("eg_allDeepFishResources")
+	eg_allCattleAtStart = EGroup_CreateIfNotFound("eg_allCattleAtStart")
+	
+	if scartype(Mission_SetupPlayers) == ST_FUNCTION then
+		Mission_SetupPlayers()
+	end
+
+	MissionOMatic_SetupCheatMenu()
+	
+	Gathering_FindAllResources(
+		eg_allWoodResources, 
+		eg_allStoneResources,
+		eg_allGoldResources,
+		eg_allBerriesAtStart,
+		eg_allsheepAtStart,
+		eg_allDeerAtStart,
+		eg_allShoreFishResources,
+		eg_allCattleAtStart,
+		eg_allDeepFishResources
+	)
+	if content_pack ~= CONTENT_PACK_ROGUE then
+		_Wave_Init()
+		LeaderTent_InitSystem()
+		WaveGenerator_InitSystem()
+	end
+	Army_InitSystem()
+	
+	g_missionObjectives = {}
+	
+	t_allModules = {}
+	t_attackModules = {}
+	t_rovingArmyModules = {}
+	t_defendModules = {}
+	t_townLifeModules = {}
+	t_unitSpawnerModules = {}
+	t_siegeModules = {}
+	t_villagerLifePrefabs = {}
+	
+	-- disable the shroud and territory lines
+	UI_AllTerritoryHide()
+	
+	if content_pack == CONTENT_PACK_VANILLA_CAMPAIGN then
+		-- disable the rebuildable landmarks feature
+		print("landmarks cannot be rebuilt")
+		for index = 1, World_GetPlayerCount() do 
+			Player_SetStateModelBool(World_GetPlayerAt(index), "disable_landmark_rebuild", true)
+		end
+	else
+		--print("landmarks can be rebuilt")
+	end
+	
+	-- enable resource pickups
+	Player_SetStateModelBool(World_GetPlayerAt(1), "player_can_interact_with_resource_pickups", true)
+	
+	-- enable wolves attacking scouts
+	if content_pack ~= CONTENT_PACK_ROGUE then
+		Player_SetStateModelBool(World_GetPlayerAt(1), "scout_can_be_attacked_by_wolf", true)
+	end
+	
+	_MissionOMatic_CustomDebriefTitle = nil 
+	
+end
+
+function MissionOMatic_Preset()	-- start spawning the units and initializing the modules
+	--print("MissionOMatic Preset")
+	if scartype(GetRecipe) == ST_FUNCTION then
+		MissionRecipe = GetRecipe()
+	end
+	
+	if scartype(MissionRecipe.audioSettings) == ST_TABLE then 
+		g_missionData.campaignName = MissionRecipe.audioSettings.campaignName
+		g_missionData.missionName = MissionRecipe.audioSettings.missionName
+	end
+			
+	-- initialize locations
+	if scartype(MissionRecipe.locations) == ST_TABLE then
+		for index, location in ipairs(MissionRecipe.locations) do 
+			MissionOMatic_InitializeLocation(location)
+		end
+	end
+	if content_pack ~= CONTENT_PACK_ROGUE then
+		MissionOMatic_InitializeLocationMonitoring()	-- this ensures that new entities get associated with locations as they are constructed
+	end
+	
+	-- initialize modules
+	if scartype(MissionRecipe.modules) == ST_TABLE then
+		for index, module in ipairs(MissionRecipe.modules) do
+			local diff = Game_GetSPDifficulty()
+			if module.difficulty == nil or module.difficulty == diff or (scartype(module.difficulty) == ST_TABLE and Table_Contains(module.difficulty, Game_GetSPDifficulty())) then
+				MissionOMatic_InitializeModule(module)	
+			end
+		end
+	end
+	
+	-- create battalions
+	if scartype(MissionRecipe.battalions) == ST_TABLE then
+		for index, battalion in ipairs(MissionRecipe.battalions) do 
+			MissionOMatic_InitializeBattalion(battalion)
+		end
+	end
+	
+	-- initialize objectives
+	if scartype(MissionRecipe.objectives) == ST_TABLE then
+		for index, objective in ipairs(MissionRecipe.objectives) do 
+			MissionOMatic_InitializeObjective(objective)
+		end
+	end
+	
+	-- initialize metrics
+	if scartype(MissionRecipe.metrics) == ST_TABLE then
+		for index, metric in ipairs(MissionRecipe.metrics) do 
+			MissionOMatic_InitializeCustomMetric(metric)
+		end
+	end
+	
+end
+
+function MissionOMatic_PreStart()
+	--print("MissionOMatic PreStart")
+	if scartype(MissionRecipe) == ST_TABLE then 
+		
+		if scartype(MissionRecipe.preStart) == ST_TABLE then 
+			if scartype(MissionRecipe.preStart.actions) == ST_TABLE then
+				ActionList_PlayActions(MissionRecipe.preStart.actions, nil, MissionOMatic_PreStart_Done, nil)
+				StartMission_Hold()
+			end
+		end
+		
+		if scartype(MissionRecipe.introNIS) == ST_FUNCTION then
+			
+			if _SpeechEvent_AudioMuted ~= true then
+				Sound_Play2D("mute_gameplay_all_speech")
+				_SpeechEvent_AudioMuted = true
+			end
+			Event_StartEx(MissionRecipe.introNIS, EVENT_NIS, _SpeechEvent_RestoreGameplayAudio) 			-- high priority
+			
+			Rule_Add(MissionOMatic_PreStart_IntroNISFinished)
+			StartMission_Hold()
+			
+		end
+		
+	end
+	
+
+end
+
+function MissionOMatic_PreStart_IntroNISFinished()
+	if Event_IsAnyRunning() == false then 
+		Rule_RemoveMe()
+		StartMission_ReleaseHold()
+	end
+end
+
+function MissionOMatic_PreStart_Done()
+	StartMission_ReleaseHold()
+end
+
+
+function MissionOMatic_PlayTitleCard(location, date, icon)
+	
+	local location = location or 0
+	local date = date or 0
+	local icon = icon or ""
+				
+	Game_SubTextFadeWithIcon(location, date, 0, 0.5, 3, 0.5, icon)	-- not wrapped in an event as there may be speech going on
+	
+	CTRL.Event_Delay(3)
+	CTRL.WAIT()
+	
+end
+
+function MissionOMatic_Start()
+	local difficulty_string = Util_DifVar({"0 - Story (GD_EASY in scar)", "1 - Easy (GD_NORMAL in scar)", "2 - Intermediate (GD_HARD in scar)", "3 - Hard (GD_EXPERT in scar)"})
+	--print("Starting with difficulty "..difficulty_string)
+	-- gather all of the units and buildings that exist at the start of the mission (so these can be excluded by certain conditions later on)
+	for index, player in ipairs(PLAYERS) do
+		Player_GetAll(player.id)
+		SGroup_AddGroup(sg_startingUnits, sg_allsquads)
+		EGroup_AddEGroup(eg_startingBuildings, eg_allentities)
+	end
+	
+	if content_pack ~= CONTENT_PACK_ROGUE then
+		Game_FadeToBlack(FADE_IN, 1)
+	end
+	
+	-- A few things depend on the mission recipe
+	if scartype(MissionRecipe) == ST_TABLE then 
+
+		if scartype(MissionRecipe.onStart) == ST_TABLE then
+		
+			if scartype(MissionRecipe.onStart.actions) == ST_TABLE then 
+				ActionList_PlayActions(MissionRecipe.onStart.actions)
+			end
+			
+		end
+		
+		-- Move the camera to wherever the player's units entered the map
+		local cameraStartPosition = nil
+		
+		-- First, check for an explicit definition
+		if scartype(MissionRecipe.cameraStartMarker) == ST_STRING then
+			cameraStartPosition = Util_GetPosition(Marker_FromName(MissionRecipe.cameraStartMarker, ""))
+		elseif scartype(MissionRecipe.cameraStartMarker) == ST_MARKER then
+			cameraStartPosition = Util_GetPosition(MissionRecipe.cameraStartMarker)
+		end
+		
+		-- Now use whatever we found
+		if scartype(cameraStartPosition) ~= ST_NIL then
+			Camera_MoveTo(cameraStartPosition, false)
+		end
+		
+	end
+	
+	-- trigger starting objectives and mission-wide playbills
+	if Rule_Exists(MissionOMatic_TriggerStartingObjectives) == false then -- if this isn't queued up for later, start the objectives now
+		MissionOMatic_TriggerStartingObjectives()
+	end
+	MissionOMatic_StartPlaybill()
+	
+end
+
+--
+-- Location
+--
+
+function MissionOMatic_InitializeLocation(location)
+
+	Location_Init(location)
+
+end
+
+--
+-- RovingArmy
+--
+
+function MissionOMatic_InitializeRovingArmy(rovingArmy)
+
+	RovingArmy_Init(rovingArmy)
+	
+end
+
+--
+-- Siege
+--
+
+function MissionOMatic_InitializeSiege(siege)
+
+	Siege_Init(siege)
+	
+end
+
+--
+-- Players and Teams
+--
+
+function MissionOMatic_SetupPlayer(player)			-- called during OnGameSetup - just creates the player for now
+
+	if _nextOpenPlayerSlot == nil then
+		_nextOpenPlayerSlot = 2
+	end
+	
+	if MissionRecipe.playAs == player.descriptor then 
+		player.id = Setup_Player(1, (player.displayName or 0), player.civilization, 1)
+		player.index = 1
+	else
+		player.id = Setup_Player(_nextOpenPlayerSlot, (player.displayName or 0), player.civilization, _nextOpenPlayerSlot)
+		player.index = _nextOpenPlayerSlot
+		_nextOpenPlayerSlot = _nextOpenPlayerSlot + 1
+	end
+
+	-- set age 
+	if player.startingAge ~= nil then
+		Player_SetCurrentAge(player.id, player.startingAge)
+		player.startingAge = nil		-- clear out this info - you should get it by using Player_GetCurrentAge, not from here!
+	end
+	if player.maximumAge ~= nil then 
+		Player_SetMaximumAge(player.id, player.maximumAge)
+		player.maximumAge = nil
+	end
+	
+end
+
+function MissionOMatic_InitializePlayers()			-- called during OnInit - finishes off the initialization
+
+	for index, player in pairs(MissionRecipe.players) do 
+		MissionOMatic_InitializePlayer(player)
+	end
+	
+end	
+	
+function MissionOMatic_InitializePlayer(player)
+
+	local playerDataTable = Core_GetPlayersTableEntry(player.id)
+	playerDataTable.missionomatic = player
+
+	if player.existingPlayerIndex ~= nil then
+		player.tempSGroup = SGroup_CreateUnique("")
+		player.tempEGroup = EGroup_CreateUnique("")
+		Player_GetAll(World_GetPlayerAt(player.existingPlayerIndex), player.tempSGroup, player.tempEGroup)
+	end
+	
+	
+	if scartype(player.upgrades) == ST_TABLE then
+		for index, item in pairs(player.upgrades) do 
+			Player_CompleteUpgrade(player.id, BP_GetUpgradeBlueprint(item))
+		end
+	end
+	
+	if scartype(player.availability) == ST_TABLE then
+		for index, item in pairs(player.availability) do 
+			
+			-- SBPs
+			if item.sbp == nil then
+				if scartype(item.sbp) == ST_STRING then 
+					if SBP_Exists(item.sbp) then
+						item.sbp = BP_GetSquadBlueprint(item.sbp)
+					else
+						item.sbp = Cardinal_ConvertTypeToSquadBlueprint(item.sbp, player.id)
+					end
+				end
+				if item.sbp ~= nil then 
+					Player_SetSquadProductionAvailability(player.id, item.sbp, item.availability)
+				end
+			end
+			
+			-- EBPs
+			if item.ebp == nil then
+				if scartype(item.ebp) == ST_STRING then 
+					if EBP_Exists(item.ebp) then 
+						item.ebp = BP_GetEntityBlueprint(item.ebp)
+					else
+						item.ebp = Cardinal_ConvertTypeToEntityBlueprint(item.ebp, player.id)
+					end
+				end
+				if item.ebp ~= nil then 
+					Player_SetEntityProductionAvailability(player.id, item.ebp, item.availability)
+				end
+			end
+			
+			-- UPGRADEs
+			if item.upgrade == nil then
+				if scartype(item.upgrade) == ST_STRING then 
+					item.upgrade = BP_GetEntityBlueprint(item.upgrade)
+				end
+				if item.upgrade ~= nil then 
+					Player_SetUpgradeAvailability(player.id, item.upgrade, item.availability)
+				end
+			end
+
+		end
+	end
+	
+end
+
+function MissionOMatic_InitializeTeams()
+
+	if MissionRecipe.teams == nil then
+		MissionRecipe.teams = {}
+	end
+
+	local _FindRelationshipFromRecipe = function(p1, p2)
+	
+		if p1.missionomatic == nil or p2.missionomatic == nil then
+			return R_NEUTRAL
+		end
+		
+		if MissionRecipe.teams ~= nil then
+			for index, team in pairs(MissionRecipe.teams) do 
+			
+				local p1_isOnTeam = Table_Contains(team, p1.missionomatic.descriptor)
+				local p2_isOnTeam = Table_Contains(team, p2.missionomatic.descriptor)
+				
+				if p1_isOnTeam or p2_isOnTeam then
+					if index == "neutral" then
+						return R_NEUTRAL	
+					elseif p1_isOnTeam and p2_isOnTeam then
+						return R_ALLY	-- we found a team table entry with BOTH players in it, so these players are on the same team
+					end
+				end
+				
+			end
+		end
+		
+		return R_ENEMY	-- we didn't find anything, so fall back to the two players being enemies
+		
+	end
+	
+
+	for i1, p1 in pairs(PLAYERS) do 
+		for i2, p2 in pairs(PLAYERS) do 
+
+			if p1 == p2 then
+				-- that's the same player - ignore!
+			else
+				local relationship = _FindRelationshipFromRecipe(p1, p2)
+				Player_SetRelationship(p1.id, p2.id, relationship)
+			end
+			
+			if p1.missionomatic ~= nil and p1.missionomatic.existingPlayerIndex ~= nil then
+				SGroup_SetPlayerOwner(p1.missionomatic.tempSGroup, p1.id)
+				EGroup_SetPlayerOwner(p1.missionomatic.tempEGroup, p1.id)
+				p1.missionomatic.existingPlayerIndex = nil
+				SGroup_Destroy(p1.missionomatic.tempSGroup)
+				EGroup_Destroy(p1.missionomatic.tempEGroup)
+				p1.missionomatic.tempSGroup = nil
+				p1.missionomatic.tempEGroup = nil
+			end
+
+		end
+	end
+
+end
+
+--? @shortdesc Get the relationship between two players in the mission. These players can be referenced in any way that MissionOMatic_GetPlayer() can process. 
+--? @args Player p1, Player p2
+--? @result Relationship
+function MissionOMatic_GetRelationship(p1, p2)
+
+	p1 = MissionOMatic_GetPlayer(p1)
+	p2 = MissionOMatic_GetPlayer(p2)
+	
+	return Player_ObserveRelationship(p1.id, p2.id)
+	
+end
+
+--? @shortdesc Finds the player data table for one of the players in the mission, identifying them from a String ("descriptor"), PlayerID, Squad/SGroup or Entity/EGroup
+--? @extdesc If you pass in a PlayerTable that has already been resolved it returns it straight back  
+--? @args String/PlayerID/Object identifier
+--? @result PlayerTable
+function MissionOMatic_GetPlayer(identifier)
+
+	if scartype(identifier) == ST_TABLE and scartype(identifier.id) == ST_PLAYER then
+		return identifier
+	end
+	
+	-- convert most object reference types to a player
+	if scartype(identifier) == ST_SQUAD or 
+	   scartype(identifier) == ST_SGROUP or 
+	   scartype(identifier) == ST_ENTITY or 
+	   scartype(identifier) == ST_EGROUP then
+		
+		identifier = Util_GetPlayerOwner(identifier)
+		
+	end
+	
+	for index, player in pairs(PLAYERS) do 
+		
+		if scartype(identifier) == ST_STRING then			-- search by descriptor
+			if player.missionomatic.descriptor == identifier then
+				return player.missionomatic
+			end
+		
+		elseif scartype(identifier) == ST_PLAYER then		-- search by playerID
+			if player.id == identifier then
+				return player.missionomatic
+			end
+			
+		end
+		
+	end
+
+	-- not found
+	return nil 
+	
+end
+PARTICIPANT = MissionOMatic_GetPlayer
+
+--
+-- Modules
+--
+
+function MissionOMatic_InitializeModule(module)
+	
+	local initFunc = _G[module.type.."_Init"]
+	if scartype(initFunc) == ST_FUNCTION then
+		initFunc(module)
+	else
+		if scartype(module.type) == ST_STRING then
+			assert(false, "Module has an invalid type "..module.type)
+		else
+			assert(false, "Module has an invalid type")
+		end
+		
+	end
+	
+end
+
+--? @shortdesc Finds the module data table, identifying it from a String
+function MissionOMatic_FindModule(descriptor, context)
+
+	if scartype(descriptor) == ST_STRING then
+		
+		for index, module in pairs(t_allModules) do
+			if module.descriptor == descriptor then
+				return module 
+			end
+		end
+		
+	elseif scartype(descriptor) == ST_TABLE then 
+		
+		if descriptor.prefabName ~= nil then 	-- this is just the simplest way to check if it's actually a module table
+			return descriptor 
+		end
+		
+	end
+	
+	if scartype(context) == ST_TABLE then	-- use the context and try and figure out the "self" source module from that
+		
+		if scartype(context.self) == ST_STRING then
+			return MissionOMatic_FindModule(context.self)
+		elseif scartype(context.self) == ST_TABLE then
+			return context.self
+		end
+		
+	end
+	
+end
+
+--? @shortdesc Finds the location data table, identifying it from a String
+function MissionOMatic_FindLocation(descriptor, context)
+
+	if scartype(descriptor) == ST_STRING then
+		
+		for index, location in pairs(t_allLocationPrefabs) do
+			if location.descriptor == descriptor then
+				return location 
+			end
+		end
+		
+	elseif scartype(descriptor) == ST_TABLE then 
+		
+		if descriptor.prefabName == "Location" then 	-- this is just the simplest way to check if it's actually a Location table
+			return descriptor 
+		end
+		
+	end	
+end
+
+function MissionOMatic_StartPlaybill()
+	
+	local playbill = MissionRecipe.playbill
+	
+	if scartype(playbill) == ST_TABLE then
+		
+		Playbill_Start(playbill)
+		
+	end
+	
+end
+
+function SpawnUnits(player, list, location, sgroup)
+
+	UnitEntry_DeploySquads(player, sgroup, list, location)
+
+end
+
+
+
+function MissionOMatic_SpawnUnits(units, where, sgroup, options)
+
+
+end
+
+function MissionOMatic_SpawnCompanies(companies, where, sgroup, options)
+
+
+end
+
+
+
+function MissionOMatic_EndMission(win)
+
+	if win == true and MissionRecipe.onWin ~= nil and MissionRecipe.onWin.actions ~= nil then
+		
+		ActionList_PlayActions(MissionRecipe.onWin.actions)
+		
+	elseif win == false and MissionRecipe.onLose ~= nil and MissionRecipe.onLose.actions ~= nil then
+		
+		ActionList_PlayActions(MissionRecipe.onLose.actions)
+		
+	else
+	
+		--local report = MissionOMatic_GenerateMissionReport(win)
+
+		
+		CardinalMissionData = {
+			report = {
+				win = win,
+				gameLength = World_GetGameTime(),
+			},
+		}
+		
+		Game_RetrieveTableData("CardinalMissionData", true) -- clear out the old store
+		Game_StoreTableData("CardinalMissionData", CardinalMissionData)
+		
+		local winReason = WR_OBJECTIVECOMPLETE
+		if (not win) then
+			winReason = WR_OBJECTIVEFAILED
+		end
+		
+		Game_EndSP(win, winReason)
+	
+	end
+	
+end
+
+
+
+--
+-- Setup default music settings for missions. These can be overriden later on a per scenario basis
+--
+
+function MissionOMatic_InitMusicSettings()
+
+	Sound_ResetMusicIntensityMapping();
+	Sound_AddMusicIntensityMappingPoint(15, 550) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(300, 4000) -- point 2 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(800, 9999) -- raw value max to scaled value max 
+
+end
+
+--
+-- Tagging units - useful for getting conditions and actions to track specific units
+--
+
+function MissionOMatic_GetSGroupForTaggedUnit(tag)
+
+	if t_taggedUnits == nil then
+		t_taggedUnits = {}
+	end
+	
+	for index, entry in pairs(t_taggedUnits) do 
+			
+		if entry.tag == tag then	
+			return entry.sgroup
+		end
+		
+	end
+	
+	local entry = MissionOMatic_CreateTag(tag)
+	return entry.sgroup
+	
+end
+
+function MissionOMatic_GetEntryForTaggedUnit(tag)
+
+	if t_taggedUnits == nil then
+		t_taggedUnits = {}
+	end
+	
+	for index, entry in pairs(t_taggedUnits) do 
+			
+		if entry.tag == tag then	
+			return entry
+		end
+		
+	end
+	
+	local entry = MissionOMatic_CreateTag(tag)
+	return entry
+	
+end
+
+function MissionOMatic_TagUnit(squad, tag)
+
+	if t_taggedUnits == nil then
+		t_taggedUnits = {}
+	end
+	
+	local entry = MissionOMatic_GetEntryForTaggedUnit(tag)
+
+	if entry == nil then
+		entry = MissionOMatic_CreateTag(tag)
+	end
+	
+	if scartype(squad) == ST_SGROUP then
+		SGroup_AddGroup(entry.sgroup, squad)
+	elseif scartype(squad) == ST_SQUAD then
+		SGroup_Add(entry.sgroup, squad)
+	end
+	
+end
+
+function MissionOMatic_SquadHasTag(squad, tag)
+
+	local sgroup = MissionOMatic_GetSGroupForTaggedUnit(tag)
+	
+	if sgroup ~= nil and scartype(squad) == ST_SQUAD then
+		return SGroup_ContainsSquad(sgroup, Squad_GetID(squad), true)
+	end
+	
+	return false
+end
+
+function MissionOMatic_UntagUnit(squad, tag)
+
+	if t_taggedUnits == nil then
+		t_taggedUnits = {}
+	end
+	
+	local entry = MissionOMatic_GetSGroupForTaggedUnit(tag)
+
+	if entry == nil then
+		
+		entry = {
+			tag = tag,
+			sgroup = SGroup_CreateUnique("Tagged Unit"),
+		}
+		table.insert(t_taggedUnits, entry)
+	
+	end
+	
+	if scartype(squad) == ST_SGROUP then
+		SGroup_RemoveGroup(entry.sgroup, squad)
+	elseif scartype(squad) == ST_SQUAD then
+		SGroup_Remove(entry.sgroup, squad)
+	end
+	
+end
+
+function MissionOMatic_ClearTag(tag)
+
+	if t_taggedUnits == nil then
+		t_taggedUnits = {}
+	end
+	
+	for index, entry in pairs(t_taggedUnits) do 
+			
+		if entry.tag == tag then	
+			SGroup_Clear(entry.sgroup)
+		end
+		
+	end
+	
+end
+
+function MissionOMatic_CreateTag(tag)
+
+	if t_taggedUnits == nil then
+		t_taggedUnits = {}
+	end
+
+	for index, entry in pairs(t_taggedUnits) do 
+		if entry.tag == tag then	
+			return entry
+		end
+	end 
+	
+	local entry = {
+		tag = tag,
+		sgroup = SGroup_CreateUnique("Tagged Unit - "..tag),
+	}
+	table.insert(t_taggedUnits, entry)
+	
+	return entry	
+	
+end
+
+
+
+
+
+--
+-- Hooks into the Core UnitEntry system
+--
+
+function MissionOMatic_UnitEntry_CreateUnit(unit, deployment)
+
+	-- look for the "tag" key and apply missionomatic tags as appropriate
+	if scartype(unit.tag) == ST_STRING then			
+		MissionOMatic_TagUnit(unit.squadID, unit.tag)
+	end
+	
+	SGroup_Add(sg_scriptSpawnedUnits, unit.squadID) 
+end
+
+
+
+function MissionOMatic_UnitEntry_SpawnUnit(unit, deployment)	
+	
+ 	-- look for the "zeroPopulation" key (as a unit option or a deployment option) and apply a modifier to nix the unit's popcap
+ 	if unit.zeroPopulation == true or deployment.options.zeroPopulation == true then
+		local modifier = Modifier_Create(MAT_Entity, "entity_popcap_modifier", MUT_Multiplication, false, 0, "")
+		Modifier_ApplyToSquad(modifier, unit.squadID, 0)
+	end
+	
+end
+
+
+--
+-- This is called when the user requests to quit the mission - reset campaign state as necessary
+--
+
+function MissionOMatic_OnLeaveGameMatchRequested()
+
+	-- agraham: temporary Neil, please shell out to the campaign mission to clear feFlow_is_playing_campaign
+	-- also - currently post screen says "victory" we need to set a variable in store to indicate quit instead
+
+	local temp = Game_RetrieveTableData("campaign_temp", false)
+	temp.feFlow_is_playing_campaign = false
+	Game_StoreTableData("campaign_temp", temp)
+
+	-- go back to last saved campaign data so we see breifing again
+	Game_LoadTextDataStore("campaign", "")
+
+end
+
+
+
+--
+-- Cheat Menu
+--
+
+function MissionOMatic_SetupCheatMenu()
+
+	CheatMenu_RegisterCheatFunction(MissionOMatic_Cheat_ViewRecipe, "View Recipe", false)
+	CheatMenu_RegisterCheatFunction(MissionOMatic_Cheat_Win, "Mission-o-Matic Win", false)
+	CheatMenu_RegisterCheatFunction(MissionOMatic_Cheat_Lose, "Mission-o-Matic Lose", false)
+	CheatMenu_RegisterCheatFunction(MissionOMatic_Cheat_Complete_Obj, "Complete Active Objectives", false)
+	CheatMenu_RegisterCheatFunction(MissionOMatic_Cheat_Fail_Obj, "Fail Active Objectives", false)
+	
+	if scartype(EVENTS) == ST_TABLE then 
+		for index, event in pairs(EVENTS) do
+			if string.find(index, "ECAM") ~= nil then
+				CheatMenu_AddMenuItem_Event("Play E-Cam "..index, false, "playECAM", index)
+			else
+				CheatMenu_AddMenuItem_Event("Play Speech "..index, false, "playSpeechEvent", index)
+			end
+		end
+	end
+	
+end
+
+function MissionOMatic_ActivateMenuItem(mode, value)
+
+	if mode == "playECAM" and scartype(value) == ST_STRING then
+		PlayECAM(value)
+	elseif mode == "playSpeechEvent" and scartype(value) == ST_STRING then
+		PlaySpeech(value)
+	end	
+	
+end
+
+--? @shortdesc Used to view the mission recipe that this mission was generated from
+function MissionOMatic_Cheat_ViewRecipe()
+
+	view(MissionRecipe)
+	
+end
+
+--? @shortdesc Used to WIN the entire mission
+function MissionOMatic_Cheat_Win()
+	
+	-- kill everything that isn't the player's
+	for index, player in pairs(PLAYERS) do 
+		if player.index ~= 1 then
+			Player_GetAll(player.id)
+			SGroup_Kill(sg_allsquads)
+		end
+	end
+	
+	-- complete all objectives
+	for index, objective in pairs(g_missionObjectives) do 
+		Obj_SetState(objective.ID, OS_Complete)
+	end
+	
+	World_NotifyDebugEndSP(true)
+
+	CardinalMissionData = {
+		report = {
+			win = true,
+			gameLength = World_GetGameTime(),
+		},
+	}
+	
+	Game_RetrieveTableData("CardinalMissionData", true) -- clear out the old store
+	Game_StoreTableData("CardinalMissionData", CardinalMissionData)
+	
+	Game_EndSP(true, WR_OBJECTIVECOMPLETE)
+	
+end
+
+--? @shortdesc Used to FAIL the entire mission
+function MissionOMatic_Cheat_Lose()
+	
+	-- kill everything player-owned
+	local player = World_GetPlayerAt(1)
+	Player_GetAll(player)
+	SGroup_Kill(sg_allsquads)
+	
+	-- fail all objectives
+	for index, objective in pairs(g_missionObjectives) do 
+		Obj_SetState(objective.ID, OS_Failed)
+	end
+	
+	World_NotifyDebugEndSP(false)
+	
+	CardinalMissionData = {
+		report = {
+			win = false,
+			gameLength = World_GetGameTime(),
+		},
+	}
+	
+	Game_RetrieveTableData("CardinalMissionData", true) -- clear out the old store
+	Game_StoreTableData("CardinalMissionData", CardinalMissionData)
+	
+	Game_EndSP(false, WR_OBJECTIVEFAILED)
+
+end
+
+--? @shortdesc Used to successfully COMPLETE all currently-active objectives
+function MissionOMatic_Cheat_Complete_Obj()
+
+	-- Complete all objectives that have STARTED
+	for index, objective in pairs(__t_Objectives) do
+		if objective.Type ~= OT_Secondary and Objective_IsStarted(objective) == true and Objective_IsComplete(objective) == false and Objective_IsFailed(objective) == false then
+			
+			-- First, figure out subobjectives, if there are any
+			local subObjectives = Objective_GetSubObjectives(objective)
+			local countPendingSubobjectives = 0
+			
+			-- First we want to extract started subobjectives
+			local subobjsToComplete = {}
+			-- We have to complete them separately or one subobjective might start another on completion,
+			-- which could lead to that knock-on subobjective also getting completed before it becomes active
+			for index, subObjective in pairs(subObjectives) do
+				-- If an objective has any subobjectives that aren't yet resolved, we don't want to complete the objective itself yet
+				if Objective_IsComplete(subObjective) == false and Objective_IsFailed(subObjective) == false then
+					countPendingSubobjectives = countPendingSubobjectives + 1
+					-- If we have a pending objective that is started, we need to complete it
+					if Objective_IsStarted(subObjective) == true then
+						table.insert(subobjsToComplete, subObjective)
+					end
+				end
+			end
+			
+			-- Complete only the ones that were already started here
+			for index, subObjective in pairs(subobjsToComplete) do
+				print("CHEAT - Completing Sub: "..Loc_ToAnsi(subObjective.Title))
+				Objective_Complete(subObjective)
+			end
+			
+			-- If there weren't any subobjectives to resolve, we may have to resolve this directly
+			if countPendingSubobjectives <= 0 then
+				Objective_Complete(objective)
+				print("CHEAT - Completing Obj: "..Loc_ToAnsi(objective.Title))
+			end
+		end
+	end
+
+end
+
+--? @shortdesc Used to FAIL all currently-active objectives
+function MissionOMatic_Cheat_Fail_Obj()
+
+	-- Fail all objectives that have STARTED
+	for index, objective in pairs(__t_Objectives) do
+		if objective.Type ~= OT_Secondary and Objective_IsStarted(objective) == true and Objective_IsComplete(objective) == false and Objective_IsFailed(objective) == false then
+			
+			-- First, figure out subobjectives, if there are any
+			local subObjectives = Objective_GetSubObjectives(objective)
+			local countPendingSubobjectives = 0
+			
+			-- First we want to extract started subobjectives
+			local subobjsToFail = {}
+			-- We have to fail them separately or one subobjective might start another on failure,
+			-- which could lead to that knock-on subobjective also getting failed before it becomes active
+			for index, subObjective in pairs(subObjectives) do
+				-- If an objective has any subobjectives that aren't yet resolved, we don't want to fail the objective itself yet
+				if Objective_IsComplete(subObjective) == false and Objective_IsFailed(subObjective) == false then
+					countPendingSubobjectives = countPendingSubobjectives + 1
+					-- If we have a pending objective that is started, we need to fail it
+					if Objective_IsStarted(subObjective) == true then
+						table.insert(subobjsToFail, subObjective)
+					end
+				end
+			end
+			
+			-- Fail only the ones that were already started here
+			for index, subObjective in pairs(subobjsToFail) do
+				print("CHEAT - Failing Sub: "..Loc_ToAnsi(subObjective.Title))
+				Objective_Fail(subObjective)
+			end
+			
+			-- If there weren't any subobjectives to resolve, we may have to resolve this directly
+			if countPendingSubobjectives <= 0 then
+				Objective_Fail(objective)
+				print("CHEAT - Failing Obj: "..Loc_ToAnsi(objective.Title))
+			end
+		end
+	end
+
+end
+
+-- Overrides the default player flags on Holy Order Units. MUST BE RUN DURING LOAD (run right after file imports)
+function MissionOMatic_UpdateHolyOrderFlags()
+	UI_OverrideUIProperty(SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_CRU, "flag_icon", "images\\civ_flags\\civ_icon_secondary_tem")
+	UI_OverrideUIProperty(SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEMPLAR_MASTER_CRU, "flag_icon", "images\\civ_flags\\civ_icon_secondary_tem")
+	UI_OverrideUIProperty(SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_CRU, "flag_icon", "images\\civ_flags\\civ_icon_secondary_teu")
+	UI_OverrideUIProperty(SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_TEUTON_MASTER_CRU, "flag_icon", "images\\civ_flags\\civ_icon_secondary_teu")
+	UI_OverrideUIProperty(SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_CRU, "flag_icon", "images\\civ_flags\\civ_icon_secondary_hos")
+	UI_OverrideUIProperty(SBP.CRUSADER_CMP.UNIT_HOLY_ORDER_HOSPITALLER_MASTER_CRU, "flag_icon", "images\\civ_flags\\civ_icon_secondary_hos")
+end

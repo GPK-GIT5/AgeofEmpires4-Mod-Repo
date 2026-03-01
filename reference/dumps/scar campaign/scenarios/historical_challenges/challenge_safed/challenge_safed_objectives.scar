@@ -1,0 +1,410 @@
+-- Developed by Forgotten Empires
+
+function Safed_Init_Objectives()
+	
+	local location = LOCATION("siege_camp")
+	
+	OBJ_SaveFortressPrimary = {
+		Title = "$11268432", --Save the Fortress of Safed from falling
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.PrimaryObjective_Start,
+		Intel_Complete = EVENTS.Victory,
+		Intel_Fail = EVENTS.PrimaryObjective_Fail,
+		OnStart = function()
+			
+			Objective_Start(OBJ_Tip_SaveVillagers, false, false)
+			Objective_Start(OBJ_Bonus_ConqMode, false, false)
+			Objective_Start(OBJ_SaveFortressProgressBar, false, false)
+			
+		end,
+		SetupUI = function()
+			
+			--LOC: Safed Fortress
+			Objective_AddUIElements(OBJ_SaveFortressPrimary, eg_fortress, true, "$11268433", false, 5)
+			
+			--training hint to keep villagers alive
+			Safed_Training_Hint_Save_Vills()
+			
+			--first stone revealed
+			Safed_Reveal_Stone(LOCATION("mine_town1"))
+			
+    	end,
+		IsFailed = function()
+			
+			--player loses all villagers, let them know the reason on objective failure popup
+			if (SGroup_CountSpawned(sg_player_vills) == 0 and
+					Objective_IsComplete(SOBJ_SecureStone) ~= true) then
+				--LOC: All villagers have perished
+				Objective_UpdateText(OBJ_SaveFortressPrimary, "$11268434", nil, false, true)
+			end
+		
+			--fortress destroyed or player lost all villagers
+			--if SOBJ_SecureStone is complete, ignore losing all villagers
+			if (EGroup_CountSpawned(eg_fortress) == 0 or
+					SGroup_CountSpawned(sg_player_vills) == 0 and
+					Objective_IsComplete(SOBJ_SecureStone) ~= true) then				
+				return true
+			end
+			
+			
+		end,
+		PreComplete = function()
+			
+			--conqueror mode medal
+			if (SAFED_CM_ACTIVATED == true) then
+				Game_StoreTableData("conqueror", { kpi = SAFED_FORTRESS_HEALTH_INT })
+			else --gold, silver, bronze medals
+				Game_StoreTableData("trial", { kpi = SAFED_FORTRESS_HEALTH_INT })
+			end
+			
+			--conqueror mode send event for achievement
+			if (SAFED_CM_ACTIVATED == true) then
+				Game_SendCustomChallengeEvent(player1, CE_SAFEDCONQ, 1)
+			end
+			
+		end,
+		OnComplete = function()
+			
+			Mission_Complete()
+
+		end,
+		OnFail = function()
+		
+			Mission_Fail()
+		
+		end
+	}
+	
+	OBJ_SaveFortressProgressBar = {
+		Title = Loc_FormatText("$11268429", SAFED_FORTRESS_HEALTH_INT), --Fortress Health: %1%%%
+		Type = ObjectiveType_Information,
+		showTitle = false,
+		playIntel = false,
+		PreStart = function()
+		
+			--UI fortress health bar
+			Rule_Add(Safed_Update_Fortress_ProgressBar)
+			
+		end,
+		isComplete = function()
+			--primary mission completed, remove from objectives than have it lingering on screen
+			if (Objective_IsComplete(OBJ_SaveFortressPrimary) == true) then
+				return true
+			end
+		end
+	}
+	
+	
+	OBJ_Tip_SaveVillagers = {
+		Title = "$11268435", --Protect your villagers - the mission fails if all are lost.
+		Type = ObjectiveType_Tip,
+		IsComplete = function()
+			return Objective_GetCounter(SOBJ_SecureStone) >= SAFED_STONE_NODE_COUNT
+		end,
+		showTitle = false,
+		playIntel = false
+	}
+	
+	
+	OBJ_Bonus_ConqMode = {
+		Title = "$11269004", --Escort all your villagers safely and quickly for a great challenge
+		Type = ObjectiveType_Bonus,
+		IsComplete = function()
+			
+			--update bonus objective text when conqueror mode is activated
+			if (SAFED_CM_ACTIVATED == true) then
+				Objective_UpdateText(OBJ_Bonus_ConqMode, "$11266822", nil, false, true)
+			elseif (math.floor(World_GetGameTime()) >= SAFED_CM_ACTIVATE_TIME and SAFED_CM_ACTIVATED == false or SGroup_CountSpawned(sg_player_vills) < SAFED_PLAYER_VILLAGERS_TOTAL_COUNT) then
+				return true
+			end
+			
+		end,
+		showTitle = false,
+		playIntel = false
+	}
+	
+	
+	SOBJ_SecureStone = {
+		Title = "$11268436", --Mine stone for the fortress to be repaired
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_SaveFortressPrimary,
+		StartAlongsideParent = true,
+		PreStart = function()
+			Objective_SetCounter(SOBJ_SecureStone, 0, SAFED_STONE_NODE_COUNT)
+			end,
+		IsComplete = function()
+			return Objective_GetCounter(SOBJ_SecureStone) >= SAFED_STONE_NODE_COUNT
+		end,
+		PreComplete = function()
+					
+		end,
+		OnComplete = function()
+			Objective_Start(SOBJ_StopBombardment)
+		end
+	}
+	
+	
+	SOBJ_LocationSecureStone = {
+		Title = "$11190196", --Stone Bounty
+		Type = ObjectiveType_Build,
+		Parent = OBJ_SaveFortressPrimary
+	}
+	
+	
+	SOBJ_StopBombardment = {
+		Title = "$11268437", --Stop the bombardment
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_SaveFortressPrimary,
+		PreStart = function()
+			--set new attack targets
+			Rule_AddInterval(Safed_Siege_Camp_Set_Target, 1)
+			
+			--monitor if player loses entire army and can no longer afford to buy units, prevents softlock by failing the mission
+			Rule_AddInterval(Safed_Monitor_Player_Can_Afford, 1)
+		end,
+		SetupUI = function()
+			Safed_Init_Siege_Camp(LOCATION("siege_camp"))
+		end
+	}
+	
+	
+	SOBJ_LocationStopBombardment = {
+		Title = "$11268438", --Clear the siege camp
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_SaveFortressPrimary
+	}
+
+	Objective_Register(OBJ_SaveFortressPrimary)
+	Objective_Register(OBJ_Tip_SaveVillagers)
+	Objective_Register(OBJ_Bonus_ConqMode)
+	Objective_Register(OBJ_SaveFortressProgressBar)
+	
+	Objective_Register(SOBJ_SecureStone)
+	Objective_Register(SOBJ_LocationSecureStone)
+	
+	Objective_Register(SOBJ_StopBombardment)
+	Objective_Register(SOBJ_LocationStopBombardment)
+	
+	location.objectivePrimary = OBJ_SaveFortressPrimary
+	location.objectiveSecondary = SOBJ_StopBombardment
+	location.objectiveCapture = SOBJ_LocationStopBombardment
+	
+end
+
+
+function Safed_Update_Fortress_ProgressBar(context, data)
+	if (Objective_IsComplete(OBJ_SaveFortressPrimary) ~= true) then
+		--updates objective title with health percentage
+		Objective_UpdateText(OBJ_SaveFortressProgressBar, Loc_FormatText("$11268429", SAFED_FORTRESS_HEALTH_INT), nil, false, true) --Fortress Health: %1%%%
+		Objective_SetProgressBar(OBJ_SaveFortressProgressBar, SAFED_FORTRESS_HEALTH)
+	else
+		Objective_RemoveProgressBar(OBJ_SaveFortressProgressBar)
+		Rule_RemoveMe()
+	end
+end
+
+
+
+
+--initializes final siege camp objective with location module data
+function Safed_Init_Siege_Camp(location)
+	
+	local instance = Prefab_GetInstance(location)
+	
+	if (scartype(instance.sgroup_defenders) ~= ST_TABLE) then
+		instance.sgroup_defenders = { instance.sgroup_defenders }
+	end
+	
+	if (scartype(instance.egroup_defenders) ~= ST_TABLE) then
+		instance.egroup_defenders = { instance.egroup_defenders }
+	end
+	
+	local locationName = instance.objectiveCapture.Title
+		
+	Objective_AddUIElements(
+		instance.objectiveCapture, 
+		instance.marker, 
+		true, 
+		locationName, 
+		true
+	)
+	
+	Obj_SetVisible(instance.objectiveCapture.ID, false)
+	Obj_SetProgressVisible(instance.objectiveCapture.ID, true)
+	Obj_SetProgress(instance.objectiveCapture.ID, 0)
+	
+	--set initial count
+	Safed_Siege_Camp_Count(instance)
+	
+	--removes the low repair rate on villagers so they may be able to repair mangonels
+	Modifier_Remove(mod_player_vill_repair_rate)
+	
+	--fortress damage decreased to account for travel time to siege camp and final battle
+	Modify_ReceivedDamage(eg_fortress, SAFED_FORTRESS_DAMAGE_RECEIVED_SCALE_ENDING, false)
+	
+	--monitor progress
+	Rule_AddInterval(Safed_Siege_Camp_Monitor, 0.5, instance)
+	
+end
+
+
+
+
+--monitors the number of SGroups and EGroups remaining
+--updates the UI objective marker bar
+function Safed_Siege_Camp_Monitor(context, instance)
+	
+	local defenders_remaining = Safed_Siege_Camp_Count(instance)
+	
+	--objective complete
+	if (defenders_remaining == 0) then
+		
+		Objective_Complete(instance.objectiveSecondary, false)
+		Objective_Complete(instance.objectiveCapture, false)
+		Objective_Complete(instance.objectivePrimary)
+	
+	--remaining defenders
+	else
+				
+		local defenders_killed = instance.data.defender_count - defenders_remaining
+		
+		--bar to indicate progress
+		Objective_SetCounter(instance.objectiveSecondary, defenders_killed, instance.data.defender_count)
+				
+		local progress = defenders_killed / instance.data.defender_count
+		Obj_SetProgress(instance.objectiveCapture.ID, progress)
+		Obj_SetProgress(instance.objectiveSecondary.ID, progress)
+				
+	end
+	
+end
+
+
+
+
+--gets the total count of sgroups and egroups assigned to defend the siege camp location module
+function Safed_Siege_Camp_Count(instance)
+
+	local count = 0
+	
+	--SGroup count for player to destroy
+	for index, sgroup in pairs(instance.sgroup_defenders) do	
+		
+		local _count_squad = function(gid, idx, sid)
+			if (Squad_GetPlayerOwner(sid) == instance.player) then
+				count = count + 1
+			end
+		end
+		
+		SGroup_ForEach(sgroup, _count_squad)
+	end
+	
+	if (instance.data.defender_count == nil) then
+		instance.data.defender_count = count
+	end
+	
+	return count
+	
+end
+
+
+
+
+--modifes combat range params at the siege camp for units near the trebuchets
+--only the front row troops near the front
+function Safed_Siege_Camp_Set_Target()
+	
+	if (Player_AreSquadsNearMarker(player1, mkr_siege_camp_trigger)) then
+		
+		local enemy_siege_camp_markers = Marker_GetSequence("mkr_enemy_siege_camp", "")
+		
+		for key, marker_name in ipairs(enemy_siege_camp_markers) do
+			
+			--units near trebuchets doesn't exceed 4 markers
+			--the remaining units are positioned in the siege camp
+			if (key > 4) then
+				break
+			end
+			
+			--set a high attack range so they leave their post
+			--at the beginning of the mission these parameters were set to zero
+			local current_army = Army_FindFromName("army_siege_camp"..tostring(key))
+			current_army.combatArenaParams.combatRangeAtTarget = 90
+			current_army.combatArenaParams.combatRangeEnRoute = 90
+			current_army.combatArenaParams.leashRangeEnRoute = 100
+			current_army.combatArenaParams.leashRangeAtTarget = 100
+			current_army.combatArenaParams.attackMoveAtTarget = true
+			current_army.combatArenaParams.attackMoveEnRoute = true
+			current_army.combatArenaParams.holdPositionWhileWaiting = true
+			Army_SetTarget(current_army, marker_name)
+			
+		end
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+
+
+
+--all units that are utilized in the mission and their cost
+function Safed_Unit_Cost_Init()
+
+	local units_cost = {
+		{ sbp = SBP.TEMPLAR.UNIT_ARCHER_3_TEM, cost = nil },
+		{ sbp = SBP.TEMPLAR.UNIT_CROSSBOWMAN_3_TEM, cost = nil },
+		{ sbp = SBP.TEMPLAR.UNIT_HORSEMAN_3_TEM, cost = nil },
+		{ sbp = SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_3_TEM, cost = nil },
+		{ sbp = SBP.TEMPLAR.UNIT_GENITOUR_3_TEM, cost = nil },
+		{ sbp = SBP.TEMPLAR.UNIT_SPEARMAN_3_TEM, cost = nil },
+		{ sbp = SBP.TEMPLAR.UNIT_MANATARMS_3_TEM, cost = nil },
+		{ sbp = SBP.TEMPLAR.UNIT_KNIGHT_HOSPITALLER_3_TEM, cost = nil },
+		{ sbp = SBP.TEMPLAR.UNIT_MANGONEL_3_TEM, cost = nil }
+	}
+	
+	for i = 1, #units_cost do
+		units_cost[i].cost = Player_GetSquadBPCost(player1, units_cost[i].sbp)
+	end
+	
+	return units_cost
+	
+end
+
+
+
+
+--returns true if player can afford units from the SAFED_UNITS_COST table
+function Safed_Player_Can_Afford_Units()
+	
+	local food = Player_GetResource(player1, RT_Food)
+	local wood = Player_GetResource(player1, RT_Wood)
+	local gold = Player_GetResource(player1, RT_Gold)
+	
+	for key, unit in ipairs(SAFED_UNITS_COST) do
+		local cost = unit.cost
+		if (food >= cost.food and wood >= cost.wood and gold >= cost.gold) then
+			return true
+		end
+	end
+	
+	return false
+	
+end
+
+
+
+
+--monitor the players troops and if they can still make new units
+--this is to prevent a softlock at the end of the mission where if the player destroys the trebuchets, loses all their units, and can't afford new ones
+function Safed_Monitor_Player_Can_Afford()
+
+	if (Player_GetSquadCount(player1) < 1) then
+		if (Safed_Player_Can_Afford_Units() == false) then
+			Objective_Fail(OBJ_SaveFortressPrimary, false, true)
+			Rule_RemoveMe()
+		end
+	end
+
+end

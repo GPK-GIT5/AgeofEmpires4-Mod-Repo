@@ -1,0 +1,474 @@
+-- 
+-- Shield Wall
+--
+
+
+--? @group ShieldWall
+
+
+
+SHIELDWALL_UNIT_SPACING = 1.2			-- how far apart the units are positioned along a row (this may change a bit as it tries to divide the number of units equally along the row)
+SHIELDWALL_ROW_SPACING = 1				-- how far behind a row the next row is positioned
+SHIELDWALL_NUM_ROWS = 2					-- maximum number of rows (may change if there aren't enough units) 
+SHIELDWALL_LAST_ROW_FILL = 1			-- what percentage of units the last row should have
+SHIELDWALL_BACKFILL_DISTANCE = 5.5		-- how far behind the first row the backfill units will position themselves
+
+
+
+
+--? @shortdesc Create a shield wall stretching from posA to posB, using the units in the sgroup. Units stand in a line shoulder to shoulder, and excess units are used as backfill. 
+--? @extdesc PosA should be the left end (as you look at the line), PosB the right, so if the units are facing the wrong way then flip the two positions. If immediate is set to true, units start in wall formation, otherwise they move into position.
+--? @args Marker/Pos posA, Marker/Pos posB, SGroupID units, Table specialUnitsPerRow[, Boolean immediate, String name]
+--? @result ShieldWallID
+function ShieldWall_Create(posA, posB, units, specialUnitsPerRow, immediate, name)
+
+	posA = Util_GetPosition(posA)
+	posB = Util_GetPosition(posB)
+	posMiddle = Util_GetPositionFromAtoB(posA, posB, 0.5)
+	
+	specialUnitsPerRow = specialUnitsPerRow or {}
+	
+	local data = {
+		name = name or "No name",
+		location = {
+			posA = posA,
+			posB = posB,
+			posMiddle = posMiddle,
+			facing = Util_GetDirectionFromAtoB(posA, posB),			-- this is the facing along the line - will get rotated in a bit!
+		},
+		units = {
+			wall = SGroup_CreateUnique("ShieldWall_Units"),
+			backfill = SGroup_CreateUnique("ShieldWall_Backfill"),
+			rows = {},
+			total = units,
+			unitList = {},
+		},
+		data = {},
+		enabled = true,
+	}
+	
+	SGroup_AddGroup(data.units.backfill, units)	
+	data.location.facing = World_Pos(data.location.facing.z, 0, -data.location.facing.x)	-- rotate the facing 90 degrees so it's now facing forwards
+
+	--Modify_WeaponEnabled(units, "hardpoint_02", false)										-- disable the torch weapon on these units
+	
+	local length = Util_GetDistance(posA, posB)
+	local row = 1
+	
+	local specialUnits = SGroup_CreateUnique("")
+	
+	while SGroup_CountSpawned(data.units.backfill) >= 1 and row <= SHIELDWALL_NUM_ROWS do 
+		
+		local rowSpacingOffset = (row - 1) * 0.5
+		local rowCountAdjustment = (row - 1) 
+		
+		local rowSGroup = SGroup_CreateUnique("ShieldWall_Row"..row)
+		table.insert(data.units.rows, rowSGroup)
+		
+		
+		-- figure out the number of units required for this row, and the necessary spacing
+		local unitNumber = math.floor(math.min((length / SHIELDWALL_UNIT_SPACING), SGroup_CountSpawned(data.units.backfill))) 
+		if row == SHIELDWALL_NUM_ROWS then 
+			unitNumber = math.floor(unitNumber * SHIELDWALL_LAST_ROW_FILL)
+		end
+		local unitSpacing = length / (unitNumber - 1)			-- unit spacing may be wider than specified, as it has to stretch the row to fill remaining space
+		local rowSpacing = (row - 1) * SHIELDWALL_ROW_SPACING
+
+		unitNumber = unitNumber - rowCountAdjustment
+		
+		
+		local posA = World_Pos(data.location.posA.x - (data.location.facing.x * rowSpacing), data.location.posA.y, data.location.posA.z - (data.location.facing.z * rowSpacing))
+		local posB = World_Pos(data.location.posB.x - (data.location.facing.x * rowSpacing), data.location.posB.y, data.location.posB.z - (data.location.facing.z * rowSpacing))
+		
+		SGroup_Clear(specialUnits)
+		
+		local specialUnit_frequency = 99999
+		local specialUnit_next = 99999 
+		if scartype(specialUnitsPerRow[row]) == ST_SGROUP then
+			SGroup_AddGroup(specialUnits, specialUnitsPerRow[row])
+			if SGroup_CountSpawned(specialUnits) >= 1 then
+				specialUnit_frequency = unitNumber / SGroup_CountSpawned(specialUnits)
+				specialUnit_next = specialUnit_frequency / 2
+			end				
+		end
+		
+		
+		-- fill wall units from backfill and give move orders
+		for i = 1, unitNumber do 
+			
+			local position = Util_GetPositionFromAtoB(posA, posB, (((i - 1) + rowSpacingOffset) * unitSpacing) + 1) 
+			position = Util_ScarPos(position.x, position.z)
+			local facing = World_Pos(position.x + (data.location.facing.x * 10), position.y, position.z + (data.location.facing.z * 10))
+			local squad = nil
+			if i >= specialUnit_next and SGroup_CountSpawned(specialUnits) >= 1 then 
+				squad = SGroup_GetClosestSquad(specialUnits, position)
+				SGroup_Remove(specialUnits, squad)
+				specialUnit_next = specialUnit_next + specialUnit_frequency
+			else
+				squad = SGroup_GetClosestSquad(data.units.backfill, position)
+				SGroup_Remove(data.units.backfill, squad)
+			end	
+			
+			local unit = {
+				squadID = Squad_GetID(squad),
+				position = position,
+				facing = facing,
+				row = row,
+			}
+			table.insert(data.units.unitList, unit)
+			
+			SGroup_Single(sg_temp, squad)					
+			
+			if immediate == true then
+				local entity = Squad_GetFirstEntity(squad)
+				Squad_SetPosition(squad, position, facing)
+				Entity_SetPosition(entity, position)
+				Cmd_Stop(sg_temp)
+				ShieldWall_WallUnit_HoldGround(unit) 
+			else		
+				Cmd_Move(sg_temp, position, nil, nil, facing)
+				Rule_AddInterval(ShieldWall_WallUnitInPositon, 1, {wall = data, unit = unit})
+			end
+			
+
+			SGroup_Add(data.units.wall, squad)
+			SGroup_Add(rowSGroup, squad)		
+			
+		end
+
+		row = row + 1 
+		
+	end
+	
+	-- set up rules for monitoring the wall
+	Rule_AddSGroupEvent(ShieldWall_WallUnitKilled, data.units.wall, GE_SquadKilled, data)	
+	
+	-- move backfill units to the area behind the wall
+	if SGroup_CountSpawned(data.units.backfill) >= 1 then 
+		
+		local unitNumber = SGroup_CountSpawned(data.units.backfill)
+		local unitSpacing = length / unitNumber
+		
+		SGroup_Duplicate(data.units.backfill, sg_temp)
+
+		local positionA = World_Pos(data.location.posA.x - (data.location.facing.x * SHIELDWALL_BACKFILL_DISTANCE), data.location.posA.y, data.location.posA.z - (data.location.facing.z * SHIELDWALL_BACKFILL_DISTANCE))
+		local positionB = World_Pos(data.location.posB.x - (data.location.facing.x * SHIELDWALL_BACKFILL_DISTANCE), data.location.posB.y, data.location.posB.z - (data.location.facing.z * SHIELDWALL_BACKFILL_DISTANCE))
+
+		for index = 1, unitNumber do
+			
+			local segmentSpacing = World_GetRand(math.floor(unitSpacing * 15), math.floor(unitSpacing * 80)) / 100
+			local wallPosition = Util_GetPositionFromAtoB(positionA, positionB, math.max(((index - 1) * unitSpacing) + segmentSpacing, 1)) 
+			local backfillPosition =  Util_GetRandomPosition(wallPosition, 2)
+			backfillPosition = Util_ScarPos(backfillPosition.x, backfillPosition.z)
+
+			local facing = Util_GetFacingFromDirection(backfillPosition, data.location.facing)					
+			local squad = SGroup_GetClosestSquad(sg_temp, backfillPosition)
+			
+			SGroup_Single(sg_single, squad)
+			
+			if immediate == true then
+				local entity = Squad_GetFirstEntity(squad)
+				Squad_SetPosition(squad, backfillPosition, facing)
+				Entity_SetPosition(entity, backfillPosition)
+				Cmd_Stop(sg_single)
+				Cmd_HoldPosition(sg_single, true, true)		
+			else		
+				Cmd_Move(sg_single, backfillPosition, nil, nil, facing)
+				Cmd_HoldPosition(sg_single, true, true)		
+			end 
+			
+			SGroup_Remove(sg_temp, squad)
+			
+		end
+		
+	end
+	
+	SGroup_Destroy(specialUnits)		-- remove the temp group 
+	
+	return data 
+	
+end
+
+
+
+--? @shortdesc Release units from a shield wall
+--? @extdesc 
+--? @args ShieldWallID wall
+--? @result Void
+function ShieldWall_Release(data) 
+
+	if data.enabled == true then 
+		
+		Rule_RemoveSGroupEvent(ShieldWall_WallUnitKilled, data.units.wall)
+	
+		for index, unit in pairs(data.units.unitList) do 
+			ShieldWall_WallUnit_HoldGround_Release(unit)
+		end
+		
+		Cmd_HoldPosition(data.units.backfill, false)
+		
+		SGroup_Destroy(data.units.wall)
+		SGroup_Destroy(data.units.backfill)
+		
+		data.enabled = false 
+	
+	end
+
+end
+
+
+function ShieldWall_AddSGroup(data, sgroup)
+	
+	if data.enabled == true then
+
+		local posA = World_Pos(data.location.posA.x - (data.location.facing.x * SHIELDWALL_BACKFILL_DISTANCE), data.location.posA.y, data.location.posA.z - (data.location.facing.z * SHIELDWALL_BACKFILL_DISTANCE))
+		local posB = World_Pos(data.location.posB.x - (data.location.facing.x * SHIELDWALL_BACKFILL_DISTANCE), data.location.posB.y, data.location.posB.z - (data.location.facing.z * SHIELDWALL_BACKFILL_DISTANCE))
+		
+		local _MoveSquadToBackfill = function(gid, idx, sid) 
+
+			local rand = World_GetRand(1, 99) / 100
+			local wallPosition = Util_GetPositionFromAtoB(posA, posB, rand) 
+			local backfillPosition =  Util_GetRandomPosition(wallPosition, 1.5)
+			local facing = Util_GetFacingFromDirection(backfillPosition, data.location.facing)					
+
+			SGroup_Single(sg_single, sid)
+			
+			Cmd_Move(sg_single, backfillPosition, nil, nil, facing)
+			
+		end
+		SGroup_ForEach(sgroup, _MoveSquadToBackfill)
+		
+
+		SGroup_AddGroup(data.units.backfill, sgroup)
+		SGroup_AddGroup(data.units.total, sgroup)		
+		
+	end
+	
+	
+end
+
+
+function ShieldWall_WallUnitInPositon(context, data) 
+
+	if data.wall.enabled == false then
+		Rule_RemoveMe()
+		return 
+	end
+	
+	if Squad_IsValid(data.unit.squadID) == false then
+		Rule_RemoveMe()
+		return 
+	end
+		
+	local squad = Squad_FromID(data.unit.squadID)
+	
+	if Squad_HasDestination(squad) == false then
+		
+		-- move order over... are we in position?
+		
+		local position = Squad_GetPosition(squad)
+		
+		if Util_GetDistance(position, data.unit.position) > 1 then
+
+			local facing = World_Pos(data.unit.position.x + (data.wall.location.facing.x * 10), data.unit.position.y, data.unit.position.z + (data.wall.location.facing.z * 10))
+		
+			SGroup_Single(sg_temp, squad)
+			Cmd_Move(sg_temp, data.unit.position, nil, nil, facing)
+
+		else
+		
+			ShieldWall_WallUnit_HoldGround(data.unit) 
+			Rule_RemoveMe()
+			
+		end
+		
+	elseif Util_GetDistance(Squad_GetDestination(squad), data.unit.position) > 0.5 then
+		
+		-- got distracted somewhere and are enroute somewhere else
+		
+		SGroup_Single(sg_temp, squad)
+		Cmd_Move(sg_temp, data.unit.position, nil, nil, data.wall.location.facing)
+		
+	end
+	
+	
+end
+
+
+
+function ShieldWall_WallUnitKilled(context, data)
+
+	local squadID = Squad_GetID(context.victim)
+	local position = Util_GetPosition(context.victim) 
+	local facing = nil
+	local row = nil 
+	local replacementFound = false 
+	
+	for index, unit in pairs(data.units.unitList) do 
+		if unit.squadID == squadID then 
+			position = unit.position
+			facing = unit.facing
+			row = unit.row
+			table.remove(data.units.unitList, index)
+			break
+		end
+	end
+			
+	-- replace unit
+	if row < #data.units.rows then 
+		
+		local thisRow = data.units.rows[row]
+		local rowBehind = data.units.rows[row + 1]
+		
+		if SGroup_CountSpawned(rowBehind) >= 1 then 
+			
+			local replacementSquad = SGroup_GetClosestSquad(rowBehind, position)
+			
+			SGroup_Single(sg_temp, replacementSquad)
+			
+			Cmd_HoldPosition(sg_temp, false)		
+			Cmd_Move(sg_temp, position, true, nil, data.location.facing)
+			
+			ShieldWall_WallUnitKilled({victim = replacementSquad}, data)
+			
+			SGroup_Remove(rowBehind, replacementSquad)
+			SGroup_Add(thisRow, replacementSquad)
+			
+			local unit = {
+				squadID = Squad_GetID(replacementSquad),
+				position = position,
+				row = row,
+			}
+			
+			table.insert(data.units.unitList, unit)
+			
+			Rule_AddInterval(ShieldWall_WallUnitInPositon, 1, {wall = data, unit = unit})
+			
+			replacementFound = true
+			
+		end
+		
+	end
+	
+	
+	-- fill from backfill 
+	if replacementFound == false then 
+		
+		local replacementSquad = SGroup_GetClosestSquad(data.units.backfill, position)
+		
+		if replacementSquad ~= nil then 
+			
+			SGroup_Single(sg_temp, replacementSquad)
+			
+			Cmd_HoldPosition(sg_temp, false)		
+			Cmd_Move(sg_temp, position, true, nil, facing)
+			
+			SGroup_Remove(data.units.backfill, replacementSquad)
+			SGroup_Add(data.units.wall, replacementSquad)
+			SGroup_Add(data.units.rows[#data.units.rows], replacementSquad)
+			
+			local unit = {
+				squadID = Squad_GetID(replacementSquad),
+				position = position,
+				row = #data.units.rows,
+			}
+			
+			table.insert(data.units.unitList, unit)
+			
+			Rule_AddInterval(ShieldWall_WallUnitInPositon, 1, {wall = data, unit = unit})
+			
+			Rule_AddSquadEvent(ShieldWall_WallUnitKilled, replacementSquad, GE_SquadKilled, data)
+			
+		end
+		
+	end
+	
+	
+	
+	
+	if scartype(data.callbacks) == ST_TABLE then 
+		if scartype(data.callbacks.onUnitKilled) == ST_FUNCTION then 
+			data.callbacks.onUnitKilled(context, data)
+		end
+	end
+	
+end
+
+
+
+
+--
+-- turn the "lock into the wall" on and off for a particular unit
+--
+
+function ShieldWall_WallUnit_HoldGround(unit) 
+
+	if Squad_IsValid(unit.squadID) then
+	
+		local squad = Squad_FromID(unit.squadID)
+		
+		if Squad_Count(squad) >= 1 then 
+			
+			local entity = Squad_GetFirstEntity(squad)
+
+			SGroup_Single(sg_temp, squad)																-- shield wall units:
+			unit.modid_damage = Modify_WeaponDamage(sg_temp, "hardpoint_01", 3)								-- have more damage
+			unit.modid_shield = Modify_ReceivedDamage(sg_temp, 0.75)										-- take less damage themselves
+			
+			--if unit.row == 1 then 																		-- front row have their weapon disabled
+				--unit.modid_weaponenable = Modify_WeaponEnabled(sg_temp, "hardpoint_01", false)
+			--end
+			
+			Entity_SetRangedBlocksPerAttacks(entity, 1, 1)
+			Entity_SetProjectileBlocksPerAttacks(entity, 1, 1)
+			Entity_SetMeleeBlocksPerAttacks(entity, 19, 20)
+			
+			
+			Cmd_HoldPosition(sg_temp, true, true)		-- hold position at current location
+			
+		end
+		
+	end
+	
+end
+
+
+function ShieldWall_WallUnit_HoldGround_Release(unit) 
+
+	if Squad_IsValid(unit.squadID) then
+	
+		local squad = Squad_FromID(unit.squadID)
+		
+		if Squad_Count(squad) >= 1 then 
+			
+			local entity = Squad_GetFirstEntity(squad)
+			
+			if unit.modid_freeze ~= nil then
+				Modifier_Remove(unit.modid_freeze)
+				unit.modid_freeze = nil 
+			end
+			if unit.modid_damage ~= nil then
+				Modifier_Remove(unit.modid_damage)
+				unit.modid_damage = nil 
+			end
+			if unit.modid_shield ~= nil then
+				Modifier_Remove(unit.modid_shield)
+				unit.modid_shield = nil 
+			end
+			if unit.modid_weaponenable ~= nil then
+				Modifier_Remove(unit.modid_weaponenable)
+				unit.modid_weaponenable = nil 
+			end
+			
+			Entity_ResetRangedBlocksPerAttacks(entity)
+			Entity_ResetProjectileBlocksPerAttacks(entity)
+			Entity_ResetMeleeBlocksPerAttacks(entity)
+			
+			SGroup_Single(sg_temp, squad)		
+			Cmd_HoldPosition(sg_temp, false)	-- unlock the Hold Position command
+			
+		end
+		
+	end
+
+end

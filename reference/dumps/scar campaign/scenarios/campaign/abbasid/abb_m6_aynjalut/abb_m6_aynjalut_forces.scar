@@ -1,0 +1,461 @@
+import("MissionOMatic/MissionOMatic.scar")	
+import("cardinal.scar")
+
+function Round_Init(round)
+	round_index = round_index or 0
+	round_index = round_index + 1
+	round.id = round_index
+	round.name = "round_"..round.id
+	round.sgroup = SGroup_CreateUniqueWithPrefix("sg_"..round.name)
+	round.forces = {}
+	round.cost = 0
+	for _, cohort in ipairs(round.cohorts) do
+		cohort.round = round
+		Cohort_Init(cohort)
+		round.cost = round.cost + cohort.cost
+	end
+	round_costs = round_costs or {}
+	round_costs[round.id] = round.cost
+	total_cost = total_cost or 0
+	total_cost = total_cost + round.cost
+	if round.id == 5 then
+		round_costs[round.id + 1] = total_cost
+	end
+end
+
+function Cohort_Init(cohort)
+	local round = cohort.round
+	cohort_index = cohort_index or 0
+	cohort_index = cohort_index + 1
+	cohort.id = cohort_index
+	cohort.name = "cohort_"..cohort.id
+	cohort.cost = 0
+	for _, force in ipairs(cohort.forces) do
+		force.cohort = cohort
+		force.round = round
+		table.insert(round.forces, force)
+		Force_Init(force)
+		cohort.cost = cohort.cost + force.cost
+	end
+end
+
+function Force_Init(force)
+	local cohort = force.cohort
+	
+	cohort.force_index = cohort.force_index or 0
+	cohort.force_index = cohort.force_index + 1
+	force.id = cohort.force_index
+	force.name = cohort.name.."_".."force_"..force.id
+	
+	assert(force.army_size.numSquads == force.army_size.numRanks * force.army_size.numFiles + force.army_size.extra, "invalid army size")
+	
+	forces_total = forces_total + 1
+	
+	force.has_finished_spawning = false
+	
+	if force.is_crusader then
+		force.player = player3
+	else
+		force.player = player2
+	end
+	
+	if force.squad_type then
+		force.squad_sbp = Cardinal_ConvertTypeToSquadBlueprint(force.squad_type, force.player, false)
+		force.squad_type = nil
+	end
+	
+	force.cost = TotalCost(Player_GetSquadBPCost(force.player, force.squad_sbp)) * force.army_size.numSquads
+	force.queue_next_order = false
+	
+	local letter = string.sub(force.slot_name, 1, 1)
+	force.is_left = Table_Contains({ "a", "b", "c", "d" }, letter)
+	
+	for condition, value in pairs(cohort.spawn_conditions) do
+		force[condition] = value
+	end
+	if force.is_in_rank then
+		force.ranks = {}
+		
+		if force.army_size.extra > 0 then
+			table.insert(force.ranks, { units = {{ sbp = force.squad_sbp, numSquads = force.army_size.extra }}})
+		end
+		
+		for i = 1, force.army_size.numRanks do
+			table.insert(force.ranks, { units = {{ sbp = force.squad_sbp, numSquads = force.army_size.numFiles }}})
+		end
+		
+		for _, rank in ipairs(force.ranks) do
+			rank.force = force
+		end
+		force.rank_interval = RANK_INTERVAL
+	else
+		force.units = {{ sbp = force.squad_sbp, numSquads = force.army_size.numSquads }}
+	end
+	
+	force.order_indexes = {}
+	for command, orders in pairs(cohort.orders) do
+		force.order_indexes[command] = 1
+	end
+	
+	force.sgroup = SGroup_CreateUniqueWithPrefix("sg_force_")
+end
+
+function QueueCohorts()
+	for _, cohort in ipairs(cohorts) do
+		Rule_AddOneShot(Cohort_Arrives, cohort.arrive_at, { cohort = cohort })
+		if cohort.signal_hill_at then
+			Rule_AddOneShot(Cohort_Signal, cohort.signal_hill_at, { cohort = cohort, command = "signal_hill" })
+		end
+		if cohort.signal_field_at then
+			Rule_AddOneShot(Cohort_Signal, cohort.signal_field_at, { cohort = cohort, command = "signal_field" })
+		end
+		if cohort.signal_town_at then
+			Rule_AddOneShot(Cohort_Signal, cohort.signal_town_at, { cohort = cohort, command = "signal_town" })
+		end
+	end
+end
+
+function Cohort_Arrives(context, data)
+	local cohort = data.cohort
+	for _, force in ipairs(cohort.forces) do
+		Rule_AddOneShot(Force_Spawn, force.spawn_delay, { force = force })
+	end
+	if cohort.on_arrive then
+		cohort.on_arrive()
+	end
+end
+
+function Cohort_Signal(context, data)
+	local cohort = data.cohort
+	local command = data.command 
+	for _, force in ipairs(cohort.forces) do
+		force.queue_next_order = false
+		Force_ExecuteOrders(nil, { force = force, command = command })
+	end
+	if command == "signal_town" and cohort.on_signal_town ~= nil then
+		cohort.on_signal_town()
+	end
+end
+
+function Force_Spawn(context, data)
+	local force = data.force
+	local cohort = force.cohort
+	if force.is_in_rank then
+		for i = 1, #force.ranks do
+			local rank = force.ranks[i]
+			Rule_AddOneShot(Force_SpawnInRank, i * force.rank_interval, { rank = rank, force = force })
+		end
+	else
+		Force_SpawnNotInRank(force)
+	end
+	if force.initial_orders_executed ~= true then
+		force.initial_orders_executed = true
+		Force_ExecuteOrders(nil, { force = force, command = "initial" })
+	end
+end
+
+function Force_SpawnInRank(context, data)
+	local rank = data.rank
+	local force = data.force
+	local round = force.round
+	--print(force.name.." spawning in rank")
+	rank.sgroup = CreateUnits(force.player, rank.units, mkr_spawn_road, "")
+	SGroup_AddGroup(force.sgroup, rank.sgroup)
+	SGroup_AddGroup(round.sgroup, rank.sgroup)
+	if force.is_walking then
+		--print(force.name.." spawned walking")
+		Modify_UnitSpeedWhenNotInCombat(rank.sgroup, WALK_SPEED, MUT_Set)
+	else
+		--print(force.name.." spawned running")
+	end
+	
+	local lane = lanes["full"]["road"]
+	for _, marker in ipairs(lane) do
+		SGroup_AttackMove(rank.sgroup, marker, true)
+	end
+	
+	if rank == force.ranks[#force.ranks] then
+		force.has_finished_spawning = true
+		round.has_finished_spawning = Round_HasFinishedSpawning(round)
+		forces_spawned = forces_spawned + 1
+		if force.onSpawnComplete then
+			force.onSpawnComplete(force)
+		end
+	end
+end
+
+function Round_HasFinishedSpawning(round)
+	for _, force in ipairs(round.forces) do
+		if force.has_finished_spawning ~= true then
+			return false
+		end
+	end
+	return true
+end
+
+function Force_SpawnNotInRank(force)
+	--print(force.name.." spawning not in rank")
+	local round = force.round
+	CreateUnits(force.player, force.units, force.spawn, force.sgroup)
+	SGroup_AddGroup(round.sgroup, force.sgroup)
+	if force.is_walking then
+		--print(force.name.." spawned walking")
+		Modify_UnitSpeedWhenNotInCombat(force.sgroup, WALK_SPEED, MUT_Set)
+	else
+		--print(force.name.." spawned running")
+	end
+	
+	if force.is_ai_controlled then
+		Force_CreateArmy(force, force.spawn, nil)
+	end
+	force.has_finished_spawning = true
+	round.has_finished_spawning = Round_HasFinishedSpawning(round)
+	forces_spawned = forces_spawned + 1
+	if force.onSpawnComplete then
+		force.onSpawnComplete(force)
+	end
+end
+
+function Force_ExecuteOrders(context, data)
+	local force = data.force
+	local command = data.command
+	--print("executing command "..command.." for "..force.name)
+	local orders = force.cohort.orders[command]
+
+	if orders then
+		local order_index = force.order_indexes[command]
+		local order = orders[order_index]
+		if order then
+			if order.type == "wait_for_duration" then
+				Rule_AddOneShot(Force_ExecuteOrderWaitForDuration, order.duration, { force = force, command = command, orders = orders, order = order })
+			elseif order.type == "wait_for_arrival" then
+				Rule_AddOneShot(Force_ExecuteOrderWaitForArrival, 1, { force = force, command = command, orders = orders, order = order })
+			elseif order.type == "start_running" then
+				Force_ExecuteOrderRun(force, command, orders, order)
+			elseif order.type == "start_walking" then
+				Force_ExecuteOrderWalk(force, command, orders, order)
+			elseif order.type == "attack_lane" then
+				Force_ExecuteOrderAttackLane(force, command, orders, order)
+			elseif order.type == "attack_slot" then
+				Force_ExecuteOrderAttackSlot(force, command, orders, order)
+			elseif order.type == "finish_afula" then
+				Force_FinishAfula(force, command, orders, order)
+			else
+				fatal("invalid order type")
+			end
+		end
+	end
+end
+
+function Force_ExecuteOrderWaitForDuration(context, data)
+	local force = data.force
+	local command =  data.command
+	local orders = data.orders
+	
+	if SGroup_CountSpawned(force.sgroup) > 0 then
+		force.order_indexes[command] = force.order_indexes[command] + 1
+		Force_ExecuteOrders(nil, { force = force, orders = orders, command = command })
+	end
+end
+
+function Force_ExecuteOrderWaitForArrival(context, data)
+	local force = data.force
+	local command =  data.command
+	local orders = data.orders
+	local order = data.order 
+	local marker = order.marker
+		
+	if force.has_finished_spawning == false then
+		Rule_AddOneShot(Force_ExecuteOrderWaitForArrival, 1, data)
+		return
+	end
+	
+	if SGroup_CountSpawned(force.sgroup) > 0 then
+		if Marker_InProximity(marker, SGroup_GetAvgPosition(force.sgroup)) then
+			force.order_indexes[command] = force.order_indexes[command] + 1
+			Force_ExecuteOrders(nil, { force = force, orders = orders, command = command })
+		else
+			Rule_AddOneShot(Force_ExecuteOrderWaitForArrival, 1, data)
+		end
+	end
+end
+
+function Force_ExecuteOrderRun(force, command, orders)
+	if force.is_walking == true then
+		--print(force.name.." is now running")
+		if force.is_in_rank then
+			for _, rank in ipairs(force.ranks) do
+				Remove_UnitSpeedInCombatModifier(rank.sgroup)
+			end
+		else
+			Remove_UnitSpeedInCombatModifier(force.sgroup)
+		end
+	else
+		--print(force.name.." was already running")
+	end
+	force.is_walking = false
+	
+	force.order_indexes[command] = force.order_indexes[command] + 1
+	Force_ExecuteOrders(nil, { force = force, orders = orders, command = command })
+end
+
+function Force_ExecuteOrderWalk(force, command, orders)
+	if force.is_walking == false then
+		--print(force.name.." is now walking")
+		if force.is_in_rank then
+			for _, rank in ipairs(force.ranks) do
+				Modify_UnitSpeedWhenNotInCombat(rank.sgroup, WALK_SPEED, MUT_Set)
+			end
+		else
+			Modify_UnitSpeedWhenNotInCombat(force.sgroup, WALK_SPEED, MUT_Set)
+		end
+	else
+		--print(force.name.." was already walking")
+	end
+	force.is_walking = true
+	force.order_indexes[command] = force.order_indexes[command] + 1
+	Force_ExecuteOrders(nil, { force = force, orders = orders, command = command })
+end
+
+function Force_ExecuteOrderAttackLane(force, command, orders, order)
+	local phase_name = order.phase_name
+	local enable_ai = order.enable_ai
+	
+	local lane = lanes[phase_name][force.lane_name]
+	
+	if force.is_ai_controlled or enable_ai then
+		Force_AddLaneTargetsWithAI(force, lane, enable_ai)
+	else
+		Force_AddLaneTargetsWithoutAI(force, lane)
+	end
+	
+	force.order_indexes[command] = force.order_indexes[command] + 1
+	Force_ExecuteOrders(nil, { force = force, orders = orders, command = command })
+end
+
+function Force_AddLaneTargetsWithAI(force, lane, enable_ai)
+	local targets = {}
+	for _, marker in ipairs(lane) do
+		table.insert(targets, marker)
+	end
+	
+	if force.is_ai_controlled and enable_ai then
+		fatal("ai is already enabled")
+	end
+	if enable_ai then
+		Force_CreateArmy(force, nil, targets)
+		force.is_ai_controlled = true
+		SGroup_AttackMove(force.sgroup, targets[1])
+	else
+		Army_AddTargets(force.army, targets)
+	end
+end
+
+function Force_AddLaneTargetsWithoutAI(force, lane)
+	for _, marker in ipairs(lane) do
+		SGroup_AttackMove(force.sgroup, marker, force.queue_next_order)
+		force.queue_next_order = true
+	end
+end
+
+function Force_ExecuteOrderAttackSlot(force, command, orders, order)
+	local phase_name = order.phase_name
+	local enable_ai = order.enable_ai
+	
+	local slot = slots[phase_name][force.slot_name]
+	
+	if slot then
+		if force.is_ai_controlled or enable_ai then
+			Force_AttackSlotWithAI(force, slot, enable_ai)
+		else
+			Force_AttackSlotWithoutAI(force, slot)
+		end
+	end
+	
+	force.order_indexes[command] = force.order_indexes[command] + 1
+	Force_ExecuteOrders(nil, { force = force, orders = orders, command = command })
+end
+
+function Force_AttackSlotWithAI(force, slot, enable_ai) 
+	local target = {
+		marker = slot,
+		useCustomDirection = true,
+	}
+	
+	if force.is_ai_controlled and enable_ai then
+		fatal("ai is already enabled")
+	end
+	if enable_ai then
+		Force_CreateArmy(force, nil, { target })
+		force.is_ai_controlled = true
+	else
+		Army_AddTarget(force.army, target)
+	end
+end
+
+function Force_AttackSlotWithoutAI(force, slot)
+	SGroup_AttackMove(force.sgroup, slot, force.queue_next_order)
+	force.queue_next_order = true
+	SGroup_MoveAndFace(force.sgroup, slot, nil, nil, true)
+end
+
+function Force_FinishAfula(force, command, orders, order)
+	if SGroup_CountSpawned(force.sgroup) > 0 then
+		if force.is_ai_controlled then
+			Force_FinishAfulaWithAI(force)
+		else
+			Force_FinishAfulaWithoutAI(force)
+		end
+		force.order_indexes[command] = force.order_indexes[command] + 1
+		Force_ExecuteOrders(nil, { force = force, orders = orders, command = command })
+	end
+end
+
+function Force_FinishAfulaWithAI(force, command, orders, order)
+	assert(force.army, force.name.." does not have an army yet")	
+	force.army.onCompleteFunction = Force_OnArmyComplete
+end
+
+function Force_FinishAfulaWithoutAI(force, command, orders, order)
+	local targets = Force_ChooseAfulaTargets(force)
+	for _, target in ipairs(targets) do
+		SGroup_AttackMove(force.sgroup, target, force.queue_next_order)
+		force.queue_next_order = true	
+	end
+end
+
+function Force_OnArmyComplete(army)
+	if army.isAttackingAfula ~= true then
+		army.isAttackingAfula = true
+		army.targetOrder = TARGET_ORDER_PATROL
+		local targets = Force_ChooseAfulaTargets(army.force)
+		Army_SetTargets(army, targets)
+	end
+end
+
+function Force_CreateArmy(force, spawn, targets)
+	local params = {
+		player = force.player,
+		sgroup = force.sgroup,
+		spawn = spawn,
+		targets = targets,
+		combatRange = 35,
+	}
+	force.army = Army_Init(params)
+	force.army.force = force
+end
+
+function Force_ChooseAfulaTargets(force)
+	
+	SGroup_Clear(sg_temp)
+	SGroup_Clear(sg_blah)
+	SGroup_AddGroup(sg_temp, sg_afula_villagers)
+	SGroup_FilterByProximity(sg_temp, mkr_left_afula, FILTER_KEEP, nil, sg_blah)
+	local left_is_valid = SGroup_CountSpawned(sg_temp) > 0
+	local right_is_valid = SGroup_CountSpawned(sg_blah) > 0
+	if force.is_left and left_is_valid then
+		return { mkr_finish_afula_left, mkr_finish_afula_right }
+	else
+		return { mkr_finish_afula_right, mkr_finish_afula_left }
+	end
+end

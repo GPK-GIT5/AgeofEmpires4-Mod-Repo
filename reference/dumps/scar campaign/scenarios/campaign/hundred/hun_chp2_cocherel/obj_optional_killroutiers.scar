@@ -1,0 +1,318 @@
+--
+-- France in Chaos 1364 
+-- Objective Defeat Routiers - Pay Tribute
+--
+
+
+
+function DefeatRoutiers_InitObjectives()		
+
+	OBJ_DefeatRoutiers = {
+		Title = "$11172136", --"Optional: Stop the Routiers' raids"),
+		Type = ObjectiveType_Optional,
+		Intel_Complete = EVENTS.RoutiersComplete,
+		Intel_Start = EVENTS.PayTributeRoutiers,
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_DefeatRoutiers, ANY)
+		end,
+	}
+	
+	SOBJ_DestroyRoutiersBuildings = {
+		Title = "$11172138", --"OR Destroy the English Routiers' camp"),
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_DefeatRoutiers,
+		StartAlongsideParent = true, 
+		SetupUI = DestroyRoutiersBuildings_UI,
+		OnStart = DestroyRoutiersBuildings_Start,
+		OnComplete = DestroyRoutiersBuildings_OnComplete,
+	}
+	
+	SOBJ_PayTributeRoutiers = {
+		Title = "$11172134", --"Pay tribute to stop English Routiers' attacks"),
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_DefeatRoutiers,
+		StartAlongsideParent = true,
+		SetupUI = PayTributeRoutiers_SetupUI,
+		OnComplete = PayTributeRoutiers_Complete,
+	}
+	
+	OBJ_RepelRoutiersAttack = {
+		Title = "$11185935", --"Repel the English Routier attack",
+		Type = ObjectiveType_Battle,
+		Intel_Start = EVENTS.RoutiersApproachPlayerTown,
+		Intel_Complete = EVENTS.FirstRoutiersDefeated,
+		SetupUI = function()
+			hpid_MeetRoutiers = Objective_AddUIElements(OBJ_RepelRoutiersAttack, sg_Routiers_sentToTown, true,nil, false, nil, nil, nil)
+		end,
+		OnComplete = RepelRoutiersAttackComplete,
+	}
+	
+	Objective_Register(OBJ_RepelRoutiersAttack)
+	Objective_Register(OBJ_DefeatRoutiers)
+	Objective_Register(SOBJ_PayTributeRoutiers)
+	Objective_Register(SOBJ_DestroyRoutiersBuildings)
+end
+
+function Routiers_AttackInit()
+	t_routierstoBase_typeUnitsLowPhase = {"scar_horseman","scar_spearman"}
+	t_routierstoBase_typeUnitsMiddlePhaseEasy = {"scar_horseman","scar_spearman"}
+	t_routierstoBase_typeUnitsMiddlePhase = {"scar_horseman","scar_manatarms","scar_spearman"}
+	t_routierstoBase_typeUnitsHighPhase = {"scar_knight","scar_horseman","scar_manatarms","scar_spearman"}
+	Rule_AddOneShot(StartRoutiers, t_difficulty.routiers_firstAttackDelay)
+end
+
+function StartRoutiers()
+	print("Routier attacks on Base started / "..cocherel_seconds)
+	PrepareWave_RoutiersToPlayerBase()
+	Rule_AddInterval(PrepareWave_RoutiersToPlayerBase, t_difficulty.routiers_attackFrequency)
+	routier_to_base_waves = {  }
+end
+
+function PrepareWave_RoutiersToPlayerBase()
+	if Objective_IsComplete(OBJ_DefeatRoutiers) == true then
+		Rule_RemoveMe()		
+		print("Routiers attacks on base ended / "..cocherel_seconds)
+	else
+		print("Routiers attack on base preparing / "..cocherel_seconds)
+		local units = {}	
+		i_routier_phase = i_routier_phase + 1	
+		if #t_routierstoBase_path == 0 then
+			t_routierstoBase_path = Clone(t_routierstoBase_path_original,false)
+		end
+		local waveRoutiersAttackBase = Table_GetRandomItem(t_routierstoBase_path)
+		Table_RemoveFirstItem(t_routierstoBase_path, waveRoutiersAttackBase)
+		
+		local sg_custom = nil
+		local unitType = nil
+		if i_routier_phase == 1 then
+			units = { {type = "scar_horseman", numSquads = Util_DifVar({ 3, 4, 5, 6 })} }
+			sg_custom = sg_Routiers_sentToTown
+			Rule_AddInterval(CheckRoutiersSquadSent, 1)
+		else
+			if i_routier_phase < 4 then
+				units = {{type = "scar_horseman", numSquads = Util_DifVar({ 5, 6, 8, 10 }) }} 
+			elseif i_routier_phase < 8 then 
+				unitType = Table_GetRandomItem(t_routierstoBase_typeUnitsLowPhase)
+				units = {{type = unitType, numSquads = Util_DifVar({ 7, 8, 11, 15 })}}
+			elseif i_routier_phase < 15 then 
+				if difficulty <= GD_NORMAL then
+					unitType = Table_GetRandomItem(t_routierstoBase_typeUnitsMiddlePhaseEasy)
+				else
+					unitType = Table_GetRandomItem(t_routierstoBase_typeUnitsMiddlePhase)
+				end
+				units = {{type = unitType, numSquads = Util_DifVar({ 8, 10, 14, 20 }) }}
+			else
+				unitType = Table_GetRandomItem(t_routierstoBase_typeUnitsHighPhase)
+				units = {{type = unitType, numSquads = math.min(i_routier_phase, 25) + Util_DifVar({-7, -5, 0, 7}) }}
+			end				
+		end
+		Wave_SetUnits(waveRoutiersAttackBase, units)
+		Wave_Prepare(waveRoutiersAttackBase, sg_custom)
+	end
+end
+
+function CheckRoutiersSquadSent()
+	if first_routiers_seen ~= true and Player_CanSeeSGroup(player1, sg_Routiers_sentToTown, ANY) then
+		first_routiers_seen = true
+		Objective_Start(OBJ_RepelRoutiersAttack, true, true)
+	end
+	
+	if SGroup_CountSpawned(sg_Routiers_sentToTown) == 0 then		
+		Objective_Complete(OBJ_RepelRoutiersAttack, true, true)
+		Rule_RemoveMe()
+	end
+end
+
+function StartRoutierAttacksOnCocherel()
+	print("Routier attacks on Cocherel started / "..cocherel_seconds)
+	PrepareWave_RoutiersToCocherel()
+	Rule_AddInterval(PrepareWave_RoutiersToCocherel, t_difficulty.routier_attackCocherelInterval)
+end
+
+function PrepareWave_RoutiersToCocherel()
+
+	if Objective_IsComplete(OBJ_DefeatRoutiers) == true or Objective_IsComplete(SOBJ_PayTributeRoutiers) == true then
+		print("Routier attacks on Cocherel ended / "..cocherel_seconds)
+		if Rule_Exists(PrepareWave_RoutiersToCocherel) then Rule_RemoveMe() end
+	else
+		print("Routier attack on Cocherel preparing / "..cocherel_seconds)
+		local units = {
+			{type = "scar_knight", numSquads = Util_DifVar({ 2, 3, 4, 5 })},   
+			{type = "scar_horseman", numSquads = Util_DifVar({ 2, 3, 4, 5 })}, 
+			{type = "scar_manatarms", numSquads = Util_DifVar({ 2, 3, 4, 5 })},
+		}
+		Wave_SetUnits(waveRoutierToCocherel, units)
+		Wave_Prepare(waveRoutierToCocherel)
+	end
+end
+
+function RepelRoutiersAttackComplete()
+	Objective_RemoveUIElements(OBJ_RepelRoutiersAttack,hpid_MeetRoutiers)
+	if Objective_IsComplete(OBJ_DefeatRoutiers) == false then
+		if Objective_IsStarted(OBJ_DefeatRoutiers) == false then
+			Objective_Start(OBJ_DefeatRoutiers)
+		end
+	end
+end
+
+function PayTributeRoutiers_SetupUI()
+	Routiers_ShowTributeMenu()
+	Objective_SetCounter(SOBJ_PayTributeRoutiers, 0, t_difficulty.routiers_goldDemanded)
+	Objective_SetProgressBar(SOBJ_PayTributeRoutiers, 0)
+end
+
+function PayTributeRoutiers_Complete()
+	
+	local playerBaseAttack = MissionOMatic_FindModule("RovingRoutiers_village_player")
+	local cathedralAttack = MissionOMatic_FindModule("routier_attackers_monastery")
+	local fallbackModule = MissionOMatic_FindModule("routier_garrison_villagers")
+	
+	DissolveModuleIntoModule(playerBaseAttack, fallbackModule)
+	routierspaidordestroyed = true
+	if Objective_IsComplete(SOBJ_CaptureCocherel) == true then
+		DissolveModuleIntoModule(cathedralAttack, fallbackModule)
+	end
+		
+	Routiers_HideTributeMenu()
+	routiers_destroyed = true
+	local amount = t_difficulty.routiers_goldDemanded
+	givenGold = amount
+end
+
+function Routiers_SpawnGivenGold(amount)
+	
+	local ebp = BP_GetEntityBlueprint("resource_pickup_gold")
+	local eg_goldRoutiers = EGroup_CreateUnique("eg_goldRoutiers")
+
+	local marker = Marker_FromName("mkr_goldDestination", "")
+	eg_goldRoutiers02 = Util_CreateEntities(nil, eg_goldRoutiers, ebp, marker, 1)
+	
+	local chest = EGroup_GetSpawnedEntityAt(eg_goldRoutiers02, 1)
+
+	Entity_SetStateModelFloat(chest, "resource_pickup_amount_gold", amount)
+
+end
+
+function SendGoldRoutiers_Start()
+	Objective_SetCounter(SOBJ_SendGoldRoutiers, 0, t_difficulty.routiers_goldDemanded ) --1800
+	Objective_SetProgressBar(SOBJ_SendGoldRoutiers, 0)
+	
+	if Objective_IsStarted(OBJ_DefeatRoutiers) == false then
+		Objective_Start(OBJ_DefeatRoutiers,false,false)
+	end
+end
+
+function KillRoutiers_UI()
+	i_numberRoutierUnits = SGroup_CountSpawned(sg_routier_garrison)
+	Objective_SetProgressBar(SOBJ_KillRoutiers,0)
+	camp_routiers = HintPoint_Add(mkr_routier_village, true, "$11195395", LOCATION_LABEL_HEIGHT) --"Routiers' camp"
+end
+
+--Never called???
+function KillRoutiers_Start()
+	
+	Rule_AddGlobalEvent(RoutiersKilledEvent,GE_SquadKilled)
+
+end
+--Never called???
+function RoutiersKilledEvent(context)
+	
+	local victim = context.victim	
+	if Objective_IsComplete(SOBJ_KillRoutiers) == true then
+		Rule_RemoveMe()
+	else
+		if MissionOMatic_SquadHasTag(victim, "routier_village") then 
+						
+			i_numberRoutiersKilled = i_numberRoutiersKilled + 1
+			
+			if i_numberRoutiersKilled < i_numberRoutierUnits then
+				
+				Objective_SetProgressBar(SOBJ_KillRoutiers, (i_numberRoutiersKilled / i_numberRoutierUnits))
+			else
+				Objective_SetProgressBar(SOBJ_KillRoutiers, (i_numberRoutiersKilled / i_numberRoutierUnits))
+				Objective_Complete(SOBJ_KillRoutiers)
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+function DestroyRoutiersBuildings_UI()
+	Player_GetAll(player3,eg_allentities)
+	EGroup_Filter(eg_allentities, "building", FILTER_KEEP)	
+	i_desiredRoutiersBuildingsDestroyed = EGroup_CountSpawned(eg_allentities)
+	Objective_SetCounter(SOBJ_DestroyRoutiersBuildings, 0, i_desiredRoutiersBuildingsDestroyed)	
+end
+
+
+function DestroyRoutiersBuildings_Start()
+	Rule_AddEGroupEvent(DefeatRoutiersBuildings_OnEntityKilled, eg_routiers_camp, GE_EntityKilled)
+end
+
+function DefeatRoutiersBuildings_OnEntityKilled(context)
+
+	if context.victimOwner == player3 then
+	--	if  EGroup_ContainsEntity( eg_routiers_camp, context.victim ) == true then
+		if Objective_IsComplete(OBJ_DefeatRoutiers) == false then
+			if Objective_IsCounterSet(SOBJ_DestroyRoutiersBuildings) then
+				Objective_IncreaseCounter(SOBJ_DestroyRoutiersBuildings)
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+				Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+				if Obj_GetCounterCount(SOBJ_DestroyRoutiersBuildings.ID) == Obj_GetCounterMax(SOBJ_DestroyRoutiersBuildings.ID) then 
+					Objective_Complete(SOBJ_DestroyRoutiersBuildings, false, false) 
+					Rule_RemoveMe()
+				end
+			end
+		else
+			if EGroup_Exists("eg_routiers_camp") == false or EGroup_CountSpawned(eg_routiers_camp) == 0 then
+				Rule_RemoveMe()
+				Routiers_SpawnGivenGold(givenGold)  --given gold calculated when objective is completed (paid tribute or destroy all)
+			end
+			
+		end
+	--	end
+	end
+end
+
+function DestroyRoutiersBuildings_OnComplete()
+	print("Routier buildings destroyed")
+	
+	if Objective_IsStarted(SOBJ_PayTributeRoutiers) then
+		if Objective_IsComplete(SOBJ_PayTributeRoutiers) == false then
+			local amount = Objective_GetCounter(SOBJ_PayTributeRoutiers)
+			if amount > 0 then
+				givenGold = givenGold + amount
+				Routiers_SpawnGivenGold(amount)
+			end
+		end
+	end
+	
+	Routiers_HideTributeMenu()
+	routiers_destroyed = true
+	HintPoint_Remove(camp_routiers)
+end
+
+function Mission_OnTributeSent(tribute)
+	
+	for index, tributeData in pairs(tribute) do 
+		
+		if tributeData.receiver.id == player3 and tributeData.gold > 0 then
+			
+			if Objective_IsCounterSet(SOBJ_PayTributeRoutiers) then
+				
+				Objective_IncreaseCounter(SOBJ_PayTributeRoutiers, tributeData.gold)
+				
+				local progress = Obj_GetCounterCount(SOBJ_PayTributeRoutiers.ID) / Obj_GetCounterMax(SOBJ_PayTributeRoutiers.ID)
+				Objective_SetProgressBar(SOBJ_PayTributeRoutiers, progress)
+				
+				if progress >= 1 then 
+					i_amount_gold_given = Objective_GetCounter(SOBJ_PayTributeRoutiers)
+					--Objective_Complete(objective, false, false) 
+					Objective_Complete(SOBJ_PayTributeRoutiers)
+					Rule_RemoveMe()
+				end
+				
+			end
+		end
+	end
+end

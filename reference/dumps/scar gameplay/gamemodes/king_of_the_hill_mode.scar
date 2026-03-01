@@ -1,0 +1,902 @@
+
+-----------------------------------------------------------------------
+-- Imported Scripts
+-----------------------------------------------------------------------
+
+-- Import Utility Scripts
+import( "cardinal.scar" )							-- Contains sfx references, UI templates, and Civ/Age helper functions
+import( "ScarUtil.scar" )							-- Contains game helper functions
+
+Core_RegisterModule( "KingOfTheHill" )				-- Register the win condition (Some functions can be prepended with "Mod_" to be called automatically as part of the scripting framework)
+
+-- Import Gameplay Systems
+import( "gameplay/score.scar" )						-- Tracks player score
+import( "gameplay/diplomacy.scar" )					-- Manages Tribute
+import("gameplay/vision.scar")
+import("gameplay/cheat.scar") 
+import("gameplay/dynamic_spawning.scar")
+
+-- Import Start Conditions
+import( "startconditions/classic_start.scar" )
+
+-- Import Win Conditions
+import( "winconditions/annihilation.scar" )			-- Support for eliminating a player when they can no longer fight or produce units
+import( "winconditions/elimination.scar" )			-- Support for player quitting or dropping (through pause menu or disconnection)
+import( "winconditions/surrender.scar" )			-- Support for player surrender (through pause menu)
+import( "winconditions/regicide.scar" )
+import( "winconditions/conquest.scar" )
+import( "winconditions/wonder.scar" )
+import( "winconditions/religious.scar" )
+
+-- training
+import("training/coretraininggoals.scar")
+import("training/frenchtraininggoals.scar")
+import("training/englishtraininggoals.scar")
+import("training/sultanatetraininggoals.scar")
+import("training/rustraininggoals.scar")
+import("training/mongoltraininggoals.scar")
+import("training/chinesetraininggoals.scar")
+import("training/abbasidtraininggoals.scar")
+
+-- Import UI Support
+import( "gameplay/event_cues.scar" )
+import( "gameplay/currentageui.scar" )
+import( "gameplay/chi/current_dynasty_ui.scar" )	-- Displays Chinese Dynasty UI
+import("gameplay/templar/templar_age_up_ui.scar")
+
+import("gameplay/dynamic_spawning.scar")
+
+-----------------------------------------------------------------------
+-- Global Data
+-----------------------------------------------------------------------
+
+function INTERVAL_FROM_MINUTES( minutes ) return minutes * 60 end
+
+-- Global data table that can be referenced in script functions.
+_match = {
+	options = {},
+	is_cheat_enabled = false,
+	is_diplomacy_enabled = false,
+	is_tribute_enabled = true,
+	is_nomad_start = false,
+	
+	speed = {						-- modifier multipliers 
+		build = 1,
+		repair = 1,
+		gather = 1,		
+		upgrade = 1,
+		production = 1,
+		modifiers = {},
+	},
+	
+	hill_info = {
+		blueprint_name = "capture_point",
+		spawn_markers = {},
+		spawn_positions = {}, -- Only used if new spawn method is disabled.
+		spawn_distance_cutoff_percent = 0.2,
+		initial_spawn_time = INTERVAL_FROM_MINUTES(3),
+		active_time = INTERVAL_FROM_MINUTES(5),
+		time_between_spawns = INTERVAL_FROM_MINUTES(3),
+		hill_entity = nil,
+		reward_interval_per_player = {90, 60, 30},		-- How frequently player should receive rewards based on preset options.
+		reveal_radius = 12,
+		owner = nil,
+	},
+	
+	max_trees_in_spawn_position = 20,
+	
+	rewards_info = {
+		reward_points_statemodel = "capture_point_reward_points",
+		control_timer_statemodel = "capture_point_control_timer",
+		reward_iteration_statemodel = "capture_point_reward_iteration",
+		update_interval = 1.0,
+	},
+	
+	capture_point_entity_type = "capture_point",
+	capture_points = {},
+	capture_radius = 7,
+	last_capturer = nil,
+	
+	sfx = {
+		begin_capture_enemy = "sfx_ui_event_queue_religious_enemy_capture_start_play", 		-- Enemy begins capturing a neutral Capture Point (at 0%)
+		begin_capture_player = "sfx_ui_event_queue_religious_player_capture_start_play", 	-- Player begins capturing a neutral Capture Point (at 0%)
+		begin_capture_ally = "sfx_ui_event_queue_religious_player_capture_start_play", 		-- Ally begins capturing a neutral Capture Point (at 0%)
+		
+		begin_neutralize_enemy = "sfx_ui_holy_site_contesting_start_enemy_play", 			-- Enemy begins neutralizing captured Capture Point (at 100%)
+		begin_neutralize_player = "sfx_ui_holy_site_contesting_start_player_play", 			-- Player begins neutralizing captured Capture Point (at 100%)
+		begin_neutralize_ally = "sfx_ui_holy_site_contesting_start_player_play", 			-- Ally begins neutralizing captured Capture Point (at 100%)
+		
+		captured_enemy = "sfx_ui_event_queue_religious_enemy_captured_play", 	-- Enemy captured Control Point
+		captured_player = "sfx_ui_event_queue_religious_player_captured_play", 	-- Player captured Control Point
+		captured_ally = "sfx_ui_event_queue_religious_player_captured_play", 	-- Ally captured Control Point
+	},
+	
+	change_type = {
+		Captured = 0,
+		Reverting = 1,
+		Secured = 2,
+		UnCaptured = 3,
+		Seized = 4,
+		StartedCapture = 5,
+		StartedCooldown = 6,
+		StartedRevertingCooldown = 7,
+		Halted = 8,
+		Init = 9,
+		CapturedContested = 10,
+		CapturedContestedEnded = 11,
+	},
+}
+
+_notificationData = {
+	title_loc_string = "$11269323",
+	description_loc_string = Loc_Empty(),
+	template = "medium_priority",
+	icon_path = "images\\multiplayer\\gamemode_king_of_the_hill",
+	sfx = "sfx_ui_event_queue_med_priority_play",
+	position = ECV_Title,
+	lifetime = 5,
+	start_delay = 10,
+}
+
+function AddVectorToPosition(position, vector)
+	return World_Pos(position.x + vector.x, position.y + vector.y, position.z + vector.z)
+end
+
+function MultiplyVectorByFloat(vector, float)
+	return World_Pos(vector.x * float, vector.y * float, vector.z * float)
+end
+
+-----------------------------------------------------------------------
+-- Standard Callbacks 
+-----------------------------------------------------------------------
+
+-- Called during load as part of the game setup sequence.
+function KingOfTheHill_OnGameSetup()
+
+	Setup_GetWinConditionOptions( _match.options )
+	_match.is_nomad_start = Setup_GetIsNomadStart()
+	
+	-- Win condition options
+	if _match.options.section_inner_win_conditions then
+		if not _match.options.section_inner_win_conditions.option_win_condition_conquest then
+			Core_UnregisterModule( "Conquest" )
+		end	
+	
+		if not _match.options.section_inner_win_conditions.option_win_condition_religious then
+			Core_UnregisterModule( "Religious" )
+		end
+		
+		if not _match.options.section_inner_win_conditions.option_win_condition_wonder then
+			Core_UnregisterModule( "Wonder" )
+		end	
+		
+		if not _match.options.section_inner_win_conditions.option_win_condition_regicide and not Game_HasMatchTypeFlag( MTF_FFA8 ) then
+			Core_UnregisterModule( "Regicide" )
+		end	
+	end
+
+	
+	--Shared vision
+	if not _match.options.section_starting_conditions
+		or not _match.options.section_starting_conditions.option_vision
+		or _match.options.section_starting_conditions.option_vision.enum_value == _match.options.section_starting_conditions.option_vision.enum_items.option_vision_default then
+		Core_UnregisterModule( "Vision" )	
+	end
+	
+	--Diplomacy options
+	if _match.options.section_diplomacy then
+		_match.is_diplomacy_enabled = not _match.options.section_diplomacy.option_diplomacy_teams		
+		_match.is_tribute_enabled = _match.options.section_diplomacy.option_diplomacy_tribute
+	end
+	
+	-- Set player behaviour when eliminated
+	if _match.options.section_endgame then 
+		allow_spectators = _match.options.section_endgame.option_allow_spectators
+	end
+	
+	_match.is_cheat_enabled = Misc_IsCommandLineOptionSet( "cheat" )
+	_match.revealMap = Misc_IsCommandLineOptionSet( "no_fow" )
+end
+
+-- Called before initialization, preceding other module OnInit functions.
+function KingOfTheHill_PreInit()
+	
+end
+
+-- Called on match initialization before handing control to the player.
+function KingOfTheHill_OnInit()
+	
+	-- Get local player
+	player_local = Core_GetPlayersTableEntry(Game_GetLocalPlayer())
+	
+	UI_AllTerritoryHide()
+
+	Core_CallDelegateFunctions( "DiplomacyEnabled", _match.is_diplomacy_enabled )
+	Core_CallDelegateFunctions( "TributeEnabled", _match.is_tribute_enabled )
+	
+	ReplayStatViewer_PopulateReplayStatTabs( {"CurrentResourcesTemplate", "IncomeTemplate", "MilitaryTemplate"} )
+
+	
+	if _match.options.section_starting_conditions and 
+		_match.options.section_starting_conditions.option_speed and 
+		_match.options.section_starting_conditions.option_speed.enum_value == _match.options.section_starting_conditions.option_speed.enum_items.option_speed_2x then
+		KingOfTheHill_SetSpeed( 2 )
+	elseif _match.options.section_starting_conditions and 
+		_match.options.section_starting_conditions.option_speed and 
+		_match.options.section_starting_conditions.option_speed.enum_value == _match.options.section_starting_conditions.option_speed.enum_items.option_speed_3x then
+		StandardMode_SetSpeed( 3 )
+	else
+		KingOfTheHill_SetSpeed()
+	end
+	
+	for _, player in pairs( PLAYERS ) do
+		
+		-- Increase starting resources for KotH mode
+		Player_GiftResource( player.id, RT_Wood, 500 )
+		Player_GiftResource( player.id, RT_Food, 500 )
+		Player_GiftResource( player.id, RT_Stone, 500 )
+		Player_GiftResource( player.id, RT_Gold, 500 )
+	
+		-- Debug options
+		if player.isHuman then
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_high_resources ) or _match.is_cheat_enabled then
+				Player_SetResource( player.id, RT_Food, 20000 )
+				Player_SetResource( player.id, RT_Wood, 20000 )
+				Player_SetResource( player.id, RT_Stone, 5000 )
+				Player_SetResource( player.id, RT_Gold, 10000 )				
+			end
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_high_popcap ) or _match.is_cheat_enabled then
+				Player_SetMaxPopulation( player.id, CT_Personnel, 200 )
+			end
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_reveal_map ) or _match.revealMap then
+				FOW_PlayerRevealAll( player.id )
+			end		
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_instant_build ) or _match.is_cheat_enabled then
+				local n = World_GetPossibleEntitiesCount( player.race )        
+        		for j = 0, n-1 do 
+		        	Modifier_ApplyToPlayer( Modifier_Create( MAT_EntityType, "cost_ticks_modifier", MUT_Set, false, 0.01, World_GetPossibleEntitiesBlueprint( player.race, j ) ), player.id, 0.0 )    
+				end
+			end
+		end		
+	end
+	
+	if ( _match.options.section_debug_options and _match.options.section_debug_options.option_instant_build ) or _match.is_cheat_enabled then
+		Rule_AddGlobalEvent( KingOfTheHill_OnConstructionComplete, GE_ConstructionComplete )
+	end	
+	
+	-- Optionally remove initial units
+	if Misc_IsCommandLineOptionSet( "no_units" ) then
+        for _, player in pairs( PLAYERS ) do              
+            SGroup_DestroyAllSquads( Player_GetSquads( player.id ) )
+            print( string.format( "KingOfTheHill_OnInit() - Removed all squads owned by Player %d", player.index ) )
+        end         
+    end
+	
+	-- Optionally remove gaia animals
+	if Misc_IsCommandLineOptionSet( "no_gaia" ) then    
+        local egroup = EGroup_CreateUnique()
+        World_GetAllNeutralEntities( egroup )
+        EGroup_Filter( egroup, "animal", FILTER_KEEP )
+        EGroup_DestroyAllEntities( egroup )    		
+		EGroup_Destroy( egroup )
+		print( string.format( "KingOfTheHill_OnInit() - All neutral animal entities removed" ) )
+    end
+	
+	
+	KingOfTheHill_FindSpawnPoints()
+	
+	if DynamicSpawning_IsEnabled() and #_match.hill_info.spawn_markers > 0 then
+		print(string.format("KOTH Number of possible spawn markers is %i", #_match.hill_info.spawn_markers))
+		KingOfTheHill_SpawnHill()
+	
+	elseif #_match.hill_info.spawn_positions > 0 then
+		print(string.format("KOTH Number of possible spawn positions is %i", #_match.hill_info.spawn_positions))
+		KingOfTheHill_SpawnHill()
+	
+	else
+		print(string.format("KOTH Number of possible spawn points is %i", #_match.hill_info.spawn_markers))
+		KingOfTheHill_SpawnHill()
+	end	
+	
+end
+
+-- Called after initialization is done when game is fading up from black.
+function KingOfTheHill_Start()
+	
+	--Nomad special start conditions. 
+	if _match.is_nomad_start == true then
+		for _, player in pairs( PLAYERS ) do
+			Player_SetStateModelBool( player.id, "nomad_bonus_claimed", false )
+		end
+	end
+	
+	-- Fog of war options
+	if ( _match.options.section_starting_conditions and _match.options.section_starting_conditions.option_fow ) then
+		if ( _match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_explore ) then 
+			FOW_ExploreAll()
+		elseif ( _match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_reveal ) then
+			FOW_ForceRevealAllUnblockedAreas()
+		end
+	end
+
+	-- UI Options
+	if ( _match.options.section_starting_conditions and _match.options.section_starting_conditions.option_score ) then
+		for _, player in pairs( PLAYERS ) do
+			player.scarModel.show_actual_score = true
+			UI_SetPlayerDataContext( player.id, player.scarModel )
+		end
+	end
+	
+	-- Update when Capture Point ownership changes
+	Rule_AddGlobalEvent(KingOfTheHill_OnCapturePointChange, GE_StrategicPointChanged)
+	Rule_AddGlobalEvent(KingOfTheHill_OnLocalPlayerChanged, GE_LocalPlayerChanged)
+	
+	Rule_AddOneShot(KingOfTheHill_NotifyHillSpawn, _notificationData.start_delay)
+end
+
+-- Called when Core_SetPlayerDefeated() is invoked. Signals that a player has been eliminated from play due to defeat.
+function KingOfTheHill_OnPlayerDefeated( player, reason )
+	
+end
+
+-- When a victory condition is met, a module must call Core_OnGameOver() in order to invoke this delegate and notify all modules that the match is about to end. Generally used for clean up (removal of rules, objectives, and UI elements specific to the module).
+function KingOfTheHill_OnGameOver()
+	
+	Rule_RemoveGlobalEvent( KingOfTheHill_OnConstructionComplete )
+end
+
+-----------------------------------------------------------------------
+-- Custom Functions
+-----------------------------------------------------------------------
+
+function KingOfTheHill_NotifyHillSpawn()
+	if (_match.hill_info.hill_entity ~= nil) then	
+		local capture_point_pos = Entity_GetPosition(_match.hill_info.hill_entity)
+		
+		UI_CreateEventCue
+		(
+			--[[ title --]] 		_notificationData.title_loc_string,
+			--[[ description --]] 	_notificationData.description_loc_string,
+			--[[ data_template --]] _notificationData.template,
+			--[[ icon_path --]] 	_notificationData.icon_path,
+			--[[ sound_path --]] 	_notificationData.sfx,
+			--[[ visibility --]]	_notificationData.position,
+			--[[ lifetime --]] 		_notificationData.lifetime
+			)
+		UI_CreateMinimapBlip(capture_point_pos, _notificationData.lifetime, "objective_koth_site")
+	end
+end
+
+-- Global event callback for GE_ConstructionComplete
+function KingOfTheHill_OnConstructionComplete( context )	
+
+	local player = Core_GetPlayersTableEntry( context.player )
+	local entity = context.entity
+
+	-- Accelerate unit production if cheat/option enabled
+	if ( _match.options.section_debug_options and _match.options.section_debug_options.option_instant_build ) or _match.is_cheat_enabled then
+		if player.isHuman then
+			Modifier_ApplyToEntity( Modifier_Create( MAT_Entity, "production_speed_modifier", MUT_Multiplication, false, 100.0, nil ), entity, 0.0 )
+			Modifier_ApplyToEntity( Modifier_Create( MAT_Entity, "cost_ticks_modifier", MUT_Multiplication, false, 0.01, nil ), entity, 0.0 )
+		end
+	else 
+		-- Reduce unit production and upgrade times  
+		if _match.speed.production ~= 1 and Entity_HasProductionQueue( entity ) then 
+			Modifier_ApplyToEntity( Modifier_Create( MAT_Entity, "production_speed_modifier", MUT_Multiplication, false, _match.speed.production, nil ), entity, 0.0 )
+		end
+		if _match.speed.upgrade ~= 1 then 
+			Modifier_ApplyToEntity( Modifier_Create(MAT_Entity, "cost_ticks_modifier", MUT_Multiplication, false, 1/_match.speed.upgrade, nil ), entity, 0.0 )
+		end
+	end
+end
+
+-- Modifies the default gathering, construction, production, and upgrade speeds for all units and players.
+function KingOfTheHill_SetSpeed( speed )
+	
+	-- Removed existing speed modifiers
+	for _, modifier in pairs( _match.speed.modifiers ) do
+		Modifier_RemoveInternal( modifier.ModifierID )
+	end
+	_match.speed.modifiers = {}
+	
+	-- Determine new modifier value(s)
+	local GetCommandLineNumber = function( arg, default_value )
+		local arg_value = tonumber( Util_GetCommandLineArgument( arg ) )
+		if arg_value == nil or arg_value == 0 then 
+			arg_value = default_value
+		end
+		return math.abs( arg_value )
+	end
+	
+	local default_speed = speed or GetCommandLineNumber( "speed", 1 )
+	_match.speed.build = GetCommandLineNumber( "build_speed", default_speed )
+	_match.speed.repair = GetCommandLineNumber( "repair_speed", default_speed )
+	_match.speed.gather = GetCommandLineNumber( "gather_speed", default_speed )
+	_match.speed.upgrade = GetCommandLineNumber( "upgrade_speed", default_speed )
+	_match.speed.production = GetCommandLineNumber( "production_speed", default_speed )
+	
+	local ApplyModifier = function( player_id, modifier_ebp, modifier_type, modifier_value )
+		if modifier_value ~= 1 then 
+			local modifier = Modifier_Create( MAT_EntityType, modifier_type, MUT_Multiplication, false, modifier_value, modifier_ebp )
+			Modifier_ApplyToPlayer( modifier, player_id, 0.0 )
+			table.insert( _match.speed.modifiers, modifier )
+		end
+	end
+	
+	-- Apply new modifiers
+	for _, player in pairs( PLAYERS ) do	
+		local villager_ebp = Cardinal_ConvertTypeToEntityBlueprint( "villager", player.id )		
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_food", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_wood", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_gold", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_stone", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "construction_rate", _match.speed.build )
+	end
+end
+
+-----------------------------------------------------------------------
+-- Rules
+-----------------------------------------------------------------------
+
+function KingOfTheHill_FindSpawnPoints()	
+	
+	if DynamicSpawning_IsEnabled() then
+		
+		-- Gather spawn positions using player start position filtering.
+		local minDistance = World_GetWidth() * _match.hill_info.spawn_distance_cutoff_percent
+		local filterFunction = DynamicSpawning_FilterByPlayerStartDistance
+		DynamicSpawning_GatherLandSpawnMarkers(_match.hill_info.spawn_markers, filterFunction, minDistance)
+		
+		-- Center point of a map is (0, 0) so we need the height to accurately check against the center of the map
+		local centerMapPosition = World_Pos(0, World_GetHeightAt(0, 0), 0)
+		
+		function SortByClosestToCenter(markerA, markerB)
+			
+			local positionA = Entity_GetPosition(markerA)
+			local positionB = Entity_GetPosition(markerB)
+			
+			local distSqrdA = World_DistanceSquaredPointToPoint(positionA, centerMapPosition)
+			local distSqrdB = World_DistanceSquaredPointToPoint(positionB, centerMapPosition)
+			
+			return distSqrdA < distSqrdB
+		end
+		
+		-- Sort the spawn_markers with closest to the center first as the first viable hill is to spawn closest to the center
+		table.sort(_match.hill_info.spawn_markers, SortByClosestToCenter)
+	else
+		
+		for entityIndex = 1, World_GetNumEntities() - 1 do
+		
+			local entity = World_GetEntity( entityIndex )
+			
+			if ( Entity_IsOfType( entity, "animal" ) or Entity_IsOfType( entity, "shore_fish" ) ) then
+				
+				local entityPos = Entity_GetPosition( entity )
+				
+				-- Find shortest distance to player start.
+				local closestPlayerIndex = 1
+				local closestPlayerDistance = World_GetWidth() * 2
+				
+				for playerIndex = 1, World_GetPlayerCount() do
+					
+					local playerStartPos = Player_GetStartingPosition( World_GetPlayerAt( playerIndex ) )
+					local playerStartDistance = Util_GetDistance( playerStartPos, entityPos )
+					
+					if playerStartDistance < closestPlayerDistance then
+						closestPlayerDistance = playerStartDistance
+						closestPlayerIndex = playerIndex
+					end
+				end
+				
+				-- If distance is too short discard, otherwise cache as valid spawn position.
+				if closestPlayerDistance >= World_GetWidth() * _match.hill_info.spawn_distance_cutoff_percent then
+					table.insert( _match.hill_info.spawn_positions, entityPos )
+				end
+			end
+		end
+		
+		-- Center point of a map is (0, 0) so we need the height to accurately check against the center of the map
+		local centerMapPosition = World_Pos(0, World_GetHeightAt(0, 0), 0)
+		
+		function SortByClosestToCenter(positionA, positionB)
+			local distSqrdA = World_DistanceSquaredPointToPoint(positionA, centerMapPosition)
+			local distSqrdB = World_DistanceSquaredPointToPoint(positionB, centerMapPosition)
+			
+			return distSqrdA < distSqrdB
+		end
+		
+		-- Sort the spawn_positions with closest to the center first as the first viable hill is to spawn closest to the center
+		table.sort(_match.hill_info.spawn_positions, SortByClosestToCenter)
+	end
+end
+
+-- First hill is to be spawned at the most central viable spawnpoint
+function KingOfTheHill_SpawnHill()	
+	
+	if (DynamicSpawning_IsEnabled() and #_match.hill_info.spawn_markers > 0) or (#_match.hill_info.spawn_positions > 0) then	
+		
+		local blueprint_name = _match.hill_info.blueprint_name
+		local capture_point = BP_GetEntityBlueprint(blueprint_name)
+		
+		if capture_point ~= nil then
+			local radius = Entity_GetStrategicPointRawRadius(capture_point)
+			local initialHillSpawnPosition = {}
+			local foundViableLocation = false
+			
+			local initialHillSpawnPosition
+			if DynamicSpawning_IsEnabled() then
+				local initialHillSpawnMarker = _match.hill_info.spawn_markers[1]	
+				initialHillSpawnPosition = Entity_GetPosition(initialHillSpawnMarker)
+			else
+				initialHillSpawnPosition = _match.hill_info.spawn_positions[1]
+			end
+			
+			print("SpawnInitialHill called, spawning hill")
+			
+			-- Spawn hill
+			_match.hill_info.hill_entity = Entity_CreateENV(capture_point, initialHillSpawnPosition, true)
+			Entity_Spawn(_match.hill_info.hill_entity)
+			Entity_ForceConstruct(_match.hill_info.hill_entity)
+			FOW_RevealEntity(_match.hill_info.hill_entity, _match.hill_info.reveal_radius, 0)
+			World_KingOfTheHillDestroyTreesNearPoint(initialHillSpawnPosition, radius)
+		end	
+	else
+		print("SpawnInitialHill called, no valid spawn points exist")
+	end
+end
+
+function KingOfTheHill_TrySpawnHillAtCentre()
+	-- Center point of a map is (0, 0) so we need the height to accurately check against the center of the map
+	local centerMapPosition = World_Pos(0, World_GetHeightAt(0, 0), 0)
+	local blueprint_name = _match.hill_info.blueprint_name
+	local capture_point = BP_GetEntityBlueprint(blueprint_name)
+	
+	if(capture_point ~= nil) then
+		-- We have to create a dummy entity for World_GetSpawnablePosition
+		local tempEntity = Entity_CreateENV(capture_point, centerMapPosition, true)		
+		local spawnPos = World_GetSpawnablePosition(centerMapPosition, tempEntity)
+		local radius = Entity_GetStrategicPointRawRadius(capture_point)
+		
+		local vector = World_Pos(spawnPos.x - centerMapPosition.x, 0, spawnPos.z - centerMapPosition.z)
+		vector = Vector_Normalize(vector)
+		
+		print(string.format("KOTH initial spawn position (%f, %f, %f), direction vector (%f, %f, %f)",
+				spawnPos.x,		
+				spawnPos.y,
+				spawnPos.z,
+				vector.x,
+				vector.y,
+				vector.z)
+			)
+		
+		spawnPos = AddVectorToPosition(spawnPos, MultiplyVectorByFloat(vector, radius))	
+		
+		for i = 1, 20 do
+			local numEntities = World_KingOfTheHillGetNumNonTreeNeutralEntitiesNearPoint(spawnPos, radius)
+			local numTrees = World_KingOfTheHillGetNumTreesNearPoint(spawnPos, radius)
+			
+			print(string.format("KOTH Iteration %i, position (%f, %f, %f), num entities %i, num trees %i",
+					i, 
+					spawnPos.x,		
+					spawnPos.y,
+					spawnPos.z,
+					numEntities, 
+					numTrees)
+				)
+			
+			if numEntities > 0 or numTrees >= 20 then
+				spawnPos = AddVectorToPosition(spawnPos, MultiplyVectorByFloat(vector, radius))
+			else
+				break
+			end
+		end
+		
+		-- Spawn hill		
+		_match.hill_info.hill_entity = Entity_CreateENV(capture_point, spawnPos, true)
+		Entity_Spawn(_match.hill_info.hill_entity)
+		Entity_ForceConstruct(_match.hill_info.hill_entity)
+		
+		FOW_RevealEntity(_match.hill_info.hill_entity, _match.hill_info.reveal_radius, 0)
+		
+		World_KingOfTheHillDestroyTreesNearPoint(spawnPos, radius)
+		Entity_Destroy(tempEntity)
+	end
+end
+
+-- Called when Capture Point ownership changes
+function KingOfTheHill_OnCapturePointChange(context)
+	
+	-- Skip this if we're about to process anything but a capture point
+	if not Entity_IsOfType(context.strategicPointEntity, _match.capture_point_entity_type) then
+		return
+	end
+	
+	-- Check if squad is nil and exit function if there is no instigating squad, except for changeType CT_StartedRevertingCooldown (7) and CT_CapturedContestedEnded (11)
+	-- For change type 7 and 11 they do not require a squad, and the squad can be nil when a squad dies within the capture radius (7) or leaves the radius (11).
+	if (context.instigatorSquad == nil and context.changeType ~= _match.change_type.StartedRevertingCooldown and context.changeType ~= _match.change_type.CapturedContestedEnded) then
+		print(string.format("Nil Squad for Capture Point Change Type %d", context.changeType))
+		return
+	end
+	
+	-- Get Capture Point position
+	local capture_point_pos = Entity_GetPosition(context.strategicPointEntity)
+		
+	-- Capture point behaviour SM
+	-- CT_Captured: If captured
+	if (context.changeType == _match.change_type.Captured) then
+			
+		-- Get instigating player
+		local instigating_player = Squad_GetPlayerOwner(context.instigatorSquad)
+		
+		-- Store instgating player as last capturer
+		_match.last_capturer = instigating_player
+		
+		_match.hill_info.owner = _match.last_capturer
+		
+		-- Get instigating player's colour
+		local uiColour = Player_GetUIColour(instigating_player)
+		
+		if Player_ObserveRelationship(player_local.id, instigating_player) == R_ENEMY then
+				
+			--Notify opposing players that Site is being captured
+			UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11269722, Loc_Empty(), "event_with_player_color", "icons\\event_queue_high_priority", _match.sfx.captured_enemy, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Enemy captured Holy Site
+			UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11269722, Loc_Empty(), "event_with_player_color", "icons\\event_queue_high_priority_large", "", uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Title, nothing) -- Enemy captured Site
+				
+		-- If local player captured
+		elseif (player_local.id == instigating_player) then
+				
+			--Notify player that they captured a Site
+			UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11269723, Loc_Empty(), "event_with_player_color", "",  _match.sfx.captured_player, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Site captured
+				
+			-- If local player's ally captured
+		elseif Player_ObserveRelationship(player_local.id, instigating_player) == R_ALLY then
+			
+			--Notify player that their ally captured a Site
+			UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11269721, Loc_Empty(), "event_with_player_color", "",  _match.sfx.captured_ally, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Ally captured Site
+		end		
+		
+		-- Trigger a blip that matches colour of instigator
+		UI_CreateMinimapBlipOnPosFrom(instigating_player, capture_point_pos, _notificationData.lifetime, "objective_koth_site")
+		
+	-- CT_Reverting: If owned Holy Site is being neutralized or contested
+	elseif (context.changeType == _match.change_type.Reverting) then
+		
+		-- Get instigating player
+		local instigating_player = Squad_GetPlayerOwner(context.instigatorSquad)
+		
+		-- Get instigating player's colour
+		local uiColour = Player_GetUIColour(instigating_player)
+		
+		-- Get Capture Point progress
+		local capture_point_progress = Player_GetStrategicPointCaptureProgress(player_local.id, context.strategicPointEntity)
+		
+		-- If Capture Point has not been contested recently
+		if (math.abs(capture_point_progress) == 1) then
+			
+			-- If local player or ally owns Holy Site and instigating player is not local player's ally
+			if Player_ObserveRelationship(player_local.id, context.strategicPointOwner) == R_ALLY and Player_ObserveRelationship(player_local.id, instigating_player) == R_ENEMY then
+				
+				--Notify that Capture Point is contested
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268843, Loc_Empty(), "event_with_player_color", "icons\\event_queue_high_priority", _match.sfx.begin_neutralize_enemy, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Enemy neutralizing Capture Point
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268843, Loc_Empty(), "event_with_player_color", "icons\\event_queue_high_priority_large", "", uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Title, nothing) -- Enemy neutralizing Capture Point
+				
+				-- If local player does not own the Capture Point and is instigating
+			elseif player_local.id ~= context.strategicPointOwner and player_local.id == instigating_player then
+				
+				--Notify player that they are neutralizing Capture Point
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268845, Loc_Empty(), "event_with_player_color", "", _match.sfx.begin_neutralize_player, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Neutralizing Capture Point
+				
+				-- If local player does not own the Capture Point and ally is instigating
+			elseif player_local.id ~= context.strategicPointOwner and Player_ObserveRelationship(player_local.id, instigating_player) == R_ALLY then
+				
+				--Notify player that they are neutralizing Capture Point
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268846, Loc_Empty(), "event_with_player_color", "", _match.sfx.begin_neutralize_ally, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Ally neutralizing Capture Point
+				
+			end
+		end
+		
+		-- Trigger a blip that matches colour of instigator
+		UI_CreateMinimapBlipOnPosFrom(instigating_player, capture_point_pos, _notificationData.lifetime, "objective_koth_site_spin")
+		
+	-- CT_Secured: If secured
+	elseif (context.changeType == _match.change_type.Secured) then
+		
+		-- Not used
+		
+	-- CT_UnCaptured: If Capture Point is neutralized
+	elseif (context.changeType == _match.change_type.UnCaptured) then
+		
+		-- Reset points for last hill owner
+		Player_SetStateModelInt(_match.hill_info.owner, _match.rewards_info.reward_points_statemodel, 0)
+		
+		-- Reset capture timer for last hill owner
+		Player_SetStateModelInt(_match.hill_info.owner, _match.rewards_info.control_timer_statemodel, 0)
+		
+		-- Reset reward iteration for last hill owner
+		Player_SetStateModelInt(_match.hill_info.owner, _match.rewards_info.reward_iteration_statemodel, 0)
+		
+		-- Clear last capturer
+		_match.last_capturer = nil
+		
+		-- Get instigating player
+		local instigating_player = Squad_GetPlayerOwner(context.instigatorSquad)
+		
+		-- Get instigating player's colour
+		local uiColour = Player_GetUIColour(instigating_player)
+
+	-- CT_Seized: If siezed (triggered briefly between Uncaptured and StartedCapture)
+	elseif (context.changeType == _match.change_type.Seized) then
+		
+		-- Not used
+		
+	-- CT_StartedCapture: If capture started/resuming
+	elseif (context.changeType == _match.change_type.StartedCapture) then
+		
+		-- Get instigating player
+		local instigating_player = Squad_GetPlayerOwner(context.instigatorSquad)
+		
+		-- Clear last capturer
+		_match.last_capturer = nil
+		
+		-- Get Capture Point progress - 0 to 1 for player/allies, 0 to -1 for enemies
+		local capture_point_progress = Player_GetStrategicPointCaptureProgress(player_local.id, context.strategicPointEntity)
+		
+		-- For every Capture Point
+		for _, capture_point in pairs(_match.capture_points) do
+			
+			-- If Capture Point matches the one being captured
+			if context.strategicPointEntity == Entity_FromID(capture_point.id) then
+				
+				-- Store last capturing player
+				capture_point.player_last_capturing = instigating_player
+				
+				-- If the capturing player is local player's ally
+				if Player_ObserveRelationship(player_local.id, instigating_player) == R_ALLY then
+					
+					-- Store local player's colour
+					capture_point.color_last_capturing = Player_GetUIColour(player_local.id)
+					
+				-- If capturing player is not local player's ally
+				else
+					
+					-- Store player colour
+					capture_point.color_last_capturing = Player_GetUIColour(instigating_player)
+					
+				end
+				
+				-- If Capture Point has not been revealed
+				if not capture_point.is_revealed then
+
+					-- Reveal capture point
+					FOW_RevealArea(capture_point_pos, 12, -1)
+					-- Track capture point reveal
+					capture_point.is_revealed = true
+				end
+			end
+		end
+		
+		-- Get instigating player's colour
+		local uiColour = Player_GetUIColour(instigating_player)
+
+		-- If Capture Point capture has not started recently
+		if capture_point_progress == 0 then
+			
+			-- If capturing player is not local player's ally
+			if Player_ObserveRelationship(player_local.id, instigating_player) == R_ENEMY then
+			
+				--Notify opposing players that Capture Point is being captured
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268847, Loc_Empty(), "event_with_player_color", "icons\\event_queue_high_priority", _match.sfx.begin_capture_enemy, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Enemy capturing Capture Point
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268847, Loc_Empty(), "event_with_player_color", "icons\\event_queue_high_priority_large", "", uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Title, nothing) -- Enemy capturing Capture Point
+			
+			-- If local player is capturing
+			elseif player_local.id == instigating_player then
+				
+				--Notify player that they are capturing Capture Point
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268848, Loc_Empty(), "event_with_player_color", "", _match.sfx.begin_capture_player, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Capturing Capture Point
+				
+			-- If local player's ally is capturing
+			elseif Player_ObserveRelationship(player_local.id, instigating_player) == R_ALLY then
+				
+				--Notify player that they are capturing Capture Point
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268849, Loc_Empty(), "event_with_player_color", "", _match.sfx.begin_capture_ally, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Ally capturing Capture Point
+				
+			end
+		end
+		
+		-- Trigger a blip that matches colour of instigator
+		UI_CreateMinimapBlipOnPosFrom(instigating_player, capture_point_pos, _notificationData.lifetime, "objective_koth_site_spin")
+		
+	-- CT_Halted: If progress halted (e.g. enemy enters proximity while you are present) OR If enemy enters proximity while you are present post-capture.
+	elseif (context.changeType == _match.change_type.Halted or context.changeType == _match.change_type.CapturedContested) then
+		
+		-- Get instigating player
+		local instigating_player = Squad_GetPlayerOwner(context.instigatorSquad)
+		
+		-- Clear last capturer
+		_match.last_capturer = nil
+		
+		-- Get instigating player's colour
+		local uiColour = Player_GetUIColour(instigating_player)
+		
+		-- Get Capture Point progress - 0 to 1 for player/allies, 0 to -1 for enemies
+		local capture_point_progress = Player_GetStrategicPointCaptureProgress(player_local.id, context.strategicPointEntity)
+		
+		-- If current progress was made by local player's ally
+		if capture_point_progress > 0 then
+				
+			--Notify that Capture Point is contested
+			UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268850, Loc_Empty(), "event_with_player_color", "icons\\event_queue_high_priority", _match.sfx.begin_neutralize_enemy, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Enemy contesting Capture Point
+			
+		-- If Capture Point progress was made by enemy
+		elseif capture_point_progress < 0 then
+			
+			-- If local player is instigating
+			if (player_local.id == instigating_player) then
+				
+				--Notify player that they are neutralizing Capture Point
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268851, Loc_Empty(), "event_with_player_color", "", _match.sfx.begin_neutralize_player, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Contesting Capture Point
+				
+			-- If ally is instigating
+			elseif Player_ObserveRelationship(player_local.id, instigating_player) == R_ALLY then
+				
+				--Notify player that they are neutralizing Capture Point
+				UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, 11268852, Loc_Empty(), "event_with_player_color", "", _match.sfx.begin_neutralize_ally, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing) -- Ally contesting Capture Point
+				
+			end
+		end
+		
+		-- Trigger a blip that matches colour of instigator
+		UI_CreateMinimapBlipOnPosFrom(instigating_player, capture_point_pos, _notificationData.lifetime, "objective_koth_site")
+	end
+	
+	-- Capture point point reward
+	if (context.changeType == _match.change_type.Captured 
+			or context.changeType == _match.change_type.Secured 
+			or context.changeType == _match.change_type.CapturedContestedEnded
+			or context.changeType == _match.change_type.StartedRevertingCooldown) then
+		
+		-- Avoid re-adding the same rule
+		if not Rule_Exists(KingOfTheHill_RewardPoints) then
+			-- Add the amount of seconds the player owns the capture point to their statemodel value
+			Rule_AddInterval(KingOfTheHill_RewardPoints, _match.rewards_info.update_interval)
+		else
+			Rule_Unpause(KingOfTheHill_RewardPoints)
+		end
+		
+	elseif (context.changeType ~= _match.change_type.Captured and context.changeType ~= _match.change_type.Secured and context.changeType ~= _match.change_type.CapturedContestedEnded) then
+		
+		if Rule_Exists(KingOfTheHill_RewardPoints) then
+			Rule_Pause(KingOfTheHill_RewardPoints)
+		end
+	end
+end
+
+-- Called when local player is changed
+function KingOfTheHill_OnLocalPlayerChanged(context)
+	
+	player_local = Core_GetPlayersTableEntry(context.player)
+	
+end
+
+function KingOfTheHill_RewardPoints()
+	if _match.hill_info.owner == nil then
+		return
+	end
+	
+	local capture_point_progress = Player_GetStrategicPointCaptureProgress(_match.hill_info.owner, _match.hill_info.hill_entity)
+	if capture_point_progress < 1 then
+		return
+	end
+	
+	-- Increment reward points: these will be used to determine the rewards' stages to be given to players and will be reset once we have passed a treshold
+	local current_points = Player_GetStateModelInt(_match.hill_info.owner, _match.rewards_info.reward_points_statemodel) + _match.rewards_info.update_interval
+	Player_SetStateModelInt(_match.hill_info.owner, _match.rewards_info.reward_points_statemodel, current_points)
+	
+	-- Increment timer for capture: this will be used to determine the rewards pool and will only be reset once the hill was neutralized
+	local current_timer = Player_GetStateModelInt(_match.hill_info.owner, _match.rewards_info.control_timer_statemodel) + _match.rewards_info.update_interval
+	Player_SetStateModelInt(_match.hill_info.owner, _match.rewards_info.control_timer_statemodel, current_timer)
+end

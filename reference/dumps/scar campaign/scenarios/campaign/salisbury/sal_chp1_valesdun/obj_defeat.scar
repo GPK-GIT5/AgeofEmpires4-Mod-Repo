@@ -1,0 +1,478 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("obj_prepare.scar")
+
+function DefeatGuy_InitObjectives()
+
+	OBJ_DefeatGuy = {
+		Title = "$999516", --Defeat Gui de Bourgogne
+		Type = ObjectiveType_Battle,
+		PreStart = function()
+			Rule_Add(HenryMove_Monitor)
+		end,
+		OnStart = DefeatGuy_Start,
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_DefeatGuyCavalry) and Objective_IsComplete(SOBJ_DefeatGuyArchers) and Objective_IsComplete(SOBJ_DefeatGuySpearmen)
+		end,
+		OnComplete = function()
+			-- Mission-o-Matic handles playing the outro
+			Mission_Complete()
+		end,
+		Cheat = Cheat_DefeatGuy,
+	}
+	
+	SOBJ_DefeatGuyGetReady = {
+		Title = "$11253023", -- Take Position
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_DefeatGuy,
+		StartAlongsideParent = true,
+		SetupUI = DefeatGuyGetReady_UI,
+		OnStart = DefeatGuyGetReady_Start,
+		Intel_Complete = EVENTS.ReachedBattlefield,
+		PreComplete = DefeatGuyGetReady_PreComplete,
+	}
+	
+
+	SOBJ_DefeatGuyCavalry = {
+		Title = "$999518", --Break Gui's Cavalry
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DefeatGuy,
+		StartAlongsideParent = false,
+		SetupUI = DefeatGuyCavalry_UI,
+		OnStart = DefeatGuyCavalry_Start,
+	}
+
+	SOBJ_DefeatGuyArchers = {
+		Title = "$999519", --Break Gui's Archers
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DefeatGuy,
+		StartAlongsideParent = false,
+		SetupUI = DefeatGuyArchers_UI,
+		OnStart = DefeatGuyArchers_Start,
+	}
+
+	SOBJ_DefeatGuySpearmen = {
+		Title = "$999520", --Break Gui's Spearmen
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DefeatGuy,
+		StartAlongsideParent = false,
+		SetupUI = DefeatGuySpearmen_UI,
+		OnStart = DefeatGuySpearmen_Start,
+	}
+
+	SOBJ_HeroAbility = {
+		Title = "$999522", --(Optional) Use Guillaume's Hero Ability
+		Type = ObjectiveType_Optional,
+		Parent = OBJ_DefeatGuy,
+		StartAlongsideParent = false,
+		SetupUI = HeroAbility_UI,
+		OnStart = HeroAbility_Start,
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_DefeatGuy)
+	Objective_Register(SOBJ_DefeatGuyGetReady)	
+	Objective_Register(SOBJ_DefeatGuyCavalry)
+	Objective_Register(SOBJ_DefeatGuyArchers)
+	Objective_Register(SOBJ_DefeatGuySpearmen)
+	Objective_Register(SOBJ_HeroAbility)
+end
+
+-- DefeatGuyStart - Smash the two armies together
+
+function DefeatGuy_Start() 
+
+	archers_killed = 0
+	cavalry_killed = 0
+	spearmen_killed = 0
+	
+	Rule_AddGlobalEvent(EnemyDefeatedTracker, GE_SquadKilled)
+	
+	
+	Goals_BattleHelp()
+end
+
+function HenryMove_Monitor()
+
+
+	if Prox_AreSquadsNearMarker(sg_player_units, mkr_obj_3b4_henry_trigger, ANY) then
+		
+		Util_StartIntel(EVENTS.ReachedBridge)
+		Cmd_FormationMove(sg_henry, mkr_KH_bf, false, nil, mkr_battlefield)
+		Cmd_FormationMove(sg_henry_cavalry, mkr_KH_cavalry_bf, false, nil, mkr_battlefield)
+		Cmd_FormationMove(sg_henry_spearmen, mkr_KH_spearmen_bf, false, nil, mkr_battlefield)
+		Cmd_FormationMove(sg_henry_archers, mkr_KH_archers_bf, false, nil, mkr_battlefield)
+		Rule_RemoveMe()
+	end
+end
+
+
+function DefeatGuyGetReady_UI()
+	first_marker_ui = Objective_AddUIElements(SOBJ_DefeatGuyGetReady , mkr_obj_3b4_ui, true, "$11253023", true, 5)
+	first_marker_aura = Objective_AddGroundReticule(SOBJ_DefeatGuyGetReady, mkr_obj_3b4_ui, nil, BP_GetReticuleBlueprint("aura_ring"), false)
+end
+
+function DefeatGuyGetReady_Start()
+	Rule_Add(ReachedBattle_Monitor)
+	Goals_DPadUseReminder()
+end
+
+
+function DefeatGuyGetReady_PreComplete()
+	training_reached_battle = true
+	Objective_RemoveUIElements(SOBJ_DefeatGuyGetReady, first_marker_ui)
+	Objective_RemoveGroundReticule(SOBJ_DefeatGuyGetReady, first_marker_aura)
+	FOW_RevealArea( Marker_GetPosition(mkr_battlefield), 50, -1)
+	Rule_Add(StartBattle_Monitor)
+	Objective_Start(SOBJ_DefeatGuySpearmen, false, false)
+	Objective_Start(SOBJ_DefeatGuyArchers, false, false)
+	Objective_Start(SOBJ_DefeatGuyCavalry, false, false)
+end
+
+
+
+function ReachedBattle_Monitor()
+	
+	if Prox_AreSquadsNearMarker(sg_player_units, mkr_obj_3b4, ANY) or Prox_AreSquadsNearMarker(sg_player_units, mkr_obj_3b4_ui, ANY) then
+		Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		--Music_LockIntensity(MUSIC_COMBAT_RARE) --Raise Music Intensity
+
+		Objective_Complete(SOBJ_DefeatGuyGetReady, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+
+
+
+
+function StartBattle_Monitor()
+	
+	if Prox_AreSquadsNearMarker(sg_player_units, mkr_battlefield, ANY) then
+		
+		training_started_battle = true
+		
+		-- Advance Henry's units
+		Cmd_Attack(sg_henry, sg_guy)
+		Cmd_Attack(sg_henry_spearmen, sg_guy_cavalry)
+		Cmd_Attack(sg_henry_archers, sg_guy_spearmen)
+		Cmd_Attack(sg_henry_cavalry, sg_guy_archers)
+		
+		Util_StartIntel(EVENTS.StartedBattle)
+		Objective_Start(SOBJ_HeroAbility, false, true)
+		
+		ui_hint_active = false
+		Rule_Add(UnitHighlight_Monitor)
+		Rule_Add(Reinforcement_Monitor)
+		
+		Rule_RemoveMe()
+	end
+end
+
+function UnitHighlight_Monitor()
+	
+	if not ui_hint_active then 
+		if Misc_IsSGroupSelected(sg_starting_spearmen, false) and not Objective_IsComplete(SOBJ_DefeatGuyCavalry) then
+			ui_hint_active = true
+			cavalry_hint = Objective_AddUIElements(OBJ_DefeatGuy, SGroup_GetSpawnedSquadAt(sg_guy_cavalry,1), false, "$11253024", true)
+			Rule_AddOneShot(RemoveHintTimer, 3)
+			
+		elseif Misc_IsSGroupSelected(sg_horsemen, false) and not Objective_IsComplete(SOBJ_DefeatGuyArchers) then
+			ui_hint_active = true
+			archers_hint = Objective_AddUIElements(OBJ_DefeatGuy, SGroup_GetSpawnedSquadAt(sg_guy_archers,1), false, "$11253024", true)
+			Rule_AddOneShot(RemoveHintTimer, 3)
+			
+		elseif Misc_IsSGroupSelected(sg_archers, false) and not Objective_IsComplete(SOBJ_DefeatGuySpearmen) then
+			ui_hint_active = true
+			spearmen_hint = Objective_AddUIElements(OBJ_DefeatGuy, SGroup_GetSpawnedSquadAt(sg_guy_spearmen,1), true, "$11253024", true)
+			Rule_AddOneShot(RemoveHintTimer, 3)
+		end
+	end
+end
+
+function Reinforcement_Monitor()
+	
+	if(SGroup_Count(sg_horsemen) == 0) then
+		UnitEntry_DeploySquads(player1, sg_horsemen, {{type = "scar_horseman", numSquads = target_horsemen}}, mkr_player_reinforcements_cavalry)
+		Cmd_Move(sg_horsemen, mkr_obj_3b4)
+	end
+	if(SGroup_Count(sg_starting_spearmen) == 0) then
+		UnitEntry_DeploySquads(player1, sg_starting_spearmen, {{type = "scar_spearman", numSquads = target_spearmen}}, mkr_player_reinforcements_spearmen)
+		Cmd_Move(sg_starting_spearmen, mkr_obj_3b4)
+	end
+	if(SGroup_Count(sg_archers) == 0) then
+		UnitEntry_DeploySquads(player1, sg_archers, {{type = "scar_archer", numSquads = target_archers}}, mkr_player_reinforcements_archers)
+		Cmd_Move(sg_archers, mkr_obj_3b4)
+	end
+end
+
+function RemoveHintTimer()
+	RemoveAllUIElements(OBJ_DefeatGuy)
+	ui_hint_active = false
+end
+
+-- ///// DefeatGuyCavalry //////////////////////////////////////////////
+function DefeatGuyCavalry_UI()
+	
+	max_cavalry = math.floor(SGroup_CountSpawned(sg_guy_cavalry) * 0.75)
+	Objective_SetProgressBar(SOBJ_DefeatGuyCavalry, 0)
+end
+
+function DefeatGuyCavalry_Start()
+
+end
+
+-- ///// DefeatGuyArchers //////////////////////////////////////////////
+function DefeatGuyArchers_UI()
+	
+	max_archers = math.floor(SGroup_CountSpawned(sg_guy_archers) * 0.75)
+	Objective_SetProgressBar(SOBJ_DefeatGuyArchers, 0)
+end
+
+function DefeatGuyArchers_Start()
+
+end
+
+-- ///// DefeatGuySpearmen //////////////////////////////////////////////
+function DefeatGuySpearmen_UI()
+	
+	max_spearmen = math.floor(SGroup_CountSpawned(sg_guy_spearmen) * 0.75)
+	Objective_SetProgressBar(SOBJ_DefeatGuySpearmen, 0)
+end
+
+function DefeatGuySpearmen_Start()
+
+end
+
+-- Enenmy Defeated Tracker
+function EnemyDefeatedTracker(context)
+	
+	if Squad_GetPlayerOwner(context.victim) == player2 then
+		local victim = context.victim	
+		
+		local all_completed = Objective_IsComplete(SOBJ_DefeatGuyArchers) and Objective_IsComplete(SOBJ_DefeatGuyCavalry) and Objective_IsComplete(SOBJ_DefeatGuySpearmen)
+		if all_completed == true then
+			Rule_RemoveMe()
+		
+		else
+			-- Archer
+			if SGroup_ContainsSquad(sg_guy_archers, victim.SquadID, true) and not Objective_IsComplete(SOBJ_DefeatGuyArchers) then 
+				
+				archers_killed = archers_killed + 1
+				
+				if archers_killed <= max_archers then
+					
+					Objective_SetProgressBar(SOBJ_DefeatGuyArchers, archers_killed/max_archers)
+				end
+				
+				if archers_killed >= max_archers then
+					Modify_UnitSpeed(sg_guy_archers, 1.2) 
+					Cmd_Move(sg_guy_archers, mkr_GoB_retreat)
+					Objective_Complete(SOBJ_DefeatGuyArchers, false)
+				end
+			-- Horseman
+			elseif SGroup_ContainsSquad(sg_guy_cavalry, victim.SquadID, true)  and not Objective_IsComplete(SOBJ_DefeatGuyCavalry) then 
+				
+				cavalry_killed = cavalry_killed + 1
+				
+				if cavalry_killed <= max_cavalry then
+					
+					Objective_SetProgressBar(SOBJ_DefeatGuyCavalry, cavalry_killed/max_cavalry)
+				end
+				
+				if cavalry_killed >= max_cavalry then
+					Modify_UnitSpeed(sg_guy_cavalry, 1.2)
+					Cmd_Move(sg_guy_cavalry, mkr_GoB_retreat)
+					Objective_Complete(SOBJ_DefeatGuyCavalry, false)
+				end
+				
+			-- Spearman
+			elseif SGroup_ContainsSquad(sg_guy_spearmen, victim.SquadID, true)  and not Objective_IsComplete(SOBJ_DefeatGuySpearmen) then 
+				
+				spearmen_killed = spearmen_killed + 1
+				
+				if spearmen_killed <= max_spearmen then
+					
+					Objective_SetProgressBar(SOBJ_DefeatGuySpearmen, spearmen_killed/max_spearmen)
+				end
+				
+				if spearmen_killed >= max_spearmen then
+					Modify_UnitSpeed(sg_guy_spearmen, 1.2)
+					Cmd_Move(sg_guy_spearmen, mkr_GoB_retreat)
+					Objective_Complete(SOBJ_DefeatGuySpearmen, false)
+				end
+			end
+		end
+	end
+end
+
+-- ///// HeroAbility //////////////////////////////////////////////
+function HeroAbility_UI()
+	
+end
+
+function HeroAbility_Start()
+
+	Game_SetVisibility(VF_XboxUIContextualRadial, true)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("leader_attack_speed_activated"), ITEM_UNLOCKED)
+	Goals_HeroAbility()
+	Rule_AddSGroupEvent(HeroAbility_Monitor, sg_william, GE_AbilityExecuted)
+end
+
+function HeroAbility_Monitor(context)
+
+	Objective_Complete(SOBJ_HeroAbility, false, true)
+	Rule_RemoveMe()
+end
+
+-- Adapted from Objective_RemoveUIElements:
+function RemoveAllUIElements(objTable)
+
+	if objTable.UIElements == nil or (#objTable.UIElements) == 0 then
+		return false
+	end
+	
+	for i = (#objTable.UIElements), 1, -1 do
+		
+		local v = objTable.UIElements[i]
+				
+		-- try deleting each type of UI element (if nil, will fail silently)
+		Objective_RemovePing(objTable, v.PingID)
+		
+		-- remove world highlights
+		if scartype(v.HighlightedEntities) == ST_TABLE then
+			for j = 1, (#v.HighlightedEntities) do
+				
+				local entityid = v.HighlightedEntities[j].eid
+				if Entity_IsValid(entityid) then
+					local entity = Entity_FromID(entityid)
+					Obj_HighlightEntity(objTable.ID, entity, false)
+				end
+				
+				local hintid = v.HighlightedEntities[j].hintid
+				if hintid ~= nil then
+					HintPoint_Remove(hintid)
+				end
+				
+			end
+		end
+		
+		if scartype(v.HighlightedSquads) == ST_TABLE then
+			for j = 1, (#v.HighlightedSquads) do
+				
+				local squadid = v.HighlightedSquads[j].sid
+				if Squad_IsValid(squadid) then
+					local squad = Squad_FromID(squadid)
+					if Squad_Count(squad) > 0 then
+						Obj_HighlightSquad(objTable.ID, squad, false)
+					end
+				end
+				
+				local hintid = v.HighlightedSquads[j].hintid
+				if hintid ~= nil then
+					HintPoint_Remove(hintid)
+				end
+				
+			end
+		end
+		
+		if scartype(v.HighlightedPositions) == ST_TABLE then
+			for j = 1, (#v.HighlightedPositions) do
+				
+				local pos = v.HighlightedPositions[j].pos
+				Obj_HighlightPosition(objTable.ID, pos, false)
+				
+				local hintid = v.HighlightedPositions[j].hintid
+				if hintid ~= nil then
+					HintPoint_Remove(hintid)
+				end
+				
+			end
+		end
+		
+		if v.AreaHighlightID ~= nil then
+			MapIcon_Destroy(v.AreaHighlightID)
+		end
+		
+		-- forget all about it
+		table.remove(objTable.UIElements, i)
+		return true
+	end
+	
+	return false
+end
+
+
+--- cheat function to allow skipping to this objective
+
+function Cheat_DefeatGuy()
+	
+	Sound_Play2D(MIX_RETURN_TO_GAME)
+	
+	--open UI
+	Game_SetVisibility(VF_XboxUIControlGroups, true)
+	Game_SetVisibility(VF_XboxUIQuickCommands, true)
+	Game_SetVisibility(VF_XboxUIQuickFind, true)
+	
+	--open map
+	World_SetInteractionStage(1)
+	World_SetInteractionStage(2)
+	World_SetInteractionStage(3)
+	World_SetInteractionStage(9)	
+	World_SetInteractionStage(4)
+	World_SetInteractionStage(8)
+	World_SetInteractionStage(5)
+	World_SetInteractionStage(6)
+	FOW_RevealMarker(mkr_fow_reveal_obj3b,0)
+	
+	--player units
+	SGroup_EnableLeaderCrown(sg_william, true)
+	SGroup_WarpToMarker(sg_william, mkr_obj_3b3)
+	SGroup_WarpToMarker(sg_starting_spearmen, mkr_player_reinforcements_spearmen)
+	sg_horsemen = SGroup_CreateIfNotFound("sg_horsemen") 
+	sg_archers = SGroup_CreateIfNotFound("sg_archers") 
+	
+	UnitEntry_DeploySquads (player1, sg_horsemen, {{type = "scar_horseman", numSquads = 8}}, mkr_player_reinforcements_cavalry)
+	UnitEntry_DeploySquads (player1, sg_archers, {{type = "scar_archer", numSquads = 12}}, mkr_player_reinforcements_archers)	
+	
+	SGroup_AddGroups(sg_player_units, {sg_william, sg_starting_spearmen, sg_horsemen, sg_archers})
+
+	
+	-- Allies Army
+	sg_henry = SGroup_CreateIfNotFound("sg_henry") 
+	UnitEntry_DeploySquads(player3, sg_henry, {{sbp = SBP.CAMPAIGN.UNIT_KING_HENRY_CMP_SAL, numSquads = 1 }}, mkr_KH_henry)
+	Entity_SetInvulnerableMinCap(Squad_GetFirstEntity(SGroup_GetSpawnedSquadAt(sg_henry, 1)), 0.75, -1)
+	
+	sg_henry_spearmen = SGroup_CreateIfNotFound("sg_henry_spearmen") 
+	sg_henry_spearmen_01 = SGroup_CreateIfNotFound("sg_henry_spearmen_01") 
+	sg_henry_spearmen_02 = SGroup_CreateIfNotFound("sg_henry_spearmen_02") 
+	UnitEntry_DeploySquads(player3, {sg_henry_spearmen, sg_henry_spearmen_01}, {{type = "scar_spearman", numSquads = num_henry_spearmen_per_marker }}, mkr_KH_spearmen_01)
+	UnitEntry_DeploySquads(player3, {sg_henry_spearmen, sg_henry_spearmen_02}, {{type = "scar_spearman", numSquads = num_henry_spearmen_per_marker }}, mkr_KH_spearmen_02)
+	
+	sg_henry_archers = SGroup_CreateIfNotFound("sg_henry_archers") 
+	sg_henry_archers_01 = SGroup_CreateIfNotFound("sg_henry_archers_01") 
+	sg_henry_archers_02 = SGroup_CreateIfNotFound("sg_henry_archers_02") 
+	sg_henry_archers_03 = SGroup_CreateIfNotFound("sg_henry_archers_03") 
+	UnitEntry_DeploySquads(player3, {sg_henry_archers, sg_henry_archers_01}, {{type = "scar_archer", numSquads = num_henry_archers_per_marker }}, mkr_KH_archery_01)
+	UnitEntry_DeploySquads(player3, {sg_henry_archers, sg_henry_archers_02}, {{type = "scar_archer", numSquads = num_henry_archers_per_marker }}, mkr_KH_archery_02)
+	UnitEntry_DeploySquads(player3, {sg_henry_archers, sg_henry_archers_03}, {{type = "scar_archer", numSquads = num_henry_archers_per_marker }}, mkr_KH_archery_03)
+	
+	sg_henry_cavalry = SGroup_CreateIfNotFound("sg_henry_cavalry") 
+	sg_henry_cavalry_01 = SGroup_CreateIfNotFound("sg_henry_cavalry_01") 
+	sg_henry_cavalry_02 = SGroup_CreateIfNotFound("sg_henry_cavalry_02") 
+	sg_henry_cavalry_03 = SGroup_CreateIfNotFound("sg_henry_cavalry_03") 
+	UnitEntry_DeploySquads(player3, {sg_henry_cavalry, sg_henry_cavalry_01}, {{type = "scar_horseman", numSquads = num_henry_cavalry_per_marker }}, mkr_KH_cavalry_01)
+	UnitEntry_DeploySquads(player3, {sg_henry_cavalry, sg_henry_cavalry_02}, {{type = "scar_horseman", numSquads = num_henry_cavalry_per_marker }}, mkr_KH_cavalry_02)
+	UnitEntry_DeploySquads(player3, {sg_henry_cavalry, sg_henry_cavalry_03}, {{type = "scar_horseman", numSquads = num_henry_cavalry_per_marker }}, mkr_KH_cavalry_03)
+
+	World_EnableSharedLineOfSight(player1, player3, true)
+	
+	--enemy army
+	SpawnGuyArmy()
+	
+	Objective_Start(OBJ_DefeatGuy, true, true)
+
+end
+
+
+

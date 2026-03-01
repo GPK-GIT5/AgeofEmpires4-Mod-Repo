@@ -1,0 +1,114 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("obj_archers.scar")
+
+function LocateArchers_InitObjectives()
+
+	OBJ_LocateArchers = {
+		Title = "$999503", --Locate the Archers
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.LocateArchersStart,
+
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_LocateArchers, ALL)
+		end,
+		OnComplete = function()
+			Objective_Start(OBJ_CommandArchers, false, true) -- no banner because the call to action triggers as well
+		end,	
+	}
+
+	SOBJ_SelectExpandedArmy = {
+		Title = "$11254819",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_LocateArchers,
+		StartAlongsideParent = true,
+		OnStart = SelectExpandedArmy_Start,
+		IsComplete = SelectExpandedArmy_IsComplete,
+		OnComplete = SelectExpandedArmy_Complete,
+	}	
+	
+	SOBJ_MoveAmbush = {
+		Title = "$999504", --Follow the Markers and Find the Archers 
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_LocateArchers,
+		StartAlongsideParent = false,
+		SetupUI = MoveAmbush_UI,
+		OnStart = MoveAmbush_Start,
+	}
+	
+	-- Register all objectives
+	Objective_Register(OBJ_LocateArchers)
+	Objective_Register(SOBJ_SelectExpandedArmy)
+	Objective_Register(SOBJ_MoveAmbush)
+
+end
+
+
+function SelectExpandedArmy_Start()
+    Goals_ExploreSelection()
+end
+
+function SelectExpandedArmy_IsComplete()	
+	return Misc_IsSGroupSelected(sg_player_units, ALL)
+end
+
+function SelectExpandedArmy_Complete()
+	Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+	Objective_Start(SOBJ_MoveAmbush, false, true)
+	
+end
+
+-- ///// MoveAmbush //////////////////////////////////////////////
+function MoveAmbush_UI()
+	
+	Objective_AddUIElements(SOBJ_MoveAmbush, mkr_obj_2g2, true, "$999497", true, 5)
+	Objective_AddGroundReticule(SOBJ_MoveAmbush, mkr_obj_2g2, Marker_GetProximityRadiusOrDefault(mkr_obj_2g2, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+	
+end
+
+function MoveAmbush_Start()
+
+	-- Spawn Archers for encounter
+	sg_archers = SGroup_CreateIfNotFound("sg_archers") 
+	UnitEntry_DeploySquads(player4, sg_archers, {{type = "scar_archer", numSquads = num_allied_archers_per_marker }}, mkr_obj2g_archery_spawn_01)
+	UnitEntry_DeploySquads(player4, sg_archers, {{type = "scar_archer", numSquads = num_allied_archers_per_marker }}, mkr_obj2g_archery_spawn_02)
+	UnitEntry_DeploySquads(player4, sg_archers, {{type = "scar_archer", numSquads = num_allied_archers_per_marker }}, mkr_obj2g_archery_spawn_03)
+	UnitEntry_DeploySquads(player4, sg_archers, {{type = "scar_archer", numSquads = num_allied_archers_per_marker }}, mkr_obj2g_archery_spawn_04)
+	SGroup_SetSelectable(sg_archers, false)
+	
+	Rule_Add(MoveAmbush_Monitor)
+	
+end
+
+function MoveAmbush_Monitor()
+
+	if Prox_AreSquadsNearMarker(sg_player_units, mkr_obj_2g1, ANY) then
+		SGroup_SetPlayerOwner(sg_archers, player1)
+		SGroup_SetSelectable(sg_archers, true)
+		
+		
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_archers)
+
+		
+		Objective_Complete(SOBJ_MoveAmbush, false, true)
+		
+		RecordControlGroups()
+		
+		-- Grey out the other units
+		World_EnableSharedLineOfSight(player1, player4, true)
+		SGroup_SetPlayerOwner(sg_player_units, player4)
+		SGroup_SetSelectable(sg_player_units, false)
+		SGroup_SetAvgHealth(sg_player_units, 1) 
+		
+		sg_enemy_spearmen = SGroup_CreateIfNotFound("sg_enemy_spearmen") 
+		UnitEntry_DeploySquads(player2, sg_enemy_spearmen, {{type = "scar_spearman", numSquads = num_enemy_spearmen_per_marker }}, mkr_obj2h_spearmen_spawn_01)
+		UnitEntry_DeploySquads(player2, sg_enemy_spearmen, {{type = "scar_spearman", numSquads = num_enemy_spearmen_per_marker }}, mkr_obj2h_spearmen_spawn_02)
+		UnitEntry_DeploySquads(player2, sg_enemy_spearmen, {{type = "scar_spearman", numSquads = num_enemy_spearmen_per_marker }}, mkr_obj2h_spearmen_spawn_03)
+		Modify_ReceivedDamage(sg_enemy_spearmen, 2)
+		
+		Rule_RemoveMe()
+		
+	end
+end
+

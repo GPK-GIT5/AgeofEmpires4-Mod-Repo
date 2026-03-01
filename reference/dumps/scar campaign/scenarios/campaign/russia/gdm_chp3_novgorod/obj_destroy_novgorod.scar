@@ -1,0 +1,198 @@
+--
+-- Mission Novgorod and 1478 - Objective Destroy Novgorod buildings
+--
+
+--PHASE 4 OF THE MISSION (PROBABLY)
+
+function DestroyNovgorod_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	-----primary objective now in GetThroughNovgorod obj
+	SOBJ_DestroyVecheBell = {
+	
+		Title = "$11172099",--Destroy the Town Center and get the Veche Bell
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ConquerNovgorod,
+		StartAlongsideParent = false, 
+		
+		Intel_Start = EVENTS.DestroyLandmarks,
+		--Intel_Complete = EVENTS.DestroyBell,
+		
+		SetupUI = function()
+			hpid_vecheBell = Objective_AddUIElements(SOBJ_DestroyVecheBell, EGroup_GetPosition(eg_veche_bell), true, "$11197733", true, 10)
+		end,
+		
+		PreStart = function()
+			Rule_AddInterval(VecheBell_VOThresholdTrigger, 1)
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(FindVecheBell_Monitor, 1)
+	
+			Music_LockIntensity(MUSIC_COMBAT_RARE)
+		end,
+		
+		IsComplete = function()
+			return EGroup_IsEmpty(eg_veche_bell)
+		end,
+		
+		PreComplete = function()
+			Objective_RemoveUIElements(SOBJ_DestroyVecheBell, hpid_vecheBell)
+		end,
+	}
+	
+	SOBJ_DestroyKremlin = {
+	
+		Title = "$11179923",--Destroy the Kremlin Armory
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ConquerNovgorod,
+		StartAlongsideParent = false, 
+		
+		SetupUI = DestroyTheKremlin_UI,
+		
+		OnStart = DestroyTheKremlin_Start,
+		
+		OnComplete = DestroyTheKremlin_OnComplete,
+		Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+	}
+	
+	SOBJ_DestroyUniversity= {
+	
+		Title = "$11172100",--Destroy the University
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_ConquerNovgorod,
+		StartAlongsideParent = false, 
+		
+		SetupUI = DestroyUniversity_UI,
+		
+		OnStart = DestroyUniversity_Start,
+		
+		OnComplete = DestroyUniversity_OnComplete,
+		Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+	}
+		
+	
+--	Objective_Register(OBJ_DestroyNovgorod)
+	Objective_Register(SOBJ_DestroyVecheBell)
+	--Objective_Register(SOBJ_DestroyKremlin)
+	--Objective_Register(SOBJ_DestroyUniversity)
+	--
+	-- any other variable initialization can go in here
+	--
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			Mission_Complete()
+		end,
+		
+	    }
+
+    Objective_Register(OBJ_DebugComplete)	
+	
+end
+
+
+
+--
+-- any other script relating to this objective should go down below here
+--
+
+-- function starts the destroy monastery
+
+function NovgorodProvePower_IntensityMusicChange()
+		Music_UnlockIntensity()
+		--Sound_SetMinimumMusicCombatIntensity(801,0)
+end
+
+function FindVecheBell_Monitor()
+	
+	if EGroup_CountSpawned(eg_veche_bell) >= 1 then
+		if Player_CanSeeEGroup(player1, eg_veche_bell, ANY) == true then
+			Sound_Play3D("sfx_veche_bell_toll_revealed", EGroup_GetEntityAt(eg_veche_bell, 1))
+			Rule_RemoveMe()
+		end
+	else
+		Rule_RemoveMe()
+	end
+end
+
+function VecheBell_VOThresholdTrigger()
+	local function _EvaluateHP(gid, idx, eid)
+		if Entity_GetHealthPercentage(eid) <= 0.33 and bell_tolled ~= true then
+			Sound_Play3D("sfx_veche_bell_toll_damaged", EGroup_GetEntityAt(eg_veche_bell, 1))
+			bell_tolled = true
+		end
+		
+		if Entity_GetHealthPercentage(eid) <= 0.25 then
+			Util_StartIntel(EVENTS.DestroyBell)
+			Rule_RemoveMe()
+			return true
+		end
+	end
+	
+	if EGroup_CountSpawned(eg_veche_bell) >= 1 then
+		EGroup_ForEach(eg_veche_bell, _EvaluateHP)
+	end
+end
+
+function DestroyVecheBell_OnComplete()
+	
+	Objective_RemoveUIElements(SOBJ_DestroyVecheBell,hpid_monastery)
+	
+end
+
+function DestroyTheKremlin_UI()
+	hpid_kremlin = Objective_AddUIElements(SOBJ_DestroyKremlin,mkr_novgorod_kremlin, true,nil, false, nil, nil, nil, "icons/objectives/capture_objective", "CaptureObjectiveTemplate")
+
+end
+
+function DestroyTheKremlin_Start()
+	
+	Rule_Add(DestroyTheKremlin_Monitor)
+end
+	
+function DestroyTheKremlin_Monitor()
+	
+	if Player_HasBuilding(player2, {EBP.CAMPAIGN.BUILDING_LANDMARK_AGE3_KREMLIN_ARMOURY_NOV}) == false then
+		Objective_Complete(SOBJ_DestroyKremlin)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function DestroyTheKremlin_OnComplete()
+	
+	Objective_RemoveUIElements(SOBJ_DestroyKremlin,hpid_kremlin)
+	
+end
+
+
+function DestroyUniversity_UI()
+	hpid_kremlin = Objective_AddUIElements(SOBJ_DestroyUniversity,mkr_novgorod_university, true,nil, false, nil, nil, nil, "icons/objectives/capture_objective", "CaptureObjectiveTemplate")
+end
+		
+function DestroyUniversity_Start()
+		
+	Rule_Add(DestroyUniversity_Monitor)
+	
+end
+
+function DestroyUniversity_Monitor()
+	
+	if Player_HasBuilding(player2, {EBP.CAMPAIGN.BUILDING_TECH_UNIVERSITY_CONTROL_NOV}) == false then
+		Objective_Complete(SOBJ_DestroyUniversity)
+		Rule_RemoveMe()
+	end
+end
+
+function DestroyUniversity_OnComplete()
+	
+	Objective_RemoveUIElements(SOBJ_DestroyUniversity,hpid_kremlin)
+
+end
+
+--function OBJ_DestroyNovgorod_OnComplete()
+	--Util_StartIntel(EVENTS.Victory)
+	--IvanMovesOnTown()
+--end

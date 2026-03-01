@@ -1,0 +1,219 @@
+--
+-- Lumen Shan 1268 - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+
+
+local goal_sequence_use_liu_zheng = "campaign_mon_chp3_lumen_shan_liu_zheng"
+local goal_sequence_repair_bridge = "campaign_mon_chp3_lumen_shan_repair_bridge"
+
+function MissionTutorial_Init()	-- called from the mission's Mission_Start() function, so post-intro
+	
+	-- this enables the tutorial system, regardless of preferences
+	
+	--Training_Init()
+	--Training_ForceGoalsActive()	
+	
+	--if Rule_Exists(Training_Update) == false then -- if it hasn't already been started up...
+		--Rule_AddInterval( Training_Update, 0.5)
+	--end
+	
+end
+
+--
+-- DESTROYING BRIDGES
+--
+
+function _Predicate_CompletedBridgeHint(goal)
+	
+	local bridgeSelected = Misc_IsEGroupSelected(eg_bridges_wood, ANY)
+	local bridgeAttacked = false
+	local _CheckHealth = function(gid, idx, eid)
+		if Entity_GetHealthPercentage(eid) < 0.5 then
+			bridgeAttacked = true
+		end
+	end
+	EGroup_ForEach(eg_bridges_wood, _CheckHealth)
+	
+	return bridgeSelected or bridgeAttacked
+end
+
+function _Predicate_UserHasNotSeenBridgeRecently(goalSequence)
+	if ABriefPeriodOfTimeHasPassed(goalSequence) then
+		
+		eg_bridges_onscreen = EGroup_CreateIfNotFound("eg_bridges_onscreen")
+		EGroup_Clear(eg_bridges_onscreen)
+		local _CheckOnscreen = function(gid, idx, eid)
+			if Misc_IsEntityOnScreen(eid, 100) == true then
+				EGroup_Add(eg_bridges_onscreen, eid)
+			end
+		end
+		EGroup_ForEach(eg_bridges_wood, _CheckOnscreen)
+		
+		if EGroup_Count(eg_bridges_onscreen) > 0 then
+			local entity = EGroup_GetEntityAt(eg_bridges_onscreen, 1)
+			goalSequence.goals[goalSequence.currentGoalIndex].key = entity
+			return true
+		end
+	end
+	return false
+end
+
+function MissionTutorial_AddHintToIntactBridges()
+
+	local GoalUI = {
+		ID = "Bridges can be destroyed. Select soldiers and click the Attack-Move button, or use the A hotkey; then left-click.", 
+		Message = "$11184822", 
+		DataTemplate = "GenericTrainingDataTemplate",
+	}
+	local GoalDestroyBridge = Training_Goal(
+		nil, 
+		GoalUI, 
+		_Predicate_CompletedBridgeHint
+	)
+	local GoalSequenceDestroyBridge = Training_GoalSequence(
+		goal_sequence_destroy_bridge, 						-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		_Predicate_UserHasNotSeenBridgeRecently, 			-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 												-- ignore
+		nil,										 		-- remind
+		_Predicate_CompletedBridgeHint, 					-- bypass
+		false, 												-- canRegress
+		{GoalDestroyBridge}									-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceDestroyBridge)
+		
+	Training_EnableGoalSequenceByID(goal_sequence_destroy_bridge, true)
+	
+end
+
+--
+-- REBUILDING BRIDGES
+--
+
+function _Predicate_UserSelectedDestroyedBridge(goal)
+	
+	local eg_destroyed_bridges = EGroup_CreateUnique("")
+	
+	local _CheckLowHealth = function(gid, idx, eid)
+		if Entity_GetHealthPercentage(eid) < 1 then
+			EGroup_Add(eg_destroyed_bridges, eid)
+		end
+	end
+	EGroup_ForEach(eg_bridges_wood, _CheckLowHealth)
+	
+	return Misc_IsEGroupSelected(eg_destroyed_bridges, ANY)
+end
+
+function _Predicate_UserHasNotSeenDestroyedBridgeRecently(goalSequence)
+	if ABriefPeriodOfTimeHasPassed(goalSequence) then
+		
+		eg_destroyed_bridges_onscreen = EGroup_CreateIfNotFound("eg_destroyed_bridges_onscreen")
+		EGroup_Clear(eg_destroyed_bridges_onscreen)
+		local _CheckOnscreen = function(gid, idx, eid)
+			if Misc_IsEntityOnScreen(eid, 100) == true and Entity_GetHealthPercentage(eid) < 1 then
+				EGroup_Add(eg_destroyed_bridges_onscreen, eid)
+			end
+		end
+		EGroup_ForEach(eg_bridges_wood, _CheckOnscreen)
+		
+		if EGroup_Count(eg_destroyed_bridges_onscreen) > 0 then
+			local entity = EGroup_GetEntityAt(eg_destroyed_bridges_onscreen, 1)
+			goalSequence.goals[goalSequence.currentGoalIndex].key = entity
+			return true
+		end
+	end
+	return false
+end
+
+function MissionTutorial_AddHintToBrokenBridge()
+
+	local GoalUI = {
+		ID = "To repair a damaged or destroyed bridge, select villagers and right-click on the bridge.",
+		Message = UI_PickIDForInputMode(11184823, 1000609),
+		DataTemplate = "GenericTrainingDataTemplate",
+	}
+	local GoalDestroyBridge = Training_Goal(
+		nil, 
+		GoalUI, 
+		_Predicate_UserSelectedDestroyedBridge
+	)
+	local GoalSequenceDestroyBridge = Training_GoalSequence(
+		goal_sequence_repair_bridge, 						-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		_Predicate_UserHasNotSeenDestroyedBridgeRecently, 	-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 												-- ignore
+		nil,										 		-- remind
+		_Predicate_UserSelectedDestroyedBridge, 			-- bypass
+		false, 												-- canRegress
+		{GoalDestroyBridge}									-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceDestroyBridge)
+		
+	Training_EnableGoalSequenceByID(goal_sequence_repair_bridge, true)
+	
+end
+
+--
+-- LIU ZHENG ABILITY
+--
+
+function Lumen_TriggerZhengHint_Xbox(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingHoverInterval then	
+		
+		Player_GetAll(g_playerMongol)
+		local squads = Player_GetSquads(g_playerMongol)
+	
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			if squad ~= nil and Squad_GetBlueprint(squad) == SBP.MONGOL.UNIT_LIU_ZHENG_CMP_MON then
+				if Misc_IsSquadOnScreen(squad, 100) then 
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[2].key = Squad_GetID(squad)
+					goalSequence.goals[3].key = BP_GetAbilityBlueprint("leader_construction_activated")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+function Lumen_TriggerZhengHint(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingHoverInterval then	
+		
+		Player_GetAll(g_playerMongol)
+		local squads = Player_GetSquads(g_playerMongol)
+	
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			if squad ~= nil and Squad_GetBlueprint(squad) == SBP.MONGOL.UNIT_LIU_ZHENG_CMP_MON then
+				if Misc_IsSquadOnScreen(squad, 100) then 
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[2].key = BP_GetAbilityBlueprint("leader_construction_activated")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	return false
+end

@@ -1,0 +1,640 @@
+import("MissionOMatic/MissionOMatic.scar")	
+import("hun_chp3_orleans_objectives.scar")
+import("hun_chp3_orleans_data.scar")
+import("hun_chp3_orleans_training.scar")
+
+function Mission_SetupPlayers()
+	player1 = World_GetPlayerAt(1) 
+	player2 = World_GetPlayerAt(2)
+	player3 = World_GetPlayerAt(3)
+	player4 = World_GetPlayerAt(4)
+	
+	Setup_SetPlayerName(player1, Loc_GetString(11180107)) -- ("France")))
+	Player_SetCurrentAge(player1, AGE_CASTLE)
+	Player_SetMaximumAge(player1, AGE_CASTLE)
+
+	Setup_SetPlayerName(player2, Loc_GetString(11180108)) -- ("England")))
+	Player_SetCurrentAge(player2, AGE_CASTLE)
+	Player_SetMaximumAge(player2, AGE_CASTLE)
+	
+	Setup_SetPlayerName(player3, Loc_GetString(11180109)) -- ("Trade Carts")))
+	Player_SetCurrentAge(player3, AGE_CASTLE)
+	Player_SetMaximumAge(player3, AGE_CASTLE)
+	AI_Enable(player3, false)
+	
+	Setup_SetPlayerName(player4, Loc_GetString(11180110)) -- ("Neutral Joan")))
+	Player_SetCurrentAge(player4, AGE_CASTLE)
+	Player_SetMaximumAge(player4, AGE_CASTLE)
+	AI_Enable(player4, false)
+	
+	PlayerColour_Enable()                                      
+    Game_SetPlayerSlotColour(player1, 1)              
+    Game_SetPlayerUISlotColour(player1, 1)          
+    Game_SetPlayerSlotColour(player2, 2)             
+    Game_SetPlayerUISlotColour(player2, 2)
+    Game_SetPlayerSlotColour(player3, 3)          
+    Game_SetPlayerUISlotColour(player3, 3)
+	Game_SetPlayerSlotColour(player4, 1)              
+    Game_SetPlayerUISlotColour(player4, 1)
+	
+	Player_SetRelationship(player1, player3, R_ALLY)
+	Player_SetRelationship(player3, player1, R_ALLY)
+	World_EnableSharedLineOfSight(player1, player3, true)
+	World_EnableSharedLineOfSight(player3, player1, true)
+	
+	Player_SetRelationship(player1, player4, R_ALLY)
+	Player_SetRelationship(player4, player1, R_ALLY)
+	Player_SetRelationship(player2, player4, R_ALLY)
+	Player_SetRelationship(player4, player2, R_ALLY)
+end
+
+function Mission_SetupVariables()
+	leaderJoan = Missionomatic_InitializeLeader({ name = "$11163059", owner = player1, neutralHolder = player4 })--"Jeanne d'Arc"
+	Orleans_InitData1()
+end
+
+function Mission_Preset()
+	Orleans_InitData2()
+	Orleans_SetupWaves()
+	Orleans_InitObjectives()
+	
+	PlayerUpgrades_Auto(player1, false)
+	PlayerUpgrades_Auto(player2, false, { UPG.COMMON.UPGRADE_RANGED_ARCHER_SILKSTRING, UPG.FRENCH.UPGRADE_RANGED_INCENDIARY_FRE })
+	
+	Cmd_InstantUpgrade(eg_enemy_outposts, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	Cmd_InstantUpgrade(eg_enemy_outposts, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	Cmd_InstantUpgrade(eg_arrowslits, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	
+	Cmd_InstantUpgrade(eg_player_outposts, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	Cmd_InstantUpgrade(eg_player_outposts, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	
+	if Game_GetSPDifficulty() == GD_EASY then
+		local ram_damage_nerf = Modifier_Create(MAT_WeaponType, "damage_weapon_modifier", MUT_Multiplication, false, 0.8, BP_GetWeaponBlueprint("weapon_ram_3"))
+		Modifier_ApplyToPlayer(ram_damage_nerf, player2, 0)	
+	end
+	
+	if Music_UnlockIntensity then 
+		Sound_SetForceMusic(false) 
+	else 
+		Sound_SetForceMusic(true) 
+	end
+
+	AssignVillagersToFarms(sg_player_farmers_east)
+	AssignVillagersToFarms(sg_player_farmers_west)
+	AssignVillagersToWood(sg_player_wood_cutters)
+	AssignVillagersToGold(sg_player_gold_miners)
+	AssignVillagersToStone(sg_player_stone_miners)
+
+	Orleans_MoveIntroUnits()
+end
+
+function Mission_Start()
+	Music_UnlockIntensity()
+	
+	if Game_GetSPDifficulty() == GD_EASY then
+		Player_SetResource(player1, RT_Food, 400)
+		Player_SetResource(player1, RT_Wood, 400)
+		Player_SetResource(player1, RT_Stone,400)
+		Player_SetResource(player1, RT_Gold, 400)
+	elseif Game_GetSPDifficulty() == GD_NORMAL then
+		Player_SetResource(player1, RT_Food, 300)
+		Player_SetResource(player1, RT_Wood, 300)
+		Player_SetResource(player1, RT_Stone,300)
+		Player_SetResource(player1, RT_Gold, 300)
+	elseif Game_GetSPDifficulty() == GD_HARD then
+		Player_SetResource(player1, RT_Food, 200)
+		Player_SetResource(player1, RT_Wood, 200)
+		Player_SetResource(player1, RT_Stone,200)
+		Player_SetResource(player1, RT_Gold, 200)
+	else
+		Player_SetResource(player1, RT_Food, 100)
+		Player_SetResource(player1, RT_Wood, 100)
+		Player_SetResource(player1, RT_Stone,100)
+		Player_SetResource(player1, RT_Gold, 100)	
+	end
+
+	Objective_Start(OBJ_Keep)
+	
+	if UI_IsXboxControllerUI() then
+		Rule_AddOneShot(Orleans_AddJoanAbilityHint_Xbox, JOAN_HINT_TIME)
+	else
+		Rule_AddOneShot(Orleans_AddJoanAbilityHint, JOAN_HINT_TIME)
+	end
+	
+	Rule_AddEGroupEvent(Orleans_KeepUnderAttack, eg_orleans_keep, GE_DamageReceived)
+
+	Rule_AddOneShot(Orleans_StartObjectiveTourelles, OBJ_TIME_TOURELLES)
+	Rule_AddOneShot(Orleans_ManualWaveLaunch, WAVE_1_LAUNCH, { lane = 3 })
+	Rule_AddOneShot(Orleans_ManualWaveLaunch, WAVE_2_LAUNCH, { lane = 1 })
+	last_lane_prepared = 1
+	second_last_lane_prepared = 3
+	Rule_AddOneShot(Orleans_TryWavePrepare, WAVE_3_LAUNCH - PREPARE_TIME, { lanes = { 1,2,3,4 } })
+	Rule_AddOneShot(Orleans_StartTradeCycle, TRADE_FIRST - TRADE_AMBUSH_SETUP_TIME)
+	
+	Rule_AddInterval(Orleans_MainLoop, 1)
+	Rule_AddInterval(Orleans_CheckBridge, 1)
+	Rule_AddInterval(Orleans_CheckNorthForts, 1)
+	Rule_AddInterval(Orleans_CheckSouthForts, 1)
+	Rule_AddInterval(Orleans_CheckTourelles, 1)
+	Rule_AddInterval(Orleans_Autosave, AUTOSAVE_INTERVAL)
+end
+
+----------------------------------------------------------------------------------------------------
+--------------------------------------------- GAME LOGIC -------------------------------------------
+----------------------------------------------------------------------------------------------------
+function Orleans_MainLoop()
+	orleans_seconds[1] = orleans_seconds[1] + 1
+end
+
+function Orleans_ManualWaveLaunch(context, data)
+	local lane = data.lane
+	waves_launched = waves_launched + 1
+	print("wave "..waves_launched.." launched at "..orleans_seconds[1].." - lane "..lane)
+	local assault_module = MissionOMatic_FindModule("assault_"..lane.."_manual")
+	RovingArmy_SetTargets(assault_module, assault_targets[lane])
+end
+
+function Orleans_StartObjectiveTourelles(context, data)
+	Objective_Start(OBJ_Les_Tourelles, true, true)
+end
+
+function Orleans_TryWavePrepare(context, data)
+	local lanes = data.lanes
+	local lane = nil
+	local categories = nil
+	local lane_has_siege = nil
+	lane, categories = Orleans_ChooseLane(lanes)
+	if lane ~= nil then
+		second_last_lane_prepared = last_lane_prepared
+		last_lane_prepared = lane
+		local power_max = Orleans_GetPower(orleans_seconds[1] + PREPARE_TIME)
+		local units = Orleans_GetWaveUnits(categories, power_max, lane)
+		if units ~= nil then
+			Orleans_PrepareLane(lane, units)
+			Rule_AddOneShot(Orleans_TryWavePrepare, Orleans_GetWaveInterval(), { lanes = { 1,2,3,4 } })	
+		else
+			print("cannot prepare, forts only have siege")
+		end
+	else
+		print("cannot prepare, forts have no production")
+	end
+end
+
+function Orleans_PrepareLane(lane, units)
+	local wave = Wave_FindWave("wave_"..lane)
+	Wave_SetUnits(wave, units)
+	Wave_Prepare(wave)
+end
+
+function Orleans_ChooseLane(lanes)
+	-- determine which categories can be built by each lane
+	local lane_categories = { {}, {}, {}, {} }
+	local lane_category_counts = {}
+	local valid_lanes = 0
+	for i = #lanes, 1, -1 do
+		local wave = Wave_FindWave("wave_"..i)
+		Wave_ValidateSpawns(wave)
+		lane_categories[i] = Wave_GetSpawnableCategories(wave)
+		RemoveTownCenterFromCategories(lane_categories[i])
+		lane_category_counts[i] = #lane_categories[i]
+		if lane_category_counts[i] > 0 then
+			valid_lanes = valid_lanes + 1
+		end
+	end
+	
+	if valid_lanes > 0 then
+		--prefer not to use the same lane that was used for the last 2 prepares
+		if valid_lanes > 1 and last_lane_prepared ~= nil then
+			lane_categories[last_lane_prepared] = {}
+			lane_category_counts[last_lane_prepared] = 0
+			valid_lanes = valid_lanes - 1
+		end
+		if valid_lanes > 1 and second_last_lane_prepared ~= nil then
+			lane_categories[second_last_lane_prepared] = {}
+			lane_category_counts[second_last_lane_prepared] = 0
+			valid_lanes = valid_lanes - 1
+		end
+		--a lane's chances of being chosen are proportional to how many categories it can build
+		local chosen_lane = Table_GetRandomItemWeighted(lane_category_counts)
+		return chosen_lane, lane_categories[chosen_lane]
+	end
+	return nil
+end
+
+
+--------------------------------------------------------------------------------------
+------------------------------------ TRADE CARTS -------------------------------------
+--------------------------------------------------------------------------------------
+
+function Orleans_StartTradeCycle()
+	print("Orleans_StartTradeCycle")
+	Rule_AddInterval(Orleans_PrepareRaidAndQueueTraders, TRADE_INTERVAL)
+	Orleans_PrepareRaidAndQueueTraders()
+end
+
+function Orleans_PrepareRaidAndQueueTraders()
+	Orleans_PrepareTradeAmbush()
+	if trade_convoys_sent > 0 then
+		if Objective_IsStarted(SOBJ_NextConvoy) then
+			Objective_Stop(SOBJ_NextConvoy)
+		end
+		Objective_Start(SOBJ_NextConvoy, false, false)
+	end
+	Rule_AddOneShot(Orleans_StartObjectiveTrade, TRADE_AMBUSH_SETUP_TIME)
+end
+
+function Orleans_StartObjectiveTrade(context, data)
+	if Objective_IsStarted(OBJ_Trade) then
+		Objective_Stop(OBJ_Trade)
+	end
+	Objective_Start(OBJ_Trade, true, true)
+end
+
+function Orleans_PrepareTradeAmbush()
+	print("Orleans_PrepareTradeAmbush")
+	local current_ambush_count = SGroup_CountSpawned(MissionOMatic_FindModule("ambush_1").sgroup)
+	local desired_count = Util_DifVar({3, 4, 8, 14})
+	local reinforce_count = desired_count - current_ambush_count
+	if reinforce_count > 0 then
+		local valid_waves = {}
+		local spawnable_catagories_west = Wave_GetSpawnableCategories(wave_ambush_west)
+		local spawnable_catagories_east = Wave_GetSpawnableCategories(wave_ambush_east)
+		local has_cavalry_west = Table_Contains(spawnable_catagories_west, "cavalry")
+		local has_cavalry_east = Table_Contains(spawnable_catagories_east, "cavalry")	
+		if has_cavalry_west then table.insert(valid_waves, wave_ambush_west) end
+		if has_cavalry_east then table.insert(valid_waves, wave_ambush_east) end
+		
+		if has_cavalry_west or has_cavalry_east then
+			local chosen_wave = Table_GetRandomItem(valid_waves, 1)
+			Wave_SetUnits(chosen_wave, {{ type = "scar_horseman", numSquads = reinforce_count }})
+			Wave_Prepare(chosen_wave)
+			print("PrepareTradeAmbush")
+		end
+	end
+end
+
+function Orleans_SpawnTradeCart()
+	local units = {{ type = "scar_trade_cart", numSquads = 1 }}
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player3, sg_temp, units, mkr_trade_cart_spawn)
+	SGroup_AddGroup(sg_trade_carts, sg_temp)
+	for i, trade_target in ipairs({ mkr_trade_cart_1, mkr_trade_cart_2, mkr_trade_cart_3, mkr_trade_cart_4, mkr_trade_cart_5, mkr_trade_cart_6, mkr_trade_cart_7, mkr_trade_cart_8, mkr_trade_cart_9, mkr_trade_cart_despawn }) do
+		Cmd_FormationMove(sg_temp, trade_target, true)	
+	end
+end
+
+function Orleans_AmbushDead()
+	ambushes_killed = ambushes_killed + 1
+	if ambushes_killed == 1 then
+		Util_StartIntel(EVENTS.TradeRoad_Complete)
+	end
+end
+
+-- despawn carts at dest. victory if at least one made it. failure if none made it
+function Orleans_CheckDespawn()
+	Player_GetAllSquadsNearMarker(player3, sg_temp, mkr_trade_cart_despawn, 15)
+	local count = SGroup_Count(sg_temp)
+	if count > 0 then
+		if current_convoy_succeeded == false then
+			current_convoy_succeeded = true
+			trade_convoys_succeeded = trade_convoys_succeeded + 1
+			if trade_convoys_succeeded > 1 then
+				OBJ_Trade.Intel_Complete = EVENTS.TradeCart_Arrives_Perpetual
+			end
+			Objective_Complete(OBJ_Trade, true, true)
+		end
+		SGroup_DestroyAllSquads(sg_temp)
+		Player_AddResource(player1, RT_Gold, 100 * count)
+		UI_CreateEventCueClickable(-1, 10, -1, 0, "$11192982", "$11192982", "low_priority", "", "sfx_ui_event_queue_low_priority_play", 255, 255, 255, 255, ECV_Queue, nothing) 
+	end
+	
+	local time_since_sent = orleans_seconds[1] - current_convoy_sent_at
+	if time_since_sent >= TRADE_TIMEOUT then
+		SGroup_ForEach(sg_trade_carts, Orleans_TradersGoHome)
+		print("Trade convoy going home at "..orleans_seconds[1])
+		SGroup_Clear(sg_trade_carts)
+	end
+	
+	if SGroup_CountSpawned(sg_trade_carts) == 0 then
+		if current_convoy_succeeded == true then
+			print("Trade finished with success at "..orleans_seconds[1])
+		else
+			print("Trade finished with failure at "..orleans_seconds[1])
+			Objective_Fail(OBJ_Trade, true, true)
+		end
+		Rule_RemoveMe()
+	end
+end
+
+function Orleans_TradersGoHome(group_id, item_index, item_id)
+	SGroup_Single(sg_temp, item_id)
+	Cmd_FormationMove(sg_temp, mkr_trade_cart_spawn, false, true)	
+end
+
+function Orleans_ClearMarkerPath()
+	MarkerPaths_ClearIcons("trader_spline")
+end
+
+--------------------------------------------------------------------------------------
+-------------------------------------- UI EVENT TRIGGERS -----------------------------
+--------------------------------------------------------------------------------------
+
+function Orleans_CheckNorthForts(context)
+	if not mission_over then
+		for name, data in pairs(north_forts) do
+			if data.is_destroyed == false then
+				if EGroup_CountSpawned(data.egroup) == 0 then
+					data.is_destroyed = true
+					WAVE_INTERVAL = WAVE_INTERVAL + 20
+					north_forts_destroyed = north_forts_destroyed + 1
+					Util_StartIntel(data.destroy_event)	
+					World_GetSquadsNearMarker(player1, sg_temp, data.marker, OT_Player)
+					Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+					if north_forts_destroyed == 4 then
+						Util_StartIntel(EVENTS.NorthForts_Destroyed)
+						Rule_RemoveMe()
+					end
+				end
+			end
+		end
+
+	end
+end
+
+function Orleans_CheckSouthForts(context)
+	if not mission_over then
+		for name, data in pairs(south_forts) do
+			if data.is_destroyed == false then
+				if EGroup_CountSpawned(data.egroup) == 0 then
+					data.is_destroyed = true
+					south_forts_destroyed = south_forts_destroyed + 1
+					World_GetSquadsNearMarker(player1, sg_temp, data.marker, OT_Player)
+					Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+					if south_forts_destroyed == 1 then
+						Util_StartIntel(EVENTS.SouthFort_Destroyed)
+					elseif south_forts_destroyed == 2 then
+						Rule_RemoveMe()
+					end
+				end
+			end
+		end
+
+	end
+end
+
+function Orleans_CheckTourelles(context)
+	if Player_AreSquadsNearMarker(player1, mkr_tourelles) then
+		Util_StartIntel(EVENTS.LesTourelles_Reveal)
+		Rule_RemoveMe()
+	end
+end
+
+function Orleans_CheckBridge(context)
+	if Player_AreSquadsNearMarker(player1, mkr_orleans_bridge) then
+		Util_StartIntel(EVENTS.Bridge_Fact)
+		Rule_RemoveMe()
+	end
+end
+
+function Orleans_KeepUnderAttack(context)
+	Util_StartIntel(EVENTS.Keep_UnderAttack)
+	Rule_RemoveEGroupEvent(Orleans_KeepUnderAttack, eg_orleans_keep)
+end
+
+--------------------------------------------------------------------------------------
+-------------------------------------- INTRO -----------------------------------------
+--------------------------------------------------------------------------------------
+function Orleans_MoveIntroUnits()
+	TourellesIntro()
+	MoveIntroCrossbow3()
+	MoveIntroCrossbow4()
+	Rule_AddOneShot(MoveJoan, 4)
+end
+
+function TourellesIntro()
+	local sg_intro_knights = SGroup_CreateUnique("sg_intro_knights")
+	local units = {{type = "scar_knight", numSquads = 2}}
+	SpawnUnits(player2, units, mkr_intro_spawn_knights, sg_intro_knights)
+	Cmd_FormationMove(sg_intro_knights, mkr_intro_target_knights, false, false)
+end
+
+function MoveIntroCrossbow3()
+	local facing_pos = Util_GetFacingFromDirection(Marker_GetPosition(mkr_player_crossbow_3_destination), Marker_GetDirection(mkr_player_crossbow_3_destination))
+	Cmd_FormationMove(sg_player_crossbow_3, mkr_player_crossbow_3_destination, false, false, facing_pos)
+
+end
+
+function MoveIntroCrossbow4()
+	local facing_pos = Util_GetFacingFromDirection(Marker_GetPosition(mkr_player_crossbow_4_destination), Marker_GetDirection(mkr_player_crossbow_4_destination))
+	Cmd_FormationMove(sg_player_crossbow_4, mkr_player_crossbow_4_destination, false, false, facing_pos)
+end
+
+function MoveIntroCrossbow6()
+	local facing_pos = Util_GetFacingFromDirection(Marker_GetPosition(mkr_player_crossbow_6_destination), Marker_GetDirection(mkr_player_crossbow_6_destination))
+	Cmd_FormationMove(sg_player_crossbow_6, mkr_player_crossbow_6_destination, false, false, facing_pos)
+end
+
+function MoveIntroCrossbow7()
+	local facing_pos = Util_GetFacingFromDirection(Marker_GetPosition(mkr_player_crossbow_7_destination), Marker_GetDirection(mkr_player_crossbow_7_destination))
+	Cmd_FormationMove(sg_player_crossbow_7, mkr_player_crossbow_7_destination, false, false, facing_pos)
+end
+
+function MoveJoan()
+	Cmd_FormationMove(leaderJoan.sgroup, mkr_player_waypoint_1, false, false)
+	Cmd_FormationMove(leaderJoan.sgroup, mkr_player_waypoint_2, true, false)
+	Cmd_FormationMove(leaderJoan.sgroup, mkr_player_joan_target, true, false)
+	
+	Cmd_FormationMove(sg_player_knights_1, mkr_player_waypoint_1, false, false)
+	Cmd_FormationMove(sg_player_knights_1, mkr_player_waypoint_2, true, false)
+	Cmd_FormationMove(sg_player_knights_1, mkr_player_knights_target_1, true, false)
+	
+	Cmd_FormationMove(sg_player_knights_2, mkr_player_waypoint_1, false, false)
+	Cmd_FormationMove(sg_player_knights_2, mkr_player_waypoint_2, true, false)
+	Cmd_FormationMove(sg_player_knights_2, mkr_player_knights_target_2, true, false)
+	
+	local introSpeedMod = 0.8
+	modid_IntroJoanSpeedModifier = Modify_UnitSpeed(leaderJoan.sgroup, introSpeedMod)
+	modid_IntroKnightsSpeedModifier_1 = Modify_UnitSpeed(sg_player_knights_1, introSpeedMod)
+	modid_IntroKnightsSpeedModifier_2 = Modify_UnitSpeed(sg_player_knights_2, introSpeedMod)
+end
+
+--------------------------------------------------------------------------------------
+-------------------------------- WAVE COMPOSITION ------------------------------------
+--------------------------------------------------------------------------------------
+function Orleans_GetPower(seconds)
+	local minutes = seconds/60
+	local minutes_capped = math.min(minutes, 71)
+	local power = 1500 + (15 * minutes_capped) + ((1/15000) * minutes_capped^4)
+	power = power * Util_DifVar({0.8, 1, 1.4, 2})
+	return power
+end 
+
+--waves have 2 buckets for unit types. regular-units includes all non-siege units, as well as those siege units who are 
+--not good vs walls (mangonels, springalds). anti-wall-units includes those siege units who are good vs walls
+--(rams, siege-towers, trebuchets)
+function Orleans_GetWaveUnits(categories, power_max, lane)
+	waves_prepared = waves_prepared + 1
+	local power_regular_max = power_max
+	local power_anti_wall_max = 0
+	local power_regular = 0
+	local power_anti_wall = 0
+	local unit_type_candidates = {  }
+	local chosen_unit_types = {  }
+	local units = {}
+	local lane_has_siege = false
+	
+	--determine siege requirements
+	if Table_Contains(categories, "siege") then
+		Table_RemoveFirstItem(categories, "siege")
+		lane_has_siege = true
+		power_anti_wall_max = power_max * (1/5)
+		power_regular_max = power_max * (4/5)
+	end	
+	
+	if #categories > 0 then
+		--get unit_type_candidates, not including siege
+		for i, category in ipairs(categories) do
+			for i, unit_type in ipairs(category_unit_types[category]) do
+				table.insert(unit_type_candidates, unit_type)
+			end
+		end
+		
+		--pick 1 unit_type randomly
+		local chosen_unit_type = Table_GetRandomItem(unit_type_candidates)
+		table.insert(chosen_unit_types, chosen_unit_type)
+		--prevent that category from being chosen again, unless there is only 1
+		if #categories > 1 then
+			for i = #unit_type_candidates, 1, -1 do
+				local unit_type = unit_type_candidates[i]
+				if unit_type_categories[unit_type] == unit_type_categories[chosen_unit_type] then
+					table.remove(unit_type_candidates, i)
+				end
+			end
+		end
+		
+		--add siege as a valid category if available
+		if lane_has_siege then
+			table.insert(categories, "siege")
+			for i, unit_type in ipairs(category_unit_types["siege"]) do
+				table.insert(unit_type_candidates, unit_type)
+			end
+		end
+		
+		--pick a 2nd unit_type randomly
+		chosen_unit_type = Table_GetRandomItem(unit_type_candidates)
+		table.insert(chosen_unit_types, chosen_unit_type)
+		Table_RemoveFirstItem(unit_type_candidates, chosen_unit_type)
+		
+		--add regular units, and keep track of how many siege towers might be useful
+		local siege_tower_units = 0
+		while power_regular < power_regular_max do
+			local max_unit_type_power = power_regular_max - power_regular 
+			chosen_unit_type = Orleans_PickUnitType(chosen_unit_types, unit_type_weights_regular, max_unit_type_power)
+			if chosen_unit_type == nil then
+				break
+			end
+			power_regular = power_regular + unit_type_power[chosen_unit_type]
+			UnitTable_AddUnitsByType(units, chosen_unit_type)
+			if unit_type_categories[chosen_unit_type] == "infantry" or unit_type_categories[chosen_unit_type] == "ranged" then
+				siege_tower_units = siege_tower_units + 1
+			end
+		end
+		local siege_towers_needed = 0
+		if siege_tower_units > 0 then
+			siege_towers_needed = 1
+		end
+		
+		--add anti-wall units
+		anti_wall_unit_types = { "scar_ram", "scar_siege_tower", "scar_trebuchet_cw" }
+		local forced_pick = true --for guaranteeing that atleast 1 anti-wall unit is chosen
+		while power_anti_wall < power_anti_wall_max do
+			local max_unit_type_power = power_anti_wall_max - power_anti_wall 
+			if Table_Contains(anti_wall_unit_types, "scar_siege_tower") and siege_towers_needed == 0 then
+				Table_RemoveFirstItem(anti_wall_unit_types, "scar_siege_tower")
+			end
+			chosen_unit_type = Orleans_PickUnitType(anti_wall_unit_types, unit_type_weights_anti_wall, max_unit_type_power, forced_pick)
+			forced_pick = false
+			if chosen_unit_type == nil then
+				break
+			end
+			if chosen_unit_type == "scar_siege_tower" then
+				siege_towers_needed = siege_towers_needed - 1
+			end
+			power_anti_wall = power_anti_wall + unit_type_power[chosen_unit_type]
+			UnitTable_AddUnitsByType(units, chosen_unit_type)
+		end
+		
+		--top off units with more regular units
+		local power_total = power_anti_wall + power_regular
+		while power_total < power_max do
+			local max_unit_type_power = power_max - power_total
+			chosen_unit_type = Orleans_PickUnitType(chosen_unit_types, unit_type_weights_regular, max_unit_type_power)
+			if chosen_unit_type == nil then
+				break
+			end
+			power_regular = power_regular + unit_type_power[chosen_unit_type]
+			power_total = power_anti_wall + power_regular
+			UnitTable_AddUnitsByType(units, chosen_unit_type)
+		end
+		
+		print("wave "..waves_prepared.." prepared at "..orleans_seconds[1].." - lane "..lane.." - power ".. power_total.."/"..power_max)
+		--Util_PrintUnitTable(units, 1)
+		return units
+	else
+		return nil
+	end
+	
+end
+
+function Orleans_PickUnitType(unit_types, weight_table, max_power, forced_pick)
+	local valid_unit_types_with_weight = {}
+	local valid_unit_types = 0
+	if forced_pick == true and max_power < unit_type_power["scar_ram"] then
+		max_power = unit_type_power["scar_ram"]
+	end
+	for i, unit_type in ipairs(unit_types) do
+		if unit_type_power[unit_type] <= max_power then
+			valid_unit_types_with_weight[unit_type] = weight_table[unit_type]
+			valid_unit_types = valid_unit_types + 1	
+		end
+	end
+	if valid_unit_types > 0 then
+		return Table_GetRandomItemWeighted(valid_unit_types_with_weight)
+	else
+		return nil
+	end
+end
+
+
+--------------------------------------------------------------------------------------
+-------------------------------------- UTILITY ---------------------------------------
+--------------------------------------------------------------------------------------
+
+function Orleans_OnLaunch(queue_wave, wave)
+	waves_launched = waves_launched + 1
+	print("wave "..waves_launched.." launched at "..orleans_seconds[1].." - lane "..wave.lane)
+end
+
+function Orleans_OnLaunchAmbush(queue_wave, wave)
+	print("ambush launched from "..wave.from)
+end
+
+function RemoveTownCenterFromCategories(categories)
+	for i = #categories, 1, -1 do
+		if categories[i] == "town_center" then
+			table.remove(categories, i)
+		end
+	end
+end
+
+function Orleans_Autosave(context, data)
+	Util_AutoSave(true)
+end
+
+function Orleans_GetWaveInterval()
+	wave_interval_index = wave_interval_index + 1
+	if wave_interval_index > #WAVE_INTERVAL_VARIATION then
+		wave_interval_index = 1
+	end
+	return WAVE_INTERVAL + WAVE_INTERVAL_VARIATION[wave_interval_index]
+end

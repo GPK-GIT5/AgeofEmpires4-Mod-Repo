@@ -1,0 +1,427 @@
+import("cardinal.scar")
+
+function WaveTemplates_Init()
+	subwave_templates = {}
+	subwave_template_strings = {}
+	SubwaveTemplates_AutoGenerate()
+	
+	wave_templates = {}	
+	wave_template_strings = {}
+	WaveTemplates_AutoGenerate()
+end
+
+function WaveTemplates_AutoGenerate()
+	wave_template_militia = WaveTemplate_Init({ subwave_template_militia })
+	
+	-- construct wave templates
+	local wave_template = nil
+	for _, subwave_template_1 in ipairs(subwave_templates) do
+		if subwave_template_1.anti_building_only == false then
+			wave_template = WaveTemplate_Init({ subwave_template_1 })
+			table.insert(wave_templates, wave_template)
+		end
+		for _, subwave_template_2 in ipairs(subwave_templates) do
+			if subwave_template_2.id >= subwave_template_1.id and WaveTemplate_ComboIsValid({ subwave_template_1, subwave_template_2 }) then
+				wave_template = WaveTemplate_Init({ subwave_template_1, subwave_template_2 })
+				table.insert(wave_templates, wave_template)
+				for _, subwave_template_3 in ipairs(subwave_templates) do
+					if subwave_template_3.id >= subwave_template_2.id and WaveTemplate_ComboIsValid({ subwave_template_1, subwave_template_2, subwave_template_3 }) then
+						wave_template = WaveTemplate_Init({ subwave_template_1, subwave_template_2, subwave_template_3 })
+						table.insert(wave_templates, wave_template)
+					end
+				end
+			end
+		end
+	end
+	
+	-- attach lanes to wave templates
+	for age = 1, 4 do
+		for _, wave_template in ipairs(wave_templates) do
+			if age >= wave_template.min_age  and (age < 4 or wave_template.max_damage_to_buildings >=3) then
+				for lane_name, lane in pairs(lanes) do
+					if lane.wave_template_validator == nil then
+						lane.wave_template_validator = ValidateOkayVsBuildings
+					end
+					if lane.wave_template_validator(wave_template) then
+						local lane_age_info = lane.per_age[age]
+						local wave_template_bundle = { wave_template = wave_template, weight = 0 }
+						table.insert(lane_age_info.wave_template_bundles, wave_template_bundle)
+						if wave_template.max_value > lane_age_info.largest_template_value then
+							lane_age_info.largest_template_value = wave_template.max_value
+						end
+						if wave_template.min_value < lane_age_info.lowest_template_value then
+							lane_age_info.lowest_template_value = wave_template.min_value
+						end
+					end
+				end
+			end
+		end
+
+	end
+	
+	
+	for age = 1, 4 do
+		print("----- Age "..age.." Templates ------")
+		for lane_name, lane in pairs(lanes) do
+			local lane_age_info = lane.per_age[age]
+			local unit_type_total_proportions = lane_age_info.unit_type_total_proportions
+			local unit_type_proportion_ratios = lane_age_info.unit_type_proportion_ratios
+			local unit_type_weight_multipliers = lane_age_info.unit_type_weight_multipliers
+			local wave_template_bundles = lane_age_info.wave_template_bundles
+			
+			-- calculate unit_type proportions for each lane and age
+			local grand_total_for_age = 0
+			for _, wave_template_bundle in ipairs(wave_template_bundles) do
+				for _, subwave_template in ipairs(wave_template_bundle.wave_template.subwave_templates) do
+					for _, unit_row in ipairs(subwave_template.unit_table) do
+						unit_type_total_proportions[unit_row.unit_name] = unit_type_total_proportions[unit_row.unit_name] + unit_row.proportion
+						grand_total_for_age = grand_total_for_age + unit_row.proportion
+					end
+				end
+			end
+			
+			-- calculate unit_type weight multipliers for each lane and age
+			for unit_name, unit_type in pairs(unit_types) do
+				if unit_type_total_proportions[unit_name] > 0 then
+					unit_type_proportion_ratios[unit_name] = unit_type_total_proportions[unit_name] / grand_total_for_age
+					unit_type_weight_multipliers[unit_name] = 1 / unit_type_proportion_ratios[unit_name]
+					unit_type_weight_multipliers[unit_name] = unit_type_weight_multipliers[unit_name] * unit_type.weight_per_age[age]
+					--print(unit_name.." total_proportion: "..unit_type_total_proportions[unit_name].." - multipler: "..unit_type_weight_multipliers[unit_name])
+				end
+			end
+			
+			-- calculate wave_template weights for each lane and age
+			for _, wave_template_bundle in ipairs(wave_template_bundles) do
+				local wave_template = wave_template_bundle.wave_template
+				for _, subwave_template in ipairs(wave_template.subwave_templates) do
+					for _, unit_row in ipairs(subwave_template.unit_table) do
+						local unit_type = unit_types[unit_row.unit_name]
+						wave_template_bundle.weight = wave_template_bundle.weight + 100 * unit_row.proportion * unit_type_weight_multipliers[unit_row.unit_name]
+					end
+				end
+				wave_template_bundle.weight = math.floor(wave_template_bundle.weight)
+				assert(wave_template_bundle.weight > 0, wave_template.name.." has a weight of "..wave_template_bundle.weight.." at age "..age.." lane "..lane_name)
+			end
+			local string = lane_name.." lane: "..#lane_age_info.wave_template_bundles.." templates"
+			string = string.."  -  Value range: "..lane_age_info.lowest_template_value.." - "..lane_age_info.largest_template_value
+			print(string)
+		end
+	end
+	print("----------------------")
+end
+
+function WaveTemplate_ComboIsValid(subwave_templates)
+	if #subwave_templates == 3 then
+		if subwave_templates[1] ~= subwave_templates[2] and subwave_templates[1] ~= subwave_templates[3] and subwave_templates[2] ~= subwave_templates[3] then
+			return false	
+		end
+	end
+	local combined_unit_names = {}
+	local anti_building_only_count = 0
+	local support_only = true
+	for _, subwave_template in ipairs(subwave_templates) do
+		for _, unit_name in ipairs(subwave_template.unit_names) do
+			if Table_Contains(combined_unit_names, unit_name) == false then
+				table.insert(combined_unit_names, unit_name)
+			end	
+		end
+		if subwave_template.anti_building_only then
+			anti_building_only_count = anti_building_only_count + 1
+		end
+		if subwave_template.support_only == false then
+			support_only = false
+		end
+	end
+	if anti_building_only_count > 1 then
+		return false
+	end
+	if support_only == true then
+		return false
+	end
+	local good_vs_buildings_type_count = 0
+	local okay_vs_buildings_type_count = 0
+	for _, unit_name in ipairs(combined_unit_names) do
+		if unit_types[unit_name].damage_to_buildings == 3 then
+			good_vs_buildings_type_count = good_vs_buildings_type_count + 1
+		end
+	end
+	if good_vs_buildings_type_count > 1 then
+		return false
+	end
+	if #combined_unit_names > 3 then
+		return false
+	end
+	return true
+end
+
+function SubwaveTemplates_AutoGenerate()
+	subwave_template_index = 0
+	subwave_template_militia = SubwaveTemplate_Init({ "militia" })
+	local subwave_unit_names = Clone(unit_names)
+	Table_RemoveFirstItem(subwave_unit_names, "militia")
+	for _, unit_name_1 in ipairs(subwave_unit_names) do
+		local unit_type_1  = unit_types[unit_name_1]
+		local race_unit_type_1 = wave_race_unit_types[unit_name_1]
+		if race_unit_type_1.can_train then
+			local subwave_template = SubwaveTemplate_Init({ unit_name_1 })
+			table.insert(subwave_templates, subwave_template)
+			for _, unit_name_2 in ipairs(subwave_unit_names) do
+				local unit_type_2  = unit_types[unit_name_2]
+				local race_unit_type_2 = wave_race_unit_types[unit_name_2]
+				if race_unit_type_2.can_train and SubwaveTemplate_ComboIsValid(unit_name_1, unit_name_2) then
+					local subwave_template = SubwaveTemplate_Init({ unit_name_1, unit_name_2 })
+					table.insert(subwave_templates, subwave_template)
+				end
+			end
+		end
+	end
+	print("Subwave Templates: "..#subwave_templates)
+end
+
+function SubwaveTemplate_ComboIsValid(unit_name_1, unit_name_2)
+	local unit_type_1  = unit_types[unit_name_1]
+	local unit_type_2  = unit_types[unit_name_2]
+	local archtype_1 = unit_type_1.archtype
+	local archtype_2 = unit_type_2.archtype
+	
+	if unit_type_2.id <= unit_type_1.id then
+		return false
+	end
+	if unit_type_1.wave_role == "none" or unit_name_2.wave_role == "none" then
+		return false
+	end
+	if unit_type_1.wave_role == "support" and unit_type_2.wave_role == "support" then
+		return false
+	end
+	if unit_type_1.wave_role == unit_type_2.wave_role and archtype_1 == archtype_2 then
+		return false
+	end
+	if (unit_type_1.damage_to_buildings == 1 and unit_type_2.damage_to_buildings == 3) or (unit_type_1.damage_to_buildings == 3 and unit_type_2.damage_to_buildings == 1) then
+		return false
+	end
+	if (archtype_1.name == "cavalry" and archtype_2.name == "infantry") or (archtype_1.name == "infantry" and archtype_2.name == "cavalry") then
+		return false
+	end
+	return true
+end
+
+-- needs to be safe for cloning. shouldn't contain complex objects like unit_type, archtype, etc.
+function SubwaveTemplate_Init(chosen_names)
+	local subwave_template = {}
+	subwave_template_index = subwave_template_index + 1
+	subwave_template.id = subwave_template_index
+	subwave_template.unit_table = {}
+	subwave_template.unit_names = {}
+	subwave_template.archtype_names = {}
+	subwave_template.min_age = 1
+	subwave_template.max_damage_to_buildings = 1
+	subwave_template.anti_building_only = true
+	subwave_template.support_only = true
+	
+	for _, unit_name in ipairs(chosen_names) do
+		local unit_row = { unit_name = unit_name }
+		table.insert(subwave_template.unit_table, unit_row)
+		table.insert(subwave_template.unit_names, unit_name)
+		if wave_race_unit_types[unit_name].min_age > subwave_template.min_age then
+			subwave_template.min_age = wave_race_unit_types[unit_name].min_age 
+		end
+		local unit_type = unit_types[unit_name]
+		if unit_type.damage_to_buildings > subwave_template.max_damage_to_buildings then
+			subwave_template.max_damage_to_buildings = unit_type.damage_to_buildings
+		end
+		if unit_type.damage_to_buildings < 3 then
+			subwave_template.anti_building_only = false
+		end
+		if unit_type.wave_role ~= "support" then
+			subwave_template.support_only = false
+		end
+		local archtype_name = unit_type.archtype.name
+		if Table_Contains(subwave_template.archtype_names, archtype_name) == false then
+			table.insert(subwave_template.archtype_names, archtype_name)
+		end
+	end
+	return subwave_template
+end
+
+function WaveTemplate_Init(subwave_templates)
+	local wave_template = {}
+	wave_template.name = ""
+	wave_template.unit_names = {}
+	wave_template.max_damage_to_buildings = 1
+	wave_template.okay_vs_buildings_type_count = 0
+	wave_template.good_vs_buildings_type_count = 0
+	wave_template.archtype_names = {}
+	wave_template.subwave_templates = Clone(subwave_templates, true)
+	local total_relative_proportion = 0
+	for _, subwave_template in ipairs(wave_template.subwave_templates) do
+		for _, unit_row in ipairs(subwave_template.unit_table) do
+			wave_template.name = wave_template.name..unit_row.unit_name.." " 
+			unit_row.unit_type = unit_types[unit_row.unit_name]
+			unit_row.race_unit_type = wave_race_unit_types[unit_row.unit_name]
+			unit_row.archtype = unit_row.unit_type.archtype
+			unit_row.relative_proportion = unit_row.race_unit_type.cost * unit_row.archtype.max_formation_size
+			total_relative_proportion = total_relative_proportion + unit_row.relative_proportion
+			if Table_Contains(wave_template.unit_names, unit_row.unit_name) == false then
+				table.insert(wave_template.unit_names, unit_row.unit_name)
+				if unit_row.unit_type.damage_to_buildings >= 2 then
+					wave_template.okay_vs_buildings_type_count = wave_template.okay_vs_buildings_type_count + 1
+				end
+				if unit_row.unit_type.damage_to_buildings == 3 then
+					wave_template.good_vs_buildings_type_count = wave_template.good_vs_buildings_type_count + 1
+				end
+			end
+			if Table_Contains(wave_template.archtype_names, unit_row.archtype.name) == false then
+				table.insert(wave_template.archtype_names, unit_row.archtype.name)
+			end
+		end
+		if subwave_template.max_damage_to_buildings > wave_template.max_damage_to_buildings then
+			wave_template.max_damage_to_buildings = subwave_template.max_damage_to_buildings 
+		end
+	end
+	
+	wave_template.debug_string = ""
+	local proportion_total = 0
+	for _, subwave_template in ipairs(wave_template.subwave_templates) do
+		for _, unit_row in ipairs(subwave_template.unit_table) do
+			unit_row.proportion = unit_row.relative_proportion / total_relative_proportion
+			proportion_total = proportion_total + unit_row.proportion
+			wave_template.debug_string = wave_template.debug_string.." - "..string.format("%.3f", unit_row.proportion).." "..unit_row.unit_name
+		end
+	end
+	assert(proportion_total < 1.01 and proportion_total > 0.99, "wave template "..wave_template.name.." proportions add up to "..proportion_total)
+	WaveTemplate_GenerateMinValue(wave_template)
+	WaveTemplate_GenerateMaxValue(wave_template)
+	assert(wave_template.max_value > wave_template.min_value, "wave template "..wave_template.name.." has invalid value range of "..wave_template.min_value.." and "..wave_template.max_value)
+	wave_template.debug_string = wave_template.debug_string.." - "..math.floor(wave_template.min_value)..":"..math.floor(wave_template.max_value)
+	
+	wave_template.min_age = 1
+	for _, subwave_template in ipairs(wave_template.subwave_templates) do
+		if subwave_template.min_age > wave_template.min_age then
+			wave_template.min_age = subwave_template.min_age	
+		end
+	end
+	
+	WaveTemplate_SortSubwaveTemplates(wave_template)
+	table.insert(wave_template_strings, wave_template.debug_string)
+	
+	--print(wave_template_string)
+	return wave_template
+end
+
+function WaveTemplate_SortSubwaveTemplates(wave_template)
+	if #wave_template.subwave_templates < 3 then
+		return
+	end
+	for _, subwave_template_1 in ipairs(wave_template.subwave_templates) do
+		subwave_template_1.similarity = 0
+		for _, subwave_template_2 in ipairs(wave_template.subwave_templates) do
+			if subwave_template_1 ~= subwave_template_2 then
+				for _, unit_name in ipairs(subwave_template_1.unit_names) do
+					if Table_Contains(subwave_template_2.unit_names, unit_name) then
+						subwave_template_1.similarity = subwave_template_1.similarity + 1 
+					end
+				end
+			end
+		end
+	end
+	table.sort(wave_template.subwave_templates, function(a, b) return a.similarity > b.similarity end)
+end
+
+function WaveTemplate_WaveFactionCanTrain(wave_template)
+	for _, unit_name in ipairs(wave_template.unit_names) do
+		local race_unit_type = wave_race_unit_types[unit_name] 
+		if race_unit_type.can_train == false then
+			return false
+		end
+	end
+	return true
+end
+
+function WaveTemplate_Choose(lane, faction, value, boss_archtype_name, is_first_wave)
+	if is_first_wave then
+		return wave_template_militia, 1
+	end
+	local valid_wave_templates_with_weights = {}
+	local current_age = states.sim.current_age
+	local eligibile_template_count = 0
+	for _, wave_template_bundle in ipairs(lane.per_age[current_age].wave_template_bundles) do
+		local wave_template = wave_template_bundle.wave_template
+		if WaveTemplate_IsWithinValueRange(wave_template, faction, value) then
+			if (boss_archtype_name == nil or boss_archtype_name == "siege" or Table_Contains(wave_template.archtype_names, boss_archtype_name)) then
+				valid_wave_templates_with_weights[wave_template] = wave_template_bundle.weight
+				eligibile_template_count = eligibile_template_count + 1
+			end
+		end
+	end
+	if eligibile_template_count == 0 then
+		local assert_string = time_string.." Could not find Wave Template for value "..math.ceil(value).." at age "..current_age
+		if boss_archtype_name == nil then
+			fatal(assert_string)
+		else
+			fatal(assert_string.." with Boss Archtype "..boss_archtype_name)
+		end
+	end
+	local chosen_wave_template = Table_GetRandomItemWeighted(valid_wave_templates_with_weights) 
+	return chosen_wave_template, eligibile_template_count
+end
+
+function WaveTemplate_IsWithinValueRange(wave_template, faction, value)
+	if value < wave_template.min_value or value > wave_template.max_value then
+		return false
+	end
+	return true
+end
+
+function WaveTemplate_GenerateMinValue(wave_template)
+	wave_template.min_value = 0
+	for _, sublane_template in ipairs(wave_template.subwave_templates) do
+		for _, unit_row in ipairs(sublane_template.unit_table) do 
+			local min_value_for_unit_type = unit_row.race_unit_type.cost / unit_row.proportion
+			if min_value_for_unit_type > wave_template.min_value then
+				wave_template.min_value = min_value_for_unit_type
+			end
+		end
+	end
+	assert(wave_template.min_value > 0, "invalid min value for wave_template "..wave_template.name)
+end
+
+function WaveTemplate_GenerateMaxValue(wave_template)
+	--print(wave_template.name)
+	wave_template.max_value = 9999999999
+	for _, sublane_template in ipairs(wave_template.subwave_templates) do
+		local max_archtype_values = {}
+		for archtype_name, archtype in pairs(archtypes) do
+			local total_archtype_proportion = 0
+			for _, unit_row in ipairs(sublane_template.unit_table) do 
+				if unit_row.archtype == archtype then
+					total_archtype_proportion = total_archtype_proportion + unit_row.proportion
+				end
+			end
+			
+			local race_unit_types_for_archtype = {}
+			local total_proportional_unit_cost = 0
+			for _, unit_row in ipairs(sublane_template.unit_table) do
+				local race_unit_type = wave_race_unit_types[unit_row.unit_name] 
+				if unit_row.archtype == archtype then
+					table.insert(race_unit_types_for_archtype, unit_row.race_unit_type)
+					local proportion_of_archtype = unit_row.proportion / total_archtype_proportion
+					total_proportional_unit_cost = total_proportional_unit_cost + (unit_row.race_unit_type.cost * proportion_of_archtype)
+				end
+			end
+			if #race_unit_types_for_archtype > 0 then
+				local max_value_of_archtype = (archtype.max_formation_size + 1) * total_proportional_unit_cost / #race_unit_types_for_archtype
+				local max_value = max_value_of_archtype / total_archtype_proportion
+				--print(archtype_name..": "..max_value)
+				if max_value < wave_template.max_value then
+					wave_template.max_value = max_value
+				end
+			end
+		end
+	end
+	assert(wave_template.max_value < 9999999999, "invalid max value for wave_template "..wave_template.name)
+	wave_template.max_value = wave_template.max_value - 0.001
+end
+
+function ValidateOkayVsBuildings(wave_template)
+	return wave_template.okay_vs_buildings_type_count > 0 
+end

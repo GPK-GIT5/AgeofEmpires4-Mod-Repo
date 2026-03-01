@@ -1,0 +1,637 @@
+
+-----------------------------------------------------------------------
+-- Imported Scripts
+-----------------------------------------------------------------------
+
+-- Import Utility Scripts
+import( "cardinal.scar" )							-- Contains sfx references, UI templates, and Civ/Age helper functions
+import( "ScarUtil.scar" )							-- Contains game helper functions
+
+Core_RegisterModule( "SeasonsFeast" )			-- Register the win condition (Some functions can be prepended with "Mod_" to be called automatically as part of the scripting framework)
+
+-- Import Gameplay Systems
+import( "gameplay/score.scar" )						-- Tracks player score
+import( "gameplay/diplomacy.scar" )					-- Manages Tribute
+import("gameplay/vision.scar")
+import("gameplay/cheat.scar") 
+import("gameplay/dynamic_spawning.scar")
+
+-- Import Start Conditions
+import( "startconditions/classic_start.scar" )
+
+-- Import Win Conditions
+import( "winconditions/annihilation.scar" )			-- Support for eliminating a player when they can no longer fight or produce units
+import( "winconditions/elimination.scar" )			-- Support for player quitting or dropping (through pause menu or disconnection)
+import( "winconditions/surrender.scar" )			-- Support for player surrender (through pause menu)
+import( "winconditions/regicide.scar" )
+import( "winconditions/conquest.scar" )
+import( "winconditions/wonder.scar" )
+import( "winconditions/religious.scar" )
+
+-- Import UI Support
+import( "gameplay/event_cues.scar" )
+import( "gameplay/currentageui.scar" )
+import( "gameplay/chi/current_dynasty_ui.scar" )	-- Displays Chinese Dynasty UI
+import("gameplay/templar/templar_age_up_ui.scar")
+
+ -- Import Training
+import("training/coretraininggoals.scar")
+import("training/frenchtraininggoals.scar")
+import("training/englishtraininggoals.scar")
+import("training/sultanatetraininggoals.scar")
+import("training/rustraininggoals.scar")
+import("training/mongoltraininggoals.scar")
+import("training/chinesetraininggoals.scar")
+import("training/abbasidtraininggoals.scar")
+
+-----------------------------------------------------------------------
+-- Global Data
+-----------------------------------------------------------------------
+
+function INTERVAL_FROM_MINUTES( minutes ) return minutes * 60 end
+
+-- Global data table that can be referenced in script functions.
+_match = {
+	options = {},
+	is_cheat_enabled = false,
+	is_diplomacy_enabled = false,
+	is_tribute_enabled = true,
+	is_nomad_start = false,
+	speed = {						-- modifier multipliers 
+		build = 1,
+		repair = 1,
+		gather = 1,		
+		upgrade = 1,
+		production = 1,
+		modifiers = {},
+	},
+	gift_haul = {
+		blueprint_land = "resource_pickup_gift_haul_land",
+		blueprint_water = "resource_pickup_gift_haul_water",
+		spawn_positions = {},	-- Old method.
+		spawn_markers = {},		-- New method.
+		spawn_count = 0,
+		spawn_distance_cutoff_percent = 0.15,
+		total_gifts = 0,
+		spawn_time = 110,
+		initial_spawn_time = INTERVAL_FROM_MINUTES(1),
+		used_spawn_location = {},	-- Old method.
+		used_spawn_markers = {},	-- New method.
+		min_dist_between_gifts = 32,
+		min_dist_between_gifts_sqr = 32 * 32, -- 8x8 tiles, 32-sqr == 1024
+		wave_gift_increase = 1,
+		entity_type = "resource_pickup_gift",
+	},
+}
+
+_notificationData = {
+	has_gift_spawned = false,
+	event_start = {
+		interval_time = _match.gift_haul.initial_spawn_time,
+		title_loc_string = "$11266862",
+		description_loc_string = Loc_Empty(),
+		template = "medium_priority",
+		icon_path = "images\\multiplayer\\gamemode_seasons_feast",
+		sfx = "sfx_ui_event_queue_med_priority_play",
+		position = ECV_Title,
+		lifestime = 5,
+	},
+}
+
+-----------------------------------------------------------------------
+-- Standard Callbacks 
+-----------------------------------------------------------------------
+
+-- Called during load as part of the game setup sequence.
+function SeasonsFeast_OnGameSetup()
+
+	Setup_GetWinConditionOptions( _match.options )
+	_match.is_nomad_start = Setup_GetIsNomadStart()
+	
+	-- Win condition options
+	if _match.options.section_inner_win_conditions then
+		if not _match.options.section_inner_win_conditions.option_win_condition_conquest then
+			Core_UnregisterModule( "Conquest" )
+		end	
+	
+		if not _match.options.section_inner_win_conditions.option_win_condition_religious then
+			Core_UnregisterModule( "Religious" )
+		end
+		
+		if not _match.options.section_inner_win_conditions.option_win_condition_wonder then
+			Core_UnregisterModule( "Wonder" )
+		end	
+		
+		if not _match.options.section_inner_win_conditions.option_win_condition_regicide and not Game_HasMatchTypeFlag( MTF_FFA8 ) then
+			Core_UnregisterModule( "Regicide" )
+		end	
+	end
+
+	
+	--Shared vision
+	if not _match.options.section_starting_conditions
+		or not _match.options.section_starting_conditions.option_vision
+		or _match.options.section_starting_conditions.option_vision.enum_value == _match.options.section_starting_conditions.option_vision.enum_items.option_vision_default then
+		Core_UnregisterModule( "Vision" )	
+	end
+	
+	--Diplomacy options
+	if _match.options.section_diplomacy then
+		_match.is_diplomacy_enabled = not _match.options.section_diplomacy.option_diplomacy_teams		
+		_match.is_tribute_enabled = _match.options.section_diplomacy.option_diplomacy_tribute
+	end
+	
+	-- Set player behaviour when eliminated
+	if _match.options.section_endgame then 
+		allow_spectators = _match.options.section_endgame.option_allow_spectators
+	end
+	
+	_match.is_cheat_enabled = Misc_IsCommandLineOptionSet( "cheat" )
+	_match.revealMap = Misc_IsCommandLineOptionSet( "no_fow" )
+end
+
+-- Called before initialization, preceding other module OnInit functions.
+function SeasonsFeast_PreInit()
+	
+end
+
+-- Called on match initialization before handing control to the player.
+function SeasonsFeast_OnInit()
+	
+	UI_AllTerritoryHide()
+
+	Core_CallDelegateFunctions( "DiplomacyEnabled", _match.is_diplomacy_enabled )
+	Core_CallDelegateFunctions( "TributeEnabled", _match.is_tribute_enabled )
+	
+	ReplayStatViewer_PopulateReplayStatTabs( {"CurrentResourcesTemplate", "IncomeTemplate", "MilitaryTemplate"} )
+
+	
+	if _match.options.section_starting_conditions and 
+		_match.options.section_starting_conditions.option_speed and 
+		_match.options.section_starting_conditions.option_speed.enum_value == _match.options.section_starting_conditions.option_speed.enum_items.option_speed_2x then
+		SeasonsFeast_SetSpeed( 2 )
+	elseif _match.options.section_starting_conditions and 
+		_match.options.section_starting_conditions.option_speed and 
+		_match.options.section_starting_conditions.option_speed.enum_value == _match.options.section_starting_conditions.option_speed.enum_items.option_speed_3x then
+		StandardMode_SetSpeed( 3 )
+	else
+		SeasonsFeast_SetSpeed()
+	end
+	
+	for _, player in pairs( PLAYERS ) do
+	
+		-- Debug options
+		if player.isHuman then
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_high_resources ) or _match.is_cheat_enabled then
+				Player_SetResource( player.id, RT_Food, 20000 )
+				Player_SetResource( player.id, RT_Wood, 20000 )
+				Player_SetResource( player.id, RT_Stone, 5000 )
+				Player_SetResource( player.id, RT_Gold, 10000 )				
+			end
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_high_popcap ) or _match.is_cheat_enabled then
+				Player_SetMaxPopulation( player.id, CT_Personnel, 200 )
+			end
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_reveal_map ) or _match.revealMap then
+				FOW_PlayerRevealAll( player.id )
+			end		
+			
+			if ( _match.options.section_debug_options and _match.options.section_debug_options.option_instant_build ) or _match.is_cheat_enabled then
+				local n = World_GetPossibleEntitiesCount( player.race )        
+        		for j = 0, n-1 do 
+		        	Modifier_ApplyToPlayer( Modifier_Create( MAT_EntityType, "cost_ticks_modifier", MUT_Set, false, 0.01, World_GetPossibleEntitiesBlueprint( player.race, j ) ), player.id, 0.0 )    
+				end
+			end
+		end		
+	end
+	
+	if ( _match.options.section_debug_options and _match.options.section_debug_options.option_instant_build ) or _match.is_cheat_enabled then
+		Rule_AddGlobalEvent( SeasonsFeast_OnConstructionComplete, GE_ConstructionComplete )
+	end	
+	
+	-- Optionally remove initial units
+	if Misc_IsCommandLineOptionSet( "no_units" ) then
+        for _, player in pairs( PLAYERS ) do              
+            SGroup_DestroyAllSquads( Player_GetSquads( player.id ) )
+        end         
+    end
+	
+	-- Optionally remove gaia animals
+	if Misc_IsCommandLineOptionSet( "no_gaia" ) then    
+        local egroup = EGroup_CreateUnique()
+        World_GetAllNeutralEntities( egroup )
+        EGroup_Filter( egroup, "animal", FILTER_KEEP )
+        EGroup_DestroyAllEntities( egroup )    		
+		EGroup_Destroy( egroup )
+    end
+	
+	 -- Setup training hint for gifts
+	local giftTrainingGoal = Training_Goal
+	(
+		"Squad",
+		{ID= "", Message= 11266862,
+		DataTemplate="GenericTrainingDataTemplate"},
+		SeasonsFeast_GiftSpawnedTrainingComplete -- Goal is complete function.
+	)
+	local giftTrainingGoalSequence = Training_GoalSequence
+	(
+		"gift_haul_training", 						-- ID.
+		1, 											-- Repeat Max.
+		0, 											-- Remind Max.
+		SeasonsFeast_GiftSpawnedTrainingTrigger, 	-- Trigger function.
+		nil, 										-- Ignore function.
+		nil, 										-- Remind function.
+		nil, 										-- Bypass function, skip without completing.  NIL FOR NOW BUT IDEALLY WILL BE A FUNCTION CHECKING IF PLAYER HAS ALREADY COLLECTED A GIFT.
+		false, 										-- Can regress, if goal incomplete should the sequence restart.
+		{giftTrainingGoal} 							-- List of goals
+	)
+	Training_AddGoalSequence( giftTrainingGoalSequence )
+	
+	CheatMenu_RegisterCheatFunction(SeasonsFeast_SpawnGifts, "Spawn Gifts")
+end
+
+-- Called after initialization is done when game is fading up from black.
+function SeasonsFeast_Start()
+	
+	--Nomad special start conditions. 
+	if _match.is_nomad_start == true then
+		for _, player in pairs( PLAYERS ) do
+			Player_SetStateModelBool( player.id, "nomad_bonus_claimed", false )
+		end
+	end
+	
+	-- Fog of war options
+	if ( _match.options.section_starting_conditions and _match.options.section_starting_conditions.option_fow ) then
+		if ( _match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_explore ) then 
+			FOW_ExploreAll()
+		elseif ( _match.options.section_starting_conditions.option_fow.enum_value == _match.options.section_starting_conditions.option_fow.enum_items.option_fow_reveal ) then
+			FOW_ForceRevealAllUnblockedAreas()
+		end
+	end
+
+	-- UI Options
+	if ( _match.options.section_starting_conditions and _match.options.section_starting_conditions.option_score ) then
+		for _, player in pairs( PLAYERS ) do
+			player.scarModel.show_actual_score = true
+			UI_SetPlayerDataContext( player.id, player.scarModel )
+		end
+	end
+		
+	if (_match.options.section_starting_conditions and _match.options.section_starting_conditions.option_double_gift_spawn_rate) then
+		_match.gift_haul.total_gifts = #PLAYERS * 2 + _match.gift_haul.wave_gift_increase
+	else
+		_match.gift_haul.total_gifts = #PLAYERS + _match.gift_haul.wave_gift_increase
+	end
+	
+	SeasonsFeast_FindSpawnPoints();
+	
+	Rule_AddOneShot( SeasonsFeast_StartGiftSpawning, _match.gift_haul.initial_spawn_time )
+	Rule_AddOneShot( SeasonsFeast_EventStartNotification, _notificationData.event_start.interval_time, nil, nil )
+end
+
+-- Called when Core_SetPlayerDefeated() is invoked. Signals that a player has been eliminated from play due to defeat.
+function SeasonsFeast_OnPlayerDefeated( player, reason )
+	
+end
+
+-- When a victory condition is met, a module must call Core_OnGameOver() in order to invoke this delegate and notify all modules that the match is about to end. Generally used for clean up (removal of rules, objectives, and UI elements specific to the module).
+function SeasonsFeast_OnGameOver()
+	
+	Rule_RemoveGlobalEvent( SeasonsFeast_OnConstructionComplete )
+end
+
+-----------------------------------------------------------------------
+-- Custom Functions
+-----------------------------------------------------------------------
+
+-- Global event callback for GE_ConstructionComplete
+function SeasonsFeast_OnConstructionComplete( context )	
+
+	local player = Core_GetPlayersTableEntry( context.player )
+	local entity = context.entity
+
+	-- Accelerate unit production if cheat/option enabled
+	if ( _match.options.section_debug_options and _match.options.section_debug_options.option_instant_build ) or _match.is_cheat_enabled then
+		if player.isHuman then
+			Modifier_ApplyToEntity( Modifier_Create( MAT_Entity, "production_speed_modifier", MUT_Multiplication, false, 100.0, nil ), entity, 0.0 )
+			Modifier_ApplyToEntity( Modifier_Create( MAT_Entity, "cost_ticks_modifier", MUT_Multiplication, false, 0.01, nil ), entity, 0.0 )
+		end
+	else 
+		-- Reduce unit production and upgrade times  
+		if _match.speed.production ~= 1 and Entity_HasProductionQueue( entity ) then 
+			Modifier_ApplyToEntity( Modifier_Create( MAT_Entity, "production_speed_modifier", MUT_Multiplication, false, _match.speed.production, nil ), entity, 0.0 )
+		end
+		if _match.speed.upgrade ~= 1 then 
+			Modifier_ApplyToEntity( Modifier_Create(MAT_Entity, "cost_ticks_modifier", MUT_Multiplication, false, 1/_match.speed.upgrade, nil ), entity, 0.0 )
+		end
+	end
+end
+
+-- Modifies the default gathering, construction, production, and upgrade speeds for all units and players.
+function SeasonsFeast_SetSpeed( speed )
+	
+	-- Removed existing speed modifiers
+	for _, modifier in pairs( _match.speed.modifiers ) do
+		Modifier_RemoveInternal( modifier.ModifierID )
+	end
+	_match.speed.modifiers = {}
+	
+	-- Determine new modifier value(s)
+	local GetCommandLineNumber = function( arg, default_value )
+		local arg_value = tonumber( Util_GetCommandLineArgument( arg ) )
+		if arg_value == nil or arg_value == 0 then 
+			arg_value = default_value
+		end
+		return math.abs( arg_value )
+	end
+	
+	local default_speed = speed or GetCommandLineNumber( "speed", 1 )
+	_match.speed.build = GetCommandLineNumber( "build_speed", default_speed )
+	_match.speed.repair = GetCommandLineNumber( "repair_speed", default_speed )
+	_match.speed.gather = GetCommandLineNumber( "gather_speed", default_speed )
+	_match.speed.upgrade = GetCommandLineNumber( "upgrade_speed", default_speed )
+	_match.speed.production = GetCommandLineNumber( "production_speed", default_speed )
+	
+	local ApplyModifier = function( player_id, modifier_ebp, modifier_type, modifier_value )
+		if modifier_value ~= 1 then 
+			local modifier = Modifier_Create( MAT_EntityType, modifier_type, MUT_Multiplication, false, modifier_value, modifier_ebp )
+			Modifier_ApplyToPlayer( modifier, player_id, 0.0 )
+			table.insert( _match.speed.modifiers, modifier )
+		end
+	end
+	
+	-- Apply new modifiers
+	for _, player in pairs( PLAYERS ) do	
+		local villager_ebp = Cardinal_ConvertTypeToEntityBlueprint( "villager", player.id )		
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_food", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_wood", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_gold", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "resource_entity_harvest_rate_stone", _match.speed.gather )
+		ApplyModifier( player.id, villager_ebp, "construction_rate", _match.speed.build )
+	end
+end
+
+function SeasonsFeast_EventStartNotification()
+	
+	UI_CreateEventCue
+	(
+		--[[ title --]] 		_notificationData.event_start.title_loc_string,
+		--[[ description --]] 	_notificationData.event_start.description_loc_string,
+		--[[ data_template --]] _notificationData.event_start.template,
+		--[[ icon_path --]] 	_notificationData.event_start.icon_path,
+		--[[ sound_path --]] 	_notificationData.event_start.sfx,
+		--[[ visibility --]]	_notificationData.event_start.position,
+		--[[ lifetime --]] 		_notificationData.event_start.lifestime
+	)
+end
+
+function SeasonsFeast_GiftSpawnedTrainingTrigger( goalSequence )
+	
+	local giftFound = false
+	
+	 -- Only show training hint if a gift has been spawned.
+	local landGiftEntityGroup = EGroup_CreateUnique()
+	World_GetAllNeutralEntities( landGiftEntityGroup )
+    EGroup_Filter( landGiftEntityGroup, "resource_pickup_gift_land", FILTER_KEEP )
+	
+	if _notificationData.has_gift_spawned == true and EGroup_Count( landGiftEntityGroup ) > 0 then
+		local scoutFound = true
+		local player = Game_GetLocalPlayer()
+		-- Point at scout to inform player on collecting gifts without giving away gift position.
+		local scoutSquadGroup = Player_GetSquadsFromType( player, "scar_scout" )
+		-- If there are no scouts then search for khan units in case of Mongol civ.
+		if SGroup_Count(scoutSquadGroup) == 0 then
+			scoutSquadGroup = Player_GetSquadsFromType( player, "scar_khan" )
+			if SGroup_Count(scoutSquadGroup) == 0 then
+				scoutFound = false;
+			end
+		end
+		if scoutFound then
+			local scoutUnit = SGroup_GetSquadAt( scoutSquadGroup, 1 )
+			goalSequence.goals[1].key = scoutUnit
+			giftFound = true
+		end
+	end
+	
+	return giftFound
+end
+
+function SeasonsFeast_GiftSpawnedTrainingComplete( goal )
+	
+	local isTrainingComplete = false
+	local currentTime = Timer_GetElapsed( goal.timerID )
+	
+	if currentTime > __t_trainingModerateInterval then
+		isTrainingComplete = true
+	end
+	
+	return isTrainingComplete
+end
+
+function SeasonsFeast_FindSpawnPoints()
+	
+	if DynamicSpawning_IsEnabled() then
+		
+		-- Gather spawn positions using player start position filtering.
+		local minDistance = World_GetWidth() * _match.gift_haul.spawn_distance_cutoff_percent
+		local filterFunction = DynamicSpawning_FilterByPlayerStartDistance
+		DynamicSpawning_GatherAllSpawnMarkers(_match.gift_haul.spawn_markers, filterFunction, minDistance)
+		
+		_match.gift_haul.spawn_count = #_match.gift_haul.spawn_markers
+	else
+		for entityIndex = 1, World_GetNumEntities() - 1 do
+			
+			local entity = World_GetEntity( entityIndex )
+			
+			if ( Entity_IsOfType( entity, "animal" ) or Entity_IsOfType( entity, "deep_water_fish" )) then
+				
+				local entityPos = Entity_GetPosition( entity )
+				
+				-- Find shortest distance to player start.
+				local closestPlayerIndex = 1
+				local closestPlayerDistance = World_GetWidth() * 2
+				
+				for playerIndex = 1, World_GetPlayerCount() do
+					
+					local playerStartPos = Player_GetStartingPosition( World_GetPlayerAt( playerIndex ) )
+					local playerStartDistance = Util_GetDistance( playerStartPos, entityPos )
+					
+					if playerStartDistance < closestPlayerDistance then
+						closestPlayerDistance = playerStartDistance
+						closestPlayerIndex = playerIndex
+					end
+				end
+				
+				-- If distance is too short discard, otherwise cache as valid spawn position.
+				if closestPlayerDistance >= World_GetWidth() * _match.gift_haul.spawn_distance_cutoff_percent then
+					table.insert( _match.gift_haul.spawn_positions, entityPos )
+				end
+			end
+		end
+		
+		_match.gift_haul.spawn_count = #_match.gift_haul.spawn_positions
+	end
+end
+
+function SeasonsFeast_StartGiftSpawning()
+	SeasonsFeast_SpawnGifts()
+	
+	Rule_AddInterval( SeasonsFeast_SpawnGifts, _match.gift_haul.spawn_time, nil, nil )
+end
+	
+function SeasonsFeast_SpawnGifts()
+	
+	if DynamicSpawning_IsEnabled() then
+		
+		-- Clean previously used markers
+		for i=1, #_match.gift_haul.used_spawn_markers do 
+			_match.gift_haul.used_spawn_markers[i]=nil 
+		end	
+		
+		local tempSpawnMarkers = Table_Copy(_match.gift_haul.spawn_markers)
+		local spawned_gifts = 0
+		local gift_index = 0
+		
+		if ( #tempSpawnMarkers > 0 ) then
+
+			while gift_index < _match.gift_haul.total_gifts and #tempSpawnMarkers > 0 do		
+				
+				local randomMarker = Table_GetRandomItem(tempSpawnMarkers)
+				local randomMarkerToward = Table_GetRandomItem(tempSpawnMarkers)
+				local randomPosition = Entity_GetPosition(randomMarker)
+				local randomPositionToward = Entity_GetPosition(randomMarkerToward)
+				
+				-- Avoid repeated spawns
+				local spawnerTooClose = false
+				
+				for i = 1, #_match.gift_haul.used_spawn_markers do
+					
+					local usedMarkerPos = Entity_GetPosition(_match.gift_haul.used_spawn_markers[i])
+					local distanceSquare = Util_GetDistanceSquared(randomPosition, usedMarkerPos)
+					
+					if distanceSquare < _match.gift_haul.min_dist_between_gifts_sqr then
+						spawnerTooClose = true
+					end
+				end
+				
+				-- If gift is not collected we don't spawn
+				EGroup_Clear(eg_temp)
+				local player = Game_GetLocalPlayer()
+				World_GetEntitiesNearPoint(player, eg_temp, randomPosition, _match.gift_haul.min_dist_between_gifts, OT_Neutral)
+				EGroup_Filter(eg_temp, _match.gift_haul.entity_type, FILTER_KEEP)
+				
+				if EGroup_CountSpawned(eg_temp) > 0 then
+					spawnerTooClose = true
+				end
+				
+				if spawnerTooClose == false then		
+					-- Check if we need land or water blueprint
+					local blueprint = _match.gift_haul.blueprint_water 
+					if World_GetTerrainCellType(randomPosition.x, randomPosition.z) == eTerrainType.land then
+						blueprint = _match.gift_haul.blueprint_land
+					end		
+					
+					local pickup = BP_GetEntityBlueprint(blueprint)
+					
+					if(pickup ~= nil) then
+						-- Spawn gift
+						Util_CreateEntities(nil, nil, pickup, randomPosition, 1, randomPositionToward, true)		
+						table.insert( _match.gift_haul.used_spawn_markers, randomMarker )
+						_notificationData.has_gift_spawned = true -- allow training data to show
+					end
+					gift_index = gift_index + 1
+					spawned_gifts = spawned_gifts + 1
+				end
+				
+				-- Remove used and unavailable positions
+				local index = #tempSpawnMarkers
+				for i=1, #tempSpawnMarkers do
+					if tempSpawnMarkers[i] == randomMarker then
+						index = i
+					end
+				end
+				table.remove(tempSpawnMarkers, index)
+			end
+		end
+		
+		_match.gift_haul.total_gifts = _match.gift_haul.total_gifts + _match.gift_haul.wave_gift_increase
+		
+		if (_match.gift_haul.total_gifts > #_match.gift_haul.spawn_markers) then
+			
+			_match.gift_haul.total_gifts = #_match.gift_haul.spawn_markers
+		end
+		
+	else
+		-- Clean previously used locations
+		for i=1, #_match.gift_haul.used_spawn_location do
+			_match.gift_haul.used_spawn_location[i]=nil 
+		end
+		
+		local spawn_positions = Table_Copy(_match.gift_haul.spawn_positions)
+		local spawned_gifts = 0
+		local gift_index = 0
+		
+		if ( #spawn_positions > 0 ) then
+
+			while gift_index < _match.gift_haul.total_gifts and #spawn_positions > 0 do		
+				
+				local randomPosition = Table_GetRandomItem(spawn_positions)
+				local randomPositionToward = Table_GetRandomItem(spawn_positions)
+				
+				-- Avoid repeated spawns
+				local spawnerTooClose = false
+				for i = 1, #_match.gift_haul.used_spawn_location do
+					local distanceSquare = Util_GetDistanceSquared(randomPosition, _match.gift_haul.used_spawn_location[i]);	
+					if distanceSquare < _match.gift_haul.min_dist_between_gifts_sqr then
+						spawnerTooClose = true
+					end
+				end
+				
+				-- If gift is not collected we don't spawn
+				EGroup_Clear(eg_temp)
+				local player = Game_GetLocalPlayer()
+				World_GetEntitiesNearPoint(player, eg_temp, randomPosition, _match.gift_haul.min_dist_between_gifts, OT_Neutral)
+				EGroup_Filter(eg_temp, _match.gift_haul.entity_type, FILTER_KEEP)
+				
+				if EGroup_CountSpawned(eg_temp) > 0 then
+					spawnerTooClose = true
+				end
+				
+				if spawnerTooClose == false then		
+					-- Check if we need land or water blueprint
+					local blueprint = _match.gift_haul.blueprint_water 
+					if World_GetTerrainCellType( randomPosition.x, randomPosition.z ) == 1 then
+						blueprint = _match.gift_haul.blueprint_land
+					end		
+					
+					local pickup = BP_GetEntityBlueprint(blueprint)
+					
+					if(pickup ~= nil) then
+						-- Spawn gift
+						Util_CreateEntities(nil, nil, pickup, randomPosition, 1, randomPositionToward, true)		
+						table.insert( _match.gift_haul.used_spawn_location, randomSpawnPositionLand )
+						_notificationData.has_gift_spawned = true -- allow training data to show
+					end
+					gift_index = gift_index + 1
+					spawned_gifts = spawned_gifts + 1
+				end
+				
+				-- Remove used and unavailable positions
+				local index = #spawn_positions
+				for i=1, #spawn_positions do
+					if spawn_positions[i] == randomPosition then
+						index = i
+					end
+				end
+				table.remove(spawn_positions, index)
+			end
+		end
+		
+		_match.gift_haul.total_gifts = _match.gift_haul.total_gifts + _match.gift_haul.wave_gift_increase
+		if(_match.gift_haul.total_gifts > #_match.gift_haul.spawn_positions) then
+			_match.gift_haul.total_gifts = #_match.gift_haul.spawn_positions
+		end
+	end
+end

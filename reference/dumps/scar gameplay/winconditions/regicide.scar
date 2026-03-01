@@ -1,0 +1,436 @@
+-----------------------------------------------------------------------
+--
+-- The classic 'regicide' win condition in which the player and their team wins by having the last King standing
+--
+--
+-- (c) Relic Entertainment 2023
+--
+-----------------------------------------------------------------------
+
+import("replay/replaystatviewer.scar")
+import("cardinal.scar")
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+
+_regicide = {
+	module = "Regicide",
+	populationBonusOnKill = 50,
+	objective_title = "$11218487",				-- "Your Monarch must survive"
+	population_title = "$11262703",				-- "Current population limit:"
+	icons = {
+		objective = "icons\\objectives\\objectives_leader"
+	},
+	kings = {},
+	cuePopulationGained = {			 
+		title = 11261450,						-- "Population increased by +50"
+		sfx = "sfx_ui_victory_countdown_update_first",
+		icon = "icons\\event_queue_medium_priority_large",
+	},
+	winnerPresentation = {
+		objective_state = OS_Complete,
+		objective_popup_title = 11261449,		-- "All Enemy Monarchs have been Slain"
+		objective_stinger = MUS_STING_PRIMARY_OBJ_COMPLETE_ENDGAME,
+		end_game_title = 11161277,				-- "Victory"
+		end_game_stinger = "DefendWonderVictoryEvent",
+		end_game_video = "stinger_victory"	
+	},
+	loserPresentation = {
+		objective_state = OS_Failed,
+		objective_popup_title = 11261448,		-- "Your Monarch Was Slain"
+		objective_stinger = MUS_STING_PRIMARY_OBJ_FAIL,
+		end_game_title = 11165094,				-- "Defeat"
+		end_game_stinger = "DefendWonderDefeatEvent",
+		end_game_video = "stinger_defeat"	
+	},
+}
+
+-----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+Core_RegisterModule(_regicide.module)
+
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+
+function Regicide_OnInit()
+	
+	if  #PLAYERS <= 1 then
+		
+		Core_UnregisterModule(_regicide.module)
+		return
+		
+	end
+		
+	-- Init vars
+	for i, player in pairs(PLAYERS) do
+		player._regicide = {
+			objective_id = nil
+		}
+		-- Construct king tracking table
+		_regicide.kings[#_regicide.kings +1] = {sgroup = nil}
+		
+	end
+		
+	Regicide_SpawnKings()	
+	Rule_AddGlobalEvent(Regicide_UpdateEntityKilled, GE_EntityKilled)
+	Rule_AddGlobalEvent(Regicide_UpdatePlayerKilled, GE_PlayerKilled)
+	
+
+end
+
+function Regicide_Start()
+	
+	Regicide_SetupObjective()
+	
+end
+
+function Regicide_UpdateEntityKilled(context)
+	
+	if not Entity_IsOfType(context.victim, "King") then
+		
+		return
+		
+	end
+		
+	-- If the Killed King belongs to a player, eliminate them
+	if context.victimOwner ~= nil then
+		
+		Core_SetPlayerDefeated(context.victimOwner, Regicide_LoserPresentation, WR_REGICIDE)
+	
+	end
+		
+	Regicide_CheckWinner()
+	
+	if context.killer ~= nil then
+		if not World_OwnsEntity(context.killer) then
+			
+			Regicide_KilledKingBonus(Entity_GetPlayerOwner(context.killer))
+		
+		end
+	end
+	
+	Regicide_UpdateObjective()	
+	
+end
+
+function Regicide_UpdatePlayerKilled(context)
+	
+	Regicide_UpdateObjective()
+	
+end
+
+-- Callback invoked by Core_SetPlayerDefeated() when a player is eliminated.
+function Regicide_OnPlayerDefeated(player, reason)	
+	
+	if reason == WR_REGICIDE then
+		
+		--Kill all player squads
+		local sg_player_squads = Player_GetSquads(player.id)
+		SGroup_Kill(sg_player_squads)
+		
+		KillAllLandmarks(player)
+		
+		if Player_IsAlive(player.id) then
+			
+			World_KillPlayer(player.id, KPR_Lost)
+			
+		end
+		
+	end
+end
+
+-----------------------------------------------------------------------
+-- Internal Functions
+-----------------------------------------------------------------------
+function Regicide_SpawnKings()
+		
+	for i, player in pairs(PLAYERS) do
+		
+		local spawn_position = Regicide_GetKingSpawnPosition(player)
+		local sbp_king = Regicide_GetSquad(Player_GetRaceName(player.id), "king")
+		local sgroup_name = "sg_player_king_" .. tostring(player.id)
+		local sg_player_king = SGroup_CreateIfNotFound(sgroup_name)
+		
+		if spawn_position == nil then
+			
+			Core_UnregisterModule(_regicide.module)
+			return
+			
+		end	
+
+		UnitEntry_DeploySquads(player.id, sg_player_king, {{sbp = sbp_king, numSquads = 1 }}, spawn_position)
+		
+		-- Add King Squad to tracking
+		_regicide.kings[i].sgroup = sg_player_king
+		
+	end
+end
+
+-- Create the objective UI that appears in the top-left corner of each player's screen
+function Regicide_SetupObjective()
+	
+	for _, player in pairs(PLAYERS) do		
+		if player.isLocal and not player.isEliminated and player._regicide.objective_id == nil then
+		
+			local data_template = "RegicideOrObjectiveDataTemplate"
+			if _first_primary_objective == nil then
+				
+				data_template = "RegicideObjectiveDataTemplate"
+				_first_primary_objective = data_template
+				
+			end
+			
+			-- Set up Primary Objective
+			player._regicide.objective_id = Obj_Create(player.id, _regicide.objective_title, Loc_Empty(), _regicide.icons.objective, data_template, player.raceName, OT_Primary, 0, "regicideObj")
+			
+			Obj_SetState(player._regicide.objective_id, OS_Incomplete)
+			Obj_SetVisible(player._regicide.objective_id, true)	
+			Obj_SetCounterType(player._regicide.objective_id, COUNTER_Count)
+			Obj_SetSecondaryCounterType(player._regicide.objective_id, COUNTER_Count)
+			
+			-- Set up Sub Objective Counter
+			player._regicide.objective_secondary_id = Obj_Create(player.id, _regicide.population_title, Loc_Empty(), _regicide.icons.objective, "RegicideSecondaryObjectiveDataTemplate", player.raceName, OT_Secondary, player._regicide.objective_id, "regicideObj")
+			Obj_SetState(player._regicide.objective_secondary_id, OS_Incomplete)
+			Obj_SetVisible(player._regicide.objective_secondary_id, true)	
+			Obj_SetCounterType(player._regicide.objective_secondary_id, COUNTER_Count)
+			
+		end
+	end
+	
+	Regicide_UpdateObjective()
+	
+end
+
+function Regicide_UpdateObjective()
+	
+	for _, player in pairs(PLAYERS) do		
+		if player.isLocal then
+			if player._regicide.objective_id ~= nil then
+						
+				local kings_alive = Regicide_GetEnemyKingCount(player)
+		
+				Obj_SetCounterCount(player._regicide.objective_id, kings_alive)
+				Obj_SetSecondaryCounterCount(player._regicide.objective_id, Player_GetMaxPopulationCap(player.id, CT_Personnel))
+				Obj_SetCounterCount(player._regicide.objective_secondary_id, Player_GetMaxPopulationCap(player.id, CT_Personnel))
+			end
+		end
+	end	
+end
+
+function Regicide_KilledKingBonus(player)
+	
+	local population_max_modifier = Modifier_Create(MAT_Player, "max_personnel_cap_player_modifier", MUT_Addition, false, _regicide.populationBonusOnKill, nil)
+	Modifier_ApplyToPlayer(population_max_modifier, player, 0)
+	
+	if Player_GetRaceName(player) == "mongol" or Player_GetRaceName(player) == "mongol_ha_gol" then
+		
+		local population_modifier = Modifier_Create(MAT_Player, "personnel_cap_player_modifier", MUT_Addition, false, _regicide.populationBonusOnKill, nil)
+		Modifier_ApplyToPlayer(population_modifier, player, 0)
+	
+	end
+		
+	-- Send Cue
+	local uiColour = Player_GetUIColour(player)
+	UI_CreateEventCueClickable(-1, 10.0, 0, 20.0, _regicide.cuePopulationGained.title, Loc_Empty(), "event_with_player_color", _regicide.cuePopulationGained.icon, _regicide.cuePopulationGained.sfx, uiColour.r, uiColour.g, uiColour.b, uiColour.a, ECV_Queue, nothing)
+	
+end
+
+function Regicide_LoserPresentation(playerID)		
+		
+	Regicide_ConstructPresentation(playerID, _regicide.loserPresentation)
+	
+end
+
+function Regicide_WinnerPresentation(playerID)		
+		
+	Regicide_ConstructPresentation(playerID, _regicide.winnerPresentation)	
+	
+end
+
+-----------------------------------------------------------------------
+-- Helper Functions
+-----------------------------------------------------------------------
+-- Returns a valid location to spawn a player's King. If no suitable location is found, unload the module. 
+function Regicide_GetKingSpawnPosition(player)
+		
+	local eg_player_entities = Player_GetEntities(player.id)
+	EGroup_Filter(eg_player_entities, "town_center", FILTER_KEEP)
+		
+	if(EGroup_Count(eg_player_entities) > 0) then
+		
+		local entityPosition = Entity_GetPosition(EGroup_GetEntityAt(eg_player_entities, 1))
+		return Util_GetOffsetPosition(entityPosition, 20, 10)
+		
+	end
+			
+	local sg_player_squads = Player_GetSquads(player.id)
+	SGroup_Filter(sg_player_squads, "villager", FILTER_KEEP)
+			
+	if(SGroup_Count(sg_player_squads) > 0) then
+		
+		local squadPosition = Squad_GetPosition(SGroup_GetSquadAt(sg_player_squads, 1))
+		return Util_GetOffsetPosition(squadPosition, 1, 1)
+		
+	end
+	
+	print(string.format("No suitable location to spawn King for player %d unloading Regicide module.", player.index))
+	return nil
+						
+end
+
+function Regicide_CheckWinner()
+	
+	local winning_player = nil
+	
+	for _, player in pairs(PLAYERS) do
+		
+		if not Core_IsPlayerEliminated(player.id) then 
+			
+			if Regicide_GetEnemyKingCount(player) == 0 then
+				
+				winning_player = player
+				break
+				
+			end
+		end
+	end
+	
+	if winning_player == nil then
+		
+		return
+
+	end
+		
+	for _, player in pairs(PLAYERS) do
+			
+		if Player_ObserveRelationship(player.id, winning_player.id) == R_ALLY then
+				
+			Core_SetPlayerVictorious(player.id, Regicide_WinnerPresentation, WR_REGICIDE)	
+				
+		end
+	end
+		
+	Core_OnGameOver()
+
+end
+
+function Regicide_GetEnemyKingCount(player)
+	
+	local enemies_remaining = {}
+	
+	for i, player_other in pairs(PLAYERS) do
+		
+		-- If other player is not the given player and is an enemy, and still alive
+		if player ~= player_other and Player_ObserveRelationship(player.id, player_other.id) == R_ENEMY and Player_IsAlive(player_other.id) then 
+			
+			if SGroup_IsAlive(_regicide.kings[i].sgroup) then
+
+				table.insert(enemies_remaining, player_other)
+			
+			end
+		end
+	end
+	
+	return #enemies_remaining
+end
+
+function Regicide_GetSquad(civName, entityName)
+		
+	EntityList ={
+		english = {
+			king = "unit_king_1_eng"
+		},
+		chinese = {
+			king = "unit_king_1_chi"
+		},
+		french = {
+			king = "unit_king_1_fre"
+		},
+		hre = {
+			king = "unit_king_1_hre"
+		},
+		mongol = {
+			king = "unit_king_1_mon"
+		},
+		rus = {
+			king = "unit_king_1_rus"
+		},
+		sultanate = {
+			king = "unit_king_1_sul"
+		},
+		abbasid = {
+			king = "unit_king_1_abb"
+		},
+		malian = {
+			king = "unit_king_1_mal"
+		},
+		ottoman = {
+			king = "unit_king_1_ott"
+		},
+		byzantine = {
+			king = "unit_king_1_byz"
+		},
+		japanese = {
+			king = "unit_king_1_jpn"
+		},
+		abbasid_ha_01 = {
+			king = "unit_king_1_abb_ha_01"
+		},
+		chinese_ha_01 = {
+			king = "unit_king_1_chi_ha_01"
+		},
+		french_ha_01 = {
+			king = "unit_king_1_fre_ha_01"
+		},
+		hre_ha_01 = {
+			king = "unit_king_1_hre_ha_01"
+		},
+		templar = { 
+			king = "unit_king_1_tem"
+		},
+		lancaster = { 
+			king = "unit_king_1_lan"
+		},
+		byzantine_ha_mac = {
+			king = "unit_king_1_byz_ha_mac"
+		},
+		japanese_ha_sen = {
+			king = "unit_king_1_jpn_ha_sen"
+		},
+		mongol_ha_gol = {
+			king = "unit_king_1_mon_ha_gol"
+		},
+		sultanate_ha_tug = {
+			king = "unit_king_1_sul_ha_tug"
+		},
+	}
+	
+	return BP_GetSquadBlueprint(EntityList[civName][entityName])
+	
+end
+
+function Regicide_ConstructPresentation(playerID, presentationData)
+	
+	local player = Core_GetPlayersTableEntry(playerID)
+		if player.isLocal then
+			Misc_ClearSelection()
+			Taskbar_SetVisibility(false)
+			Obj_SetState(player._regicide.objective_id, presentationData.objective_state)
+			Obj_CreatePopup(player._regicide.objective_id, presentationData.objective_popup_title, "")
+			Music_PlayStinger(presentationData.objective_stinger)
+			
+			Rule_AddOneShot(_gameOver_message, 
+				GAMEOVER_OBJECTIVE_TIME, {
+					_playerID = playerID, 
+					_icon = _regicide.icons.objective, 
+					_endType = Loc_GetString(presentationData.end_game_title),
+					_message = Loc_Empty(),
+					_sound = presentationData.end_game_stinger, 
+					_videoURI = presentationData.end_game_video
+				})
+		end
+end

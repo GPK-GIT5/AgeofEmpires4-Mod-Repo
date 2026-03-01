@@ -1,0 +1,632 @@
+--
+-- Juyong 1213 - Primary Objectives Phase 3
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_juyong_phase4.scar")
+
+--? @shortdesc Initializes the main objectives for Juyong
+function Juyong_InitObjectives_Phase3()
+
+	OBJ_Yanqing = { Title = "$11180872", -- Raze Yanqing
+		Type = ObjectiveType_Battle,
+		
+		PreStart = function()			
+			Util_AutoSave()
+		end,
+		
+		OnStart = function()
+			Game_TransitionToState("steppes_midday", 300)
+			objectiveBuildingCount = (EGroup_Count(SOBJ_Village_1.egroup) + EGroup_Count(SOBJ_Village_2.egroup) + EGroup_Count(SOBJ_Village_3.egroup))
+			Rule_AddGlobalEvent(Juyong_OnEntityDestroyed, GE_EntityKilled)
+			
+			Player_AddResource(g_playerMongol, RT_Food, 800)
+			Player_AddResource(g_playerMongol, RT_Wood, 600)
+			Player_AddResource(g_playerMongol, RT_Stone, 0)
+			Player_AddResource(g_playerMongol, RT_Gold, 400)
+	
+			UI_SetPlayerDataContext(g_playerMongol, { PopulationCapOn = true })     
+
+			Rule_AddInterval(Juyong_CheckPlayerApproachYanqing, 5)
+			Rule_AddInterval(Juyong_CheckPlayerApproachVillage1, 5)
+			Rule_AddInterval(Juyong_CheckPlayerApproachVillage2, 5)
+			Rule_AddInterval(Juyong_CheckPlayerApproachVillage3, 5)
+			
+			MissionTutorial_JuyongGer()
+			MissionTutorial_JuyongPasture_Entity()
+			MissionTutorial_JuyongPasture_Squad()
+			MissionTutorial_JuyongUnpackBuildings()
+			MissionTutorial_ImprovedRaiding()
+			
+			hint_Yanqing = Objective_AddUIElements(OBJ_Yanqing, yanqing_tc, true, 11180873, true, nil ) -- Yanqing
+			
+			Rule_AddOneShot(Juyong_StartNorthWaves, northWaveStartDelay)
+			Rule_AddOneShot(Juyong_StartSouth1Waves, south1WaveStartDelay)
+			Rule_AddOneShot(Juyong_StartSouth2Waves, south2WaveStartDelay)
+			
+			-- Don't do Yanqing waves on Story mode
+			if Game_GetSPDifficulty() >= GD_NORMAL then
+				Rule_AddOneShot(Juyong_StartYanqingWaves, yanqingWaveStartDelay)
+			end
+			
+			Rule_AddInterval(Juyong_CheckMongolTCDestroyed, 5)
+			Init_Waves()
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_YanqingBuildings)
+		end,
+		
+		OnComplete = function()
+			Player_GetAllSquadsNearMarker(g_playerMongol, sg_mon_army, base_yanqing, 200)
+			Sound_PlayWallaCelebrateOnSGroup(sg_mon_army)
+			HintPoint_Remove(hint_Yanqing)
+			if Game_GetSPDifficulty() >= GD_NORMAL then
+				Rule_AddInterval(Juyong_JuyongWave, juyongWavePeriod)
+			end
+			Util_StartIntel(EVENTS.YanqingComplete)
+			Rule_AddInterval(Juyong_MoveBuildingsHint, 45)
+			
+			Objective_Start(OBJ_Juyong)
+			Juyong_RecallAllJinSoldiers()
+		end,
+		
+		IsFailed = Juyong_CheckTotalFailure,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	SOBJ_YanqingBuildings = { Title = "$11191883", -- Destroy buildings
+		Type = ObjectiveType_Battle, 
+		Parent = OBJ_Yanqing,
+		egroup = eg_yanqing,
+		counterTarget = 12,
+		counterCurrent = 0,
+
+		PreStart = function()
+		end,
+		
+		OnStart = function()
+			Obj_SetProgressVisible(SOBJ_YanqingBuildings.ID, true)
+			Obj_SetProgress(SOBJ_YanqingBuildings.ID, SOBJ_YanqingBuildings.counterCurrent / SOBJ_YanqingBuildings.counterTarget )
+		end,
+		
+		IsComplete = function()
+			return EGroup_Count(SOBJ_YanqingBuildings.egroup) <= 0
+		end,
+		
+		OnComplete = function()
+		end,
+	}
+	OBJ_RaidBuildings = { Title = "$11191861", -- Optional: Collect 2000 resources by burning buildings
+		Type = ObjectiveType_Optional,
+		
+		counterTarget = 2000,
+		counterCurrent = 0,
+		 
+		PreStart = function()
+		end,
+		
+		OnStart = function()
+			Juyong_GetBurnableList()
+			Objective_SetCounter(OBJ_RaidBuildings, burnResourcesClaimed, 2000)
+			
+		end,
+		
+		IsComplete = function()
+			return Objective_GetCounter(OBJ_RaidBuildings) >= 2000
+		end,
+		
+		OnComplete = function()
+		end,
+	}
+	OBJ_DestroyVillages = { Title = "$11188383", -- Optional: Destroy outlying Jin villages to cut off reinforcements
+		Type = ObjectiveType_Optional,
+		 
+		PreStart = function()
+			if Game_GetSPDifficulty() <= GD_EASY then
+				--Obj_SetTitle(OBJ_DestroyVillages.ID, "$11204361")
+			end
+		end,
+		
+		OnStart = function()
+			Objective_SetCounter(OBJ_DestroyVillages, 0, 3)
+			MissionTutorial_JuyongOvoo()
+			hint_Village1 = Objective_AddUIElements(OBJ_DestroyVillages, village_1, true, 11191878, true, nil ) -- Jin Village
+			hint_Village2 = Objective_AddUIElements(OBJ_DestroyVillages, village_2, true, 11191878, true, nil ) -- Jin Village
+			hint_Village3 = Objective_AddUIElements(OBJ_DestroyVillages, village_3, true, 11191878, true, nil ) -- Jin Village
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_Village_1) and Objective_IsComplete(SOBJ_Village_2) and Objective_IsComplete(SOBJ_Village_3)
+		end,
+		
+		OnComplete = function()
+		end,
+	}
+	SOBJ_Village_1 = { Title = "$11191882", -- Destroy Western Village
+		Type = ObjectiveType_Optional, 
+		Parent = OBJ_DestroyVillages,
+		egroup = eg_village_1,
+		marker = village_1,
+		counterTarget = 6,
+		counterCurrent = 0,
+
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			Objective_SetCounter(SOBJ_Village_1, 0, SOBJ_Village_1.counterTarget)
+		end,
+		
+		IsComplete = function()
+			return EGroup_Count(SOBJ_Village_1.egroup) <= 0
+		end,
+		
+		OnComplete = function()
+			Juyong_FirstVillageDestroyed()
+			Objective_IncreaseCounter(OBJ_DestroyVillages, 1)
+			Objective_RemoveUIElements(OBJ_DestroyVillages, hint_Village1)
+		end,
+	}
+	SOBJ_Village_2 = { Title = "$11191881", -- Destroy Southern Village
+		Type = ObjectiveType_Optional, 
+		Parent = OBJ_DestroyVillages,
+		egroup = eg_village_2,
+		marker = village_2,
+		counterTarget = 8,
+		counterCurrent = 0,
+
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			Objective_SetCounter(SOBJ_Village_2, 0, SOBJ_Village_2.counterTarget)
+		end,
+		
+		IsComplete = function()
+			return EGroup_Count(SOBJ_Village_2.egroup) <= 0
+		end,
+		
+		OnComplete = function()
+			Juyong_FirstVillageDestroyed()
+			Objective_IncreaseCounter(OBJ_DestroyVillages, 1)
+			Objective_RemoveUIElements(OBJ_DestroyVillages, hint_Village2)
+		end,
+	}
+	SOBJ_Village_3 = { Title = "$11191880", -- Destroy Northern Village
+		Type = ObjectiveType_Optional, 
+		Parent = OBJ_DestroyVillages,
+		egroup = eg_village_3,
+		marker = village_3,
+		counterTarget = 9,
+		counterCurrent = 0,
+
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			Objective_SetCounter(SOBJ_Village_3, 0, SOBJ_Village_3.counterTarget)
+		end,
+		
+		IsComplete = function()
+			return EGroup_Count(SOBJ_Village_3.egroup) <= 0
+		end,
+		
+		OnComplete = function()
+			Juyong_FirstVillageDestroyed()
+			Objective_IncreaseCounter(OBJ_DestroyVillages, 1)
+			Objective_RemoveUIElements(OBJ_DestroyVillages, hint_Village3)
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Yanqing)
+	Objective_Register(SOBJ_YanqingBuildings)
+	Objective_Register(OBJ_RaidBuildings)
+	Objective_Register(OBJ_DestroyVillages)
+	Objective_Register(SOBJ_Village_1)
+	Objective_Register(SOBJ_Village_2)
+	Objective_Register(SOBJ_Village_3)
+	
+	
+end
+
+function Juyong_StartYanqingWaves()
+	Juyong_YanqingWave()
+	Rule_AddInterval(Juyong_YanqingWave, yanqingWavePeriod)
+end
+
+function Juyong_StartNorthWaves()
+	Juyong_NorthWave()
+	Rule_AddInterval(Juyong_NorthWave, northWavePeriod)
+end
+
+function Juyong_StartSouth1Waves()
+	Juyong_South1Wave()
+	Rule_AddInterval(Juyong_South1Wave, south1WavePeriod)
+end
+
+function Juyong_StartSouth2Waves()
+	Juyong_South2Wave()
+	Rule_AddInterval(Juyong_South2Wave, south2WavePeriod)
+end
+
+
+function Juyong_SupplyCaravanOnClick()
+    Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sg_mon_reinforcements) -- Walla for the reinforcement	
+end
+
+function Juyong_MoveBuildingsHint(context, data)
+	eg_movingbuildings = EGroup_CreateIfNotFound("eg_movingbuildings")
+	EGroup_Clear(eg_movingbuildings)
+	Player_GetAll(g_playerMongol)
+	EGroup_Filter(eg_allentities, "mobile_building", FILTER_REMOVE, eg_movingbuildings)
+	if EGroup_IsEmpty(eg_movingbuildings) then
+		MissionTutorial_JuyongMovingBuildings()
+		Util_StartIntel(EVENTS.Camp_Move_Hint)
+		Rule_RemoveMe()
+	end
+end
+
+function Juyong_GetBurnableList()
+	local _RemoveNonBurnable = function (gid, idx, eid)
+		if not Entity_IsBurnable(eid) or Entity_IsBurning(eid) then
+			EGroup_Remove(eg_jin_burnables, eid)
+		end
+	end
+			
+	eg_jin_burnables = EGroup_CreateIfNotFound("eg_jin_burnables")
+	
+	Player_GetAll(g_playerJin, sg_allsquads, eg_jin_burnables)
+	EGroup_Filter(eg_jin_burnables, "stone_wall", FILTER_REMOVE)
+	EGroup_ForEach(eg_jin_burnables, _RemoveNonBurnable)
+	
+	Rule_AddInterval(Juyong_IsBurnableBurning, 0.125)
+end
+
+function Juyong_IsBurnableBurning()
+	
+	-- Persistently track the number, so we can spot disappearances
+	g_trackedBurnables = g_trackedBurnables or EGroup_Count(eg_jin_burnables)
+	
+	-- How much should burnt buildings, or assumed burnt buildings, yield?
+	local burnBountyAmount = (50 * 3)
+	if Player_HasUpgrade(g_playerMongol, UPG.MONGOL.UPGRADE_RAID_BOUNTY_IMPROVED_MON) then
+		burnBountyAmount = (175 * 3)
+	elseif Player_HasUpgrade(g_playerMongol, UPG.MONGOL.UPGRADE_RAID_BOUNTY_MON) then
+		burnBountyAmount = (150 * 3)
+	end
+	
+	-- Check for each building to see if it's burning - if it is, respond to the burn state
+	local _RemoveBurning = function (gid, idx, eid)
+		if Entity_IsBurning(eid) then
+			EGroup_Remove(eg_jin_burnables, eid)
+			burnResourcesClaimed = burnResourcesClaimed + burnBountyAmount
+			if Objective_IsStarted(OBJ_RaidBuildings) and not Objective_IsComplete(OBJ_RaidBuildings) then
+				Objective_SetCounter(OBJ_RaidBuildings, burnResourcesClaimed, OBJ_RaidBuildings.counterTarget)
+			end
+		end
+	end
+	
+	-- Did the EGroup lose any buildings since the last time it was checked?
+	-- If so, we have to assume those buildings were destroyed AND burnt in the same interval
+	-- We're not getting tech support for a proper callback for when things are set on fire, so this is the best we can do
+	local sinceLastCheckDelta = g_trackedBurnables - EGroup_Count(eg_jin_burnables)
+	if sinceLastCheckDelta > 1 then
+		burnResourcesClaimed = burnResourcesClaimed + (burnBountyAmount * sinceLastCheckDelta)
+		if Objective_IsStarted(OBJ_RaidBuildings) and not Objective_IsComplete(OBJ_RaidBuildings) then
+			Objective_SetCounter(OBJ_RaidBuildings, burnResourcesClaimed, OBJ_RaidBuildings.counterTarget)
+		end
+	end
+	
+	-- Run the check on everyone left and removed anything that burnt
+	if EGroup_IsBurning(eg_jin_burnables, ANY) == true then
+		if firstBurn then
+			Util_StartIntel(EVENTS.DeerStones_GainGold)
+			firstBurn = false
+		end
+		EGroup_ForEach(eg_jin_burnables, _RemoveBurning)
+	end
+	
+	-- Log this number; if anything disappears from it between now and the next call,
+	-- it can't have been removed by the removing we just did on account of fire
+	g_trackedBurnables = EGroup_Count(eg_jin_burnables)
+	
+end
+
+--? @shortdesc Recalls all soldiers to Juyong from around the map
+function Juyong_RecallAllJinSoldiers(context)
+	
+	print("Recalling all soldiers to Juyong!")
+	
+	g_evacuatingArmies = 0
+	-- For every single remaining module, we want to send it attack-moving to Juyong
+	Juyong_SendToJuyong("YanqingPatrol", "Retreat_Yanqing")
+	Juyong_SendToJuyong("SouthPatrol", "Retreat_Patrols")
+	Juyong_SendToJuyong("NorthPatrol", "Retreat_North")
+	
+	Juyong_SendToJuyong("MountainPatrol1", "Retreat_Mountain")
+	Juyong_SendToJuyong("MountainPatrol2", "Retreat_Mountain")
+	
+	Juyong_SendToJuyong("JinForestPost", "Retreat_Mountain")
+	Juyong_SendToJuyong("JinPostZhangjiakou1", "Retreat_Zhang")
+	Juyong_SendToJuyong("JinZhangjiakou", "Retreat_Zhang")
+	Juyong_SendToJuyong("ZhangjiakouDefend", "Retreat_Zhang")
+	Juyong_SendToJuyong("ZhangjiakouArchersNorth1", "Retreat_Zhang")
+	Juyong_SendToJuyong("ZhangjiakouArchersNorth2", "Retreat_Zhang")
+	Juyong_SendToJuyong("ZhangjiakouArchersNorth3", "Retreat_Zhang")
+	Juyong_SendToJuyong("ZhangjiakouArchersNorth4", "Retreat_Zhang")
+	Juyong_SendToJuyong("ZhangjiakouArchersSouth1", "Retreat_Zhang")
+	Juyong_SendToJuyong("ZhangjiakouArchersSouth2", "Retreat_Zhang")
+	Juyong_SendToJuyong("ZhangjiakouArchersSouth3", "Retreat_Zhang")
+	Juyong_SendToJuyong("ZhangjiakouArchersSouth4", "Retreat_Zhang")
+	Juyong_SendToJuyong("NorthDefend", "Retreat_North")
+	Juyong_SendToJuyong("MidfieldDefend", "Retreat_Yanqing")
+	Juyong_SendToJuyong("JinYanqing", "Retreat_Yanqing")
+	
+	Juyong_SendToJuyong("JinRoadPost1", "Retreat_Patrols")
+	Juyong_SendToJuyong("JinRoadPost2", "Retreat_Patrols")
+	
+	Rule_AddInterval(Juyong_RetreatOffMap, 10)
+	
+end
+
+--? @shortdesc Sends a module to Juyong
+function Juyong_SendToJuyong(moduleName, newModule)
+	
+	-- Pick the module to go after
+	local module = MissionOMatic_FindModule(moduleName)
+	local retreatingModule = nil
+	
+	if module ~= nil then 
+		if MissionOMatic_FindModule(newModule) == nil then
+			---- Now create an attack module
+			local moduleData = {
+				descriptor = newModule,
+				type = "RovingArmy",
+				target = base_juyong,
+				targetingType = ARMY_TARGETING_DISCARD,
+				player = g_playerJin,
+				attackmove = attackMoveStyle_aggressive,
+				onDeathDissolve = true,
+				onCompleteModule = "JinJuyong_Retreated",
+				
+			}
+			
+			retreatingModule = RovingArmy_Init(moduleData)
+		else
+			retreatingModule = MissionOMatic_FindModule(newModule)
+		end
+		
+		TransferModuleIntoModule(module, retreatingModule)
+		
+		-- Increment the ID for the module
+		g_evacuatingArmies = g_evacuatingArmies + 1
+	end
+end
+		
+
+function Juyong_PlayVillageWaveVOAndObj()
+	if firstVillageAttack then
+		Util_StartIntel(EVENTS.Jin_Villages_Attack)
+		firstVillageAttack = false
+		Objective_Start(OBJ_DestroyVillages)
+	end
+end
+
+function Juyong_YanqingWave()
+	if Objective_IsComplete(OBJ_Yanqing) then
+		Rule_RemoveMe()
+	else
+		Juyong_PlayVillageWaveVOAndObj()
+		Juyong_SendWave(wave_yanqing)
+		print("Wave: Sending Yanqing")
+	end
+end
+
+function Juyong_NorthWave()
+	
+	if EGroup_IsEmpty(eg_village_3) then
+		Rule_RemoveMe()
+	else
+		Juyong_PlayVillageWaveVOAndObj()
+		Juyong_SendWave(wave_north)
+		print("Wave: Sending North")
+	end
+end
+
+function Juyong_South1Wave()
+		
+	if EGroup_IsEmpty(eg_village_1) then
+		Rule_RemoveMe()
+	else
+		Juyong_PlayVillageWaveVOAndObj()
+		Juyong_SendWave(wave_south1)
+		print("Wave: Sending South1")
+	end
+end
+
+function Juyong_South2Wave()
+			
+	if EGroup_IsEmpty(eg_village_2) then
+		Rule_RemoveMe()
+	else
+		Juyong_PlayVillageWaveVOAndObj()
+		Juyong_SendWave(wave_south2)
+		print("Wave: Sending South2")
+	end
+end
+
+function Juyong_JuyongWave()
+	Juyong_SendWave(wave_juyong)
+	print("Wave: Sending Juyong")
+end
+
+function Juyong_SendWave(wave)
+	Juyong_UpdateMonTC()
+	local newWave = Wave_Prepare(wave)
+	if newWave ~= nil then
+		table.insert(assaultWaveList, newWave.assault_module)
+		RovingArmy_AddTarget(newWave.assault_module, mon_tc_position)
+	end
+end
+
+function Juyong_OnBuildingBurned(context)
+	
+end
+
+function Juyong_OnEntityDestroyed(context)
+	local victim = context.victim
+	local owner = context.victimOwner
+	
+	if owner == g_playerJin then 
+		if Entity_IsOfType(victim, "building") then			
+			if Objective_IsStarted(SOBJ_YanqingBuildings) and not Objective_IsComplete(SOBJ_YanqingBuildings) then
+				local current = SOBJ_YanqingBuildings.counterTarget - EGroup_Count(eg_yanqing)
+				Obj_SetProgress(SOBJ_YanqingBuildings.ID, current / SOBJ_YanqingBuildings.counterTarget)
+			end
+			if Objective_IsStarted(SOBJ_Village_1) and not Objective_IsComplete(SOBJ_Village_1) then
+				local current = SOBJ_Village_1.counterTarget - EGroup_Count(SOBJ_Village_1.egroup)
+				Objective_SetCounter(SOBJ_Village_1, SOBJ_Village_1.counterTarget - EGroup_Count(SOBJ_Village_1.egroup), SOBJ_Village_1.counterTarget)
+			end
+			if Objective_IsStarted(SOBJ_Village_2) and not Objective_IsComplete(SOBJ_Village_2) then
+				local current = SOBJ_Village_2.counterTarget - EGroup_Count(SOBJ_Village_2.egroup)
+				Objective_SetCounter(SOBJ_Village_2, SOBJ_Village_2.counterTarget - EGroup_Count(SOBJ_Village_2.egroup), SOBJ_Village_2.counterTarget)
+			end
+			if Objective_IsStarted(SOBJ_Village_3) and not Objective_IsComplete(SOBJ_Village_3) then
+				local current = SOBJ_Village_3.counterTarget - EGroup_Count(SOBJ_Village_3.egroup)
+				Objective_SetCounter(SOBJ_Village_3, current, SOBJ_Village_3.counterTarget)
+			end
+			if objectiveBuildingCount > (EGroup_Count(SOBJ_Village_1.egroup) + EGroup_Count(SOBJ_Village_2.egroup) + EGroup_Count(SOBJ_Village_3.egroup)) then
+				objectiveBuildingCount = (EGroup_Count(SOBJ_Village_1.egroup) + EGroup_Count(SOBJ_Village_2.egroup) + EGroup_Count(SOBJ_Village_3.egroup))
+				Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+			end
+			if Objective_IsComplete(SOBJ_YanqingBuildings) and Objective_IsComplete(SOBJ_Village_1) and Objective_IsComplete(SOBJ_Village_2) and Objective_IsComplete(SOBJ_Village_3) then
+				Rule_RemoveMe()
+			end
+		end
+	end
+end
+
+function Juyong_CheckPlayerApproachVillage1()
+	Player_GetAll(g_playerMongol)
+	if Prox_AreSquadsNearMarker(sg_allsquads,SOBJ_Village_1.marker, ANY, 80) then
+		Juyong_PlayVillageWaveVOAndObj()
+		Objective_Start(SOBJ_Village_1)
+		Rule_RemoveMe()
+	end
+end
+function Juyong_CheckPlayerApproachVillage2()
+	Player_GetAll(g_playerMongol)
+	if Prox_AreSquadsNearMarker(sg_allsquads,SOBJ_Village_2.marker, ANY, 80) then
+		Juyong_PlayVillageWaveVOAndObj()
+		Objective_Start(SOBJ_Village_2)
+		Rule_RemoveMe()
+	end
+end
+function Juyong_CheckPlayerApproachVillage3()
+	Player_GetAll(g_playerMongol)
+	if Prox_AreSquadsNearMarker(sg_allsquads,SOBJ_Village_3.marker, ANY, 80) then
+		Juyong_PlayVillageWaveVOAndObj()
+		Objective_Start(SOBJ_Village_3)
+		Rule_RemoveMe()
+	end
+end
+function Juyong_CheckPlayerApproachYanqing()
+	Player_GetAll(g_playerMongol)
+	if Prox_AreSquadsNearMarker(sg_allsquads,base_yanqing, ANY, 200) then
+		Juyong_PlayVillageWaveVOAndObj()
+		Objective_Start(SOBJ_YanqingBuildings)
+		Rule_RemoveMe()
+	end
+end
+
+function Juyong_FirstVillageDestroyed()
+	if not firstVillageDestroyed then
+		firstVillageDestroyed = true
+		Util_StartIntel(EVENTS.Jin_Village_Destroyed)
+	end
+end
+
+function Juyong_CheckMongolTCDestroyed()
+	Juyong_UpdateMonTC()
+end
+
+function Juyong_UpdateMonTC()
+	
+	local function _UpdateAllWaves()
+		--Update live RovingArmies and set Dead ones to nil
+		for k,v in ipairs(assaultWaveList) do
+			if RovingArmy_IsDead(v) then
+				assaultWaveList[k] = nil
+			else
+				local targetList = RovingArmy_GetTargets(v)
+				if targetList[#targetList] ~= mon_tc_position then
+					RovingArmy_SetTarget(v, mon_tc_position)
+				end
+			end
+		end
+		--Clean up nil table entries
+		local j=0
+		local n = #assaultWaveList
+		
+		for i=1,n do
+	        if assaultWaveList[i]~=nil then
+                j=j+1
+                assaultWaveList[j]=assaultWaveList[i]
+	        end
+		end
+		
+		for i=j+1,n do
+      	  assaultWaveList[i]=nil
+		end
+	end
+	
+	eg_mon_tc = Player_GetAllEntities(g_playerMongol)
+	EGroup_Filter(eg_mon_tc, "town_center", FILTER_KEEP)
+	
+	if EGroup_IsEmpty(eg_mon_tc) then --verify the TC exists
+		Mission_Fail()
+	else -- Update TC position
+		local new_mon_tc_position = EGroup_GetPosition(eg_mon_tc)
+
+		if mon_tc_position == nil or Util_GetDistance(mon_tc_position, new_mon_tc_position) > 20 then
+			mon_tc_position = new_mon_tc_position
+			_UpdateAllWaves()
+		end
+	end
+end
+
+function Juyong_RetreatOffMap()
+	local module = MissionOMatic_FindModule("JinJuyong_Retreated")
+	local sgroup = module.sgroup
+	
+	if SGroup_Count(sgroup) > 30 then
+		local i = 0
+		
+		local _Retreat = function(gid, idx, sid)
+			if i >= 2 then
+				i = 0
+				SGroup_Single(sg_single, sid)
+				Defend_RemoveSGroup(module, sg_single)
+				Cmd_MoveToAndDestroy(sg_single, mkr_juyong_outro9)
+			else
+				i = i + 1
+			end
+		end
+		SGroup_ForEach(sgroup, _Retreat)
+	end
+end

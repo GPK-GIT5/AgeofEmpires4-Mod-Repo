@@ -1,0 +1,133 @@
+
+function Pontvallain_InitObjectives()
+	OBJ_Protect = {
+		Title = "$11180088", -- ("The town of Pontvallain must survive"),
+		Type = ObjectiveType_Primary,
+		OnStart = function()
+			Objective_AddUIElements(OBJ_Protect, mkr_pontvallain_icon, true, 11156658, false, 10)
+		end,
+		IsFailed = function()
+			local current_pontvallain_count = EGroup_CountSpawned(eg_pontvallain)
+			return current_pontvallain_count == 0 
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	OBJ_Build = {
+		Title = "$11201484", -- ("Optional: Construct military production buildings"),
+		Type = ObjectiveType_Optional,
+		PreStart = function()
+			Objective_SetCounter(OBJ_Build, production_buildings_constructed, production_buildings_required)
+		end,
+		IsComplete = function()
+			Objective_SetCounter(OBJ_Build, production_buildings_constructed, production_buildings_required)
+			return production_buildings_constructed >= production_buildings_required
+		end,
+	}
+	
+	OBJ_DefeatEnglish = {
+		Title = "$11180098", -- ("Defeat the English"),
+		Type = ObjectiveType_Battle,
+		Intel_Start = EVENTS.English_Spawn,
+		PreStart = function()
+			print("OBJ_DefeatEnglish started")
+			FOW_PlayerRevealSGroup(player1, sg_english_all, 20, -1)
+			EventCues_CallToAction("$11182286", CTA_ALARM, nil, nil, sg_english_army) --The English army has arrived!
+			Sound_Play2D("mus_stinger_campaign_warning")
+			muster_icon = Objective_AddUIElements(SOBJ_DefeatArmies, sg_english_army, true, "$11182343", false)
+			
+			Rule_AddOneShot(Pontvallain_StartRaid, RAID_1_TIME, { i = 1 })
+			Rule_AddOneShot(Pontvallain_StartRaid, RAID_2_TIME, { i = 2 })
+			Rule_AddOneShot(Pontvallain_StartRaid, RAID_3_TIME, { i = 3 })
+		end,
+		OnStart = function()
+			Objective_Start(OBJ_Wait, false, false)
+		end,
+		OnComplete = function()
+			Mission_Complete()
+		end,
+	}
+	SOBJ_DefeatRaids = {
+		Title = "$11182311", -- ("Defeat the raiding parties"),
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DefeatEnglish,
+		StartAlongsideParent = false,
+		Intel_Start = EVENTS.First_English,
+		PreStart = function()
+			print("OBJ_DefeatRaids started")
+			Objective_SetCounter(SOBJ_DefeatRaids, dead_raid_count, 3)
+		end,
+		OnComplete = function()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+		end,
+	}
+	
+	SOBJ_DefeatArmies = {
+		Title = "$11180087", -- ("Defeat the armies"),
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DefeatEnglish,
+		StartAlongsideParent = false,
+		Intel_Start = EVENTS.English_March,
+		PreStart = function()
+			Objective_RemoveUIElements(SOBJ_DefeatArmies, muster_icon)
+			Objective_SetCounter(SOBJ_DefeatArmies, dead_army_count, 3)
+		end,
+		OnStart = function()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_fear")
+			Sound_Play2D("mus_stinger_campaign_warning")
+			Music_LockIntensity(MUSIC_COMBAT, 180)
+		end,
+		OnComplete = function()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+		end,
+	}
+	OBJ_Wait = {
+		Title = "$11182274", -- ("English army attacking soon"), TODO
+		Type = ObjectiveType_Information,
+		OnStart = function()
+			Objective_StartTimer(OBJ_Wait, COUNT_DOWN, TIMER_DURATION, 0)
+		end,
+		IsComplete = function()
+			if Objective_GetTimerSeconds(OBJ_Wait) == 0 then
+				Objective_Complete(OBJ_Wait, false, false)
+			end
+			return 
+		end,
+		PreComplete = function()
+			if dead_army_count < 3 then
+				Rule_AddOneShot(Util_AutoSave, 0.1)
+			end
+		end,
+		OnComplete = function()
+			if dead_army_count < 3 then
+				Pontvallain_StartArmies()
+				if Objective_IsStarted(SOBJ_DefeatArmies) == false then
+					print("SOBJ_DefeatArmies started because of timer")
+					Objective_Start(SOBJ_DefeatArmies)
+				end
+			end
+		end,
+	}
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Mission_Complete()
+		end,
+	}
+
+	Objective_Register(OBJ_Protect)
+	Objective_Register(OBJ_Build)
+	Objective_Register(OBJ_DefeatEnglish)
+	Objective_Register(SOBJ_DefeatRaids)
+	Objective_Register(SOBJ_DefeatArmies)
+	Objective_Register(OBJ_Wait)
+	Objective_Register(OBJ_DebugComplete)
+end  
+
+

@@ -1,0 +1,2034 @@
+-- Developed by Forgotten Empires
+
+-- Battle of Montgisard
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+--import("training/coretraininggoals.scar")
+--import("training/campaigntraininggoals.scar")
+import("challenge_montgisard_objectives.scar")
+import("challenge_montgisard_reinforcements.scar")
+import("challenge_montgisard_data.scar")
+
+function Mission_SetupVariables()
+	
+	-- Initialize data
+	Montgisard_InitData()
+	Montgisard_InitPatrolPaths()
+	Montgisard_AttackGroupsData()
+	Montgisard_SetupLocations() -- Get Sacred Sites positions
+	
+	-- Test
+	sg_test = SGroup_CreateIfNotFound("sg_test")
+	sg_test2 = SGroup_CreateIfNotFound("sg_test2")
+	
+end
+
+function Mission_SetupPlayers()
+	
+	-- Set up Players
+	localPlayer = Missionomatic_InitPlayer(1, { name = "$11265367", currentAge = AGE_DARK, maxAge = AGE_IMPERIAL, color = 1 })
+	enemyPlayer = Missionomatic_InitPlayer(2, { name = "$11253242", currentAge = AGE_DARK, maxAge = AGE_DARK, color = 2 })
+	enemyPlayer_2 = Missionomatic_InitPlayer(3, { name = "$11253242", currentAge = AGE_IMPERIAL, maxAge = AGE_IMPERIAL, color = 2 })
+	neutralPlayer = Missionomatic_InitPlayer(4, { name = "$11265367", currentAge = AGE_DARK, maxAge = AGE_CASTLE, color = 3 })
+	mapPlayer = Missionomatic_InitPlayer(5, { name = "$11253242", currentAge = AGE_IMPERIAL, maxAge = AGE_IMPERIAL, color = 2 })
+	allyPlayer = Missionomatic_InitPlayer(6, { name = "$11265367", currentAge = AGE_IMPERIAL, maxAge = AGE_IMPERIAL, color = 3 })
+	
+	--Enables campaign AI for enemyPlayer, disable AI for the other players
+	AI_Enable(enemyPlayer, true)
+	AI_Enable(enemyPlayer_2, true)
+	AI_Enable(neutralPlayer, true)
+	AI_Enable(mapPlayer, true)
+	AI_Enable(allyPlayer, true)
+	AI_SetPersonality(enemyPlayer, "default_campaign")
+	AI_SetPersonality(enemyPlayer_2, "default_campaign")
+	AI_SetPersonality(neutralPlayer, "default_campaign")
+	AI_SetPersonality(mapPlayer, "default_campaign")
+	AI_SetPersonality(allyPlayer, "default_campaign")
+	
+	-- Deactivate the condensed objectives by default
+	UI_SetPlayerDataContext(localPlayer, { hide_condensed_objectives_override = true})
+		
+	Montgisard_SetupDiplomacy()
+	Montgisard_SetupModifiers()
+	
+end
+
+function Mission_SetRestrictions()
+
+	Player_SetEntityProductionAvailability(localPlayer, EBP.TEMPLAR.BUILDING_DEFENSE_PALISADE_BASTION_TEM, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.TEMPLAR.BUILDING_DEFENSE_PALISADE_GATE_TEM, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.TEMPLAR.BUILDING_DEFENSE_PALISADE_WALL_TEM, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.TEMPLAR.BUILDING_DEFENSE_STONE_TOWER_TEM, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.TEMPLAR.BUILDING_DEFENSE_STONE_WALL_BASTION_TEM, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.TEMPLAR.BUILDING_DEFENSE_STONE_WALL_GATE_TEM, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.TEMPLAR.BUILDING_DEFENSE_STONE_WALL_TEM, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(localPlayer, EBP.TEMPLAR.BUILDING_DOCK_TEM, ITEM_REMOVED)
+	
+end
+
+
+function Mission_PreInit()
+	
+	Rule_AddGlobalEvent(Montgisard_OnEnemyBuildingDamage, GE_DamageReceived)
+	
+end
+
+function Mission_Preset()
+	
+	
+end
+
+
+
+function Mission_Start()
+	
+	startTime = World_GetGameTime()
+	timeSinceStart = World_GetGameTime()
+	
+	Montgisard_SetSacredSiteBonuses()
+	
+	-- Initialize Objectives 
+	Rule_AddOneShot(Montgisard_InitObjectives, 1)
+	
+	-- For testing
+--	Rule_AddOneShot(Montgisard_Test, 10)
+	
+	-- Register callbacks for global events
+	Rule_AddInterval(Montgisard_CheckForIdleAroundSS, 30)
+	
+	-- Reveal a small area around every Sacred Site
+	FOW_PlayerRevealArea(localPlayer, sacredSite_position1, 12, -1)
+	FOW_PlayerRevealArea(localPlayer, sacredSite_position2, 12, -1)
+	FOW_PlayerRevealArea(localPlayer, sacredSite_position3, 12, -1)
+	FOW_PlayerRevealArea(localPlayer, sacredSite_position4, 12, -1)
+	
+end
+
+function Montgisard_SpawnPointsOfInterest()
+	
+	-- Neutral Rams + Lumber camps
+	sg_rams = SGroup_CreateIfNotFound("sg_rams")
+	sg_rams_defenders = SGroup_CreateIfNotFound("sg_rams_defenders")
+	eg_neutralCamp_Rams = EGroup_CreateIfNotFound("eg_neutralCamp_Rams")
+	sg_neutralVills_Rams = SGroup_CreateIfNotFound("sg_neutralVills_Rams")
+	sg_onWood = SGroup_CreateIfNotFound("sg_onWood")
+	
+	UnitEntry_DeploySquads(neutralPlayer, sg_rams, {
+			{sbp = SBP.TEMPLAR.UNIT_RAM_3_TEM, numSquads = 1, spawn = mkr_poi_rams_spawn1 },
+			{sbp = SBP.TEMPLAR.UNIT_RAM_3_TEM, numSquads = 1, spawn = mkr_poi_rams_spawn2 },
+			{sbp = SBP.TEMPLAR.UNIT_RAM_3_TEM, numSquads = 1, spawn = mkr_poi_rams_spawn3 }}, mkr_poi_rams)
+	UnitEntry_DeploySquads(enemyPlayer, sg_rams_defenders, {
+			{sbp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, numSquads = 4, spawn = mkr_poi_ramsDefenders1 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_2_ABB_HA_01, numSquads = 6, spawn = mkr_poi_ramsDefenders2 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, numSquads = 4, spawn = mkr_poi_ramsDefenders3 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_HORSEMAN_4_ABB_HA_01, numSquads = 1, spawn = mkr_poi_ramsDefenders4 }}, mkr_poi_ramsDefenders2)
+	UnitEntry_DeploySquads(neutralPlayer, sg_neutralVills_Rams, {
+			{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 2, sgroup = sg_onWood, spawn = mkr_poi_rams_lumber1 },
+			{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 2, sgroup = sg_onWood, spawn = mkr_poi_rams_lumber2 }}, mkr_poi_rams)
+	
+	-- Neutral Mangonels [REMOVED]
+--	sg_mangonels = SGroup_CreateIfNotFound("sg_mangonels")
+--	sg_mangonels_defenders = SGroup_CreateIfNotFound("sg_mangonels_defenders")
+--	UnitEntry_DeploySquads(neutralPlayer, sg_mangonels, {
+--			{sbp = SBP.TEMPLAR.UNIT_MANGONEL_3_TEM, numSquads = 1, spawn = mkr_poi_mangonels_spawn1 },
+--			{sbp = SBP.TEMPLAR.UNIT_MANGONEL_3_TEM, numSquads = 1, spawn = mkr_poi_mangonels_spawn2 }}, mkr_poi_mangonels)
+--	UnitEntry_DeploySquads(enemyPlayer, sg_mangonels_defenders, {
+--			{sbp = SBP.ABBASID_HA_01.UNIT_HORSEMAN_3_ABB_HA_01, numSquads = 5, spawn = mkr_poi_mangonelsDefenders1 },
+--			{sbp = SBP.ABBASID_HA_01.UNIT_CROSSBOWMAN_3_ABB_HA_01, numSquads = 5, spawn = mkr_poi_mangonelsDefenders2 }}, mkr_poi_mangonelsDefenders2)
+	
+	-- Neutral Monastery (No longer counted as POI)
+	sg_monastery = SGroup_CreateIfNotFound("sg_monastery")
+	eg_Monastery = EGroup_CreateIfNotFound("eg_Monastery")
+	local abilityID = BP_GetAbilityBlueprintByPbgID(131480)
+	EGroup_SetTargetingType(eg_Monastery, Targeting_None)
+	EGroup_CallEntityFunction(eg_Monastery, Entity_RemoveAbility, abilityID)
+	EGroup_SetInvulnerable(eg_Monastery, true, -1)
+	UnitEntry_DeploySquads(neutralPlayer, sg_monastery, {
+			{sbp = SBP.TEMPLAR.UNIT_MONK_3_TEM, numSquads = 2, spawn = mkr_poi_monks1 },
+			{sbp = SBP.TEMPLAR.UNIT_MONK_3_TEM, numSquads = 2, spawn = mkr_poi_monks2 }}, mkr_poi_monastery)
+	
+	-- Neutral Fortress
+	sg_fortress = SGroup_CreateIfNotFound("sg_fortress")
+	eg_Fortress = EGroup_CreateIfNotFound("eg_Fortress")
+	local entityID = EGroup_GetEntityAt(eg_Fortress, 1)
+	local healthPercent = Entity_GetOnFireHealthPercentThreshold(entityID)
+	Entity_SetHealth(entityID, healthPercent+0.1)
+	UnitEntry_DeploySquads(enemyPlayer, sg_fortress, {
+			{sbp = SBP.ABBASID_HA_01.UNIT_HORSEMAN_4_ABB_HA_01, numSquads = 5, spawn = mkr_poi_fortDefenders1 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_MANATARMS_4_ABB_HA_01, numSquads = 5, spawn = mkr_poi_fortDefenders2 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_ARCHER_4_ABB_HA_01, numSquads = 6, spawn = mkr_poi_fortDefenders3 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_MANATARMS_4_ABB_HA_01, numSquads = 5, spawn = mkr_poi_fortDefenders4 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_CROSSBOWMAN_4_ABB_HA_01, numSquads = 6, spawn = mkr_poi_fortDefenders5 }}, mkr_poi_fortDefenders1)
+	
+	-- Neutral mining camp 1
+	eg_neutralCamp = EGroup_CreateIfNotFound("eg_neutralCamp")
+	sg_neutralVills = SGroup_CreateIfNotFound("sg_neutralVills")
+	sg_miningcamp_enemies = SGroup_CreateIfNotFound("sg_miningcamp_enemies")
+	sg_onGold = SGroup_CreateIfNotFound("sg_onGold")
+	sg_onStone = SGroup_CreateIfNotFound("sg_onStone")
+	UnitEntry_DeploySquads(neutralPlayer, sg_neutralVills, {
+			{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 3, sgroup = sg_onGold, spawn = mkr_poi_mining_vills1 },
+			{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 3, sgroup = sg_onStone, spawn = mkr_poi_mining_vills2 }}, mkr_poi_miningcamp)
+	UnitEntry_DeploySquads(enemyPlayer, sg_miningcamp_enemies, {
+			{sbp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01, numSquads = 3, spawn = mkr_poi_miningcamp_enemy1 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, numSquads = 3, spawn = mkr_poi_miningcamp_enemy2 }}, mkr_poi_miningcamp_enemy1)
+	
+	-- Neutral mining camp 2 [REMOVED]
+--	eg_neutralCamp_2 = EGroup_CreateIfNotFound("eg_neutralCamp_2")
+--	sg_neutralVills_2 = SGroup_CreateIfNotFound("sg_neutralVills_2")
+--	sg_miningcamp2_enemies = SGroup_CreateIfNotFound("sg_miningcamp2_enemies")
+--	sg_onGold_2 = SGroup_CreateIfNotFound("sg_onGold_2")
+--	sg_onStone_2 = SGroup_CreateIfNotFound("sg_onStone_2")
+--	UnitEntry_DeploySquads(neutralPlayer, sg_neutralVills_2, {
+--			{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 3, sgroup = sg_onGold_2, spawn = mkr_poi_mining2_vills1 },
+--			{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 3, sgroup = sg_onStone_2, spawn = mkr_poi_mining2_vills2 }}, mkr_poi_miningcamp_2)
+--	UnitEntry_DeploySquads(enemyPlayer, sg_miningcamp2_enemies, {
+--			{sbp = SBP.ABBASID_HA_01.UNIT_ARCHER_3_ABB_HA_01, numSquads = 4, spawn = mkr_poi_mining2_enemy1 },
+--			{sbp = SBP.ABBASID_HA_01.UNIT_HORSEMAN_3_ABB_HA_01, numSquads = 4, spawn = mkr_poi_mining2_enemy2 },
+--			{sbp = SBP.ABBASID_HA_01.UNIT_HORSEMAN_3_ABB_HA_01, numSquads = 4, spawn = mkr_poi_mining2_enemy3 },
+--			{sbp = SBP.ABBASID_HA_01.UNIT_ARCHER_3_ABB_HA_01, numSquads = 4, spawn = mkr_poi_mining2_enemy4 }}, mkr_poi_mining2_enemy1)
+	
+	-- Neutral mining camp 3 [REMOVED]
+--	eg_neutralCamp_3 = EGroup_CreateIfNotFound("eg_neutralCamp_3")
+--	sg_neutralVills_3 = SGroup_CreateIfNotFound("sg_neutralVills_3")
+--	sg_miningcamp3_enemies = SGroup_CreateIfNotFound("sg_miningcamp3_enemies")
+--	sg_onGold_3 = SGroup_CreateIfNotFound("sg_onGold_3")
+--	UnitEntry_DeploySquads(neutralPlayer, sg_neutralVills_3, {
+--			{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 3, sgroup = sg_onGold_3, spawn = mkr_poi_mining3_vills }}, mkr_poi_miningcamp_3)
+--	UnitEntry_DeploySquads(enemyPlayer, sg_miningcamp3_enemies, {
+--			{sbp = SBP.ABBASID_HA_01.UNIT_MANATARMS_3_ABB_HA_01, numSquads = 4, spawn = mkr_poi_mining3_enemy1 },
+--			{sbp = SBP.ABBASID_HA_01.UNIT_CROSSBOWMAN_3_ABB_HA_01, numSquads = 4, spawn = mkr_poi_mining3_enemy2 }}, mkr_poi_mining3_enemy1)
+	
+	-- Neutral mining camp 4
+	eg_neutralCamp_4 = EGroup_CreateIfNotFound("eg_neutralCamp_4")
+	sg_neutralVills_4 = SGroup_CreateIfNotFound("sg_neutralVills_4")
+	sg_miningcamp4_enemies = SGroup_CreateIfNotFound("sg_miningcamp4_enemies")
+	sg_onGold_4 = SGroup_CreateIfNotFound("sg_onGold_4")
+	sg_onStone_4 = SGroup_CreateIfNotFound("sg_onStone_4")
+	UnitEntry_DeploySquads(neutralPlayer, sg_neutralVills_4, {
+			{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 3, sgroup = sg_onGold_4, spawn = mkr_poi_mining4_vills1 },
+			{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 3, sgroup = sg_onStone_4, spawn = mkr_poi_mining4_vills2 }}, mkr_poi_miningcamp_4)
+	UnitEntry_DeploySquads(enemyPlayer, sg_miningcamp4_enemies, {
+			{sbp = SBP.ABBASID_HA_01.UNIT_SPRINGALD_3_ABB_HA_01, numSquads = 1, spawn = mkr_poi_mining4_enemy1 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_KNIGHT_3_ABB_HA_01, numSquads = 4, spawn = mkr_poi_mining4_enemy2 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_SPRINGALD_3_ABB_HA_01, numSquads = 1, spawn = mkr_poi_mining4_enemy3 },
+			{sbp = SBP.ABBASID_HA_01.UNIT_ARCHER_3_ABB_HA_01, numSquads = 4, spawn = mkr_poi_mining4_enemy4 }}, mkr_poi_mining4_enemy1)
+	
+	-- Prison
+	eg_prisonWalls = EGroup_CreateIfNotFound("eg_prisonWalls")
+	sg_prisoners = SGroup_CreateIfNotFound("sg_prisoners")
+	sg_guards = SGroup_CreateIfNotFound("sg_guards")
+	n_walls = EGroup_CountSpawned(eg_prisonWalls)
+	UnitEntry_DeploySquads(enemyPlayer, sg_guards, {{sbp = SBP.ABBASID_HA_01.UNIT_MANATARMS_3_ABB_HA_01, numSquads = 8 }}, mkr_poi_prison1)
+	UnitEntry_DeploySquads(enemyPlayer, sg_guards, {{sbp = SBP.ABBASID_HA_01.UNIT_CROSSBOWMAN_3_ABB_HA_01, numSquads = 8 }}, mkr_poi_prison2)
+	UnitEntry_DeploySquads(neutralPlayer, sg_prisoners, {{sbp = SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_4_TEM, numSquads = 15 }}, mkr_poi_prisoners)
+	
+	-- Extra Site (Mining camp to destroy)
+	EGroup_SetTargetingType(eg_extraSite, Targeting_None)
+	EGroup_SetInvulnerable(eg_extraSite, true, -1)
+end
+
+function Montgisard_ConquerorTriggerSite()
+	
+	FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_extrasite), 20, -1)
+	
+	EGroup_SetPlayerOwner(eg_extraSite, enemyPlayer)
+	EGroup_SetTargetingType(eg_extraSite, Targeting_Automatic)
+	EGroup_SetInvulnerable(eg_extraSite, false, -1)
+	
+	EGroup_CompleteUpgrade(eg_extraTower1, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	SpawnGarrisonsIntoEGroup(eg_extraTower1, enemyPlayer, "scar_archer", 5)
+	
+	EGroup_CompleteUpgrade(eg_extraTower2, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+	EGroup_CompleteUpgrade(eg_extraTower2, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	
+	local sg_spawnedUnits = SGroup_CreateIfNotFound("sg_spawnedUnits")
+	
+	-- Front enemy group
+	UnitEntry_DeploySquads(enemyPlayer, sg_extraSite_units, {{sbp = SBP.ABBASID_HA_01.UNIT_MANATARMS_3_ABB_HA_01, numSquads = extraSite_numSquads.front, sgroup = sg_spawnedUnits }}, mkr_extraTower1)
+	Cmd_FormationAttackMove(sg_spawnedUnits, mkr_extra_front, true)
+	SGroup_Clear(sg_spawnedUnits)
+	
+	-- Side enemy groups
+	UnitEntry_DeploySquads(enemyPlayer, sg_extraSite_units, {{sbp = SBP.ABBASID_HA_01.UNIT_CROSSBOWMAN_3_ABB_HA_01, numSquads = extraSite_numSquads.side1, sgroup = sg_spawnedUnits }}, mkr_extraTower1)
+	Cmd_FormationAttackMove(sg_spawnedUnits, mkr_extra_side1, true)
+	SGroup_Clear(sg_spawnedUnits)
+	UnitEntry_DeploySquads(enemyPlayer, sg_extraSite_units, {{sbp = SBP.ABBASID_HA_01.UNIT_ARCHER_3_ABB_HA_01, numSquads = extraSite_numSquads.side2, sgroup = sg_spawnedUnits }}, mkr_extraTower2)
+	Cmd_FormationAttackMove(sg_spawnedUnits, mkr_extra_side2, true)
+	SGroup_Clear(sg_spawnedUnits)
+	
+	-- Back enemy group
+	UnitEntry_DeploySquads(enemyPlayer, sg_extraSite_units, {{sbp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_3_ABB_HA_01, numSquads = extraSite_numSquads.back, sgroup = sg_spawnedUnits }}, mkr_extraTower2)
+	Cmd_FormationAttackMove(sg_spawnedUnits, mkr_extra_back, true)
+	SGroup_Clear(sg_spawnedUnits)
+	
+end
+
+function Montgisard_UpdatePointsOfInterest()
+	
+	-- Check for the rams POI completion criteria
+	if ramsComplete == false then
+		if SGroup_CountSpawned(sg_rams_defenders) == 0 then
+			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_poi_rams), 25, -1)
+			SGroup_SetPlayerOwner(sg_rams, localPlayer)
+			SGroup_SetPlayerOwner(sg_neutralVills_Rams, localPlayer)
+			EGroup_SetPlayerOwner(eg_neutralCamp_Rams, localPlayer)
+			AssignVillagersToWood(sg_onWood, false, true)
+			UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+			completedPOI = completedPOI + 1
+			Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+			ramsComplete = true
+		end
+	end
+	
+	-- Check for the mangonels POI completion criteria [REMOVED]
+--	if mangonelsComplete == false then
+--		if SGroup_CountSpawned(sg_mangonels_defenders) == 0 then
+--			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_poi_mangonels), 25, -1)
+--			SGroup_SetPlayerOwner(sg_mangonels, localPlayer)
+--			UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+--			completedPOI = completedPOI + 1
+--			Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+--			mangonelsComplete = true
+--		end
+--	end
+	
+	-- Check for the monastery POI completion criteria (No longer counted as POI)
+	if monasteryComplete == false then
+		if  Player_AreSquadsNearMarker(localPlayer, mkr_poi_monastery) == true then
+			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_poi_monastery), 25, -1)
+			SGroup_SetPlayerOwner(sg_monastery, localPlayer)
+			EGroup_SetPlayerOwner(eg_Monastery, localPlayer)
+			Sound_Play2D(MUS_STING_BONUS_OBJ_COMPLETE)
+--			UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+--			completedPOI = completedPOI + 1
+--			Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+			monasteryComplete = true
+		end
+	end
+	
+	-- Check for the fortress POI completion criteria
+	if fortressComplete == false then
+		if  Player_AreSquadsNearMarker(localPlayer, mkr_poi_fortress) == true then
+			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_poi_fortress), 30, -1)
+			if SGroup_CountSpawned(sg_fortress) == 0 then
+				EGroup_SetPlayerOwner(eg_Fortress, localPlayer)
+				-- Updates the fortress total count on the UI
+				local totalFortresses = Player_GetStateModelInt(localPlayer, "total_keep_count")
+				Player_SetStateModelInt(localPlayer, "total_keep_count", totalFortresses+1)
+				UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+				completedPOI = completedPOI + 1
+				Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+				fortressComplete = true
+			end
+		end
+	end
+	
+	-- Check for the mining camp POI completion criteria
+	if miningcampComplete == false then
+		if  Player_AreSquadsNearMarker(localPlayer, mkr_poi_miningcamp) == true then
+			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_poi_miningcamp), 25, -1)
+			if SGroup_CountSpawned(sg_miningcamp_enemies) == 0 then
+				SGroup_SetPlayerOwner(sg_neutralVills, localPlayer)
+				EGroup_SetPlayerOwner(eg_neutralCamp, localPlayer)
+				AssignVillagersToGold(sg_onGold, false, false)
+				AssignVillagersToStone(sg_onStone, false, false)
+				UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+				completedPOI = completedPOI + 1
+				Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+				miningcampComplete = true
+			end
+		end
+	end
+	
+	-- Check for the mining camp 2 POI completion criteria [REMOVED]
+--	if miningcampComplete_2 == false then
+--		if  Player_AreSquadsNearMarker(localPlayer, mkr_poi_miningcamp_2) == true then
+--			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_poi_miningcamp_2), 25, -1)
+--			if SGroup_CountSpawned(sg_miningcamp2_enemies) == 0 then
+--				SGroup_SetPlayerOwner(sg_neutralVills_2, localPlayer)
+--				EGroup_SetPlayerOwner(eg_neutralCamp_2, localPlayer)
+--				AssignVillagersToGold(sg_onGold_2, false, false)
+--				AssignVillagersToStone(sg_onStone_2, false, false)
+--				UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+--				completedPOI = completedPOI + 1
+--				Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+--				miningcampComplete_2 = true
+--			end
+--		end
+--	end
+	
+	-- Check for the mining camp 3 POI completion criteria [REMOVED]
+--	if miningcampComplete_3 == false then
+--		if  Player_AreSquadsNearMarker(localPlayer, mkr_poi_miningcamp_3) == true then
+--			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_poi_miningcamp_3), 25, -1)
+--			if SGroup_CountSpawned(sg_miningcamp3_enemies) == 0 then
+--				SGroup_SetPlayerOwner(sg_neutralVills_3, localPlayer)
+--				EGroup_SetPlayerOwner(eg_neutralCamp_3, localPlayer)
+--				AssignVillagersToGold(sg_onGold_3, false, false)
+--				UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+--				completedPOI = completedPOI + 1
+--				Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+--				miningcampComplete_3 = true
+--			end
+--		end
+--	end
+	
+	-- Check for the mining camp 4 POI completion criteria
+	if miningcampComplete_4 == false then
+		if  Player_AreSquadsNearMarker(localPlayer, mkr_poi_miningcamp_4) == true then
+			FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_poi_miningcamp_4), 25, -1)
+			if SGroup_CountSpawned(sg_miningcamp4_enemies) == 0 then
+				SGroup_SetPlayerOwner(sg_neutralVills_4, localPlayer)
+				EGroup_SetPlayerOwner(eg_neutralCamp_4, localPlayer)
+				AssignVillagersToGold(sg_onGold_4, false, false)
+				AssignVillagersToStone(sg_onStone_4, false, false)
+				UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+				completedPOI = completedPOI + 1
+				Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+				miningcampComplete_4 = true
+			end
+		end
+	end
+	
+	-- Check for the prison POI completion criteria
+	if prisonComplete == false then
+		if  EGroup_CountSpawned(eg_prisonWalls) ~= n_walls and SGroup_CountSpawned(sg_guards) == 0 then
+			SGroup_SetPlayerOwner(sg_prisoners, localPlayer)
+			UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+			completedPOI = completedPOI + 1
+			Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+			prisonComplete = true
+		end
+	end
+	
+	-- Check for the extra site POI completion criteria
+	if extraSiteComplete == false then
+		-- Spawn treasure chests upon destruction of the individual buildings of this POI
+		local pos = nil
+		local facing_f = Util_GetPosition(mkr_extraFacing1)
+		local facing_r = Util_GetPosition(mkr_extraFacing2)
+		local facing_l = Util_GetPosition(mkr_extraFacing3)
+		local bp = BP_GetEntityBlueprintByPbgID(2099990)
+		local chest = nil
+		if campDestroyed == false then
+			if EGroup_CountSpawned(eg_extraCamp) == 0 then
+--				pos = Util_GetOffsetPosition(mkr_extrasite, OFFSET_FRONT_RIGHT, 3)
+--				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_f, true)
+--				Entity_Spawn(chest)
+				pos = Util_GetOffsetPosition(mkr_extrasite, OFFSET_FRONT_LEFT, 3)
+				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_r, true)
+				Entity_Spawn(chest)
+				pos = Util_GetOffsetPosition(mkr_extrasite, OFFSET_BACK_LEFT, 3)
+				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_l, true)
+				Entity_Spawn(chest)
+				pos = Util_GetOffsetPosition(mkr_extrasite, OFFSET_BACK_RIGHT, 3)
+				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_f, true)
+				Entity_Spawn(chest)
+				campDestroyed = true
+			end
+		end
+		if tower1Destroyed == false then
+			if EGroup_CountSpawned(eg_extraTower1) == 0 then
+--				pos = Util_GetOffsetPosition(mkr_extraTower1, OFFSET_BACK_RIGHT, 3)
+--				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_f, true)
+--				Entity_Spawn(chest)
+--				pos = Util_GetOffsetPosition(mkr_extraTower1, OFFSET_BACK_LEFT, 3)
+--				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_l, true)
+--				Entity_Spawn(chest)
+				pos = Util_GetOffsetPosition(mkr_extraTower1, OFFSET_FRONT, 3)
+				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_r, true)
+				Entity_Spawn(chest)
+				tower1Destroyed = true
+			end
+		end
+		if tower2Destroyed == false then
+			if EGroup_CountSpawned(eg_extraTower2) == 0 then
+--				pos = Util_GetOffsetPosition(mkr_extraTower2, OFFSET_FRONT, 3)
+--				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_r, true)
+--				Entity_Spawn(chest)
+				pos = Util_GetOffsetPosition(mkr_extraTower2, OFFSET_LEFT, 3)
+				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_f, true)
+				Entity_Spawn(chest)
+--				pos = Util_GetOffsetPosition(mkr_extraTower2, OFFSET_BACK_RIGHT, 3)
+--				chest = Entity_CreateFacing(bp, localPlayer, pos, facing_l, true)
+--				Entity_Spawn(chest)
+				tower2Destroyed = true
+			end
+		end
+		if  EGroup_CountSpawned(eg_extraSite) == 0 and SGroup_CountSpawned(sg_extraSite_units) == 0 then
+			if triggerActivated == true then
+				UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Queue, __DoNothing)
+			else
+				UI_CreateEventCueClickable(-1, 10, 0, 0, "$11266810", Loc_Empty(), "high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title | ECV_Queue, __DoNothing)
+			end
+			completedPOI = completedPOI + 1
+			Objective_SetCounter(OBJ_PointsOfInterest, completedPOI, totalPOI)
+			extraSiteComplete = true
+		end
+	end
+	
+end
+
+function Montgisard_RewardPointsOfInterest()
+	-- Reveals the monastery if not already found and gives it to the player
+	sg_allyAttack = SGroup_CreateIfNotFound("sg_allyAttack")
+	if monasteryComplete == false then
+		FOW_PlayerRevealArea(localPlayer, Util_GetPosition(mkr_poi_monastery), 25, -1)
+		SGroup_SetPlayerOwner(sg_monastery, localPlayer)
+		EGroup_SetPlayerOwner(eg_Monastery, localPlayer)
+		Sound_Play2D(MUS_STING_BONUS_OBJ_COMPLETE)
+	end
+	
+	--	Spawns an ally army in waves and uses it to attack an enemy
+	Rule_AddOneShot(Montgisard_SpawnAllyArmy, 0, {sbp = SBP.TEMPLAR.UNIT_RAM_3_TEM, numSquads = 3, pos = mkr_poi_allyArmy1})
+	Rule_AddOneShot(Montgisard_SpawnAllyArmy, 5, {sbp = SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_4_TEM, numSquads = 14, pos = mkr_poi_allyArmy2})
+	Rule_AddOneShot(Montgisard_SpawnAllyArmy, 8, {sbp = SBP.TEMPLAR.UNIT_TEUTONIC_KNIGHT_4_TEM, numSquads = 10, pos = mkr_poi_allyArmy3})
+	Rule_AddOneShot(Montgisard_SpawnAllyArmy, 10, {sbp = SBP.TEMPLAR.UNIT_ARCHER_4_TEM, numSquads = 10, pos = mkr_poi_allyArmy4})
+	
+	UI_SetPlayerDataContext(allyPlayer, { PopulationCapOn = false })
+	Player_SetMaxPopulation(allyPlayer, CT_Personnel, 200)
+	Player_SetResource(allyPlayer, RT_Wood, 800)
+	Cmd_InstantUpgrade(allyPlayer, UPG.COMMON.UPGRADE_SIEGE_ENGINEERS)
+	
+	local enemySites = Montgisard_GetCurrentSites(enemyPlayer)
+	local availableTarget = {}
+	local attackPosition = nil
+	local sg_unitsAroundSS = SGroup_CreateIfNotFound("sg_unitsAroundSS")
+	local sg_unitsCloseSS = SGroup_CreateIfNotFound("sg_unitsCloseSS")
+	for i = 1, #enemySites do
+		Player_GetAllSquadsNearMarker(localPlayer, sg_unitsCloseSS, enemySites[i], 20)
+		Player_GetAllSquadsNearMarker(localPlayer, sg_unitsAroundSS, enemySites[i], 40)
+		if SGroup_CountSpawned(sg_unitsCloseSS) == 0 and SGroup_CountSpawned(sg_unitsAroundSS) ~= 0 then
+			table.insert(availableTarget, enemySites[i])
+		end
+		
+	end
+	
+	local size = (#availableTarget)
+		if size ~= 0 then
+			attackPosition = Table_GetRandomItem(availableTarget)
+		else
+			attackPosition = Table_GetRandomItem(enemySites)
+		end
+	
+	attackParams = {
+		    player = allyPlayer,
+			name = "ally_army",
+		}
+	
+	ally_army = Army_Init(attackParams)
+	Rule_AddOneShot(Montgisard_LaunchAllyArmy, 15, {position = attackPosition})
+	timeSinceIdle = World_GetGameTime()
+end
+
+function Montgisard_SpawnAllyArmy(context, data)
+	
+	local sg_tempGroup = SGroup_CreateIfNotFound("sg_tempGroup")
+	local facing = Util_GetPosition(data.pos)
+	facing.z = facing.z - 1
+	UnitEntry_DeploySquads(allyPlayer, sg_tempGroup, {sbp = data.sbp, numSquads = data.numSquads, sgroup = sg_allyAttack}, mkr_poi_monastery)
+	Cmd_FormationMove(sg_tempGroup, data.pos, false, false, facing)
+	SGroup_Clear(sg_tempGroup)
+	
+end
+
+function Montgisard_LaunchAllyArmy(context, data)
+	
+	Army_AddSGroup(ally_army, sg_allyAttack)
+	Army_AddTarget(ally_army, data.position)
+--	"Our allies have come to help and are launching an attack!"
+	EventCues_CallToAction("$11269020", CTA_UNIQUE_CHANGE, nil, nil, mkr_poi_allyArmy2, 15, "icons/cta/illustrations/point_a_to_b")
+	timeSinceIdle = World_GetGameTime()
+	
+end
+
+-- Used for testing only
+function Montgisard_Test()
+
+end
+
+-- Spawn neutral vills around the map
+function Montgisard_SpawnNeutralVills()
+	
+	local sg_vills = SGroup_CreateIfNotFound("sg_vills")
+	local food_modifier = Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_food", MUT_Multiplication, false, 0, SBP.TEMPLAR.UNIT_VILLAGER_1_TEM)
+	Modifier_ApplyToPlayer(food_modifier, neutralPlayer, 0)
+
+	local villsToSpawn = {
+		mkr_farm1,
+		mkr_farm2,
+		mkr_farm3,
+		mkr_farm4,
+		mkr_farm5,
+		mkr_farm6,
+		mkr_farm7,
+		mkr_farm8,
+		mkr_farm9,
+		mkr_farm10
+	}
+	
+	for i = 1, #villsToSpawn do
+		UnitEntry_DeploySquads(neutralPlayer, sg_vills, {{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 1}}, villsToSpawn[i])
+		AssignVillagersToFarms(sg_vills, false, true)
+		SGroup_Clear(sg_vills)
+	end
+	
+end
+
+-- an enemy building is attacked
+function Montgisard_OnEnemyBuildingDamage(context)
+	local owner = nil
+	if context.victim ~= nil then
+		if context.attacker ~= nil then
+			--attacker is a squad and victim is a building
+			if Entity_IsBuilding(context.attacker) == false and Entity_IsBuilding(context.victim) == true then
+				local attacker = Entity_GetSquad(context.attacker)
+				local bp = Entity_GetBlueprint(context.attacker)
+				if attacker ~= nil and bp == EBP.TEMPLAR.UNIT_TREBUCHET_4_CW_TEM then
+					if Entity_GetHealthPercentage(context.victim) > 0 then
+						-- proceed only if the entity is not neutral
+						if World_OwnsEntity(context.victim) == false then
+							owner = Entity_GetPlayerOwner(context.victim)
+						end
+					end
+					-- proceed only if damage is received by the enemy
+					if owner == enemyPlayer or owner == enemyPlayer_2 then
+						-- Launch an enemy attack to target trebs
+						local buildingPos = Entity_GetPosition(context.victim)
+						local trebPos = Entity_GetPosition(context.attacker)
+						Montgisard_FocusTrebs(buildingPos, trebPos)
+					end
+				end	
+			end	
+		end
+	end
+end
+
+-- The enemy will try and launch small attacks to target the enemy trebuchets when under siege
+function Montgisard_FocusTrebs(buildingPosition, trebuchetPosition)
+	local time = World_GetGameTime()
+	local pos = nil
+	local sg_unitsAroundSS = SGroup_CreateIfNotFound("sg_unitsAroundSS")
+	local sg_trebAttack = SGroup_CreateIfNotFound("sg_trebAttack")
+	local markersToCheck = {
+		mkr_checkIdle1,
+		mkr_checkIdle2,
+		mkr_checkIdle3,
+		mkr_checkIdle4
+	}
+	local unitsToCheck = {
+		SBP.ABBASID_HA_01.UNIT_HORSEMAN_2_ABB_HA_01,
+		SBP.ABBASID_HA_01.UNIT_HORSEMAN_3_ABB_HA_01,
+		SBP.ABBASID_HA_01.UNIT_HORSEMAN_4_ABB_HA_01,
+		SBP.AYYUBID_CMP.UNIT_TURKIC_HORSEARCHER_3_AYY,
+		SBP.ABBASID_HA_01.UNIT_MAMLUK_3_ABB_HA_01,
+		SBP.ABBASID_HA_01.UNIT_KNIGHT_3_ABB_HA_01,
+		SBP.ABBASID_HA_01.UNIT_KNIGHT_4_ABB_HA_01
+	}
+	local unitsToCheck_2 = {
+		SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01,
+		SBP.ABBASID_HA_01.UNIT_SPEARMAN_2_ABB_HA_01,
+		SBP.ABBASID_HA_01.UNIT_SPEARMAN_3_ABB_HA_01,
+		SBP.ABBASID_HA_01.UNIT_SPEARMAN_4_ABB_HA_01,
+		SBP.ABBASID_HA_01.UNIT_MANATARMS_3_ABB_HA_01,
+		SBP.ABBASID_HA_01.UNIT_MANATARMS_4_ABB_HA_01
+	}
+	
+	local params = {
+		player = enemyPlayer,
+		attackMove = false
+	}
+	local army = Army_Init(params)
+	
+	-- Makes sure the attacks are not triggered more than one time per 2 minutes
+	if (time - timeSinceTrebAttack) >= 120 then
+		pos = Util_GetPosition(Util_GetClosestMarker(buildingPosition, markersToCheck))
+		SGroup_Clear(sg_unitsAroundSS)
+		SGroup_Clear(sg_trebAttack)
+		Player_GetAllSquadsNearMarker(enemyPlayer, sg_unitsAroundSS, pos, 40)
+		SGroup_Filter(sg_unitsAroundSS, unitsToCheck, FILTER_REMOVE, sg_trebAttack)
+		if SGroup_CountSpawned(sg_trebAttack) > 5 then
+			Army_AddSGroup(army, SGroup_Split(sg_trebAttack, 3)[1])
+			Army_AddTarget(army, trebuchetPosition)
+			timeSinceTrebAttack = time
+		else
+			Player_GetAllSquadsNearMarker(enemyPlayer, sg_unitsAroundSS, pos, 40)
+			SGroup_Clear(sg_trebAttack)
+			SGroup_Filter(sg_unitsAroundSS, unitsToCheck_2, FILTER_REMOVE, sg_trebAttack)
+			if SGroup_CountSpawned(sg_trebAttack) > 5 then
+				Army_AddSGroup(army, SGroup_Split(sg_trebAttack, 4)[1])
+				Army_AddTarget(army, trebuchetPosition)
+				timeSinceTrebAttack = time
+			end
+		end
+	end
+		
+	
+end
+
+-- Starting player units
+function Montgisard_StartingUnits()
+	
+	-- Set player popcap to max
+	Player_SetMaxPopulation(localPlayer, CT_Personnel, 200)
+	
+	--Starting scouts
+	UnitEntry_DeploySquads(localPlayer, sg_scout, {{sbp = SBP.TEMPLAR.UNIT_SCOUT_1_TEM, numSquads = 1 }}, mkr_player_scout)
+	
+	-- Starting villagers on berries
+	UnitEntry_DeploySquads(localPlayer, sg_villagers_berries, {{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 8 }}, mkr_player_mill)
+	AssignVillagersToBerries(sg_villagers_berries, false, false)
+	
+	-- Starting villagers on farms
+	UnitEntry_DeploySquads(localPlayer, sg_villagers_farm, {{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 1}}, mkr_player_house3)
+	UnitEntry_DeploySquads(localPlayer, sg_villagers_farm, {{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 1}}, mkr_player_house4)
+	AssignVillagersToFarms(sg_villagers_farm, false, true)
+	
+	-- Starting villagers on wood
+	UnitEntry_DeploySquads(localPlayer, sg_villagers_wood, {{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 4 }}, mkr_player_lumber)
+	UnitEntry_DeploySquads(localPlayer, sg_villagers_wood, {{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 4 }}, mkr_player_lumber_2)
+	AssignVillagersToWood(sg_villagers_wood, false, true)
+	
+	-- Starting villagers on gold
+	UnitEntry_DeploySquads(localPlayer, sg_villagers_gold, {{sbp = SBP.TEMPLAR.UNIT_VILLAGER_1_TEM, numSquads = 6 }}, mkr_player_mining)
+	AssignVillagersToGold(sg_villagers_gold, false, false)
+	
+	--Starting army
+	UnitEntry_DeploySquads(localPlayer, sg_startingarmy1, {{sbp = SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_3_TEM, numSquads = 5 }}, mkr_player_army1)
+	UnitEntry_DeploySquads(localPlayer, sg_startingarmy1, {{sbp = SBP.TEMPLAR.UNIT_ARCHER_2_TEM, numSquads = 10 }}, mkr_player_army3)
+	UnitEntry_DeploySquads(localPlayer, sg_startingarmy1, {{sbp = SBP.TEMPLAR.UNIT_RAM_3_TEM, numSquads = 1 }}, mkr_player_army4)
+	
+	-- Upgrade starting outposts
+	EGroup_CompleteUpgrade(eg_player_outpost_2, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+	EGroup_CompleteUpgrade(eg_player_outpost_1, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+end
+
+-- Starting enemy units for all sites
+function Montgisard_EnemyUnits()
+	
+	-- Tower upgrades
+	EGroup_CompleteUpgrade(eg_springaldTowers, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+	EGroup_CompleteUpgrade(eg_cannonTowers, UPG.COMMON.UPGRADE_OUTPOST_CANNON)
+	EGroup_CompleteUpgrade(eg_reinforcedTowers, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	EGroup_CompleteUpgrade(eg_arrowslitsTowers, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	
+	--Global upgrades
+	
+	-- Spawn archer in outpost
+	SpawnGarrisonsIntoEGroup(eg_garrisonedTowers, enemyPlayer_2, "scar_archer", 3)
+	SpawnGarrisonsIntoEGroup(eg_garrisonedTowers_full, enemyPlayer_2, "scar_archer", 5)
+	
+	-- Sacred Site 1
+	local unitsTable = {
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01, pos = mkr_SS1_spawn1, num = 6},
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, pos = mkr_SS1_spawn2, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, pos = mkr_SS1_spawn3, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01, pos = mkr_SS1_spawn5, num = 6},
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, pos = mkr_SS1_spawn4, num = 8},
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01, pos = mkr_SS1_spawn6, num = 4},
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_1_ABB_HA_01, pos = mkr_SS1_spawn7, num = 4},
+	}
+	for i = 1, 7 do
+		params = {
+		    player = enemyPlayer,
+			name = "fortress1_army"..tostring(i),
+		    units = {
+		        { sbp = unitsTable[i].bp, numSquads = unitsTable[i].num },
+		    },
+		    spawn = unitsTable[i].pos,
+		}
+		fortress1_army = Army_Init(params)
+		SGroup_AddGroup(sg_fortress1_starting, Army_GetSGroup(fortress1_army))
+	end
+	
+	-- Sacred Site 2
+	unitsTable = {
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, pos = mkr_SS2_spawn1, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_MANATARMS_3_ABB_HA_01, pos = mkr_SS2_spawn2, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_HORSEMAN_3_ABB_HA_01, pos = mkr_SS2_spawn3, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_2_ABB_HA_01, pos = mkr_SS2_spawn4, num = 10},
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_2_ABB_HA_01, pos = mkr_SS2_spawn5, num = 10},
+		{bp = SBP.ABBASID_HA_01.UNIT_CROSSBOWMAN_3_ABB_HA_01, pos = mkr_SS2_spawn6, num = 5},
+	}
+	for i = 1, 6 do
+		params = {
+		    player = enemyPlayer,
+			name = "fortress2_army"..tostring(i),
+		    units = {
+		        { sbp = unitsTable[i].bp, numSquads = unitsTable[i].num },
+		    },
+		    spawn = unitsTable[i].pos,
+		}
+		fortress2_army = Army_Init(params)
+		SGroup_AddGroup(sg_fortress2_starting, Army_GetSGroup(fortress2_army))
+	end
+	
+	-- Sacred Site 3	
+	unitsTable = {
+		{bp = SBP.ABBASID_HA_01.UNIT_KNIGHT_3_ABB_HA_01, pos = mkr_SS3_spawn1, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_3_ABB_HA_01, pos = mkr_SS3_spawn2, num = 10},
+		{bp = SBP.AYYUBID_CMP.UNIT_TURKIC_HORSEARCHER_3_AYY, pos = mkr_SS3_spawn3, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_MANATARMS_3_ABB_HA_01, pos = mkr_SS3_spawn4, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_3_ABB_HA_01, pos = mkr_SS3_spawn5, num = 10},
+		{bp = SBP.ABBASID_HA_01.UNIT_CROSSBOWMAN_3_ABB_HA_01, pos = mkr_SS3_spawn6, num = 5},
+	}
+	for i = 1, 6 do
+		params = {
+		    player = enemyPlayer,
+			name = "fortress3_army"..tostring(i),
+		    units = {
+		        { sbp = unitsTable[i].bp, numSquads = unitsTable[i].num },
+		    },
+		    spawn = unitsTable[i].pos,
+		}
+		fortress3_army = Army_Init(params)
+		SGroup_AddGroup(sg_fortress3_starting, Army_GetSGroup(fortress3_army))
+	end
+	
+	-- Sacred Site 4	
+	unitsTable = {
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_4_ABB_HA_01, pos = mkr_SS4_spawn1, num = 8},
+		{bp = SBP.ABBASID_HA_01.UNIT_SPEARMAN_4_ABB_HA_01, pos = mkr_SS4_spawn2, num = 8},
+		{bp = SBP.ABBASID_HA_01.UNIT_CROSSBOWMAN_4_ABB_HA_01, pos = mkr_SS4_spawn3, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_MANATARMS_4_ABB_HA_01, pos = mkr_SS4_spawn4, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_HORSEMAN_4_ABB_HA_01, pos = mkr_SS4_spawn5, num = 5},
+		{bp = SBP.ABBASID_HA_01.UNIT_ARCHER_4_ABB_HA_01, pos = mkr_SS4_spawn6, num = 8},
+		{bp = SBP.ABBASID_HA_01.UNIT_KNIGHT_4_ABB_HA_01, pos = mkr_SS4_spawn7, num = 8},
+	}
+	for i = 1, 7 do
+		params = {
+		    player = enemyPlayer,
+			name = "fortress4_army"..tostring(i),
+		    units = {
+		        { sbp = unitsTable[i].bp, numSquads = unitsTable[i].num },
+		    },
+		    spawn = unitsTable[i].pos,
+		}
+		fortress4_army = Army_Init(params)
+		SGroup_AddGroup(sg_fortress4_starting, Army_GetSGroup(fortress4_army))
+	end
+	
+	-- Add capture modifiers to enemy starting groups
+	Util_ApplyModifier(sg_fortress1_starting, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+	Util_ApplyModifier(sg_fortress2_starting, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+	Util_ApplyModifier(sg_fortress3_starting, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+	Util_ApplyModifier(sg_fortress4_starting, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+	
+end
+
+-- Function called everytime a reinforcement is triggered
+function Montgisard_EnemyReinforcements()
+	
+	local sg_fortress1_reinforce = SGroup_CreateIfNotFound("sg_fortress1_reinforce")
+	local sg_fortress2_reinforce = SGroup_CreateIfNotFound("sg_fortress2_reinforce")
+	local sg_fortress3_reinforce = SGroup_CreateIfNotFound("sg_fortress3_reinforce")
+	local sg_fortress4_reinforce = SGroup_CreateIfNotFound("sg_fortress4_reinforce")
+	
+	SGroup_Clear(sg_fortress1_reinforce)
+	SGroup_Clear(sg_fortress2_reinforce)
+	SGroup_Clear(sg_fortress3_reinforce)
+	SGroup_Clear(sg_fortress4_reinforce)
+	
+	local currentTable = {	
+	}
+	
+	totalReinforces = totalReinforces +1
+	
+	currentTable = Montgisard_ReinforceData(totalReinforces, conquerorActivated)
+	
+	-- Fortress 1
+	if Util_GetPlayerOwner(eg_SacredSite_1) == enemyPlayer or World_OwnsEGroup(eg_SacredSite_1, true) == true then
+		if EGroup_IsEmpty(eg_archery_1) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress1_reinforce, {currentTable.fortress1.archers}, mkr_archery_1)
+		end
+		if EGroup_IsEmpty(eg_barracks_1) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress1_reinforce, {currentTable.fortress1.infantry}, mkr_barracks_1)
+		end
+		if EGroup_IsEmpty(eg_stable_1) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress1_reinforce, {currentTable.fortress1.cavalry}, mkr_stable_1)
+		end
+		if EGroup_IsEmpty(eg_siege_1) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress1_reinforce, {currentTable.fortress1.siege}, mkr_siege_1)
+		end	
+	end
+	
+	local facing = Util_GetPosition(mkr_SS1_reinforce_archers)
+	facing.x = facing.x - 1
+	facing.z = facing.z + 1
+	Cmd_FormationMove(sg_SS1_archers, mkr_SS1_reinforce_archers, false, false, facing)
+	facing = Util_GetPosition(mkr_SS1_reinforce_infantry)
+	facing.x = facing.x - 1
+	Cmd_FormationMove(sg_SS1_infantry, mkr_SS1_reinforce_infantry, false, false, facing)
+	facing = Util_GetPosition(mkr_SS1_reinforce_cavalry)
+	facing.x = facing.x + 1
+	facing.z = facing.z - 1
+	Cmd_FormationMove(sg_SS1_cavalry, mkr_SS1_reinforce_cavalry, false, false, facing)
+	facing = Util_GetPosition(mkr_SS1_reinforce_siege)
+	facing.x = facing.x - 1
+	Cmd_FormationMove(sg_SS1_siege, mkr_SS1_reinforce_siege, false, false, facing)
+
+	if Util_GetPlayerOwner(eg_SacredSite_1) ~= enemyPlayer then
+		Cmd_FormationAttackMove(sg_fortress1_reinforce, eg_SacredSite_1, true)
+	end
+	
+	-- Fortress 2
+	if Util_GetPlayerOwner(eg_SacredSite_2) == enemyPlayer or World_OwnsEGroup(eg_SacredSite_2, true) == true then
+		if EGroup_IsEmpty(eg_archery_2) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress2_reinforce, {currentTable.fortress2.archers}, mkr_archery_2)
+		end
+		if EGroup_IsEmpty(eg_barracks_2) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress2_reinforce, {currentTable.fortress2.infantry}, mkr_barracks_2)
+		end
+		if EGroup_IsEmpty(eg_stable_2) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress2_reinforce, {currentTable.fortress2.cavalry}, mkr_stable_2)
+		end
+	end
+	
+	facing = Util_GetPosition(mkr_SS2_reinforce_archers)
+	facing.x = facing.x + 1
+	Cmd_FormationMove(sg_SS2_archers, mkr_SS2_reinforce_archers, false, false, facing)
+	facing = Util_GetPosition(mkr_SS2_reinforce_infantry)
+	facing.x = facing.x + 1
+	facing.z = facing.z - 1
+	Cmd_FormationMove(sg_SS2_infantry, mkr_SS2_reinforce_infantry, false, false, facing)
+	facing = Util_GetPosition(mkr_SS2_reinforce_cavalry)
+	facing.z = facing.z - 1
+	Cmd_FormationMove(sg_SS2_cavalry, mkr_SS2_reinforce_cavalry, false, false, facing)
+	facing = Util_GetPosition(mkr_SS2_reinforce_siege)
+	facing.x = facing.x - 1
+	facing.z = facing.z + 1
+	Cmd_FormationMove(sg_SS2_siege, mkr_SS2_reinforce_siege, false, false, facing)
+
+	if Util_GetPlayerOwner(eg_SacredSite_2) ~= enemyPlayer then
+		Cmd_FormationAttackMove(sg_fortress2_reinforce, eg_SacredSite_2, true)
+	end
+	
+	-- Fortress 3
+	if Util_GetPlayerOwner(eg_SacredSite_3) == enemyPlayer or World_OwnsEGroup(eg_SacredSite_3, true) == true then
+		if EGroup_IsEmpty(eg_archery_3) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress3_reinforce, {currentTable.fortress3.archers}, mkr_archery_3)
+		end
+		if EGroup_IsEmpty(eg_barracks_3) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress3_reinforce, {currentTable.fortress3.infantry}, mkr_barracks_3)
+		end
+		if EGroup_IsEmpty(eg_stable_3) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress3_reinforce, {currentTable.fortress3.cavalry}, mkr_stable_3)
+		end
+		if EGroup_IsEmpty(eg_siege_3) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress3_reinforce, {currentTable.fortress3.siege}, mkr_siege_3)
+		end
+	end
+	
+	facing = Util_GetPosition(mkr_SS3_reinforce_archers)
+	facing.z = facing.z - 1
+	Cmd_FormationMove(sg_SS3_archers, mkr_SS3_reinforce_archers, false, false, facing)
+	facing = Util_GetPosition(mkr_SS3_reinforce_infantry)
+	facing.x = facing.x + 1
+	facing.z = facing.z + 1
+	Cmd_FormationMove(sg_SS3_infantry, mkr_SS3_reinforce_infantry, false, false, facing)
+	facing = Util_GetPosition(mkr_SS3_reinforce_cavalry)
+	facing.z = facing.z + 1
+	Cmd_FormationMove(sg_SS3_cavalry, mkr_SS3_reinforce_cavalry, false, false, facing)
+	facing = Util_GetPosition(mkr_SS3_reinforce_siege)
+	facing.x = facing.x - 1
+	facing.z = facing.z + 1
+	Cmd_FormationMove(sg_SS3_siege, mkr_SS3_reinforce_siege, false, false, facing)
+
+	if Util_GetPlayerOwner(eg_SacredSite_3) ~= enemyPlayer then
+		Cmd_FormationAttackMove(sg_fortress3_reinforce, eg_SacredSite_3, true)
+	end
+	
+	-- Fortress 4
+	if Util_GetPlayerOwner(eg_SacredSite_4) == enemyPlayer or World_OwnsEGroup(eg_SacredSite_4, true) == true then
+		if EGroup_IsEmpty(eg_archery_4) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress4_reinforce, {currentTable.fortress4.archers}, mkr_archery_4)
+		end
+		if EGroup_IsEmpty(eg_barracks_4) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress4_reinforce, {currentTable.fortress4.infantry}, mkr_barracks_4)
+		end
+		if EGroup_IsEmpty(eg_stable_4) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress4_reinforce, {currentTable.fortress4.cavalry}, mkr_stable_4)
+		end
+		if EGroup_IsEmpty(eg_siege_4) == false then
+			UnitEntry_DeploySquads(enemyPlayer, sg_fortress4_reinforce, {currentTable.fortress4.siege}, mkr_castle_4)
+		end	
+	end
+	
+	facing = Util_GetPosition(mkr_SS4_reinforce_archers)
+	facing.x = facing.x + 1
+	facing.z = facing.z - 1
+	Cmd_FormationMove(sg_SS4_archers, mkr_SS4_reinforce_archers, false, false, facing)
+	facing = Util_GetPosition(mkr_SS4_reinforce_infantry)
+	facing.x = facing.x + 1
+	facing.z = facing.z + 1
+	Cmd_FormationMove(sg_SS4_infantry, mkr_SS4_reinforce_infantry, false, false, facing)
+	facing = Util_GetPosition(mkr_SS4_reinforce_cavalry)
+	facing.x = facing.x + 1
+	facing.z = facing.z + 1
+	Cmd_FormationMove(sg_SS4_cavalry, mkr_SS4_reinforce_cavalry, false, false, facing)
+	facing = Util_GetPosition(mkr_SS4_reinforce_siege)
+	facing.x = facing.x - 1
+	facing.z = facing.z + 1
+	Cmd_FormationMove(sg_SS4_siege, mkr_SS4_reinforce_siege, false, false, facing)
+
+	if Util_GetPlayerOwner(eg_SacredSite_4) ~= enemyPlayer then
+		Cmd_FormationAttackMove(sg_fortress4_reinforce, eg_SacredSite_4, true)
+	end
+	
+	-- Apply capture modifiers to reinforcements groups
+	Util_ApplyModifier(sg_fortress1_reinforce, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+	Util_ApplyModifier(sg_fortress2_reinforce, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+	Util_ApplyModifier(sg_fortress3_reinforce, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+	Util_ApplyModifier(sg_fortress4_reinforce, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+	
+	-- Ping the enemy site on the minimap
+	Montgisard_AddPingAndSound()
+	
+	-- Play a voice line for the first enemy reonforcement
+	if reinforceVoiceline == false then
+		Util_StartIntel(EVENTS.Enemy_Reinforcements)
+		reinforceVoiceline = true
+	end
+	
+	-- Remove the reinforce rule if conqueror mode is not active
+	if totalReinforces == 6 then
+		if reinforceRule ~= nil then
+			Rule_RemoveWithID(reinforceRule)
+		end
+	end
+
+end
+
+-- Creates patrols around the map
+function Montgisard_EnemyPatrols()
+	
+	local units = {
+		"scar_spearman",
+		"scar_archer",
+	}
+	
+	Montgisard_CreatePatrol(units, sg_enemyPatrol_01, path01, path01_reverse, 3, 3)
+	Montgisard_CreatePatrol(units, sg_enemyPatrol_02, path02, path02_reverse, 3, 3)
+	Montgisard_CreatePatrol(units, sg_enemyPatrol_03, path03, path03_reverse, 3, 3)
+	--We can create patrol 4 after the intro swoopy cam ends, to avoid interfering with intro units
+	--Montgisard_CreatePatrol(units, sg_enemyPatrol_04, path04, path04_reverse, 3, 3)
+	Montgisard_CreatePatrol(units, sg_enemyPatrol_05, path05, path05_reverse, 3, 3)
+	Montgisard_CreatePatrol(units, sg_enemyPatrol_06, path06, path06_reverse, 3, 3)
+	Montgisard_CreatePatrol(units, sg_enemyPatrol_07, path07, path07_reverse, 3, 3)
+end
+
+--Creates a set of minimap paths along a list of markers
+function Montgisard_DisplayMinimapPath(path)
+	MarkerPaths_GenerateIcons("minimap_path", path, "military_route_enemy", -1) --23
+--	MarkerPaths_AnimateArrowPath(path)
+end
+
+-- Removes the minimap path
+function Montgisard_RemoveMinimapPath()
+	MarkerPaths_ClearIcons("minimap_path")
+end
+
+-- Function called everytime an enemy attack is triggered
+function Montgisard_EnemyAttacks()
+	
+	local sacredSites_player = Montgisard_GetCurrentSites(localPlayer)
+	local sacredSites_neutral = Montgisard_GetCurrentSites("neutral")
+	
+	local sitesCounter_enemy = Montgisard_GetCurrentSites(enemyPlayer, true)
+	local sitesCounter_player = Montgisard_GetCurrentSites(localPlayer, true)
+	local sitesCounter_neutral = Montgisard_GetCurrentSites("neutral", true)
+	
+	totalAttacks = totalAttacks +1
+	
+	-- This condition is triggered when there are still neutral sites on the map
+	-- The enemy will select a random neutral site for their attack in order to recapture it
+	if sitesCounter_neutral ~= 0 and sitesCounter_enemy ~= 0 then -- sitesCounter_player == 0 and
+		Montgisard_AttackTarget(sacredSites_neutral)
+	-- Standard case for enemy attacks, the enemy will select a random player site as the target
+	elseif sitesCounter_player ~= 0 and sitesCounter_enemy ~= 0 then
+		Montgisard_AttackTarget(sacredSites_player)
+	-- If the player doesn't have any site, the attack is carried on the starting base
+	elseif sitesCounter_player == 0 and sitesCounter_enemy ~= 0 then
+		Montgisard_AttackTarget(mkr_player_tc)
+	end
+	
+	if ruleRam == nil then
+		ramRule = Rule_AddInterval(Montgisard_CheckForRams, .5) -- Start checking if rams are the only units remaining in attack groups
+	end
+	
+	-- Play the recapture voice line only on the first enemy attack
+	if sitesCounter_player ~= 0 or sitesCounter_neutral ~= 0 then
+		if attackVoiceline == false then
+			Rule_AddOneShot(Montgisard_RecaptureVoiceline, 15)
+			attackVoiceline = true
+		end
+	end
+	
+end
+
+function Montgisard_RecaptureVoiceline()
+	Util_StartIntel(EVENTS.Enemy_Recapture)
+end
+
+-- Reorder enemy units around a site after they recapture one
+function Montgisard_GetInFormation(siteRecaptured)
+	
+	local sg_aroundTheSite = SGroup_CreateIfNotFound("sg_aroundTheSite")
+	local sg_sorting = SGroup_CreateIfNotFound("sg_sorting")
+	
+	local tableTypes = {
+		{"scar_archer", "scar_crossbowman", "scar_horsearcher"},
+		{"scar_spearman", "scar_manatarms"},
+		{"scar_knight", "scar_horseman"},
+		{"scar_ram", "scar_mangonel", "scar_scorpion"},
+	}
+	local rallyPoint = {
+	}
+	
+	if siteRecaptured == mkr_sacredsite_1 then
+		rallyPoint = {
+			mkr_SS1_reinforce_archers,
+			mkr_SS1_reinforce_infantry,
+			mkr_SS1_reinforce_cavalry,
+			mkr_SS1_reinforce_siege,
+		}
+	elseif siteRecaptured == mkr_sacredsite_2 then
+		rallyPoint = {
+			mkr_SS2_reinforce_archers,
+			mkr_SS2_reinforce_infantry,
+			mkr_SS2_reinforce_cavalry,
+			mkr_SS2_reinforce_siege,
+		}
+	elseif siteRecaptured == mkr_sacredsite_3 then
+		rallyPoint = {
+			mkr_SS3_reinforce_archers,
+			mkr_SS3_reinforce_infantry,
+			mkr_SS3_reinforce_cavalry,
+			mkr_SS3_reinforce_siege,
+		}
+	elseif siteRecaptured == mkr_sacredsite_4 then
+		rallyPoint = {
+			mkr_SS4_reinforce_archers,
+			mkr_SS4_reinforce_infantry,
+			mkr_SS4_reinforce_cavalry,
+			mkr_SS4_reinforce_siege,
+		}
+	end
+	
+	local pos = Util_GetPosition(siteRecaptured)
+		
+	Player_GetAllSquadsNearMarker(enemyPlayer, sg_aroundTheSite, pos, 40)
+	if SGroup_CountSpawned(sg_aroundTheSite) > 10 then
+		for i = 1, #tableTypes do
+			SGroup_Clear(sg_sorting)
+			SGroup_Filter(sg_aroundTheSite, tableTypes[i], FILTER_REMOVE, sg_sorting)
+			Cmd_FormationAttackMove(sg_sorting, rallyPoint[i], true)
+		end
+	end
+	
+end
+
+function Montgisard_LaunchAttack()
+
+	local minimapPath = {
+	}
+	
+	local siegeMarkers = {
+		mkr_siege_1,
+		mkr_siege_2,
+		mkr_siege_3,
+		mkr_castle_4,
+	}
+	
+	-- If conqueror is active, always take the unit BPs from the 5th enemy wave from the 6th attack onward.
+	-- If not active, get the BPs for the normal 5 attacks from the respective 5 enemy waves.
+	if conquerorActivated == true then
+		if totalAttacks >= 6 then
+			attackTable = {
+				{bp = Montgisard_GetAttackUnitBP("archers", 5, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("archers", attackStart), num = Montgisard_GetAttackUnitStrength("archers", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("infantry", 5, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("infantry", attackStart), num = Montgisard_GetAttackUnitStrength("infantry", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("cavalry", 5, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("cavalry", attackStart), num = Montgisard_GetAttackUnitStrength("cavalry", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("siege", 5, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("siege", attackStart), num = Montgisard_GetAttackUnitStrength("siege", totalAttacks, attackStart, attackEnd)},
+			}
+		else
+			attackTable = {
+				{bp = Montgisard_GetAttackUnitBP("archers", totalAttacks, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("archers", attackStart), num = Montgisard_GetAttackUnitStrength("archers", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("infantry", totalAttacks, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("infantry", attackStart), num = Montgisard_GetAttackUnitStrength("infantry", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("cavalry", totalAttacks, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("cavalry", attackStart), num = Montgisard_GetAttackUnitStrength("cavalry", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("siege", totalAttacks, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("siege", attackStart), num = Montgisard_GetAttackUnitStrength("siege", totalAttacks, attackStart, attackEnd)},
+			}
+		end
+	else
+		if totalAttacks >= 6 then
+			attackTable = {
+				{bp = Montgisard_GetAttackUnitBP("archers", 4, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("archers", attackStart), num = Montgisard_GetAttackUnitStrength("archers", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("infantry", 4, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("infantry", attackStart), num = Montgisard_GetAttackUnitStrength("infantry", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("cavalry", 4, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("cavalry", attackStart), num = Montgisard_GetAttackUnitStrength("cavalry", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("siege", 4, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("siege", attackStart), num = Montgisard_GetAttackUnitStrength("siege", 1, attackStart, attackEnd)},
+			}
+		else
+			attackTable = {
+				{bp = Montgisard_GetAttackUnitBP("archers", totalAttacks, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("archers", attackStart), num = Montgisard_GetAttackUnitStrength("archers", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("infantry", totalAttacks, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("infantry", attackStart), num = Montgisard_GetAttackUnitStrength("infantry", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("cavalry", totalAttacks, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("cavalry", attackStart), num = Montgisard_GetAttackUnitStrength("cavalry", totalAttacks, attackStart, attackEnd)},
+				{bp = Montgisard_GetAttackUnitBP("siege", totalAttacks, attackStart), pos = Montgisard_GetAttackUnitSpawnPoint("siege", attackStart), num = Montgisard_GetAttackUnitStrength("siege", totalAttacks, attackStart, attackEnd)},
+			}
+		end
+	end
+	
+	for i = 1, #attackTable do
+		UnitEntry_DeploySquads(enemyPlayer, sg_attackGroup, {{sbp = attackTable[i].bp, numSquads = attackTable[i].num }}, attackTable[i].pos)
+	end
+	
+	local numRams = 0
+	
+	if conquerorActivated == true then
+		numRams = totalAttacks
+	else
+		if totalAttacks >= 6 then
+			numRams = 2
+		else
+			numRams = totalAttacks - 1
+		end
+	end
+	
+	UnitEntry_DeploySquads(enemyPlayer, sg_attackGroup, {{sbp = SBP.ABBASID_HA_01.UNIT_RAM_3_ABB_HA_01, numSquads = numRams }}, Util_GetClosestMarker(attackStart, siegeMarkers))
+	Util_ApplyModifier(sg_attackGroup, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+	--------------------------
+	
+	attackPath = Montgisard_GetAttackPath(1, attackStart, attackEnd)
+	minimapPath = Montgisard_GetAttackPath(2, attackStart, attackEnd)
+	Montgisard_DisplayMinimapPath(minimapPath)
+	Rule_AddOneShot(Montgisard_RemoveMinimapPath, 120)
+	EventCues_CallToAction("$11266823", CTA_ALARM, nil, nil, attackStart, 10, "icons/cta/illustrations/player_reinforcement_arrived")
+	Sound_Play2D("sfx_campaign_scripted_attack_horn_under_attack_high")
+	
+	-- Set sgroup to attack move through the path
+	table.insert(attackPath, attackEnd)
+	targetRoute = {
+		marker = attackPath,
+		targetOrder = TARGET_ORDER_LINEAR,
+	    combatRange = 40,
+		combatRangeEnRoute = 20,
+	    combatRangeAtTarget = 25,
+	    attackMove = true
+	}
+	attackParams = {
+    	player = enemyPlayer,
+		targets = attackPath,
+		targetOrder = TARGET_ORDER_LINEAR,
+	    combatRange = 40,
+		combatRangeEnRoute = 20,
+	    combatRangeAtTarget = 25,
+	    attackMove = true,
+		idleTime = 0
+	}
+	attackArmy = Army_Init(attackParams)
+	Army_AddSGroup(attackArmy, sg_attackGroup)
+	
+	-- Add attack group to a table to check and destroy the rams if they are the only remaining units
+	if totalAttacks <= 5 then
+		SGroup_AddGroup(attackSGroups[totalAttacks], sg_attackGroup)
+	end
+	
+end
+
+-- Builds an enemy group and attacks the specified target.
+function Montgisard_AttackTarget(target)
+	
+	attackStart = nil
+	attackEnd = nil
+
+	sg_attackGroup = SGroup_CreateIfNotFound("sg_attackGroup")
+	
+	attackPath = {
+	}
+	
+	--------------------------
+	attackTable = {
+	}
+	attackParams = {
+	}
+	attackArmy = nil
+	
+	SGroup_Clear(sg_attackGroup)
+	
+	-- If the target is the player base, always attack from the sacred site #1.
+	-- Else, choose an available enemy site to attack from.
+	if target == mkr_player_tc then
+		attackStart = mkr_sacredsite_1
+	else
+		attackStart = Montgisard_GetAvailableSiteForAttack()
+	end
+	-- If the target is the player base, choose the player tc as the final marker for enemy units.
+	-- Else, choose a random player site as the target for the enemy attack.
+	if target == mkr_player_tc then
+		attackEnd = mkr_player_tc
+	else
+		attackEnd = Table_GetRandomItem(target)
+	end
+	
+	-- Change number of total enemy units based on Conqueror Mode activation
+	if conquerorActivated == true then
+		attackStrenghtCM = attackStrenghtCM + 4
+	end
+	
+	-- Reduce enemy total strenght after the 5th attack, when players are in the bronze range
+	if totalAttacks >= 6 then
+		if attackStrenghtPostBronze > 8 then
+			attackStrenghtPostBronze = attackStrenghtPostBronze - 4
+		end
+	end
+	
+	-- Spawn the attack warning UI if players are within a certain range from the site enemies area attacking from
+	local unitInRange = SGroup_CreateIfNotFound("unitInRange")
+	local buildingInRange = EGroup_CreateIfNotFound("buildingInRange")
+	
+	local checkPos = Util_GetPosition(Util_GetClosestMarker(attackStart, warningMarkers))
+	Player_GetAllSquadsNearMarker(localPlayer, unitInRange, checkPos, 90)
+	Player_GetAllEntitiesNearMarker(localPlayer, buildingInRange, checkPos, 90)
+	
+	if SGroup_CountSpawned(unitInRange) > 0  or EGroup_CountSpawned(buildingInRange) > 0 then
+		Montgisard_AttackWarning(attackStart)
+	end
+	
+	-- Launch the attack
+	Rule_AddOneShot(Montgisard_LaunchAttack, 15)
+	
+end
+
+function Montgisard_SetupAttackRuleForConqueror()
+	--Spawn one reinforcements immediately and then every 5 minutes
+	Montgisard_EnemyAttacks()
+	attackRule = Rule_AddInterval(Montgisard_EnemyAttacks, 300)
+end
+
+function Montgisard_SetupReinforceRuleForConqueror()
+	--Spawn one reinforcements immediately and then every 5 minutes
+	Montgisard_EnemyReinforcements()
+	reinforceRule = Rule_AddInterval(Montgisard_EnemyReinforcements, 300)
+end
+
+function Montgisard_AttackWarning(origin)
+	
+	local bp_outer = BP_GetReticuleBlueprint("marquee")
+	local bp_inner = BP_GetReticuleBlueprint("capture_enemy")
+
+	reticuleCurrentSize = 0
+	hintpointsPos = {
+		
+	}
+	local lenght = nil
+	
+	if origin == mkr_sacredsite_1 then
+		lenght = 4
+		for i = 1, 4 do
+			table.insert(hintpointsPos, site_1[i])
+		end
+	elseif origin == mkr_sacredsite_2 then
+		lenght = 3
+		for i = 1, 3 do
+			table.insert(hintpointsPos, site_2[i])
+		end
+	elseif origin == mkr_sacredsite_3 then
+		lenght = 4
+		for i = 1, 4 do
+			table.insert(hintpointsPos, site_3[i])
+		end
+	elseif origin == mkr_sacredsite_4 then
+		lenght = 3
+		for i = 1, 3 do
+			table.insert(hintpointsPos, site_4[i])
+		end
+	end
+		
+	for i = 1, #hintpointsPos do
+		warningHintpoints[i] = HintPoint_Add(hintpointsPos[i], true, "$11266823", 5)
+		reticulesOuter[i] = UI_ModalVisual_CreateReticule(bp_outer, 10) -- Outer reticule
+		UI_ModalVisual_SetPosition(reticulesOuter[i], hintpointsPos[i])
+		reticulesInner[i] = UI_ModalVisual_CreateReticule(bp_inner, 0) -- Inner reticule
+		UI_ModalVisual_SetPosition(reticulesInner[i], hintpointsPos[i])
+	end
+	Rule_AddInterval(Montgisard_AttackWarningUpdate, .125, {site = lenght})
+end
+
+function Montgisard_AttackWarningUpdate(context, data)
+	
+	local bp_inner = BP_GetReticuleBlueprint("capture_enemy")
+	
+	reticuleCurrentSize = reticuleCurrentSize + 0.083 --0.125
+	
+	-- Check if the reticule has reached the desired size
+	for i = 1, data.site do
+		if reticuleCurrentSize < 10 then
+			if reticulesOuter[i] ~= nil and reticulesInner[i] ~= nil and hintpointsPos[i] ~= nil then
+				UI_ModalVisual_Destroy(reticulesInner[i])
+				reticulesInner[i] = UI_ModalVisual_CreateReticule(bp_inner, reticuleCurrentSize)
+				UI_ModalVisual_SetPosition(reticulesInner[i], hintpointsPos[i])
+			end
+		else
+			-- Remove all hintpoints and reset all variables for the next attack
+			for i = 1, data.site do
+				if warningHintpoints[i] ~= nil then
+					HintPoint_Remove(warningHintpoints[i])
+				end
+				if reticulesOuter[i] ~= nil then
+					UI_ModalVisual_Destroy(reticulesOuter[i])
+				end
+				if reticulesInner[i] ~= nil then
+					UI_ModalVisual_Destroy(reticulesInner[i])
+				end
+				
+			end
+			
+			hintpoint_warning1 = nil
+			hintpoint_warning2 = nil
+			hintpoint_warning3 = nil
+			hintpoint_warning4 = nil
+			
+			outer1 = nil
+			outer2 = nil
+			outer3 = nil
+			outer4 = nil
+			
+			inner1 = nil
+			inner2 = nil
+			inner3 = nil
+			inner4 = nil
+			
+			Rule_RemoveMe()
+		end
+	end
+	
+	
+end
+
+function Montgisard_CheckForRams()
+	
+	local sg_groupToCheck = SGroup_CreateIfNotFound("sg_groupToCheck")
+	local sg_groupRams = SGroup_CreateIfNotFound("sg_groupRams")
+	SGroup_Clear(sg_groupToCheck)
+	SGroup_Clear(sg_groupRams)
+	
+	for i = 1, #attackSGroups do
+		if SGroup_IsEmpty(attackSGroups[i]) == false then
+			SGroup_Clear(sg_groupToCheck)
+			SGroup_Clear(sg_groupRams)
+			SGroup_AddGroup(sg_groupToCheck, attackSGroups[i])
+			SGroup_Filter(sg_groupToCheck, SBP.ABBASID_HA_01.UNIT_RAM_3_ABB_HA_01, FILTER_REMOVE, sg_groupRams)
+			if SGroup_IsEmpty(sg_groupToCheck) then
+				SGroup_Kill(sg_groupRams)
+			end
+		end	
+	end
+	
+end
+
+function GetRecipe()
+	
+	local recipe = {
+		
+		audioSettings = {
+			campaignName = "tem",
+			missionName = "rts_montgisard",
+		},		
+		
+		introNIS = EVENTS.Camera_Intro,
+	
+		locations = {
+		},
+		
+		modules = {
+		},
+
+		onWin = {
+		},
+		
+		onLose = {
+		},
+	}
+	
+	return recipe
+end
+
+-- Updates sacred sites UI by adding/removing minimap objective icons
+function Montgisard_UpdateSacredSitesUI()
+	
+	site1Owner = Util_GetPlayerOwner(eg_SacredSite_1)
+	site2Owner = Util_GetPlayerOwner(eg_SacredSite_2)
+	site3Owner = Util_GetPlayerOwner(eg_SacredSite_3)
+	site4Owner = Util_GetPlayerOwner(eg_SacredSite_4)
+	
+	if site1Owner ~= previousSite1Owner then
+		if site1Owner == localPlayer and previousSite1Owner == nil then
+			if hpid_ss1 ~= nil then
+				Objective_RemoveUIElements(OBJ_SacredSitesPrimary, hpid_ss1)
+				hpid_ss1 = nil
+				Sound_Play2D(MUS_STING_TRIUMPHANT) -- Add sound on player capture
+				lastCapturedSite = mkr_sacredsite_1 -- Updated the latest captured site
+			end
+		elseif site1Owner == enemyPlayer and previousSite1Owner == nil then
+			-- Nothing
+			Montgisard_GetInFormation(mkr_sacredsite_1)
+		elseif site1Owner == nil and previousSite1Owner == localPlayer then
+			if hpid_ss1 == nil then 
+				hpid_ss1 = Objective_AddUIElements(OBJ_SacredSitesPrimary, sacredSite_position1, true, nil, false, nil, nil, nil, "icons/objectives/objectives_holy_site")
+			end
+		elseif site1Owner == nil and previousSite1Owner == enemyPlayer then
+			-- Nothing
+		end	
+	end
+	
+	if site2Owner ~= previousSite2Owner then
+		if site2Owner == localPlayer and previousSite2Owner == nil then
+			if hpid_ss2 ~= nil then
+				Objective_RemoveUIElements(OBJ_SacredSitesPrimary, hpid_ss2)
+				hpid_ss2 = nil
+				Sound_Play2D(MUS_STING_TRIUMPHANT) -- Add sound on player capture
+				lastCapturedSite = mkr_sacredsite_2 -- Updated the latest captured site
+			end
+		elseif site2Owner == enemyPlayer and previousSite2Owner == nil then
+			-- Nothing
+			Montgisard_GetInFormation(mkr_sacredsite_2)
+		elseif site2Owner == nil and previousSite2Owner == localPlayer then
+			if hpid_ss2 == nil then
+				hpid_ss2 = Objective_AddUIElements(OBJ_SacredSitesPrimary, sacredSite_position2, true, nil, false, nil, nil, nil, "icons/objectives/objectives_holy_site")
+			end
+		elseif site2Owner == nil and previousSite2Owner == enemyPlayer then
+			-- Nothing
+		end	
+	end
+	
+	if site3Owner ~= previousSite3Owner then
+		if site3Owner == localPlayer and previousSite3Owner == nil then
+			if hpid_ss3 ~= nil then
+				Objective_RemoveUIElements(OBJ_SacredSitesPrimary, hpid_ss3)
+				hpid_ss3 = nil
+				Sound_Play2D(MUS_STING_TRIUMPHANT) -- Add sound on player capture
+				lastCapturedSite = mkr_sacredsite_3 -- Updated the latest captured site
+			end
+		elseif site3Owner == enemyPlayer and previousSite3Owner == nil then
+			-- Nothing
+			Montgisard_GetInFormation(mkr_sacredsite_3)
+		elseif site3Owner == nil and previousSite3Owner == localPlayer then
+			if hpid_ss3 == nil then
+				hpid_ss3 = Objective_AddUIElements(OBJ_SacredSitesPrimary, sacredSite_position3, true, nil, false, nil, nil, nil, "icons/objectives/objectives_holy_site")
+			end
+		elseif site3Owner == nil and previousSite3Owner == enemyPlayer then
+			-- Nothing
+		end	
+	end
+	
+	if site4Owner ~= previousSite4Owner then
+		if site4Owner == localPlayer and previousSite4Owner == nil then
+			if hpid_ss4 ~= nil then
+				Objective_RemoveUIElements(OBJ_SacredSitesPrimary, hpid_ss4)
+				hpid_ss4 = nil
+				Sound_Play2D(MUS_STING_TRIUMPHANT) -- Add sound on player capture
+				lastCapturedSite = mkr_sacredsite_4 -- Updated the latest captured site
+			end
+		elseif site4Owner == enemyPlayer and previousSite4Owner == nil then
+			-- Nothing
+			Montgisard_GetInFormation(mkr_sacredsite_4)
+		elseif site4Owner == nil and previousSite4Owner == localPlayer then
+			if hpid_ss4 == nil then
+				hpid_ss4 = Objective_AddUIElements(OBJ_SacredSitesPrimary, sacredSite_position4, true, nil, false, nil, nil, nil, "icons/objectives/objectives_holy_site")
+			end
+		elseif site4Owner == nil and previousSite4Owner == enemyPlayer then
+			-- Nothing
+		end	
+	end
+	
+	previousSite1Owner = site1Owner
+	previousSite2Owner = site2Owner
+	previousSite3Owner = site3Owner
+	previousSite4Owner = site4Owner
+	
+end
+
+-- Main update function that checks for different trigger conditions
+function Montgisard_TrackSacredSites()
+	
+	local timeElapsed = World_GetGameTime() - startTime
+	local timeSinceUpdate = timeElapsed - lastVictoryUpdateTime
+	if(timeSinceUpdate == 0) then
+		--set to default update time for first update
+		lastVictoryUpdateTime = .125
+	end
+	lastVictoryUpdateTime = timeElapsed
+	
+	-- Update the mission time only if the main objective has not been completed yet
+	if Objective_IsComplete(OBJ_SacredSitesPrimary) == false then
+		missionTime = World_GetGameTime() - startTime
+	end
+	
+	playerSitesHeld = 0
+	enemySitesHeld = 0
+	
+------- Check the ownership of the Sacred Sites ------------------------------------------------------------------------------------
+	for i = 1, 4 do
+		
+		local siteOwner = Util_GetPlayerOwner(eg_SacredSite_1)
+		
+		if(i == 2) then
+			siteOwner = Util_GetPlayerOwner(eg_SacredSite_2)
+		elseif(i == 3) then
+			siteOwner = Util_GetPlayerOwner(eg_SacredSite_3)
+		elseif(i == 4) then
+			siteOwner = Util_GetPlayerOwner(eg_SacredSite_4)
+		end
+		
+		if siteOwner == localPlayer then
+			playerSitesHeld = playerSitesHeld + 1
+		elseif siteOwner == enemyPlayer then
+			enemySitesHeld = enemySitesHeld + 1
+		end
+	end
+	
+------- Only called when the number of Sacred Sites the player has changed ---------------------------------------------------------
+	if previousSitesHeld ~= playerSitesHeld or previousSitesHeld_enemy ~= enemySitesHeld then	
+		Montgisard_UpdateSacredSitesUI()
+		Montgisard_UpdateSacredSitesBonuses()
+		-- Updated the counter for the main objective
+		Objective_SetCounter(OBJ_SacredSitesPrimary, playerSitesHeld, 4)
+	end
+	
+------- Create cue when an enemy capture a site ------------------------------------------------------------------------------------
+	if previousSitesHeld_enemy < enemySitesHeld then
+		UI_CreateEventCue("$11266813", Loc_Empty(), "high_priority", "icons/event_queue_high_priority", "sfx_ui_event_queue_high_priority_play", ECV_Queue, 10)
+	end
+	
+------- Updates current sites held ---------------------------------------------------------------------------------------------	
+	previousSitesHeld = playerSitesHeld
+	previousSitesHeld_enemy = enemySitesHeld
+	
+------- Check for victory and defeat conditions --------------------------------------------------------------------------------
+	if conquerorActivated == true then
+		if (playerSitesHeld == 4) and Objective_IsFailed(OBJ_DefendTC) == false and Objective_IsFailed(OBJ_ConquerorMedal) == false then
+			Objective_Complete(OBJ_SacredSitesPrimary, false, true)
+		end
+	else
+		if (playerSitesHeld == 4) and Objective_IsFailed(OBJ_DefendTC) == false then
+			Objective_Complete(OBJ_SacredSitesPrimary, false, true)
+		end
+	end
+	
+	if conquerorActivated == true then
+		if EGroup_GetTotalHealth(eg_starting_tc) == 0 and Objective_IsComplete(OBJ_SacredSitesPrimary) == false and Objective_IsFailed(OBJ_ConquerorMedal) == false then
+			Objective_Fail(OBJ_DefendTC, true, false)
+		end
+	else
+		if EGroup_GetTotalHealth(eg_starting_tc) == 0 and Objective_IsComplete(OBJ_SacredSitesPrimary) == false then
+			Objective_Fail(OBJ_DefendTC, true, false)
+		end
+	end
+	-- Only for Conqueror Mode
+	if conquerorActivated == true and Objective_IsComplete(OBJ_SacredSitesPrimary) == false then
+		if Objective_IsTimerSet(OBJ_ConquerorMedal) == true then
+			if Objective_GetTimerSeconds(OBJ_ConquerorMedal) <= 0 then
+				Objective_Fail(OBJ_ConquerorMedal, true, false)
+			end
+		end
+	end
+	
+------- Check when to spawn bonus units on age up ------------------------------------------------------------------------------
+	local currentAge = Player_GetCurrentAge(localPlayer)
+	
+	if darkBonus == false then
+		if currentAge == AGE_FEUDAL then
+			Rule_AddOneShot(Montgisard_BonusUnitsOnAgeUp, 0, {age = currentAge})
+			darkBonus = true
+		end
+	elseif feudalBonus == false then
+		if currentAge == AGE_CASTLE then
+			Rule_AddOneShot(Montgisard_BonusUnitsOnAgeUp, 0, {age = currentAge})
+			feudalBonus = true
+		end
+	elseif castleBonus == false then
+		if currentAge == AGE_IMPERIAL then
+			Rule_AddOneShot(Montgisard_BonusUnitsOnAgeUp, 0, {age = currentAge})
+			castleBonus = true
+		end
+	end
+
+------- Check when to spawn bonus reinforcements units for the player ----------------------------------------------------------
+	if conquerorActivated == false then
+		-- Add archers 30 seconds after gold time
+		if playerReinforce_1 == false and missionTime > (goldTime*60) + 30 then
+			sg_playerReinforcements1 = SGroup_CreateIfNotFound("sg_playerReinforcements1")
+			UnitEntry_DeploySquads(localPlayer, sg_playerReinforcements1, {
+					{sbp = SBP.TEMPLAR.UNIT_ARCHER_3_TEM, numSquads = 10 }}, mkr_player_tc)
+			Cmd_FormationAttackMove(sg_playerReinforcements1, mkr_player_reinforce, true)
+			EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, mkr_player_reinforce, 20, "icons/cta/illustrations/player_reinforcement_arrived")
+			playerReinforce_1 = true
+		end
+		
+		-- Add men at arms and trebuchets 3 minute before silver time
+		if playerReinforce_2 == false and missionTime > (silverTime*60) - 180 then
+			sg_playerReinforcements2 = SGroup_CreateIfNotFound("sg_playerReinforcements2")
+			UnitEntry_DeploySquads(localPlayer, sg_playerReinforcements2, {
+					{sbp = SBP.TEMPLAR.UNIT_MANATARMS_4_TEM, numSquads = 12 },
+					{sbp = SBP.TEMPLAR.UNIT_TREBUCHET_4_CW_TEM, numSquads = 2 }}, mkr_player_tc)
+			Cmd_FormationAttackMove(sg_playerReinforcements2, mkr_player_reinforce, true)
+			EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, mkr_player_reinforce, 20, "icons/cta/illustrations/player_reinforcement_arrived")
+			playerReinforce_2 = true
+		end
+		
+		-- Add knights and springalds 3 minutes after silver time
+		if playerReinforce_3 == false and missionTime > (silverTime*60) + 120 then
+			sg_playerReinforcements3 = SGroup_CreateIfNotFound("sg_playerReinforcements3")
+			UnitEntry_DeploySquads(localPlayer, sg_playerReinforcements3, {
+					{sbp = SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_4_TEM, numSquads = 14 },
+					{sbp = SBP.TEMPLAR.UNIT_SPRINGALD_3_TEM, numSquads = 3 }}, mkr_player_tc)
+			Cmd_FormationAttackMove(sg_playerReinforcements3, mkr_player_reinforce, true)
+			EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, mkr_player_reinforce, 20, "icons/cta/illustrations/player_reinforcement_arrived")
+			playerReinforce_3 = true
+		end
+		
+		-- Add knights, crossbows and mangonels at the 40 minute mark
+		if playerReinforce_4 == false and missionTime > (bronzeTime*60) - 1200 then
+			sg_playerReinforcements4 = SGroup_CreateIfNotFound("sg_playerReinforcements4")
+			UnitEntry_DeploySquads(localPlayer, sg_playerReinforcements4, {
+					{sbp = SBP.TEMPLAR.UNIT_KNIGHT_TEMPLAR_4_TEM, numSquads = 12 },
+					{sbp = SBP.TEMPLAR.UNIT_CROSSBOWMAN_4_TEM, numSquads = 12 },
+					{sbp = SBP.TEMPLAR.UNIT_MANGONEL_3_TEM, numSquads = 3 }}, mkr_player_tc)
+			Cmd_FormationAttackMove(sg_playerReinforcements4, mkr_player_reinforce, true)
+			EventCues_CallToAction("$11268460", CTA_CELEBRATE, nil, nil, mkr_player_reinforce, 20, "icons/cta/illustrations/player_reinforcement_arrived")
+			playerReinforce_4 = true
+		end
+		
+		
+		
+	end
+	
+------ Plays the pushback voice line at 20 minutes --------------------------------------------------------------------------
+	
+	if pushbackVoiceline == false then
+		if(missionTime >= 20*60) then
+			Util_StartIntel(EVENTS.Push_Back)
+			pushbackVoiceline = true
+		end
+	end
+	
+------- Activating Conqueror Mode --------------------------------------------------------------------------------------------
+	-- First Phase: Updates the Conqueror Mode objectives triggering the second phase if the requirements are met
+	if triggerActivated == false and conquerorExpired == false then
+		-- Check if requirements for first phase are met
+		if Util_GetPlayerOwner(eg_SacredSite_1) == localPlayer and Objective_GetTimerSeconds(OBJ_ConquerorMode) > 0 then
+			-- Spawn extra site
+			Rule_AddOneShot(Montgisard_ConquerorTriggerSite)
+			-- Updated Conqueror Mode objective
+			Objective_RemoveUIElements(OBJ_ConquerorMode, worldArrow)
+			worldArrow_2 = Objective_AddUIElements(OBJ_ConquerorMode, mkr_extrasite, false, "$11266814", true, 14)
+			hpid_extra = Objective_AddUIElements(OBJ_ConquerorMode, mkr_extrasite, true, nil, false, nil, nil, nil, "icons/objectives/objectives_holy_site")
+			Objective_StopTimer(OBJ_ConquerorMode)
+			Objective_UpdateText(OBJ_ConquerorMode, "$11266815", nil, true, false) --Destroy the enemy camp to activate Conqueror Mode
+			Objective_StartTimer(OBJ_ConquerorMode, COUNT_DOWN, 60 * 3)
+			Objective_SetProgressBar(OBJ_ConquerorMode, 0)
+			
+			triggerActivated = true
+		elseif Objective_GetTimerSeconds(OBJ_ConquerorMode) == 0 then
+			Sound_Play2D(MUS_STING_NEGATIVE)
+			Objective_Fail(OBJ_ConquerorMode, false, false) -- true, true
+			Objective_Show(OBJ_ConquerorMode, false, false)
+			conquerorExpired = true
+		end
+	end
+	
+	-- Second Phase: Activates Conqueror Mode when this conditions are met
+	if conquerorExpired == false and conquerorActivated == false and triggerActivated == true then
+		-- Updates UI on units killed and buildings destroyed for the second phase of triggering Conqueror Mode
+		if SGroup_IsEmpty(sg_extraSite_units) == false or unitsKilled_extraSite == 23 then
+			unitsKilled_extraSite = 24 - SGroup_CountSpawned(sg_extraSite_units)
+		end
+		buildingsDestroyed_extraSite = 3 - EGroup_CountSpawned(eg_extraSite)
+		local campCleared = unitsKilled_extraSite + buildingsDestroyed_extraSite
+		campClearedPercent = (campCleared / extraSite_totalUnits)
+		
+		Objective_SetProgressBar(OBJ_ConquerorMode, campClearedPercent)
+		
+		-- Check if requirements for second phase are met
+		if SGroup_IsEmpty(sg_extraSite_units) and EGroup_IsEmpty(eg_extraSite) and Objective_GetTimerSeconds(OBJ_ConquerorMode) > 0 then
+	
+			conquerorPos = Util_GetPosition(mkr_extrasite)
+			
+			-- Start Conqueror Medal objective
+			Objective_Complete(OBJ_GoldMedal, false, false)
+			Objective_Show(OBJ_GoldMedal, false, false)
+			Objective_Register(OBJ_ConquerorMedal)
+			Objective_Start(OBJ_ConquerorMedal)
+			
+			-- Spawn enemy leaders
+			if Util_GetPlayerOwner(eg_SacredSite_1) == enemyPlayer then
+				UnitEntry_DeploySquads(enemyPlayer, sg_SS1_leader, {{sbp = SBP.AYYUBID_CMP.UNIT_LEADER_COMMANDER_AYY, numSquads = 1 }}, mkr_stable_1)
+				Util_ApplyModifier(sg_SS1_leader, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+				Cmd_FormationMove(sg_SS1_leader, mkr_SS1_leader, false, false, mkr_SS1_leader_facing)
+			end
+			
+			if Util_GetPlayerOwner(eg_SacredSite_2) == enemyPlayer then
+				UnitEntry_DeploySquads(enemyPlayer, sg_SS2_leader, {{sbp = SBP.AYYUBID_CMP.UNIT_LEADER_COMMANDER_AYY, numSquads = 1 }}, mkr_stable_2)
+				Util_ApplyModifier(sg_SS2_leader, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+				Cmd_FormationMove(sg_SS2_leader, mkr_SS2_leader, false, false, mkr_SS2_leader_facing)
+			end
+			
+			if Util_GetPlayerOwner(eg_SacredSite_3) == enemyPlayer then
+				UnitEntry_DeploySquads(enemyPlayer, sg_SS3_leader, {{sbp = SBP.AYYUBID_CMP.UNIT_LEADER_COMMANDER_AYY, numSquads = 1 }}, mkr_stable_3)
+				Util_ApplyModifier(sg_SS3_leader, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+				Cmd_FormationMove(sg_SS3_leader, mkr_SS3_leader, false, false, mkr_SS3_leader_facing)
+			end
+			
+			if Util_GetPlayerOwner(eg_SacredSite_4) == enemyPlayer then
+				UnitEntry_DeploySquads(enemyPlayer, sg_SS4_leader, {{sbp = SBP.AYYUBID_CMP.UNIT_LEADER_SALADIN_KNIGHT_AYY, numSquads = 1 }}, mkr_castle_4)
+				Util_ApplyModifier(sg_SS4_leader, "capture_rate_squad_modifier", true, 10, MUT_Addition, MAT_Squad, true, nil)
+				Cmd_FormationMove(sg_SS4_leader, mkr_SS4_leader, false, false, mkr_SS4_leader_facing)
+			end
+			
+			conquerorActivated = true
+			
+			-- Start the Conqueror timer
+			Objective_StartTimer(OBJ_ConquerorMedal, COUNT_DOWN, conquerorCountdown*60)
+			
+			--inform game code that the conqueror mode was activated during the mission
+			Game_StoreTableData("conquerorMode", {activated = true})
+			
+			-- Remove the normal rules for reinforcements and attacks
+			if reinforceRule ~= nil then
+				Rule_RemoveWithID(reinforceRule)
+			end
+			if attackRule ~= nil then
+				Rule_RemoveWithID(attackRule)
+			end
+			-- Setup the right timings for enemy reinforces and attack when CM is triggered
+			Rule_AddOneShot(Montgisard_SetupReinforceRuleForConqueror, 60)
+			Rule_AddOneShot(Montgisard_SetupAttackRuleForConqueror, 120)
+			Util_StartIntel(EVENTS.Conqueror_Unlock)
+			
+		elseif Objective_GetTimerSeconds(OBJ_ConquerorMode) == 0 then
+			Sound_Play2D(MUS_STING_NEGATIVE)
+			Objective_Fail(OBJ_ConquerorMode, false, false) -- true, true
+			Objective_Show(OBJ_ConquerorMode, false, false)
+			conquerorExpired = true
+		end	
+		
+	end
+	
+	Montgisard_UpdatePointsOfInterest()
+	----------------------------------------------------------------
+	-- Spawn points of interest final reward upon completing all POI
+	if rewardPOI == false then
+		if completedPOI == totalPOI then
+			Montgisard_RewardPointsOfInterest()
+			rewardPOI = true
+		end
+	end
+	-- Track the allied attack (POI reward) and give the units to the player when the attack is completed
+	if TrackAlliedAttack == false and rewardPOI == true then
+			if SGroup_IsIdle(sg_allyAttack, true) == false then
+				timeSinceIdle = World_GetGameTime()
+			else
+				if World_GetGameTime() - timeSinceIdle >= 20 then
+					if SGroup_CountSpawned(sg_allyAttack) ~= 0 then
+						Army_Dissolve(ally_army)
+						SGroup_SetPlayerOwner(sg_allyAttack, localPlayer)
+	--					"Allied units have joined your army"
+						EventCues_CallToAction("$11269021", CTA_UNIQUE_CHANGE, nil, nil, SGroup_GetPosition(sg_allyAttack), 15, "icons/cta/illustrations/02_celebration")
+						TrackAlliedAttack = true
+					else
+						TrackAlliedAttack = true
+					end
+				end
+			end
+	end
+	----------------------------------------------------------------
+	-- Updates medals
+	if conquerorActivated == false and Objective_IsComplete(OBJ_SacredSitesPrimary) == false then
+		-- Gold Medal
+		if(Objective_IsStarted(OBJ_GoldMedal)) and goldMedalFailed == false then
+			if Objective_GetTimerSeconds(OBJ_GoldMedal) >= goldTime*60  then
+				Sound_Play2D(MUS_STING_NEGATIVE)
+				goldMedalFailed = true
+				Objective_Fail(OBJ_GoldMedal, true, true)
+				Objective_Show(OBJ_GoldMedal, false, false)
+
+				Objective_Register(OBJ_SilverMedal)
+				Objective_Start(OBJ_SilverMedal)
+				Objective_StartTimer(OBJ_SilverMedal, COUNT_UP, timeSinceStart)
+			end
+		end
+		-- Silver Medal
+		if(Objective_IsStarted(OBJ_SilverMedal)) and silverMedalFailed == false then
+			if Objective_GetTimerSeconds(OBJ_SilverMedal) >= silverTime*60 then
+				Sound_Play2D(MUS_STING_NEGATIVE)
+				silverMedalFailed = true
+				Objective_Fail(OBJ_SilverMedal, true, true)
+				Objective_Show(OBJ_SilverMedal, false, false)
+				
+				Objective_Register(OBJ_BronzeMedal)
+				Objective_Start(OBJ_BronzeMedal)
+				Objective_StartTimer(OBJ_BronzeMedal, COUNT_UP, timeSinceStart)
+				-- Deactivates rule that focus enemy attacks on the player's trebuchets for Bronze medal
+				Rule_RemoveGlobalEvent(Montgisard_OnEnemyBuildingDamage)
+			end
+		end
+		-- Bronze Medal
+		if(Objective_IsStarted(OBJ_BronzeMedal)) and bronzeMedalFailed == false then
+			if Objective_GetTimerSeconds(OBJ_BronzeMedal) >= bronzeTime*60 then
+				Sound_Play2D(MUS_STING_NEGATIVE)
+				bronzeMedalFailed = true
+				Objective_Fail(OBJ_BronzeMedal, false, false) -- true, true
+				Objective_Show(OBJ_BronzeMedal, false, false)
+			end
+		end
+	end
+	
+	timeSinceStart = timeElapsed
+	-----------------------------------
+	-- Tracking Conqueror Mode NOT USED
+	if conquerorActivated == true then
+		
+	end
+	
+end
+
+-- Used by enemy units to recapture neutral/player sites if they are idling near one of the site
+function Montgisard_CheckForIdleAroundSS()
+	local nearSite = false
+	local sg_unitsAroundSS = SGroup_CreateIfNotFound("sg_unitsAroundSS")
+	local allSites = {
+		eg_SacredSite_1,
+		eg_SacredSite_2,
+		eg_SacredSite_3,
+		eg_SacredSite_4
+	}
+	local markersToCheck = {
+		mkr_checkIdle1,
+		mkr_checkIdle2,
+		mkr_checkIdle3,
+		mkr_checkIdle4
+	}
+	local pos = nil
+	for i = 1, 4 do
+		pos = Util_GetPosition(markersToCheck[i])
+		Player_GetAllSquadsNearMarker(enemyPlayer, sg_unitsAroundSS, pos, 40)
+		if SGroup_CountSpawned(sg_unitsAroundSS) > 0 then
+			if Util_GetPlayerOwner(allSites[i]) ~= enemyPlayer and SGroup_IsIdle(sg_unitsAroundSS, false) == true then
+				SGroup_AttackMove(SGroup_Split(sg_unitsAroundSS, 4)[1], Util_GetPosition(allSites[i]))
+			end
+		end
+	end
+end
+
+-- Look for an available site to launch an attack from, returns a position (marker)
+function Montgisard_GetAvailableSiteForAttack()
+	
+	local enemyTable = Montgisard_GetCurrentSites(enemyPlayer)
+	local currentTable = {
+	}
+	local sg_unitsAroundSS = SGroup_CreateIfNotFound("sg_unitsAroundSS")
+	SGroup_Clear(sg_unitsAroundSS)
+
+	if Table_Contains(enemyTable, mkr_sacredsite_1) then
+		SGroup_Clear(sg_unitsAroundSS)
+		Player_GetAllSquadsNearMarker(localPlayer, sg_unitsAroundSS, mkr_checkIdle1, 40)
+		if SGroup_CountSpawned(sg_unitsAroundSS) == 0 then
+			table.insert(currentTable, mkr_sacredsite_1)
+		end
+	end
+	if Table_Contains(enemyTable, mkr_sacredsite_2) then
+		SGroup_Clear(sg_unitsAroundSS)
+		Player_GetAllSquadsNearMarker(localPlayer, sg_unitsAroundSS, mkr_checkIdle2, 40)
+		if SGroup_CountSpawned(sg_unitsAroundSS) == 0 then
+			table.insert(currentTable, mkr_sacredsite_2)
+		end
+	end
+	if Table_Contains(enemyTable, mkr_sacredsite_3) then
+		SGroup_Clear(sg_unitsAroundSS)
+		Player_GetAllSquadsNearMarker(localPlayer, sg_unitsAroundSS, mkr_checkIdle3, 40)
+		if SGroup_CountSpawned(sg_unitsAroundSS) == 0 then
+			table.insert(currentTable, mkr_sacredsite_3)
+		end
+	end
+	if Table_Contains(enemyTable, mkr_sacredsite_4) then
+		SGroup_Clear(sg_unitsAroundSS)
+		Player_GetAllSquadsNearMarker(localPlayer, sg_unitsAroundSS, mkr_checkIdle4, 40)
+		if SGroup_CountSpawned(sg_unitsAroundSS) == 0 then
+			table.insert(currentTable, mkr_sacredsite_4)
+		end
+	end
+	local size = (#currentTable)
+	if size ~= 0 then
+		local availableSite = Table_GetRandomItem(currentTable)
+		return availableSite
+	else
+		local backupSite = Table_GetRandomItem(enemyTable)
+		return backupSite
+	end
+end
+
+function HC_Montgisard_IntroSetup()
+	
+	Montgisard_StartingUnits()
+	Montgisard_EnemyUnits()
+	Montgisard_EnemyPatrols()
+	Montgisard_SpawnPointsOfInterest()
+	Montgisard_SpawnNeutralVills()
+	
+	--Also start some intro-specific units
+	sg_intro_units = SGroup_CreateIfNotFound("sg_intro_units")
+	sg_intro_patrol_1 = SGroup_CreateIfNotFound("sg_intro_patrol_1")
+	sg_intro_patrol_2 = SGroup_CreateIfNotFound("sg_intro_patrol_2")
+	sg_intro_patrol_3 = SGroup_CreateIfNotFound("sg_intro_patrol_3")
+	sg_intro_patrol_4 = SGroup_CreateIfNotFound("sg_intro_patrol_4")
+	
+	UnitEntry_DeploySquads(
+		enemyPlayer,
+		sg_intro_units,
+		{
+			{ type = "scar_spearman", numSquads = 12, spawn = mkr_intro_1, sgroup = sg_intro_patrol_1 },
+			
+			{ type = "scar_spearman", numSquads = 12, spawn = mkr_intro_5, sgroup = sg_intro_patrol_2 },
+			
+			{ type = "scar_spearman", numSquads = 12, spawn = mkr_intro_6, sgroup = sg_intro_patrol_3 },
+			
+			{ type = "scar_spearman", numSquads = 12, spawn = mkr_intro_9, sgroup = sg_intro_patrol_4 },
+		}
+	)
+	
+	sg_intro_raiders = SGroup_CreateIfNotFound("sg_intro_raiders")
+	SGroup_AddGroup(sg_intro_raiders, sg_temp)
+	
+	Cmd_Move(sg_intro_patrol_1, mkr_intro_2, true)
+	Cmd_Move(sg_intro_patrol_1, mkr_intro_3, true)
+	Cmd_Move(sg_intro_patrol_1, mkr_intro_4, true)
+	Cmd_Move(sg_intro_patrol_1, mkr_intro_5, true)
+	Cmd_Move(sg_intro_patrol_1, mkr_intro_6, true)
+	Cmd_Move(sg_intro_patrol_1, mkr_intro_7, true)
+	Cmd_Move(sg_intro_patrol_1, mkr_intro_8, true)
+	
+	Cmd_Move(sg_intro_patrol_2, mkr_intro_6, true)
+	Cmd_Move(sg_intro_patrol_2, mkr_intro_7, true)
+	Cmd_Move(sg_intro_patrol_2, mkr_intro_8, true)
+	
+	Cmd_Move(sg_intro_patrol_3, mkr_intro_9, true)
+	Cmd_Move(sg_intro_patrol_3, mkr_intro_12, true)
+	Cmd_Move(sg_intro_patrol_3, mkr_intro_13, true)
+	
+	Cmd_Move(sg_intro_patrol_4, mkr_intro_10, true)
+	Cmd_Move(sg_intro_patrol_4, mkr_intro_11, true)
+	
+end
+
+function HC_Montgisard_IntroTeardown()
+	
+	SGroup_DestroyAllSquads(sg_intro_units)
+	SGroup_Destroy(sg_intro_units)
+	
+	--Now create patrol 4, which otherwise would have gotten in the way of the intro units
+	local units = {
+		"scar_spearman",
+		"scar_archer",
+	}
+	Montgisard_CreatePatrol(units, sg_enemyPatrol_04, path04, path04_reverse, 3, 3)
+	
+end

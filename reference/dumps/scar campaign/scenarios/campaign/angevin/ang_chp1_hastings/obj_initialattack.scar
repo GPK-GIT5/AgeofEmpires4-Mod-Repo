@@ -1,0 +1,595 @@
+--
+-- Hastings 1066 - Initial Attack objective
+--
+
+
+function InitialAttack_InitObjectives()
+
+	
+	-- there's no objective for this - it's covered by the DefeatSaxons objective
+	
+	
+	
+	--
+	-- any other variable initialization can go in here
+	--
+	
+	shieldWall_unitKillCount = 0
+	b_attackLaunched = false
+	
+	PASS_CONTROL_DELAY = 0.5
+	
+	-- ui
+	UI_LAUNCHATTACKBUTTON = "LaunchAttack"
+	uiData_LaunchAttackButton = {Visible = false}
+	
+	UI_LaunchAttackButton_CreateUI()
+	
+	
+end
+
+
+
+--
+-- any other script relating to this objective should go down below here
+--
+
+
+
+
+function InitialAttack_WaitForPlayerToIssueCommand()
+	
+	Player_GetAll(player1)
+	
+	if SGroup_IsMoving(sg_allsquads, ANY) == true or b_attackLaunched == true then
+	--if b_attackLaunched == true then
+		
+		Rule_RemoveMe()	
+		
+		timeStamp_initialAttackCharge = World_GetGameTime()
+		
+		-- play animation on William?
+		-- TODO
+		
+		-- center group charge up hill
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_LARGE, sg_william_center)
+		
+		Hastings_StaggeredAttack(sg_dukewilliam, sg_shieldwall_b, {style = "clean", backupTarget = mkr_shieldwall_b})	
+		Hastings_StaggeredAttack(sg_william_center, sg_shieldwall_b, {style = "shaggy", backupTarget = mkr_shieldwall_b})
+		
+		-- queue up left and right flanks to charge also 
+		Rule_AddOneShot(InitialAttack_MoveFlanksUpHill, 1, {sgroup = sg_william_left, target = sg_shieldwall_a, backupTarget = mkr_shieldwall_a})
+		Rule_AddOneShot(InitialAttack_MoveFlanksUpHill, 2, {sgroup = sg_william_right, target = sg_shieldwall_c, backupTarget = mkr_shieldwall_c})
+
+		---- queue up william following them up (after his anim has finished)
+		--Rule_AddOneShot(InitialAttack_MoveWilliamUpHill, 8, {sgroup = sg_dukewilliam, target = sg_shieldwall_b})
+		
+		-- start up the music
+		Music_PlayStinger("sfx_ui_shared_attack_horn_under_attack_high")
+		Music_SetIntensityAfterObjective(0, MUSIC_TENSE_COMBAT_RARE)
+		Sound_SetMinimumMusicCombatIntensity(801, 0) -- lock music to tense as minimum intensity
+		
+		Rule_AddOneShot(InitialAttack_WaitForPlayerToIssueCommand_PartB, 4)
+		
+		Rule_AddOneShot(InitialAttack_EnableWilliamsArchers, 2)
+		
+		Rule_AddInterval(InitialAttack_UnitsAtTopOfHill, 1)
+		
+	end
+	
+end
+function InitialAttack_WaitForPlayerToIssueCommand_PartB()
+	
+	Util_StartIntel(EVENTS.Shieldwall_Charge)
+	
+end
+
+function InitialAttack_MoveFlanksUpHill(context, data)
+
+	Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, data.sgroup)
+	Hastings_StaggeredAttack(data.sgroup, data.target, {style = "shaggy", origin = Util_GetPosition(sg_dukewilliam), passControl = true, backupTarget = data.backupTarget})	
+	--Rule_AddOneShot(InitialAttack_PassControlOfUnitsToPlayer, PASS_CONTROL_DELAY, data)
+	
+end
+
+
+function Hastings_StaggeredAttack(group, target, options)
+	
+	local options = options or {}
+	options.origin = options.origin or Util_GetPosition(target)		-- the origin point for choosing squad order - units closer to this position get sent first
+	options.style = options.style or "shaggy"						-- "shaggy" or "clean" - does it slightly randomize the order it sends people to attack (shaggy) or not (clean)
+	options.passControl = options.passControl or false 
+	options.numToSend = options.numToSend or 5
+	
+	--if options.backupTarget == nil then 
+		--if scartype(target) == ST_SGROUP and SGroup_CountSpawned(target) >= 1 then 
+			--options.backupTarget = Util_GetPosition(target)
+		--end
+	--end
+	
+	local tempSGroup = SGroup_CreateUnique("")
+	SGroup_AddGroup(tempSGroup, group)
+	
+	Rule_AddInterval(Hastings_StaggeredAttack_Manager, 0.25, {sgroup = tempSGroup, target = target, options = options})
+	
+end
+
+function Hastings_StaggeredAttack_Manager(context, data)
+	
+	local commandSGroup = SGroup_CreateUnique("")
+	
+	local numToSend = data.options.numToSend
+	local numToChoose = numToSend 
+	if data.options.style == "shaggy" then 
+		numToChoose = math.floor(numToChoose * 1.66)
+	end
+	
+	for index = 1, numToChoose do 
+		if SGroup_CountSpawned(data.sgroup) >= 1 then
+			local squad = SGroup_GetClosestSquad(data.sgroup, data.options.origin)
+			SGroup_Remove(data.sgroup, squad)
+			SGroup_Add(commandSGroup, squad)
+		end
+	end
+
+	while SGroup_CountSpawned(commandSGroup) > numToSend do 
+		local squad = SGroup_GetRandomSpawnedSquad(commandSGroup)
+		SGroup_Remove(commandSGroup, squad)
+		SGroup_Add(data.sgroup, squad)
+	end
+	
+
+	if SGroup_CountSpawned(commandSGroup) >= 1 then
+		
+		if scartype(data.target) == ST_SGROUP and SGroup_CountSpawned(data.target) == 0 and data.options.backupTarget ~= nil then 
+			Cmd_AttackMove(commandSGroup, data.options.backupTarget)
+		else
+			Cmd_AttackMove(commandSGroup, data.target)
+		end
+		
+		if data.options.passControl == true then 
+			Rule_AddOneShot(InitialAttack_PassControlOfUnitsToPlayer, PASS_CONTROL_DELAY, {sgroup = commandSGroup, deleteSGroupAfterwards = true})
+		else
+			SGroup_Destroy(commandSGroup)	
+		end
+		
+	else
+		SGroup_Destroy(commandSGroup)	
+	end
+	
+	if SGroup_CountSpawned(data.sgroup) == 0 then
+		SGroup_Destroy(data.sgroup)
+		Rule_RemoveMe()
+	end
+	
+end
+
+
+
+
+function InitialAttack_MoveWilliamUpHill(context, data)
+
+	Sound_PlayOnSquad(WALLA_CAMP_CHARGE_SMALL, data.sgroup)
+	Cmd_AttackMove(data.sgroup, data.target)	
+	Rule_AddOneShot(InitialAttack_MoveWilliamUpHill_PartB, PASS_CONTROL_DELAY, data)
+
+end
+function InitialAttack_MoveWilliamUpHill_PartB(context, data)
+	
+	g_leaderWilliam.owner = player1
+	Hastings_PassControlOfUnitsToPlayer(data.sgroup)				
+	
+end
+
+function InitialAttack_PassControlOfUnitsToPlayer(context, data)
+
+	Hastings_PassControlOfUnitsToPlayer(data.sgroup)				
+	
+	if data.deleteSGroupAfterwards == true then 
+		SGroup_Destroy(data.sgroup)
+	end
+	
+end
+
+
+function InitialAttack_UnitsAtTopOfHill()
+	
+	if Prox_AreSquadsNearMarker(sg_william_center, mkr_shieldwall_a, ANY) or Prox_AreSquadsNearMarker(sg_william_center, mkr_shieldwall_b, ANY) or Prox_AreSquadsNearMarker(sg_william_center, mkr_shieldwall_c, ANY) then
+		
+		Rule_RemoveMe()
+
+		Sound_PlayOnSquad(WALLA_CAMP_SPEARWALL_LARGE, sg_shieldwall_b)
+		
+		Rule_AddOneShot(InitialAttack_UnitsAtTopOfHill_PartB, 10)
+		
+		-- show the leader ability hint
+		if UI_IsXboxControllerUI() then
+			MissionTutorial_AddHintToLeaderAbility_Xbox()			
+		else
+			MissionTutorial_AddHintToLeaderAbility()
+		end
+		
+		
+		MissionTutorial_AddHintToLeaderRevive()				-- show revive hint when applicable
+
+		--Hastings_BacklineCheer(true)
+	end
+	
+end
+
+function InitialAttack_UnitsAtTopOfHill_PartB()
+	
+	Util_StartIntel(EVENTS.ShieldWall_Engaged)
+	
+	timeStamp_ShieldWallEngaged = World_GetGameTime()
+
+	Rule_AddInterval(InitialAttack_ShieldWallUnitsKilled, 1)
+	
+end
+
+function InitialAttack_ShieldWallUnitsKilled()
+	
+	if shieldWall_unitKillCount >= 4 or (World_GetGameTime() - timeStamp_ShieldWallEngaged >= 15 and SGroup_IsUnderAttack(sg_shieldwall_b, ANY, 1)) then 
+		
+		Rule_RemoveMe()
+		
+		Util_StartIntel(EVENTS.ShieldWall_Unbreakable)
+		
+		Rule_AddOneShot(Feign_StartObjective, 15)
+		
+	end
+	
+end
+
+function InitialAttack_ShieldWallUnitKilled()		-- this is triggered via a callback from the shield wall scripts
+	
+	shieldWall_unitKillCount = shieldWall_unitKillCount + 1
+	
+end
+
+
+
+function InitialAttack_EnableWilliamsArchers()
+
+	Modifier_Remove(modid_playerArcherRange)
+	modid_playerArcherRange = Modify_WeaponRange(sg_archers, "hardpoint_01", 2.6)							-- make player archers reach the shield wall
+	
+	InitialAttack_EnableWilliamsArchers_FirstVolley(sg_archers_left1, sg_shieldwall_a)
+	
+	InitialAttack_EnableWilliamsArchers_FirstVolley(sg_archers_center1, sg_shieldwall_b)
+	InitialAttack_EnableWilliamsArchers_FirstVolley(sg_archers_center2, sg_shieldwall_b)
+	
+	InitialAttack_EnableWilliamsArchers_FirstVolley(sg_archers_right1, sg_shieldwall_c)
+
+	
+end
+function InitialAttack_EnableWilliamsArchers_FirstVolley(group, target)
+
+	Cmd_Attack(group, target)
+
+	local copySGroup = SGroup_CreateUnique("")
+	SGroup_AddGroup(copySGroup, group)
+	
+	Rule_AddOneShot(InitialAttack_EnableWilliamsArchers_StopAgain, 1, {sgroup = copySGroup, target = target})
+	
+end
+function InitialAttack_EnableWilliamsArchers_StopAgain(context, data)
+	
+	Cmd_Stop(data.sgroup)
+	Rule_AddInterval(InitialAttack_EnableWilliamsArchers_Stagger, {delay = 1, interval = 0.25}, data)
+	
+end
+
+function InitialAttack_EnableWilliamsArchers_Stagger(context, data)
+
+	local rand = World_GetRand(1, 2)
+	SGroup_Clear(sg_temp)
+	
+	for index = 1, rand do 
+		if SGroup_CountSpawned(data.sgroup) >= 1 then 
+			local squad = SGroup_GetRandomSpawnedSquad(data.sgroup)
+			SGroup_Remove(data.sgroup, squad)
+			SGroup_Add(sg_temp, squad)
+		end
+	end
+	
+	if SGroup_CountSpawned(sg_temp) >= 1 then 
+		Cmd_Attack(sg_temp, data.target)
+	end
+	
+	if SGroup_CountSpawned(data.sgroup) == 0 then 
+		SGroup_Destroy(data.sgroup)
+		Rule_RemoveMe()
+	end
+	
+end
+
+
+
+
+
+
+
+function InitialAttack_StartReinforcements()
+	
+	local totalUnits = SGroup_Count(sg_william_left) + SGroup_Count(sg_william_center) + SGroup_Count(sg_william_right)
+	local finalRatio = 75 / totalUnits 
+	
+	print("total units: "..totalUnits)
+	
+	-- player reinforcements
+	local left = {
+		sgroup = sg_william_left,
+		sgroup_secondLine = sg_william_left_secondline,
+		originalCount = SGroup_Count(sg_william_left),
+		drawDownCount = math.floor(SGroup_Count(sg_william_left) * (1 - finalRatio)),
+		desiredFinalCount = math.ceil(SGroup_Count(sg_william_left) * finalRatio),
+		target = sg_shieldwall_a,
+		backupTarget = mkr_shieldwall_a,
+		spawn = mkr_william_left_reinforce_spawn,
+	}
+	local center = {
+		sgroup = sg_william_center,
+		sgroup_secondLine = sg_william_center_secondline,
+		originalCount = SGroup_Count(sg_william_center),
+		drawDownCount = math.floor(SGroup_Count(sg_william_center) * (1 - finalRatio)),
+		desiredFinalCount = math.ceil(SGroup_Count(sg_william_center) * finalRatio),
+		target = sg_shieldwall_b,
+		backupTarget = mkr_shieldwall_b,
+		spawn = mkr_william_center_reinforce_spawn,
+	}
+	local right = {
+		sgroup = sg_william_right,
+		sgroup_secondLine = sg_william_right_secondline,
+		originalCount = SGroup_Count(sg_william_right),
+		drawDownCount = math.floor(SGroup_Count(sg_william_right) * (1 - finalRatio)),
+		desiredFinalCount = math.ceil(SGroup_Count(sg_william_right) * finalRatio),
+		target = sg_shieldwall_c,
+		backupTarget = mkr_shieldwall_c,
+		spawn = mkr_william_right_reinforce_spawn,
+	}
+	Rule_AddInterval(InitialAttack_ReinforcePlayer, {delay = 0.25, interval = 1}, left)
+	Rule_AddInterval(InitialAttack_ReinforcePlayer, {delay = 0.5, interval = 1}, center)
+	Rule_AddInterval(InitialAttack_ReinforcePlayer, {delay = 0.75, interval = 1}, right)
+	
+	
+	-- shield wall reinforcements
+	local shieldwall_a = {
+		wallid = wallid_a,
+		sgroup = sg_shieldwall_a,
+		reinforcementPoint = mkr_harold_reinforce_left,
+		originalCount = SGroup_CountSpawned(sg_shieldwall_a),		
+	}
+	local shieldwall_b = {
+		wallid = wallid_b,
+		sgroup = sg_shieldwall_b,
+		reinforcementPoint = mkr_harold_reinforce,
+		originalCount = SGroup_CountSpawned(sg_shieldwall_b),		
+	}
+	local shieldwall_c = {
+		wallid = wallid_c,
+		sgroup = sg_shieldwall_c,
+		reinforcementPoint = mkr_harold_reinforce_right,
+		originalCount = SGroup_CountSpawned(sg_shieldwall_c),		
+	}
+	Rule_AddInterval(InitialAttack_ReinforceShieldWall, 2, shieldwall_a)
+	Rule_AddInterval(InitialAttack_ReinforceShieldWall, 2, shieldwall_b)
+	Rule_AddInterval(InitialAttack_ReinforceShieldWall, 2, shieldwall_c)
+	
+end
+
+
+
+function InitialAttack_ReinforceShieldWall(context, data)
+	
+	if b_shieldWallBroken == true then 
+		Rule_RemoveMe()
+	else 
+
+		
+		if SGroup_Count(data.sgroup) <= (data.originalCount - 2) then 
+							
+			SGroup_Clear(sg_temp)
+			
+			local spawnPos = World_GetHiddenPositionOnPath(player1, data.reinforcementPoint, data.wallid.location.posMiddle, CHECK_IN_FOW)
+			if spawnPos == nil then 
+				spawnPos = mkr_harold_reinforce
+			end
+			
+			-- spawn new units and add them to the rear flank
+			local units = {
+				{sbp = SBP.ENGLISH.UNIT_SHIELDWALL_HASTINGS_CMP_ENG, numSquads = 2, ability = LINE_FORMATION},
+			}
+			UnitEntry_DeploySquads(player2, sg_temp, units, spawnPos)
+		
+			ShieldWall_AddSGroup(data.wallid, sg_temp)
+			
+		end
+		
+	end
+	
+end
+
+
+
+--
+-- Reinforce player units from the second line that's waiting at the foot of the hill (the ones that join after the feign), and backfill those units
+--
+
+function InitialAttack_ReinforcePlayer(context, data)
+	
+	if data.timeStamp_lastReinforcement == nil then 
+		data.timeStamp_lastReinforcement = 0 
+	end
+	
+	if b_shieldWallBroken == true then 
+		
+		Rule_RemoveMe()
+		
+	elseif timeStamp_initialAttackCharge ~= nil then
+		
+		-- we're going to draw down the player numbers slightly over the course of this section by slowly lowering the reinforce thresholds
+		
+		local timeSinceInitialAttack = World_GetGameTime() - timeStamp_initialAttackCharge
+		local drawDownAmount = math.floor(math.max((timeSinceInitialAttack - 15) * 0.15, 0))
+		local desiredCount = data.originalCount - math.min(drawDownAmount, data.drawDownCount)
+		
+		if SGroup_CountSpawned(data.sgroup) <= (desiredCount - 2) and (World_GetGameTime() - data.timeStamp_lastReinforcement) >= 4 then 
+			
+			print("Reinforecement after "..timeSinceInitialAttack.." seconds. "..SGroup_CountSpawned(data.sgroup).." of "..desiredCount.." units. Draw down = "..math.min(drawDownAmount, data.drawDownCount).." of "..data.drawDownCount)
+
+			local numUnitsToReplace = math.min(desiredCount - SGroup_CountSpawned(data.sgroup), 3)		-- a max of three at a time
+			local replacementUnits = {}
+			
+			SGroup_Clear(sg_temp)
+			
+			-- pick some units from the second line to run up the hill and reinforce the units at the shield wall 
+			for index = 1, numUnitsToReplace do 
+				if SGroup_CountSpawned(data.sgroup_secondLine) >= 1 then 
+					local squad = SGroup_GetRandomSpawnedSquad(data.sgroup_secondLine)
+					if Squad_IsIdle(squad) then 
+						SGroup_Remove(data.sgroup_secondLine, squad)
+						SGroup_Add(sg_temp, squad)
+						local unit = {
+							squadWorldID = Squad_GetID(squad),
+							sbp = Squad_GetBlueprint(squad),
+							destination = Util_GetPosition(squad),
+							facing = Util_GetOffsetPosition(squad, OFFSET_FRONT, 10),
+							ability = LINE_FORMATION,
+						}
+						table.insert(replacementUnits, unit)
+					end
+				end
+			end
+			
+			
+			if SGroup_CountSpawned(sg_temp) >= 1 then
+				
+				-- send them off 
+				if SGroup_CountSpawned(data.target) >= 1 then 
+					Cmd_AttackMove(sg_temp, data.target)
+				else
+					Cmd_AttackMove(sg_temp, data.backupTarget)
+				end
+				SGroup_AddGroup(data.sgroup, sg_temp)
+				SGroup_AddGroup(sg_initialattack_playerreinforcements, sg_temp)
+				
+				Rule_AddOneShot(InitialAttack_ReinforcePlayer_SwapPlayerOwner, PASS_CONTROL_DELAY, {originalData = data, replacementUnits = replacementUnits})
+				Rule_AddOneShot(InitialAttack_ReinforcePlayer_SpawnReplacementUnits, (World_GetRand(2, 4) / 2), {originalData = data, replacementUnits = replacementUnits})
+				
+				data.timeStamp_lastReinforcement = World_GetGameTime()
+				
+			end
+			
+		end
+		
+	end
+		
+end
+
+
+function InitialAttack_ReinforcePlayer_SwapPlayerOwner(context, data)
+
+	for index, unit in pairs(data.replacementUnits) do 
+		
+		if Squad_IsValid(unit.squadWorldID) then 
+			
+			local squad = Squad_FromID(unit.squadWorldID)
+			
+			Hastings_PassControlOfUnitsToPlayer(squad)
+			SGroup_Remove(sg_initialattack_playerreinforcements, squad)
+			
+		end
+		
+	end
+	
+end
+
+
+function InitialAttack_ReinforcePlayer_SpawnReplacementUnits(context, data)
+	
+	if b_shieldWallBroken == false then
+		
+		-- create some replacements to backfill the player's second line
+		local options = {
+			dynamicSpawnType = DST_FURTHEST_HIDDEN,
+		}
+		UnitEntry_DeploySquads(player3, data.originalData.sgroup_secondLine, data.replacementUnits, data.originalData.spawn, nil, nil, options)
+		Misc_SetSGroupSelectable(data.originalData.sgroup_secondLine, false)
+
+	end
+
+end
+
+
+
+
+
+--
+-- UI portion
+--
+
+function UI_LaunchAttackButton_CreateUI() 
+
+	local xaml =
+[[<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" 
+		xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" 
+		xmlns:engineSharedControls="clr-namespace:WPFGUI.Shared.Controls;assembly=EngineUI"
+		xmlns:sharedConverters="clr-namespace:WPFGUI.Shared.Converters;assembly=EngineUI"
+		HorizontalAlignment="Center" 
+		VerticalAlignment="Bottom" 
+		SnapsToDevicePixels="True"
+		Margin="0,0,0,350"
+		MinWidth="258"
+		MaxWidth="380"
+		Visibility="{Binding [Visible], Converter={StaticResource BoolToVis}}">
+	<Grid.Resources>
+		<ResourceDictionary.MergedDictionaries>
+			<ResourceDictionary Source="pack://application:,,,ui/Resources/HUDResources.xaml" />
+		</ResourceDictionary.MergedDictionaries>	
+	</Grid.Resources>	
+	<Grid.RowDefinitions>
+	    <RowDefinition Height="*" />
+	</Grid.RowDefinitions>	
+	<Grid.ColumnDefinitions>
+		<ColumnDefinition Width="*" />
+	</Grid.ColumnDefinitions>		
+	<Button Grid.Row="0" Grid.Column="0" Style="{StaticResource HUDBaseButtonStyle}"  
+			Command="{Binding [LaunchAttackCommand]}" 
+			CommandParameter="0"
+			HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+			Height="50"
+			Width="240"
+			Margin="10,10,10,10"
+			HorizontalContentAlignment="Center" >
+       	<TextBlock Text="{utility:LocString $11191234}"
+			       Style="{StaticResource HUDWhiteBodyTextBlock14ptSemiBoldStyle}" />
+	</Button>
+</Grid>	
+]]
+	
+	UI_Remove(UI_LAUNCHATTACKBUTTON)
+	UI_AddChild("", "XamlPresenter", UI_LAUNCHATTACKBUTTON, { IsHitTestVisible = true, Xaml = xaml, DataContext =  UI_CreateDataContext(uiData_LaunchAttackButton) })		
+	
+end
+
+function UI_LaunchAttackButton_SetVisible(visible)
+	
+	uiData_LaunchAttackButton = {
+		Visible = visible,
+		LaunchAttackCommand = UI_CreateCommand("UI_LaunchAttackButton_ButtonCallback"),
+	}
+	
+	UI_SetDataContext(UI_LAUNCHATTACKBUTTON, uiData_LaunchAttackButton)
+	
+end
+
+function UI_LaunchAttackButton_ButtonCallback(parameter)		
+	
+	b_attackLaunched = true						-- set a flag that launches the attack
+	UI_LaunchAttackButton_SetVisible(false)		-- remove the button
+	
+end
+
+
+

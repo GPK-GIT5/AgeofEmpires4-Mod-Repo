@@ -1,0 +1,257 @@
+-----------------------------------------------------------------------
+--
+-- Campaign Training Goals
+--
+-- (c) Relic Entertainment 2018
+--
+-----------------------------------------------------------------------
+
+import("training.scar")
+import("training/coretrainingconditions.scar")
+
+Core_RegisterModule("CampaignTrainingGoals")
+
+
+local goal_rescue_leader = "goal_rescue_leader"
+
+
+function CampaignTrainingGoals_OnInit()
+	
+	if Core_IsModuleRegistered("CoreTrainingGoals") then 
+		
+		Core_UnregisterModule("CampaignTrainingGoals")			-- unregister this, and let the core training system do it's stuff instead
+		
+	else
+		
+		sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+		eg_currentSelection = EGroup_CreateIfNotFound("eg_currentSelection")
+		eg_nearbyDeposits = EGroup_CreateIfNotFound("eg_nearbyDeposits")
+		
+		training_currentConstructionBlueprint = nil
+		training_currentHoverBlueprint = nil
+		training_previousContructionBlueprint = nil
+		
+		training_currentAbilityBlueprint = nil
+		training_previousAbilityBlueprint = nil
+		
+		UI_SetModalConstructionPhaseCallback(OnConstructionPhaseChange)
+		UI_SetModalAbilityPhaseCallback(OnAbilityPhaseChange)
+		UI_SetModalHoverCallback(OnHoverChange)
+		
+	end
+	
+end
+
+function CampaignTrainingGoals_OnGameOver()
+end
+
+
+
+
+--
+-- Downed Leader
+--
+function TrainingGoal_AddLeaderRecovery()
+	
+	local leaderRescueGoal = Training_Goal("Cursor", 
+		{Message = UI_PickIDForInputMode(11191705, 11248614), DataTemplate="RightClickTrainingDataTemplate"},
+		UserIsMovingToLeader)
+	local leaderRescueGoalSequence = Training_GoalSequence(goal_rescue_leader, 
+		1, 1, --If these are both set to -1, it will keep repeating the training
+		LeaderDown, -- trigger
+		nil,        -- ignore
+		nil,        -- remind
+		nil,        -- bypass
+		false, 
+		{leaderRescueGoal})
+	Training_AddGoalSequence(leaderRescueGoalSequence)
+end
+
+function LeaderDown(goalSequence)
+	
+	for index, leaderData in pairs(t_allLeaders) do 
+		
+		local squad = SGroup_GetSpawnedSquadAt(leaderData.sgroup, 1)
+		
+		if Squad_GetPlayerOwner(squad) ~= leaderData.owner then
+			goalSequence.goals[goalSequence.currentGoalIndex].key = Squad_GetID(squad)
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserIsMovingToLeader(goal)
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	SGroup_Filter(sg_currentSelection, "scar_villager", FILTER_REMOVE)
+	SGroup_Filter(sg_currentSelection, "gaia", FILTER_REMOVE)
+	
+	if SGroup_CountSpawned(sg_currentSelection) > 0 and Squad_IsValid(goal.key) then
+		
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			
+			if Squad_HasDestination(squad) then
+				
+				local destination = Squad_GetDestination(squad)
+				local distance = Util_GetDistance(destination, Squad_GetPosition(Squad_FromID(goal.key)))
+				if distance <= 12 then --use recoverRadius?
+					return true
+				end		
+			end
+		end
+	end
+	
+	return false
+end
+
+--? @shortdesc This function/predicate is to be used on the ignore predicate of a tutorial goal sequence. This allows the sequence to timeout and be disabled. 
+--? The goal sequence can be re-enabled manually the same way it was initialized the first time.
+function CampaignTraining_TimeoutIgnorePredicate(goalSequence)
+	if goalSequence.isActive then
+		local sequenceTimeoutID = goalSequence.timeoutID
+		local goalTimerID = goalSequence.goals[goalSequence.currentGoalIndex].timerID
+		
+		if goalTimerID ~= nil and Timer_Exists(goalTimerID) then
+			if sequenceTimeoutID ~= nil then
+				if Timer_Exists(sequenceTimeoutID) ~= true then
+					Timer_Start(goalSequence.timeoutID, __t_trainingInfiniteTimerDuration)
+				elseif Timer_Exists(sequenceTimeoutID) then
+					if Timer_GetElapsed(sequenceTimeoutID) > 120 then
+						if Timer_GetElapsed(goalTimerID) > 15 then
+							Training_EnableGoalSequence(goalSequence, false)
+							return true
+						end
+					elseif Timer_GetElapsed(goalTimerID) > 60 then
+						Training_EnableGoalSequence(goalSequence, false)
+						return true
+					end
+				end
+			end
+		end
+	end
+end
+
+
+-----------------------------------------------------------
+-- Tribute / Diplomacy Panel Hint (only used on console)
+-----------------------------------------------------------
+
+function CampaignTraining_AddDiplomacyPanelHint(message, sequence_id)
+	
+	_userHasOpenedDiplomacyMenu = false
+	
+	local open_panel_goal = Training_Goal("DiplomacyButton",
+		{Message = message, DataTemplate="GenericTrainingDataTemplate"}, 
+		CampaignTraining_UserHasOpenedTheDiplomacyMenu)
+	
+	local diplomacy_hint_sequence = Training_GoalSequence(sequence_id,
+		1, 0, 
+		AShortPeriodOfTimeHasPassed, -- trigger
+		CampaignTraining_TimeoutIgnorePredicate, -- ignore
+		nil, -- remind
+		CampaignTraining_UserHasOpenedTheDiplomacyMenu, -- bypass
+		true, 
+		{open_panel_goal})
+	Training_AddGoalSequence(diplomacy_hint_sequence)
+	
+	Training_EnableGoalSequenceByID(sequence_id, true)
+end
+
+function CampaignTraining_UserHasOpenedTheDiplomacyMenu()
+	if not _userHasOpenedDiplomacyMenu and _diplomacy ~= nil and _diplomacy.data_context ~= nil then
+		_userHasOpenedDiplomacyMenu = _diplomacy.data_context.is_ui_expanded
+	end	
+	return _userHasOpenedDiplomacyMenu
+end
+
+----------------------------------------------------------------------------
+--- Function to check hover time when looking at leader abilities
+----------------------------------------------------------------------------
+
+function PredicateHelper_HasUserHoveredOverBP(goal, bp)
+	--on controller we don't need the user to "hover", we need them to have the menu open for a bit of time
+	if UI_IsXboxControllerUI() then
+		return Timer_GetElapsed(goal.timerID) > __t_trainingRadialInterval 
+	end
+		
+	-- carry on the remaining logic if we aren't on controller
+	local currentTime = Timer_GetElapsed(goal.timerID)
+	if goal.temp.lastTimeWithoutLooking == nil then 
+		goal.temp.lastTimeWithoutLooking = 0 
+	end
+	
+	if scartype(bp) ~= ST_TABLE then 
+		bp = {bp}
+	end
+	
+	if Table_Contains(bp, training_currentHoverBlueprint) then
+		if currentTime - goal.temp.lastTimeWithoutLooking > __t_trainingHoverInterval then 
+			return true
+		end
+		
+		return false
+	end
+	
+	goal.temp.lastTimeWithoutLooking = currentTime
+	return false
+	
+end	
+
+
+-- helper function used for tracking construction phases 
+-- this needs to be fired with UI_SetModalConstructionPhaseCallback in Mission_Preset
+function TrainingContructionCallback(blueprint, phase, queueCount)
+	
+	if g_training_log == nil then
+		g_training_log = {}
+	end
+		
+	if phase == TP_Position then
+		g_training_log.phase = "position phase"
+		g_training_log.BP = blueprint
+		g_training_log.blueprint_name = BP_GetName(blueprint)
+	elseif phase == TP_Facing then
+		g_training_log.phase = "facing phase"
+		g_training_log.BP = blueprint
+		g_training_log.blueprint_name = BP_GetName(blueprint)
+	elseif phase == TP_Issued then
+		g_training_log.phase = "issued phase"
+		g_training_log.BP = blueprint
+		g_training_log.blueprint_name = BP_GetName(blueprint)
+	elseif phase == TP_Cancelled then
+		g_training_log.phase = "cancelled phase"
+		g_training_log.BP = "none"
+		g_training_log.blueprint_name = "none"
+	else
+		g_training_log.phase = "unknown phase"
+		g_training_log.BP = blueprint
+		g_training_log.blueprint_name = BP_GetName(blueprint)
+	end
+	
+	--if Misc_IsCommandLineOptionSet("dev") then
+		
+		--view (g_training_log)
+		
+	--end
+	
+end
+
+-- this function returns true if the player is in the placing modal or has placed the specified blueprint
+function IsEntityBeingPlacedOrBuilt (blueprint)
+	
+	if g_training_log == nil then
+		return false
+	end
+	
+	if (g_training_log.phase == "position phase" or g_training_log.phase == "issued phase") and (g_training_log.BP == blueprint) then
+		
+		return true
+	else
+		--view (goal)
+		return false
+	end
+
+end

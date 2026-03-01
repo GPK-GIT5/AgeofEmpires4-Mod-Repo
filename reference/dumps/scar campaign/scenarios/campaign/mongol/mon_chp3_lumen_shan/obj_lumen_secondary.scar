@@ -1,0 +1,143 @@
+--
+-- Lumen Shan 1268 - Wall Off Passage
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function LumenShan_InitObjectivesSecondary()
+
+	--
+	-- Recruit Bohekou
+	--
+	OBJ_Bohekou = { Title = "$11178728", Type = ObjectiveType_Optional,
+		
+		Intel_Start = EVENTS.BohekouVillage_Start,
+		Intel_Complete = EVENTS.BohekouVillage_Complete,
+		
+		PreStart = function()
+			OBJ_Bohekou.uiIndicator = Objective_AddUIElements(OBJ_Bohekou, mkr_neutral_bohekou, true, "$11178729", true)
+			OBJ_Bohekou.uiRadius = Objective_AddGroundReticule(OBJ_Bohekou, mkr_neutral_bohekou, Marker_GetProximityRadiusOrDefault(mkr_neutral_bohekou, 0), BP_GetReticuleBlueprint("capture_friendly"))
+			
+			MissionOMatic_Objective_SetupHintpoints(SOBJ_GeneralToVillage,
+			{
+				{
+					marker = mkr_neutral_bohekou,
+					text = "$11178729",
+					blip = true,
+					worldArrow = true,
+				},
+			})
+		end,
+		
+		IsComplete = function ()
+			return Objective_IsComplete(SOBJ_GeneralToVillage)
+		end,
+		
+		PreComplete = function()
+			-- Remove the UI
+			Objective_RemoveUIElements(OBJ_Bohekou, OBJ_Bohekou.uiIndicator)
+			Objective_RemoveGroundReticule(OBJ_Bohekou, OBJ_Bohekou.uiRadius)
+			-- Also add an audio monitor
+			Rule_AddInterval(Lumen_CheckLossBohekou, 3)
+		end,
+		
+		OnComplete = function()
+			Util_AutoSave()
+		end,
+	}
+	SOBJ_GeneralToVillage = { Title = "$11178731", Type = ObjectiveType_Optional, Parent = OBJ_Bohekou,
+		StartAlongsideParent = true,
+		IsComplete = function()
+			Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_neutral_bohekou, Marker_GetProximityRadiusOrDefault(mkr_neutral_bohekou, 0))
+			return SGroup_Count(sg_temp) > 0
+		end,
+		
+		OnComplete = function()
+			-- Complete the main objective
+			-- Bump the pop cap
+			Player_SetPopCapOverride(g_playerMongol, 200)
+			-- Capture Bohekou and its units
+			local locationTable = LOCATION("Bohekou")
+			Sound_PlayWallaSpearwallOnSGroup(sg_bohekou_troops)
+			Location_SetPlayerOwner(locationTable, g_playerMongol)
+			SGroup_SetPlayerOwner(sg_bohekou_troops, g_playerMongol)
+			-- Reveal the area
+			Lumen_RevealAroundBohekou()
+		end,
+	}
+	OBJ_HintBridge = { Title = "$11184822", Type = ObjectiveType_Optional,
+		
+		IsSecret = true,
+		showTitle = false,
+		playIntel = false,
+		targetBridge = nil,
+		hintpointID = nil,
+		
+		PreStart = function()
+			OBJ_HintBridge.hintpointID = HintPoint_Add(OBJ_HintBridge.targetBridge, true, "$11184822", 5)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			return Entity_GetHealthPercentage(OBJ_HintBridge.targetBridge) < 0.5
+		end,
+		
+		OnComplete = function()
+			if OBJ_HintBridge.hintpointID ~= nil then
+				HintPoint_Remove(OBJ_HintBridge.hintpointID)
+			end
+		end,
+		
+		IsFailed = function()
+			
+		end,
+		
+		OnFail = function()
+			
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Bohekou)
+	Objective_Register(SOBJ_GeneralToVillage)
+	Objective_Register(OBJ_HintBridge)
+	
+end
+
+--? @shortdesc Players were confused about this objective starting alongside the build-walls objective, so delay it
+function Lumen_StartBohekou(context, data)
+	Objective_Start(OBJ_Bohekou)
+end
+
+--? @shortdesc Monitors whether the player has lost one of the Chinese villages they've acquired
+function Lumen_CheckLossBohekou(context, data)
+
+	EGroup_Clear(eg_temp)
+	EGroup_AddEGroup(eg_temp, eg_village_bohekou)
+	EGroup_Filter(eg_temp, { EBP.CHINESE.BUILDING_HOUSE_CONTROL_CHI, EBP.CHINESE.BUILDING_RESOURCE_FARM_CHI }, FILTER_REMOVE)
+	
+	-- Did we lose everything except the houses and farms?
+	if EGroup_Count(eg_temp) <= 0 then
+		--Music_PlayStinger(MUS_STING_NEGATIVE)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Lumen_RevealAroundBohekou()
+	FOW_RevealMarker(mkr_reveal_bohekou_1, 0.125)
+	FOW_RevealMarker(mkr_reveal_bohekou_2, 0.125)
+	FOW_RevealMarker(mkr_reveal_bohekou_3, 0.125)
+	FOW_RevealMarker(mkr_reveal_bohekou_4, 0.125)
+end

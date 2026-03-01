@@ -1,0 +1,595 @@
+--
+-- Hattin 1187 - Burning Fields tutorial section
+--
+
+import("abb_m4_hattin.scar")
+
+function BurnTutorial_InitObjectives()
+
+	OBJ_Tutorial = {
+		Title = "$11253272", 
+		Type = ObjectiveType_Primary,
+		SetupUI = function()
+			-- We don't want the player garrisoning during the tutorial
+			Player_SetCommandAvailability(player1, SCMD_Load, ITEM_LOCKED)
+			-- Make sure the player can't burn the field yet
+			EGroup_SetInvulnerable(eg_burnableFieldsTut2, true)
+			EGroup_SetSelectable(eg_burnableFieldsTut2, false)
+		end,
+		IsFailed = function()
+			return Objective_IsFailed(SOBJ_SecondTutorialCombat)
+		end,
+		OnComplete = function()
+			-- Make garrisoning available again
+			Player_SetCommandAvailability(player1, SCMD_Load, ITEM_UNLOCKED)
+			-- Unlock the rest of the map
+			World_SetInteractionStage(1)
+			-- Spawn the allies now that interactivity is enabled
+			Hattin_SpawnBarricadeAllies()
+			-- Trigger auto-save here
+			Util_AutoSave()
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_FirstTutorialCombat = {
+		Title = "$11253273",		
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Tutorial,
+		StartAlongsideParent = true,
+		Intel_Complete = EVENTS.FirstFieldsBurned,
+		SetupUI = function()
+			hintTutorial_firstFight = Objective_AddUIElements(SOBJ_FirstTutorialCombat, mkr_tutorial_fight_1, true, "$11254715", true, 5)
+			Rule_AddInterval(BurnTutorial_WatchForBurn, 1, {grassField = BurnableFields_GetField("tutFields1")})
+		end,
+		OnStart = function()
+			-- Spawn the first defined group of crusaders for this
+			g_currentCrusaderIdx = 1
+			Crusaders_SpawnUnits()
+			if CRUSADERS_USE_AI == true then
+				Crusaders_ForceMarchNext("tutLocation1")
+			end
+		end,
+		IsComplete = function()
+			-- Check to remove woods hintpoint
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_tutorial_fight_1)
+			SGroup_Filter(sg_temp, "scar_spearman", FILTER_KEEP)
+			if SGroup_CountSpawned(sg_temp) > 2 then
+				Objective_RemoveUIElements(SOBJ_FirstTutorialCombat, hintTutorial_firstFight)
+			end
+			-- We complete this objective by destroying the forces in question
+			return false
+		end,
+		OnComplete = function()
+			-- Start that second tutorial step right away
+			Tutorial_StartSecondLocation()
+		end,
+		OnFail = function()
+			local guidanceDuration = 8
+			UI_CreateEventCue("$11255574", Loc_Empty(), "high_priority_negative", "icons/event_queue_high_priority_large", "sfx_ui_event_queue_high_priority_play", ECV_Queue, guidanceDuration)
+			-- Wait for the event cue to finish before starting the second tutorial step
+			Rule_AddInterval(Tutorial_StartSecondLocation, guidanceDuration)
+		end,
+	}
+	SOBJ_SecondTutorialBurn = {
+		Title = "$11253274",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Tutorial,
+		StartAlongsideParent = false,
+		SetupUI = function()
+			-- Place a hint for burning (the field has its own reticule already)
+			hintTutorial_burn = Objective_AddUIElements(SOBJ_SecondTutorialBurn, mkr_burnableFieldsTut2, true, "$11254716", true, 5)
+		end,
+		PreStart = function()
+			-- Allow the player to burn that field
+			BurnableFields_Activate(BurnableFields_GetField("tutFields2"))
+		end,
+		OnStart = function()
+			-- Spawn the second defined group of crusaders for this
+			g_currentCrusaderIdx = 2
+			Crusaders_SpawnUnits()
+			-- Store some tutorial values
+			g_tutMostDebuffedAtOnce = 0
+			g_tutWarningsIssued = 0
+			Rule_AddInterval(Tutorial_WarnIdlePlayer, 30)
+			-- Also, prepare a second run of the debuff explainer hint
+			Rule_AddInterval(BurnTutorial_WatchForBurn, 1, {grassField = BurnableFields_GetField("tutFields2")})
+			-- And make sure we don't show the complete title
+			SOBJ_SecondTutorialBurn.showTitle = false
+		end,
+		IsComplete = function()
+			-- Tag the fields with a hint as soon as the player has a nearby unit
+			if g_fieldTagged ~= true then
+				Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_burnableFieldsTut2, Marker_GetProximityRadius(mkr_burnableFieldsTut2))
+				if SGroup_CountSpawned(sg_temp) > 0 then
+					-- We don't need the cluttery objective hint here
+					Objective_RemoveUIElements(SOBJ_SecondTutorialBurn, hintTutorial_burn)
+					-- Tag one of the fields!
+					MissionTutorial_TagField()
+				end
+			end
+			
+			local secondField = BurnableFields_GetField("tutFields2")
+			local burningRatio = BurnableFields_GetOnFirePercentage(secondField)
+			if burningRatio > 0.0 and g_largeTutorialFieldBurning ~= true then
+				-- As soon as the player has started burning the fields as directed, we can let the Crusader units move
+				MissionTutorial_UntagField()
+				g_largeTutorialFieldBurning = true
+				if CRUSADERS_USE_AI == true then
+					Crusaders_UpdateLocationWaitTime("tutLocation1", CRUSADER_STOP_WAIT_TIME.NONE)
+				end
+			end
+			
+			-- Don't complete until the fields are on fire
+			return burningRatio >= 0.25
+		end,
+		IsFailed = function()
+			if SGroup_CountSpawned(sg_tutorial_infantry) == 0 then
+				print("SOBJ_SecondTutorialBurn FAILED due to loss of player units (sg_tutorial_infantry)")
+				return true
+			end
+			return false
+		end,
+		OnComplete = function()
+			Objective_Start(SOBJ_SecondTutorialRetreat)
+		end,
+		OnFail = function()
+			EGroup_SetInvulnerable(eg_burnableFieldsTut2, false)
+			sg_failure_buffer_units = SGroup_CreateIfNotFound("sg_failure_buffer_units")
+			CreateUnits(player4, {type = "scar_spearman", numSquads = 10}, mkr_tutorial_cliffs_facing, sg_failure_buffer_units)
+			Camera_MoveTo(mkr_burnableFieldsTut2)
+			Rule_AddInterval(MissionTutorial_ManageFailure, 1)
+		end
+	}
+	SOBJ_SecondTutorialRetreat = {
+		Title = "$11256621",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Tutorial,
+		StartAlongsideParent = false,
+		SetupUI = function()
+			-- Place hints and ground reticules
+			-- First for withdrawing
+			SOBJ_SecondTutorialRetreat.hintRetreat = Objective_AddUIElements(SOBJ_SecondTutorialRetreat, mkr_tutorial_pass, true, "$11256611", true, 5)
+			SOBJ_SecondTutorialRetreat.circleRetreat = Objective_AddGroundReticule(SOBJ_SecondTutorialRetreat, Marker_GetPosition(mkr_tutorial_pass), Marker_GetProximityRadius(mkr_tutorial_pass), BP_GetReticuleBlueprint("campaign_capturelocation_self"))
+			-- Next for the failure zone
+			SOBJ_SecondTutorialRetreat.hintFailure = Objective_AddUIElements(OBJ_Tutorial, mkr_tutorial_failure, true, "$11256612", true, 5)
+			SOBJ_SecondTutorialRetreat.circleFailure = Objective_AddGroundReticule(OBJ_Tutorial, Marker_GetPosition(mkr_tutorial_failure), Marker_GetProximityRadius(mkr_tutorial_failure), BP_GetReticuleBlueprint("campaign_capturelocation_enemy"))
+		end,
+		IsComplete = function()
+			-- Are all the player's units in the marker area?
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_tutorial_pass)
+			local unitsInPass = SGroup_CountSpawned(sg_temp)
+			Player_GetAll(player1)
+			return unitsInPass == SGroup_CountSpawned(sg_allsquads)
+		end,
+		IsFailed = function()
+			if SGroup_CountSpawned(sg_tutorial_infantry) == 0 then
+				print("SOBJ_SecondTutorialRetreat FAILED due to loss of player units (sg_tutorial_infantry)")
+				return true
+			end
+			return false
+		end,
+		PreComplete = function()
+			-- Get them moving again
+			if CRUSADERS_USE_AI == true then
+				Crusaders_ForceMarchNext("tutLocation1")
+			else
+				local secondGroup = Crusaders_GetGroup("scouts2")
+				Crusaders_UpdateFullPath(secondGroup, "mkr_crusaderpath_ui_tutorial")
+			end
+			-- Also spawn in the Crossbowmen early for the next objective!
+			CreateUnits(player1, {type = "scar_crossbowman", numSquads = 10}, mkr_tutorial_player_spawn_2, sg_tutorial_ranged)
+			SGroup_RemoveAbility(sg_tutorial_ranged, BP_GetAbilityBlueprint("core_unit_death"))
+			SGroup_AddGroup(sg_scuttle_removed, sg_tutorial_ranged)
+			SGroup_AddGroup(sg_tutorial_infantry, sg_tutorial_ranged)
+			Rule_AddOneShot(Tutorial_MoveRangedIntoPosition, 0.125)
+		end,
+		OnComplete = function()
+			Objective_Start(SOBJ_SecondTutorialCombat)
+		end,
+		OnFail = function()
+			UI_CreateEventCue("$11257387", Loc_Empty(), "high_priority_negative", "icons/event_queue_high_priority_large", "sfx_ui_event_queue_high_priority_play", ECV_Title|ECV_Queue, guidanceDuration)
+			Mission_Fail()
+		end
+	}
+	SOBJ_SecondTutorialCombat = {
+		Title = "$11253275",
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_Tutorial,
+		StartAlongsideParent = false,
+		Intel_Complete = EVENTS.DefeatedFranksAtThePass,
+		OnStart = function()
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+			-- Add spearmen in case the player lost a bunch previously
+			local spearmanDeficit = 10 - SGroup_CountSpawned(sg_tutorial_infantry)
+			if spearmanDeficit > 0 then
+				CreateUnits(player1, {type = "scar_spearman", numSquads = spearmanDeficit}, mkr_tutorial_cliffs_facing, sg_tutorial_infantry)
+			end
+			-- Put a CTA on them
+			EventCues_CallToAction("$11254717", CTA_CELEBRATE, nil, nil, sg_tutorial_ranged, 10, "icons/cta/illustrations/abbasid_celebration")
+			Sound_Play2D("mus_stinger_campaign_triumph_short")
+			-- Also make sure the title card no longer players in the future, i.e. on complete or fail; the parent will banner instead
+			SOBJ_SecondTutorialCombat.showTitle = false
+		end,
+		SetupUI = function()
+			hintTutorial_pass = Objective_AddUIElements(SOBJ_SecondTutorialCombat, mkr_tutorial_pass, true, "$11254709", true, 5)
+			-- Update the hint!
+			BurnableFields_UpdateHint(BurnableFields_GetField("tutFields2"), "$11254792")
+		end,
+		IsComplete = function()
+			-- Check to remove pass hintpoint
+			Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_tutorial_pass)
+			SGroup_Filter(sg_temp, "scar_spearman", FILTER_KEEP)
+			if SGroup_CountSpawned(sg_temp) > 2 then
+				Objective_RemoveUIElements(SOBJ_SecondTutorialCombat, hintTutorial_pass)
+			end
+			-- Check to move the units forward
+			if g_playerOutOfArea ~= true then
+				g_playerOutOfArea = Tutorial_HasPlayerRetreated()
+				if g_playerOutOfArea == true then
+					Crusaders_UpdateLocationWaitTime("tutLocation2", CRUSADER_STOP_WAIT_TIME.NONE)
+					print("HATTIN TUTORIAL - Player has left area!")
+				end
+			end
+			-- Track how many crusaders were debuffed
+			-- If the Crusaders are somehow defeated without ever being debuffed, we fail this objective
+			local currentDebuffed = SGroup_CountSpawned(BurnableFields_GetField("tutFields2").sgroup_debuffedCrusaders)
+			if currentDebuffed > g_tutMostDebuffedAtOnce then
+				g_tutMostDebuffedAtOnce = currentDebuffed
+			end
+			-- We complete this objective by destroying the crusaders in question
+			return false
+		end,
+		IsFailed = function()
+			-- If the player has lost all units, fail the objective
+			if SGroup_CountSpawned(sg_tutorial_infantry) == 0 then
+				print("SOBJ_SecondTutorialCombat FAILED due to loss of player units (sg_tutorial_infantry)")
+				return true
+			end
+			-- If there are any enemies in the failure zone, fail it also
+			Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_tutorial_failure, Marker_GetProximityRadius(mkr_tutorial_failure))
+			if SGroup_CountSpawned(sg_temp) > 0 then
+				print("SOBJ_SecondTutorialCombat FAILED due to enemies at exit zone")
+				return true
+			end
+			return false
+		end,
+		PreComplete = function()
+			Objective_RemoveUIElements(SOBJ_SecondTutorialRetreat, SOBJ_SecondTutorialRetreat.hintRetreat)
+			Objective_RemoveUIElements(SOBJ_SecondTutorialRetreat, SOBJ_SecondTutorialRetreat.hintFailure)
+			Objective_RemoveGroundReticule(SOBJ_SecondTutorialRetreat, SOBJ_SecondTutorialRetreat.circleRetreat)
+			Objective_RemoveGroundReticule(SOBJ_SecondTutorialRetreat, SOBJ_SecondTutorialRetreat.circleFailure)
+		end,
+		OnComplete = function()
+			Objective_Complete(OBJ_Tutorial)
+			
+			FOW_UnRevealMarker(mkr_tut_reveal_1)
+			FOW_UnRevealMarker(mkr_tut_reveal_2)
+			FOW_UnRevealMarker(mkr_tut_reveal_3)
+			FOW_UnRevealMarker(mkr_tut_reveal_4)
+			
+			Objective_Start(OBJ_Crusaders)
+			Music_PostCombat_End()
+		end,
+		OnFail = function()
+			UI_CreateEventCue("$11255593", Loc_Empty(), "high_priority_negative", "icons/event_queue_high_priority_large", "sfx_ui_event_queue_high_priority_play", ECV_Title|ECV_Queue, guidanceDuration)
+			Mission_Fail()
+		end
+	}
+	OBJ_FieldScoutingGuidance = {
+		Title = "$11253278", 
+		Type = ObjectiveType_Tip,
+		SetupUI = function()
+			t_burnableFieldHints = {
+				{marker = mkr_burnableFields_1_2, ping = nil},
+				{marker = mkr_burnableFields_1_3, ping = nil},
+				{marker = mkr_burnableFields_1_4, ping = nil},
+				{marker = mkr_burnableFields_2_4, ping = nil},
+				{marker = mkr_burnableFields_2_5, ping = nil},
+				{marker = mkr_burnableFields_3_4, ping = nil},
+				{marker = mkr_burnableFields_3_6, ping = nil},
+				{marker = mkr_burnableFields_4_5, ping = nil},
+				{marker = mkr_burnableFields_4_6, ping = nil},
+				{marker = mkr_burnableFields_4_7, ping = nil},
+				{marker = mkr_burnableFields_5_7, ping = nil},
+				{marker = mkr_burnableFields_6_7, ping = nil},
+				{marker = mkr_burnableFields_7_9, ping = nil},
+				{marker = mkr_burnableFields_8_9, ping = nil},
+			}
+			
+			for idx, hint in pairs(t_burnableFieldHints) do
+				hint.ping = Objective_AddUIElements(OBJ_FieldScoutingGuidance, hint.marker, true)
+			end
+			
+		end,
+		IsComplete = function()
+			local hintsObserved = 0
+			for idx, hint in pairs(t_burnableFieldHints) do
+				if hint.ping ~= nil and Misc_IsPosOnScreen(Util_GetPosition(hint.marker), 1.0) == true then
+					Objective_RemoveUIElements(OBJ_FieldScoutingGuidance, hint.ping)
+					hint.ping = nil
+					hintsObserved = hintsObserved + 1
+				elseif hint.ping == nil then
+					hintsObserved = hintsObserved + 1
+				end
+			end
+			return hintsObserved >= #t_burnableFieldHints
+		end,
+	}
+	
+	Objective_Register(OBJ_Tutorial)
+	Objective_Register(SOBJ_FirstTutorialCombat)
+	Objective_Register(SOBJ_SecondTutorialBurn)
+	Objective_Register(SOBJ_SecondTutorialRetreat)
+	Objective_Register(SOBJ_SecondTutorialCombat)
+	
+end
+
+function Tutorial_StartSecondLocation()
+	Objective_Start(SOBJ_SecondTutorialBurn, true, true)
+end
+
+function Tutorial_MoveRangedIntoPosition()
+	Cmd_Ability(sg_tutorial_ranged, BP_GetAbilityBlueprint("core_formation_line"))
+	Cmd_FormationMove(sg_tutorial_ranged, mkr_tutorial_cliffs, false, false, mkr_tutorial_cliffs_facing)
+end
+
+--? @shortdesc When player unit count falls below a threshold, remind them to make more units
+function Tutorial_CheckForQueueGuidanceStart(context, data)
+	local totalProductionQueueSize = Player_GetProductionQueueSize(player1)
+	if totalProductionQueueSize < PRODUCTION_QUEUE_TARGET then
+		Objective_Start(OBJ_ProductionQueueGuidance, true, true)
+		Rule_RemoveMe()
+	end
+end
+
+function Tutorial_HasPlayerRetreated()
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_tutorial_exclusion_1)
+	local playerCount = SGroup_CountSpawned(sg_temp)
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_tutorial_exclusion_2)
+	playerCount = playerCount + SGroup_CountSpawned(sg_temp)
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_tutorial_exclusion_3)
+	playerCount = playerCount + SGroup_CountSpawned(sg_temp)
+	
+	return playerCount <= 0
+end
+
+function Tutorial_WarnIdlePlayer(context, data)
+	-- This rule is only to warn and fail the player if they aren't burning that field
+	-- If they've burnt it, we're all good and can stop looking out for this
+	local secondField = BurnableFields_GetField("tutFields2")
+	if BurnableFields_HasBeenBurned(secondField) == true then
+		Rule_RemoveMe()
+		return
+	end
+	-- Warn the player with a big warning
+	UI_CreateEventCue("$11256617", Loc_Empty(), "high_priority_negative", "icons/event_queue_high_priority_large", "sfx_ui_event_queue_high_priority_play", ECV_Title|ECV_Queue, 8)
+	g_tutWarningsIssued = g_tutWarningsIssued + 1
+	if g_tutWarningsIssued >= 3 then
+		-- If they've continued to not burn it, they may be stuck; we can't let the mission stall forever
+		-- Three strikes and the tutorial must be replayed in full
+		Objective_Fail(OBJ_Tutorial, true, false)
+	end
+end
+
+--? @shortdesc Starts the intel event for crusaders, spawns the units, and starts their manager
+function BurnTutorial_Start()
+	Objective_Start(OBJ_Tutorial, true, true)
+	Rule_AddOneShot(Crusaders_StartManager, 5)
+	Util_StartIntel(EVENTS.BurnTheFields)
+end
+
+function BurnTutorial_WatchForBurn(context, data)
+	local entityToTag = nil
+	if data.grassField.terminated ~= true and BurnableFields_HasBeenBurned(data.grassField) == true then
+		entityToTag = EGroup_GetEntityAt(data.grassField.egroup, 1)
+	end
+	
+	local template = "RightClickTrainingDataTemplate"
+	if ( UI_IsXboxControllerUI() ) then
+		template = "GenericTrainingDataTemplate"
+	end
+	
+	if scartype(entityToTag) == ST_ENTITY then
+		local hintData = {
+			ID = "Debuff Explainer for Smoke",
+			Message = Loc_GetString("$11256645"),
+			DataTemplate = template
+		}
+		UI_CreateTagForPosition(Entity_GetPosition(entityToTag), hintData)
+		Rule_AddInterval(MissionTutorial_WaitForDebuff, 1, {grassField = data.grassField, taggedEntity = entityToTag})
+		Rule_RemoveMe()
+	end
+end
+
+function MissionTutorial_WaitForDebuff(context, data)
+	local countDebuffed = SGroup_CountSpawned(data.grassField.sgroup_debuffedCrusaders)
+	if countDebuffed > 0 then
+		Rule_AddOneShot(MissionTutorial_RemoveDebuffHint, 8, {taggedEntity = data.taggedEntity})
+		Rule_RemoveMe()
+	end
+end
+
+function MissionTutorial_RemoveDebuffHint(context, data)
+	if scartype(data.taggedEntity) == ST_ENTITY then
+		UI_DestroyTagForPosition(Entity_GetPosition(data.taggedEntity))
+	end
+end
+
+--? @shortdesc Spawns a group of crusaders as one Army and assigns them to a path on the map
+function BurnTutorial_SpawnUnits(spawnIndex)
+	
+	local entry = t_crusaderData[spawnIndex]
+	
+	-- create and initialize the army module for this entry
+	local targets = Crusaders_GetTarget_Route(entry, t_crusaderLocations.tutLocation1)
+	entry.pathName = "mkr_crusaderpath_tutorial_1"
+	
+	if CRUSADERS_USE_AI == true then
+		entry.army.player = player2
+		entry.army.spawn = mkr_tutorial_crusader_spawn
+		entry.army.targets = targets
+		
+		Army_Init(entry.army)
+		
+		entry.sgroup = entry.army.sgroup
+		Army_GetSquads(entry.army, sg_temp)
+	else
+		entry.sgroup = SGroup_CreateIfNotFound(entry.army.name)
+		CreateUnits(player2, entry.army.units, mkr_tutorial_crusader_spawn, entry.sgroup, Marker_GetDirection(mkr_tutorial_crusader_spawn))
+	end
+	
+	SGroup_AddGroup(sg_crusaders, entry.sgroup)
+	
+	entry.firstLocation = t_crusaderLocations.tutLocation1
+	Crusaders_AddGroupToLocation(entry, t_crusaderLocations.tutLocation1)
+	
+	-- mark group as spawned
+	entry.spawned = true
+	
+	-- trigger a callback if specified
+	if scartype(entry.callbacks) == ST_TABLE and scartype(entry.callbacks.onSpawned) == ST_FUNCTION then 
+		entry.callbacks.onSpawned(entry)
+		entry.callbacks.onSpawned = nil
+	end
+	
+	-- BANDAID: The second group needs a kick-in-the-rear function in case the AI gets stuck
+	if CRUSADERS_USE_AI == true then
+		Rule_AddOneShot(Crusaders_CatchStragglersOngoing, 5, {
+				entry = entry,
+				lastPos = Marker_GetPosition(mkr_tutorial_crusader_spawn),
+				condition = Tutorial_HasPlayerRetreated
+			})
+	end
+end
+
+--? @shortdesc Called when the player kills the first group of scouts
+function Scouts1_Killed(entry)
+	--  Whether the player succeeded or failed depends on whether they burnt the fields before killing the scouts
+	local firstField = BurnableFields_GetField("tutFields1")
+	g_firstFieldBurnt = BurnableFields_HasBeenBurned(firstField)
+	Rule_AddOneShot(Tutorial_DelayedFieldTerminate, 6, {killEntities = g_firstFieldBurnt})
+	if g_firstFieldBurnt == true then
+		-- Complete that objective
+		Objective_Complete(SOBJ_FirstTutorialCombat)
+	else
+		-- Have a note
+		BurnableFields_UpdateHint(firstField, "$11255625")
+		-- Fail that objective
+		Objective_Fail(SOBJ_FirstTutorialCombat)
+	end
+	
+	-- Also give the player the extra units for the next step
+	local destination = mkr_tutorial_player_spawn_1
+	if SGroup_CountSpawned(sg_tutorial_infantry) > 0 then
+		destination = SGroup_GetPosition(sg_tutorial_infantry)
+	end
+	Cmd_UngarrisonSquad(sg_extra_spearmen, destination, false)
+	SGroup_SetPlayerOwner(sg_extra_spearmen, player1)
+	SGroup_AddGroup(sg_tutorial_infantry, sg_extra_spearmen)
+	
+	Rule_AddOneShot(Scouts1_Killed_B, 0.125)
+end
+
+function Scouts1_Killed_B(context, data)
+	SGroup_RemoveAbility(sg_extra_spearmen, BP_GetAbilityBlueprint("core_unit_death"))
+	SGroup_AddGroup(sg_scuttle_removed, sg_extra_spearmen)
+end
+
+function Tutorial_DelayedFieldTerminate(context, data)
+	BurnableFields_Terminate(BurnableFields_GetField("tutFields1"), data.killEntities)
+end
+
+--? @shortdesc Called when the player kills the second group of scouts
+function Scouts2_Killed(entry)
+	-- If the burnable fields WEREN'T burnt when these die, FAIL
+	Objective_Complete(SOBJ_SecondTutorialCombat)
+end
+
+function MissionTutorial_ManageFailure()
+	if SGroup_IsIdle(sg_failure_buffer_units, ANY) then
+		Cmd_Attack(sg_failure_buffer_units, eg_fail_target, false)
+	end
+	
+	local burningRatio = BurnableFields_GetOnFirePercentage(BurnableFields_GetField("tutFields2"))
+	if burningRatio > 0.0 and g_largeTutorialFieldBurning ~= true then
+		-- As soon as the player has started burning the fields as directed, we can let the Crusader units move
+		Crusaders_UpdateLocationWaitTime("tutLocation1", CRUSADER_STOP_WAIT_TIME.NONE)
+		SGroup_SetPlayerOwner(sg_failure_buffer_units, player1)
+		SGroup_AddGroup(sg_tutorial_infantry, sg_failure_buffer_units)
+		MissionTutorial_UntagField()
+		g_largeTutorialFieldBurning = true
+	end
+	
+	if burningRatio >= 0.4 then
+		Objective_Start(SOBJ_SecondTutorialRetreat)
+		Rule_RemoveMe()
+	end
+end
+
+function MissionTutorial_TagField()
+	local entity = EGroup_GetEntityAt(eg_tutHintTarget, 1)
+	
+	local template = "RightClickTrainingDataTemplate"
+	if ( UI_IsXboxControllerUI() ) then
+		template = "GenericTrainingDataTemplate"
+	end
+	
+	local data = {
+		ID = "Right-Click to Attack Fields",
+		Message = Loc_GetString("$11254778"),
+		DataTemplate = template
+	}
+	UI_CreateTagForPosition(Entity_GetPosition(entity), data)
+	g_fieldTagged = true
+end
+
+
+function MissionTutorial_UntagField()
+	if g_fieldTagged == true then
+		local entity = EGroup_GetEntityAt(eg_tutHintTarget, 1)
+		UI_DestroyTagForPosition(Entity_GetPosition(entity))
+	else
+		-- If we're untagging it before it's even been tagged, we didn't need to tag it
+		-- Make sure it doesn't get tagged in the future
+		g_fieldTagged = true
+	end
+end
+
+function MissionTutorial_HintStandGround(context, data)
+	MissionOMatic_HintOnHover(MissionTutorial_TriggerStandGroundHint,
+		"Stand Ground forces units to stay put and fight, stopping them from running around aimlessly",
+		"$11255628",
+		"campaign_abb_m4_hattin_standground")
+end
+
+function MissionTutorial_TriggerStandGroundHint(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingHoverInterval then	
+		
+		Player_GetAll(player1)
+		local squads = Player_GetSquads(player1)
+	
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			if squad ~= nil and Squad_GetBlueprint(squad) == SBP.AYYUBID_CMP.UNIT_CROSSBOWMAN_3_AYY then
+				if Misc_IsSquadOnScreen(squad, 100) then 
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					goalSequence.goals[2].key = BP_GetAbilityBlueprint("combat_unit_hold_position")
+					break
+				end
+			end
+		end
+		
+		if goalSequence.goals[1].key ~= nil then
+			return true
+		end
+	end
+	return false
+end

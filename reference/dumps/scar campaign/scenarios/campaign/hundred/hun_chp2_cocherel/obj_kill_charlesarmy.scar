@@ -1,0 +1,286 @@
+--
+--  France in Chaos 1364 - 
+--  Objective Defeat Charles the Bad
+--
+
+function DefeatCharlesBadArmy_InitObjectives()		
+	OBJ_DefeatCharlesBadArmy = {
+		Title = "$11172154", --Defeat Charles of Navarre's army at their campsite
+		Type = ObjectiveType_Battle,
+		OnStart = DefeatCharlesBadArmy_OnStart,
+		SetupUI = function()
+			hpid_charlesthebadarmy = Objective_AddUIElements(OBJ_DefeatCharlesBadArmy,mkr_navarre_village, true,"$11195389", true, 8, nil, nil)
+			Objective_SetProgressBar(OBJ_DefeatCharlesBadArmy,0)
+		end,
+		Intel_Start = EVENTS.CharlesNavarreEstablished,
+		OnComplete = function()
+			Objective_RemoveUIElements(OBJ_DefeatCharlesBadArmy,hpid_charlesthebadarmy)
+			Mission_Complete()
+		end,
+		Cheat = DefeatCharlesBadArmy_ObjectiveCheat,
+	}
+	
+	OBJ_DebugComplete1 = {
+        Title = LOC("Debug Complete - Option 1"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			i_which_ending = 1
+			World_SetInteractionStage(3)
+			Mission_Complete()
+	       end,
+	    }
+
+	OBJ_DebugComplete2 = {
+        Title = LOC("Debug Complete - Option 2"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			i_which_ending = 2
+			World_SetInteractionStage(3)
+			Mission_Complete()
+	       end,
+	    }
+	Objective_Register(OBJ_DefeatCharlesBadArmy)
+	Objective_Register(OBJ_DebugComplete1)	
+    Objective_Register(OBJ_DebugComplete2)	
+
+	Rule_AddOneShot(DefeatCharlesBadArmy_InitObjectives_PartB, 1)
+	
+end
+
+function DefeatCharlesBadArmy_InitObjectives_PartB()
+	
+	t_navarre_army_path = { waveCharlesToCocherel, waveCharlesToCocherel02 }			-- this declaration is deffered slightly as these wave tables won't be initialized until after the objectives are registered
+	t_navarre_army_units_early = { "scar_manatarms", "scar_knight", "scar_archer" }
+	t_navarre_army_units_late = { "scar_manatarms", "scar_knight", "scar_archer", "scar_spearman" }
+	
+end
+
+function DefeatCharlesBadArmy_OnStart()
+	World_SetInteractionStage(3)
+	EGroup_SetInvulnerable(eg_monastery,false)
+	
+	local unitsArchers1 = {{type = "scar_archer", numSquads = Util_DifVar({14,16,20,25}), sgroup = sg_CharlesArmy}}
+	local unitsArchers2 = {{type = "scar_archer", numSquads = Util_DifVar({14,16,20,25}), sgroup = sg_CharlesArmy}}
+	local unitsArchers3 = {{type = "scar_archer", numSquads = Util_DifVar({14,16,20,25}), sgroup = sg_CharlesArmy}}
+	SpawnUnitsToModule(unitsArchers1, "navarre_garrison_archers1", mkr_navarre_village_spawnArchers1)
+	SpawnUnitsToModule(unitsArchers2, "navarre_garrison_archers2", mkr_navarre_village_spawnArchers2)
+	SpawnUnitsToModule(unitsArchers3, "navarre_garrison_archers3", mkr_navarre_village_spawnArchers3)
+	
+	local unitsPatrol1 = {{type = "scar_spearman", numSquads = Util_DifVar({7, 8, 11, 15}), sgroup = sg_CharlesArmy, spawn = mkr_navarre_village_spawnPatrol1}}		
+	local unitsPatrol2 = {{type = "scar_manatarms", numSquads = Util_DifVar({7, 8, 11, 15}), sgroup = sg_CharlesArmy, spawn = mkr_navarre_village_spawnPatrol2}}		
+	SpawnUnitsToModule(unitsPatrol1, "navarre_patrol1", mkr_navarre_village_spawnPatrol1)
+	SpawnUnitsToModule(unitsPatrol2, "navarre_patrol2", mkr_navarre_village_spawnPatrol2)
+	
+	local unitsGarrison1 = {
+		{type = "scar_knight", numSquads = Util_DifVar({3, 4, 5, 7}), sgroup = sg_CharlesArmy, spawn = mkr_navarre_village_garrison1},		
+		{type = "scar_spearman", numSquads = Util_DifVar({6, 7, 9, 11}), sgroup = sg_CharlesArmy, spawn = mkr_navarre_village_garrison1},
+	}
+	local unitsGarrison2 = {
+		{type = "scar_knight", numSquads = Util_DifVar({3, 4, 5, 7}), sgroup = sg_CharlesArmy, spawn = mkr_navarre_village_garrison2},		
+		{type = "scar_spearman", numSquads = Util_DifVar({6, 7, 9, 11}), sgroup = sg_CharlesArmy, spawn = mkr_navarre_village_garrison2}, 
+	}
+	local unitsGarrison3 = {
+		{type = "scar_knight", numSquads = Util_DifVar({3, 4, 5, 7}), sgroup = sg_CharlesArmy, spawn = mkr_navarre_village_garrison3},	
+		{type = "scar_spearman", numSquads = Util_DifVar({6, 7, 9, 1}), sgroup = sg_CharlesArmy, spawn = mkr_navarre_village_garrison3}, 
+	}
+	SpawnUnitsToModule(unitsGarrison1, "navarre_garrison1", mkr_navarre_village_garrison1)
+	SpawnUnitsToModule(unitsGarrison2, "navarre_garrison2", mkr_navarre_village_garrison2)
+	SpawnUnitsToModule(unitsGarrison3, "navarre_garrison3", mkr_navarre_village_garrison3)
+	
+	Rule_AddOneShot(SendNavarreArchersFormation,2)
+	
+	Rule_AddInterval(DiscoverCharlesCamp_Monitor, 1)
+	
+	Rule_Add(DefeatCharlesBadArmy_IsComplete)
+	
+	Music_LockIntensity(MUSIC_TENSE_RARE, 120)
+	Rule_AddOneShot(DefeatCharlesBad_MusicChange, 120)
+	
+	Rule_AddGlobalEvent(EnemyKilledCharlesEvent,GE_SquadKilled)
+end
+
+function SendNavarreArchersFormation()
+	Cmd_FormationMove(sg_navarre_archers1, mkr_navarre_village_archers)
+end
+
+function EnemyKilledCharlesEvent(context)
+	local victim = context.victim	
+	if Objective_IsComplete(OBJ_DefeatCharlesBadArmy) == true then
+		Rule_RemoveMe()
+	else
+		if SGroup_ContainsSquad(sg_CharlesArmy, Squad_GetID(victim), true) then 		
+			i_deathCharlesEncampment = i_deathCharlesEncampment + 1
+			if i_deathCharlesEncampment < t_difficulty.i_numberUnitsToKillCharles then
+				Objective_SetProgressBar(OBJ_DefeatCharlesBadArmy, (i_deathCharlesEncampment / t_difficulty.i_numberUnitsToKillCharles))
+			else
+				Objective_SetProgressBar(OBJ_DefeatCharlesBadArmy, (i_deathCharlesEncampment / t_difficulty.i_numberUnitsToKillCharles))
+				Objective_Complete(OBJ_DefeatCharlesBadArmy)
+				Rule_RemoveMe()
+			end
+		end	
+	end
+end
+
+function DefeatCharlesBad_MusicChange()
+	Music_UnlockIntensity()
+	Sound_SetMinimumMusicCombatIntensity(801, 0)
+end
+
+function StartCharlesAttacks()
+	print("Charles attacks on Cocherel started / "..cocherel_seconds)
+	PrepareCharlesWaveToCocherel()
+	Rule_AddInterval(PrepareCharlesWaveToCocherel, t_difficulty.charles_attackInterval)
+end
+
+function PrepareCharlesWaveToCocherel()
+	if Objective_IsComplete(OBJ_DefeatCharlesBadArmy) == true then
+		if Rule_Exists(PrepareCharlesWaveToCocherel) then Rule_RemoveMe() end
+		print("Charles attacks on Cocherel ended / "..cocherel_seconds)
+	else
+		print("Charles attack on Cocherel preparing / "..cocherel_seconds)
+		local units = {}
+		i_Charles_attack_phase = i_Charles_attack_phase + 1
+		waveCharlesNavarre = Table_GetRandomItem(t_navarre_army_path)
+		local num_units = nil
+		if i_Charles_attack_phase < 4 then
+			num_units = Util_DifVar({ 6, 7, 10, 14 })
+		else
+			num_units = i_Charles_attack_phase + Util_DifVar({ 3, 4, 7, 11 })
+		end
+		units = {{type = "scar_knight", numSquads = num_units, tag = "navarre_village_wave" }}
+		Wave_SetUnits(waveCharlesNavarre, units)
+		Wave_Prepare(waveCharlesNavarre)
+	end
+end
+
+function DefeatCharlesBadArmy_IsComplete()
+	SGroup_Clear(sg_Charles_allsquads)
+	Player_GetAllSquadsNearMarker(player4, sg_Charles_allsquads,mkr_navarre_village,80)
+	SGroup_Filter(sg_Charles_allsquads,"gaia", FILTER_REMOVE)
+	
+	Player_GetAllSquadsNearMarker(player1, sg_allsquads, mkr_navarre_village,100)
+	SGroup_Filter(sg_allsquads,"scar_villager", FILTER_REMOVE)
+	SGroup_Filter(sg_allsquads,"gaia", FILTER_REMOVE)
+	
+	if SGroup_CountSpawned(sg_Charles_allsquads) <= 15 and SGroup_CountSpawned(sg_allsquads) >= 20 then
+		i_which_ending = 1
+		
+		TransferModuleIntoModule("navarre_garrison_archers1","navarre_garrison_outro")
+		TransferModuleIntoModule("navarre_garrison1","navarre_garrison_outro")
+		TransferModuleIntoModule("navarre_garrison2","navarre_garrison_outro")
+		TransferModuleIntoModule("navarre_garrison3","navarre_garrison_outro")
+		TransferModuleIntoModule("navarre_patrol1","navarre_garrison_outro")
+		TransferModuleIntoModule("navarre_patrol2","navarre_garrison_outro")
+
+		Rule_RemoveMe()
+		Rule_AddOneShot(LetObjectiveComplete,5)
+	else 
+		if SGroup_CountSpawned(sg_Charles_allsquads) == 0 then
+			i_which_ending = 2
+			Rule_RemoveMe()
+			Rule_AddOneShot(LetObjectiveComplete,5)
+		end
+	end
+end
+
+function LetObjectiveComplete()
+	Objective_Complete(OBJ_DefeatCharlesBadArmy)
+end
+
+function SendOutroCharlesArmy()
+	
+	Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_navarre_village, 200)
+	SGroup_DestroyAllSquads(sg_temp)
+
+	Player_GetAllSquadsNearMarker(player4, sg_temp, mkr_navarre_village, 200)
+	SGroup_DestroyAllSquads(sg_temp)
+	
+	Player_GetAll(player4)
+	EGroup_SetPlayerOwner(eg_allentities, player1)
+
+	if i_which_ending == 1 then 
+		UnitEntry_DeploySquads(player4, sg_outro_player4_retreat01, {sbp = SBP.HRE.UNIT_KNIGHT_3_HRE, numSquads = 5}, mkr_outro_navarre_escape02_spawn)
+		UnitEntry_DeploySquads(player4, sg_outro_player4_retreat02, {sbp = SBP.HRE.UNIT_MANATARMS_3_HRE, numSquads = 20}, mkr_outro_navarre_escape01_spawn)
+	else
+		if i_which_ending == 2 then
+			UnitEntry_DeploySquads(player4, sg_outro_player4_retreat01, {sbp = SBP.HRE.UNIT_KNIGHT_3_HRE, numSquads = 2}, mkr_outro_navarre_escape02_spawn)
+			UnitEntry_DeploySquads(player4, sg_outro_player4_retreat02, {sbp = SBP.HRE.UNIT_MANATARMS_3_HRE, numSquads = 10}, mkr_outro_navarre_escape01_spawn)
+		end
+	end
+	
+	UnitEntry_DeploySquads(player1, sg_outro_player_celebrate01, {sbp = SBP.FRENCH.UNIT_KNIGHT_3_FRE, numSquads = 8}, mkr_outro_player_knights)
+	UnitEntry_DeploySquads(player1, sg_outro_player_celebrate02, {sbp = SBP.FRENCH.UNIT_SPEARMAN_3_FRE, numSquads = 10}, mkr_outro_player_spearmen)
+	UnitEntry_DeploySquads(player1, sg_outro_player_celebrate02, {sbp = SBP.FRENCH.UNIT_SPEARMAN_3_FRE, numSquads = 10}, mkr_outro_player_spearmen02)
+	UnitEntry_DeploySquads(player1, sg_outro_player_celebrate03, {sbp = SBP.FRENCH.UNIT_ARCHER_3_FRE, numSquads = 10}, mkr_outro_player_archers)
+	UnitEntry_DeploySquads(player1, sg_outro_player_celebrate03, {sbp = SBP.FRENCH.UNIT_ARCHER_3_FRE, numSquads = 10}, mkr_outro_player_archers02)
+	
+	Rule_AddOneShot(French_celebrateMove, 0.2 )
+
+end
+
+function French_celebrateMove(context, data)
+	
+	Cmd_Attack(sg_outro_player_celebrate01, sg_outro_player4_retreat01, false)
+	
+	Cmd_FormationMove(sg_outro_player4_retreat01, mkr_navarre_village_retreat)
+	Cmd_FormationMove(sg_outro_player4_retreat02, mkr_navarre_village_retreat)
+	
+	Sound_PlayOnSquad(WALLA_CAMP_FEAR_LARGE, sg_outro_player4_retreat01)
+
+end
+
+function DiscoverCharlesCamp_Monitor()	
+	if Prox_ArePlayersNearMarker(player1, mkr_navarre_village_reveal_cliff, ANY,35) == true then	
+		DiscoverCharlesCamp(-1, EVENTS.FightingCharlesStart)
+		PlayerCameUpFront = true
+		Rule_RemoveMe()
+	elseif Prox_ArePlayersNearMarker(player1, mkr_navarre_village_reveal_BackPath, ANY,35) == true then
+		DiscoverCharlesCamp(30, EVENTS.FightingCharlesStartAlt)
+		PlayerCameUpBack = true
+		TransferModuleIntoModule("navarre_garrison_archers1","navarre_garrison1")
+		TransferModuleIntoModule("navarre_garrison_archers2","navarre_garrison2")
+		TransferModuleIntoModule("navarre_garrison_archers3","navarre_garrison3")
+		Rule_RemoveMe()
+	end	
+end
+
+function DiscoverCharlesCamp(revealTime, speechEvent)
+	FOW_RevealMarker(mkr_navarre_village_reveal, revealTime)
+	if Objective_IsStarted(OBJ_DefeatCharlesBadArmy) == true then
+		Util_StartIntel(speechEvent)
+		Rule_AddOneShot(DiscoverCharlesCamp_MusicChange,120)
+	end
+end
+
+function DiscoverCharlesCamp_MusicChange()
+	Music_UnlockIntensity()
+	Sound_SetMinimumMusicCombatIntensity(801, 0)
+end
+
+function DefeatCharlesBadArmy_ObjectiveCheat()
+	Player_GetAll(player2)					-- remove all peasant rebels
+	SGroup_DestroyAllSquads(sg_allsquads)
+
+	Player_GetAll(player3)					-- remove all routiers
+	SGroup_DestroyAllSquads(sg_allsquads)
+
+	local villagesToCapture = { "Cocherel", "Jouy", "Croisy" }
+	
+	for index, villageName in pairs(villagesToCapture) do 
+		local location = LOCATION(villageName)
+		Location_SetCapturable(location, true)
+		Location_Capture(location, player1)
+	end
+	
+	Objective_Start(OBJ_ProtectMonastery, false, false)
+	
+	Objective_Complete(OBJ_DefeatRoutiers, false, false)
+	Objective_Complete(OBJ_StemRebel, false, false)
+	Objective_Complete(SOBJ_CaptureCocherel, false, false)
+	Objective_Complete(SOBJ_CaptureJouy, false, false)
+	Objective_Complete(SOBJ_CaptureCroisy, false, false)
+	
+	CaptureCocherel_OnComplete()	
+end

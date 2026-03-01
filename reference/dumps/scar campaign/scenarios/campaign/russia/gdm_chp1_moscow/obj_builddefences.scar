@@ -1,0 +1,196 @@
+--
+-- Moscow 1238 - Build Defences objective
+--
+
+
+
+function BuildDefences_InitObjectives()
+
+	OBJ_BuildDefences = {
+		
+		Title = "$11180190", -- Build up defences before the Mongols attack
+		Type = ObjectiveType_Build,
+		
+		Intel_Start = EVENTS.BuildDefences_ObjectiveStart,
+		
+		OnStart = BuildDefences_Start,	
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_BuildDefences, ALL)
+		end,
+		
+		OnComplete = BuildDefences_Complete,
+		
+	}
+	
+	SOBJ_BuildDefensiveStructures = {
+
+		Title = Loc_FormatText("$11180191", Loc_FormatNumber(5, 0)), -- Build defensive structures
+		Type = ObjectiveType_Build,
+		Parent = OBJ_BuildDefences,
+		StartAlongsideParent = true, 
+
+		SetupUI = BuildDefensiveStructures_SetupUI,
+		
+	}
+	
+	SOBJ_BuildMilitaryUnits = {
+
+		Title = Loc_FormatText("$11180192", Loc_FormatNumber(i_desiredMilitaryAmount, 0)), -- Produce %1AMOUNT% additional military units
+		Type = ObjectiveType_Build,
+		Parent = OBJ_BuildDefences,
+		StartAlongsideParent = true, 
+		
+		SetupUI = BuildMilitaryUnits_SetupUI,
+		
+		OnStart = BuildMilitaryUnits_Start,	
+		
+	}
+	
+	Objective_Register(OBJ_BuildDefences)
+	Objective_Register(SOBJ_BuildDefensiveStructures)
+	Objective_Register(SOBJ_BuildMilitaryUnits)
+	
+	t_buildingsToConstruct_Defences = BuildStructures_RememberPositionsOfBuildings(eg_constructDefences, true)
+	
+	EGroup_DestroyAllEntities(eg_constructDefences)
+	
+end
+
+function BuildDefences_TriggerObjective()
+
+	BuildStructures_FilterManifest(t_buildingsToConstruct_Defences)
+	i_buildDefensiveStructures_numBuildingsToBuild = #t_buildingsToConstruct_Defences
+		
+	Objective_Start(OBJ_BuildDefences)
+
+	MissionTutorial_AddHintToGarrisonOutposts()
+	
+end
+
+
+
+function BuildDefences_Start()
+	
+	Rule_AddOneShot(MongolCountdown_TriggerObjective, 60)
+	
+end
+
+
+function BuildDefences_Complete()
+	
+	-- this function left intentionally blank 
+	
+end
+
+
+
+
+--
+-- Build defensive structures
+--
+
+
+function BuildDefensiveStructures_SetupUI()
+	
+	Objective_UpdateText(SOBJ_BuildDefensiveStructures, Loc_FormatText("$11180191", Loc_FormatNumber(i_buildDefensiveStructures_numBuildingsToBuild, 0)), 0, false, true)
+	Objective_SetCounter(SOBJ_BuildDefensiveStructures, 0, i_buildDefensiveStructures_numBuildingsToBuild)
+
+	-- remove the invisible entities that reserve the spots
+	EGroup_DestroyAllEntities(eg_constructDefences_blockers)
+	
+	Rule_AddOneShot(BuildDefensiveStructures_PartB, 0.125)
+	
+end
+function BuildDefensiveStructures_PartB()
+		
+	-- build the defences
+	for index, entry in pairs(t_buildingsToConstruct_Defences) do 
+
+		LocalCommand_PlayerPlaceAndConstructEntitiesPlanned(player1, entry.ebp, entry.position, Util_GetOffsetPosition(entry.position, OFFSET_FRONT, 10), true, true)
+		
+	end
+	
+	local constructionList = BuildStructures_MonitorConstructionProgress(t_buildingsToConstruct_Defences, {objective = SOBJ_BuildDefensiveStructures})		
+	
+	Rule_AddInterval(BuildDefensiveStructures_Complete, 1, {manifestToCheck = constructionList})
+
+end
+
+function BuildDefensiveStructures_Complete(context, data)
+
+	if BuildStructures_IsManifestComplete(data.manifestToCheck) then 
+		
+		Rule_RemoveMe()
+		
+		Objective_Complete(SOBJ_BuildDefensiveStructures)
+		
+	end
+	
+end
+	
+
+
+--
+-- Build military units
+--
+	
+
+function BuildMilitaryUnits_SetupUI()
+			
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "military", FILTER_KEEP)
+
+	SGroup_AddGroup(sg_countedMilitary, sg_allsquads)
+	
+	local numberMilitaryGathered = SGroup_CountSpawned(sg_allsquads)
+	
+	
+	if numberMilitaryGathered >= i_desiredMilitaryAmount then 
+		
+		Objective_Complete(SOBJ_BuildMilitaryUnits, false)
+		
+	else
+		
+		while numberMilitaryGathered >= 10 do							-- bring down the goal in increments of 10 to account for units already built
+			numberMilitaryGathered = numberMilitaryGathered - 10
+			i_desiredMilitaryAmount = i_desiredMilitaryAmount - 10
+		end
+		
+		Objective_UpdateText(SOBJ_BuildMilitaryUnits, Loc_FormatText("$11180192", Loc_FormatNumber(i_desiredMilitaryAmount, 0)), 0, false, true)
+		Objective_SetCounter(SOBJ_BuildMilitaryUnits, 0, i_desiredMilitaryAmount)
+		
+	end
+	
+end
+
+function BuildMilitaryUnits_Start()
+	
+	if Objective_IsComplete(SOBJ_BuildMilitaryUnits) == false then 
+		Rule_AddInterval(BuildMilitaryUnits_Monitor, 0.5)
+	end
+	
+end
+
+function BuildMilitaryUnits_Monitor()
+	
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "military", FILTER_KEEP)
+	SGroup_RemoveGroup(sg_allsquads, sg_countedMilitary)
+	
+	local newSoldiers = SGroup_CountSpawned(sg_allsquads)
+	
+	if newSoldiers >= 1 then 
+		
+		SGroup_AddGroup(sg_countedMilitary, sg_allsquads)	
+		
+		Objective_IncreaseCounter(SOBJ_BuildMilitaryUnits, newSoldiers)
+	
+		if Objective_GetCounter(SOBJ_BuildMilitaryUnits) >= i_desiredMilitaryAmount then 
+			Objective_Complete(SOBJ_BuildMilitaryUnits)
+			Rule_RemoveMe()
+		end
+		
+	end
+	
+end

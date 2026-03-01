@@ -1,0 +1,117 @@
+
+function SiegeTut_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	OBJ_SiegeTut = {
+	
+		Title = "$11201800", -- Build Trebuchets to Breach Rochester
+		Type = ObjectiveType_Optional,
+		IsComplete = SiegeTut_IsComplete,
+	}
+	SOBJ_AgeUp = {
+	
+		Title = "$11201801", -- Build a Landmark
+		Type = ObjectiveType_Optional,
+		StartAlongsideParent = true,
+		Parent = OBJ_SiegeTut,
+		showTitle = false,
+		IsComplete = AgeUp_IsComplete,
+		OnComplete = AgeUp_OnComplete,
+	}
+	SOBJ_SiegeWorkshop = {
+	
+		Title = "$11201802", -- Build a Siege Workshop
+		Type = ObjectiveType_Optional,
+		StartAlongsideParent = false,
+		Parent = OBJ_SiegeTut,
+		showTitle = false,
+		IsComplete = SiegeWorkshop_IsComplete,
+		--OnComplete = SiegeWorkshop_OnComplete,
+	}
+	SOBJ_Trebuchets = {
+	
+		Title = "$11201803", -- Construct Trebuchets
+		Type = ObjectiveType_Optional,
+		StartAlongsideParent = false,
+		Parent = OBJ_SiegeTut,
+		OnStart = Trebuchets_OnStart,
+		IsComplete = Trebuchets_IsComplete,
+		OnComplete = Trebuchets_OnComplete,
+	}
+	
+	Objective_Register(OBJ_SiegeTut)
+	Objective_Register(SOBJ_AgeUp)
+	Objective_Register(SOBJ_SiegeWorkshop)
+	Objective_Register(SOBJ_Trebuchets)
+	
+end
+
+function SiegeTut_IsComplete()
+	return Objective_AreSubObjectivesComplete(OBJ_SiegeTut, true)
+end
+
+function AgeUp_IsComplete()
+	return Player_GetCurrentAge(player1) == Player_GetMaximumAge(player1)
+end
+
+function AgeUp_OnComplete()
+	Objective_Start(SOBJ_SiegeWorkshop)
+	Objective_Start(SOBJ_Trebuchets)
+end
+
+function SiegeWorkshop_IsComplete()
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.ENGLISH.BUILDING_UNIT_SIEGE_CONTROL_ENG, FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	return EGroup_CountSpawned(eg_allentities) > 0
+end
+
+--function SiegeWorkshop_OnComplete()
+	--Objective_Start(SOBJ_Trebuchets)
+--end
+
+function Trebuchets_OnStart()
+	Objective_SetCounter(SOBJ_Trebuchets, 0, 3)
+end
+
+function Trebuchets_IsComplete()
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_trebuchet_cw", FILTER_KEEP)
+	local trebCount = SGroup_CountSpawned(sg_allsquads)
+	Objective_SetCounter(SOBJ_Trebuchets, trebCount, 3)
+	
+	previousTrebCount = previousTrebCount or trebCount
+	if previousTrebCount < trebCount then 
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		previousTrebCount = trebCount
+	end
+	
+	if trebCount >= 3 then
+		if Objective_IsStarted(SOBJ_SiegeWorkshop) == true and Objective_IsComplete(SOBJ_SiegeWorkshop) == false then
+			Objective_Show(SOBJ_SiegeWorkshop, false, false)
+			Objective_Complete(SOBJ_SiegeWorkshop, false, false)
+		end
+		
+		-- only show siege setup hint on kbm controls
+		if UI_IsXboxControllerUI() == false then
+			Rule_AddInterval(_Hint_SiegeSetup, 3)
+		end
+		
+		return true
+	end
+end
+
+function _Hint_SiegeSetup()
+	Misc_GetSelectedSquads(sg_temp, true)
+	SGroup_Filter(sg_temp, "scar_trebuchet_cw", FILTER_KEEP)
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		Rule_RemoveMe()
+		local treb1 = SGroup_GetSquadAt(sg_temp, 1)
+		siegeHint = HintPoint_Add(treb1, 1, "$11201804", 3, nil, nil, nil, true) -- When moving siege equipment, hold Right-Click to determine their set-up facing.
+		Rule_AddOneShot(_RemoveHint_SiegeSetup, 12)
+	end
+	
+end
+
+function _RemoveHint_SiegeSetup()
+	HintPoint_Remove(siegeHint)
+end

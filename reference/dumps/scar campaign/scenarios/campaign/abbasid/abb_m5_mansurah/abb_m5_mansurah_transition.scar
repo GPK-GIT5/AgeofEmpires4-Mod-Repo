@@ -1,0 +1,127 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")	
+
+function Transition_MonitorSpy(context, data)
+	SGroup_Clear(sg_temp)
+	SGroup_AddGroup(sg_temp, sg_spies)
+	SGroup_FilterByProximity(sg_temp, mkr_signal_trigger, FILTER_KEEP)
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		Transition_SpyArrived()
+		Rule_RemoveMe()
+	end
+end
+
+function Transition_SpyArrived()
+	print("Transition_SpyArrived")
+	
+	Objective_RemoveUIElements(OBJ_BringSpy, map_edge_ui_element)
+	Objective_Complete(OBJ_BringSpy, true, true)
+	Objective_Complete(OBJ_SendForHelp, false, false)
+
+	SGroup_SetTargetingType(sg_spies, Targeting_None)
+end
+
+function Transition_ResumeGameplay()
+	print("Transition_ResumeGameplay")
+	
+	siege_started_at = World_GetGameTime()
+	
+	--local time_string = Util_ConvertIntegerSecondsToStringTime(math.floor(siege_started_at))	
+	--print("Baibars Signaled at "..time_string)
+
+	SGroup_DestroyAllSquads(sg_signal_messanger)
+	Player_GetAll(player3)
+	EGroup_SetPlayerOwner(eg_allentities, player1)
+	SGroup_SetPlayerOwner(sg_allsquads, player1)
+
+	UI_SetPlayerDataContext(player1, { PopulationCapOn = true })
+	Modifier_RemoveAllFromSGroup(sg_villagers_berries)
+	Modifier_RemoveAllFromSGroup(sg_villagers_gold)
+	Modifier_RemoveAllFromSGroup(sg_villagers_wood)
+	LeaderTent_UpdatePlayerOwner(player3, player1)
+	
+	Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+	Music_UnlockIntensity()
+	stop_reinforcing_resources = true
+	
+	local originalHOW_Entity = EGroup_GetEntityAt(eg_player_how, 1)
+	local originalHOW_Data = {}
+	originalHOW_Data.position = Util_GetPosition(originalHOW_Entity)
+	originalHOW_Data.direction = Util_GetDirection(originalHOW_Entity)
+	
+	EGroup_DestroyAllEntities(eg_player_how)
+	EGroup_Clear(eg_temp)
+	CreateEntity(player1, EBP.AYYUBID_CMP.BUILDING_HOUSE_OF_WISDOM_AYY, originalHOW_Data.position, eg_temp, originalHOW_Data.direction, nil, false)
+	EGroup_AddEGroup(eg_player_how, eg_temp)
+	EGroup_AddEGroup(eg_landmarks, eg_temp)
+	EGroup_CompleteUpgrade(eg_player_how, UPG.ABBASID.UPGRADE_ADD_MILITARY_WING)
+	EGroup_SetAnimatorVariable(eg_player_how, "military_wing_build_progress_abb", 1)
+	Modify_EntityMaxHealth(eg_player_how, 5000, MUT_Addition)
+	RemoveScoutBlocker()
+	RemoveGatherSpeedModifications()
+	
+	local defend_01 = Army_FindFromName("defend_01")
+	SGroup_DestroyAllSquads(defend_01.sgroup)
+	local defend_02 = Army_FindFromName("defend_02")
+	SGroup_DestroyAllSquads(defend_02.sgroup)
+	
+	SGroup_SetAvgHealth(sg_cavalry_all, 1)
+	SGroup_SetAvgHealth(sg_spies, 1)
+	WarpCavalry_A()
+	
+	EGroup_SetPlayerOwner(eg_farmhouses, player1)
+	
+	Objective_Start(OBJ_DefendMansurah, true, true)
+	
+	Rule_AddOneShot(Invasion_QueueAndLaunch, INVASION_DELAY_AFTER_TRANSITION)
+	--Rule_AddOneShot(VOCue_DestroyCamp, 1)
+	Rule_AddInterval(PrintReport, 60)
+	
+	Misc_ClearSelection()
+	SGroup_SetTargetingType(sg_spies, Targeting_Automatic)
+	SGroup_AddAbility(sg_spies, BP_GetAbilityBlueprint("core_unit_death"))
+	
+	SpawnCampFollowers()
+	SpawnCampInvaders()
+	
+	Rule_AddOneShot(Transition_ResumeGameplay_Objetives, 7)
+	Rule_AddOneShot(Transition_ResumeGameplay_HelpSoon, 27)
+	Rule_AddOneShot(Transition_ResumeGameplay_Autosave, 29)
+	Rule_AddOneShot(Transition_ResumeGameplay_SpyHint, 34)
+end
+
+function WarpCavalry_A()
+	SGroup_FormationWarpToMarker(sg_cavalry_1, mkr_cavalry_warp_1)
+	SGroup_FormationWarpToMarker(sg_cavalry_2, mkr_cavalry_warp_2)
+	SGroup_FormationWarpToMarker(sg_cavalry_3, mkr_cavalry_warp_3)
+	SGroup_FormationWarpToMarker(sg_spies, mkr_spy_final)
+	
+	SGroup_Move(sg_cavalry_1, mkr_cavalry_waypoint, true)
+	SGroup_Move(sg_cavalry_1, mkr_cavalry_final_1, true)
+
+	SGroup_Move(sg_cavalry_2, mkr_cavalry_waypoint, true)
+	SGroup_Move(sg_cavalry_2, mkr_cavalry_final_2, true)
+
+	SGroup_Move(sg_cavalry_3, mkr_cavalry_waypoint, true)
+	SGroup_Move(sg_cavalry_3, mkr_cavalry_final_3, true)
+end
+
+function Transition_ResumeGameplay_Objetives()
+	Objective_Start(OBJ_DestroyTheHeadquarters, true, true)
+	Objective_Start(OBJ_EliminateTheLeaders, true, true)
+	Objective_Start(OBJ_GrandMasterTip, false, false)
+	FOW_RevealEGroup(eg_enemy_headquarters, 30, -1)
+end
+
+function Transition_ResumeGameplay_HelpSoon()
+	Objective_Start(OBJ_BaybarsArrivingSoon, true, true)
+end
+
+function Transition_ResumeGameplay_Autosave()
+	Util_AutoSave()
+	Rule_AddInterval(Util_AutoSave, 600)
+end
+
+function Transition_ResumeGameplay_SpyHint()
+	AppointSpyTutorial_Enable()
+end

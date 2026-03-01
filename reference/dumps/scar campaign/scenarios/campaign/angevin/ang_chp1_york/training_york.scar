@@ -1,0 +1,594 @@
+--
+-- York 1069 - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+--import("training/coretraininggoals.scar")
+
+
+local _recommendedNumFoodGatherers = 5
+local _recommendedBarracksCount = 1
+local goal_sequence_gather_food = "gather_food"
+local goal_sequence_send_gold = "send_gold"
+local goal_sequence_build_barracks = "build_barracks"
+local goal_sequence_build_palisade = "build_palisade"
+local goal_stop_attacking = "stop_attacking"
+local goal_build_wonder = "build_wonder"
+
+local training_goals_campaign_econ =
+{
+	goal_sequence_gather_food,
+	goal_sequence_send_gold,
+	goal_sequence_build_barracks,
+	goal_build_wonder
+}
+
+function TrainingGoal_EnableCampaignEconGoals()
+	for i, goalSequenceID in ipairs(training_goals_campaign_econ) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function TrainingGoal_DisableCampaignEconGoals()
+	for i, goalSequenceID in ipairs(training_goals_campaign_econ) do
+		Training_EnableGoalSequenceByID(goalSequenceID, false)
+	end
+end
+
+function UserHasEnoughVillagersGatheringFood(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	return Player_GetNumGatheringSquads(localPlayer, RT_Food) >= _recommendedNumFoodGatherers
+end
+
+function ShouldPromptUserToGatherMoreFood(goalSequence)
+	if not AModeratePeriodOfTimeHasPassed(goalSequence) or UserHasEnoughVillagersGatheringFood(goalSequence) then
+		return false
+	end
+	
+	local food_deposit, use_food_deposit_entity = FindDecorableFoodDepositInSight()
+	if food_deposit ~= nil then
+		if use_food_deposit_entity then
+			goalSequence.goals[goalSequence.currentGoalIndex].key = food_deposit
+		else
+			goalSequence.goals[goalSequence.currentGoalIndex].key = Entity_GetSquad(food_deposit)
+		end
+		
+		local localPlayer = Game_GetLocalPlayer()
+		_recommendedNumFoodGatherers = Player_GetNumGatheringSquads(localPlayer, RT_Food) + 1
+		
+		return true
+	end
+	
+	return false
+end
+
+function FoodTargetValid(goalSequence)
+	local deposit = goalSequence.goals[goalSequence.currentGoalIndex].key
+	if deposit == nil then
+		return false
+	end
+	
+	if scartype(deposit) == ST_SQUAD and Squad_IsValid(Squad_GetID(deposit)) 
+		and UI_GetDecoratorVisibilitySquad(deposit) ~= DV_Hidden then
+		return true
+	elseif scartype(deposit) == ST_ENTITY and Entity_IsValid(Entity_GetID(deposit)) 
+		and UI_GetDecoratorVisibilityEntity(deposit) == DV_Visible then
+		return true
+	end
+	
+	return false
+end
+
+function ShouldContinuePromptingUserToGatherMoreFood(goalSequence)
+	local currentGoal = goalSequence.goals[goalSequence.currentGoalindex]
+	return UserHasEnoughVillagersGatheringFood(currentGoal)
+end
+
+function UserHasEnoughBarracks(goalSequence)
+	local localPlayer = Game_GetLocalPlayer()
+	local barracksCount = EGroup_Count(Player_GetEntitiesFromType(localPlayer, "barracks"))
+	return barracksCount >= _recommendedBarracksCount
+end
+
+function UserShouldBuildPalisade(goalSequence)
+	
+	if UserIsGoingToBuildPalisade(goalSequence) or UserHasStartedToBuildPalisade(goalSequence) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	
+	if g_palisadeBastionTarget ~= nil then
+		
+		goalSequence.goals[1].key = g_palisadeBastionTarget
+		return true
+	end
+	
+	return false
+	
+end
+
+function UserShouldBuildMoreBarracks_Xbox(goalSequence)
+
+	if UserHasEnoughBarracks(goalSequence) or UserIsGoingToBuildABarracks(goalSequence) or UserHasStartedToBuildABarracks(goalSequence) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local barracksBP = Cardinal_ConvertTypeToEntityBlueprint("barracks", localPlayer)
+	
+	if barracksBP ~= nil 
+	and training_currentConstructionBlueprint == nil 
+	and Player_CanConstruct(localPlayer, barracksBP) then
+		goalSequence.goals[4].key = barracksBP
+		
+		local villager = FindVillagerInSight(goalSequence)
+		if villager ~= nil then
+			goalSequence.goals[1].key = villager
+			goalSequence.goals[2].key = villager
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserShouldBuildMoreBarracks(goalSequence)
+
+	if UserHasEnoughBarracks(goalSequence) or UserIsGoingToBuildABarracks(goalSequence) or UserHasStartedToBuildABarracks(goalSequence) then
+		return false
+	end
+	
+	local localPlayer = Game_GetLocalPlayer()
+	local barracksBP = Cardinal_ConvertTypeToEntityBlueprint("barracks", localPlayer)
+	
+	if barracksBP ~= nil 
+	and training_currentConstructionBlueprint == nil 
+	and Player_CanConstruct(localPlayer, barracksBP) then
+		goalSequence.goals[2].key = barracksBP
+		
+		local villager = FindVillagerInSight(goalSequence)
+		if villager ~= nil then
+			goalSequence.goals[1].key = villager
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserShouldBuildMoreBarracksAndTimeHasPassed(goalSequence)
+	
+	if UserShouldBuildMoreBarracks(goalSequence) and ALongPeriodOfTimeHasPassed(goalSequence) then
+		return true
+	end
+	return false
+end
+
+function TrainingGoal_AddStopAttacking()
+	
+	local stopAttackingGoal = Training_Goal("Cursor", 
+		{Message = "$11180956", DataTemplate="GenericTrainingDataTemplate"},
+		UserHasStoppedAttacking)
+	local stopAttackingGoalSequence = Training_GoalSequence(goal_stop_attacking, 
+		1, 0, --If these are both set to -1, it will keep repeating the training
+		BuildingAttacked, 
+		AttackTargetIsInvalid, 
+		nil, 
+		nil, 
+		false, 
+		{stopAttackingGoal})
+	Training_AddGoalSequence(stopAttackingGoalSequence)
+	
+end
+
+function BuildingAttacked(goalSequence)
+	if Timer_GetElapsed(goalSequence.timerID) > __t_trainingShortInterval then
+		
+		local localPlayer = Game_GetLocalPlayer()
+		
+		for index, location in pairs(t_allCaptureLocationPrefabs) do 
+			
+			for i = 1, EGroup_Count(location.egroup) do
+				
+				local entity = EGroup_GetEntityAt(location.egroup, i)
+				
+				if Misc_IsEntityOnScreen(entity, 100) and not World_OwnsEntity(entity) then
+					
+					if not Entity_IsOfType(entity, "wall") and not Entity_IsOfType(entity, "gate") then
+					
+						if Entity_GetPlayerOwner(entity) ~= localPlayer then
+							
+							if Entity_IsUnderAttack(entity, 2) and Entity_GetHealthPercentage(entity) < 1 then
+								goalSequence.goals[goalSequence.currentGoalIndex].key = Entity_GetID(entity)
+								return true
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	return false
+end
+
+function AttackTargetIsInvalid(goalSequence)
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		for i, goal in pairs(goalSequence.goals) do
+			local key = goal.key
+			if key == nil then
+				return true	
+			end
+			
+			if scartype(key) == ST_NUMBER then
+				
+				if Entity_IsValid(key) then
+					
+					local entity = Entity_FromID(key)
+					
+					if not Misc_IsEntityOnScreen(entity, 100) then 
+						return true 
+					elseif World_OwnsEntity(entity) then
+						return true
+					elseif Entity_GetPlayerOwner(entity) == Game_GetLocalPlayer() then
+						return true
+					end
+				else
+					return true
+				end
+			end
+		end
+		return false
+	end
+end
+
+function UserHasAnEntitySelected(goal)
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+	return EGroup_CountSpawned(eg_currentSelection) > 0
+end
+
+function UserHasStoppedAttacking(goal)
+	
+	for index, location in pairs(t_allCaptureLocationPrefabs) do 
+		
+		for i = 1, EGroup_Count(location.egroup) do
+			
+			local entity = EGroup_GetEntityAt(location.egroup, i)
+			
+			if Entity_GetID(entity) == goal.key then
+				
+				if not Entity_IsUnderAttack(entity, 2) then
+					return true
+				end
+			end
+		end
+	end
+	
+	return false
+end
+
+function TrainingGoal_AddGatherFood()
+	local assignVillagersToFoodGoal = Training_Goal("Entity",
+		{Message = "$11180957", 
+			DataTemplate="GenericTrainingDataTemplate"}, 
+		UserHasEnoughVillagersGatheringFood)
+	local assignVillagersToFoodSequence = Training_GoalSequence(goal_sequence_gather_food,
+		1, 0, 
+		ShouldPromptUserToGatherMoreFood, 
+		function(goalSequence) if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then return true else return not FoodTargetValid(goalSequence) end end, 
+		nil,
+		UserHasEnoughVillagersGatheringFood,
+		true, 
+		{assignVillagersToFoodGoal})
+	Training_AddGoalSequence(assignVillagersToFoodSequence)
+end
+
+function TrainingGoal_AddBuildPalisade()
+
+	local buildPalisadeGoal = Training_Goal("Entity",
+		{Message = "$11180958",
+			DataTemplate="GenericTrainingDataTemplate"}, 
+		UserHasBuiltPalisadeOrTimeHasPassed)
+	local buildPalisadeSequence = Training_GoalSequence(goal_sequence_build_palisade, 
+		1, 0, 
+		UserShouldBuildPalisade, 
+		TargetNotValid, 
+		nil,
+		UserHasBuiltPalisadeOrTimeHasPassed,
+		true, 
+		{buildPalisadeGoal})
+	Training_AddGoalSequence(buildPalisadeSequence)
+end
+
+function TrainingGoal_AddBuildBarracks_Xbox()
+	-- Build a Barracks to produce infantry units. Press (A) to select a Villager.
+	local selectVillagerGoal = Training_Goal("Squad",
+		{
+			Message = "$11248587", 
+			DataTemplate="GenericTrainingDataTemplate"
+		}, 
+		UserHasSelectedAVillager
+	)
+
+	local goal_OpenRadial = Training_Goal(
+		"Squad",
+		{
+			ID = "goal_OpenRadial",
+			Message = "$999532", -- Press RT to show the Villager Radial Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		UserHasOpenedContextualRadial
+	)
+
+	
+	local goal_OpenMilitaryPage = Training_Goal(
+		"RadialDPadRight",
+		{
+			ID = "goal_OpenMilitaryPage",
+			Message = "$1000655", -- Press D-pad right to access Military building options.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		UserHasOpenedDPadRightRadial
+	)
+
+	local goal_HighlightBarracks = Training_Goal(
+		EBP.CAMPAIGN.BUILDING_UNIT_INFANTRY_CONTROL_NRM,
+		{
+			ID = "goal_HighlightBarracks",
+			Message = "$11248583", -- Select and Construct the Barracks
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		UserIsBuildingOrHasBuiltBarracks
+	)
+
+	
+	local buildBarracksSequence = Training_GoalSequence(goal_sequence_build_barracks, 
+		1, 0, 
+		UserShouldBuildMoreBarracks_Xbox, 
+		UserCannotBuildABarracks, 
+		nil,
+		UserHasEnoughBarracks, 
+		true, 
+		{selectVillagerGoal, goal_OpenRadial, goal_OpenMilitaryPage, goal_HighlightBarracks})
+	Training_AddGoalSequence(buildBarracksSequence)
+end
+
+function TrainingGoal_AddBuildBarracks()
+	-- Build a Barracks to produce infantry units. LEFT CLICK to select a Villager.
+	local selectVillagerGoal = Training_Goal("Squad",
+		{Message = "$11189532", 
+			DataTemplate="LeftClickTrainingDataTemplate"}, 
+		UserHasSelectedAVillager)
+	-- Indicate button for barracks
+	local selectBuildBarracksGoal = Training_Goal("PBG",
+		{Message = "$11180960", 
+			DataTemplate="LeftClickTrainingDataTemplate"}, 
+		UserIsBuildingOrHasBuiltBarracks)
+	-- can we do this as a condition but no popup?
+	local buildBarracksSequence = Training_GoalSequence(goal_sequence_build_barracks, 
+		1, 0, 
+		UserShouldBuildMoreBarracks, 
+		UserCannotBuildABarracks, 
+		nil,
+		UserHasEnoughBarracks, 
+		true, 
+		{selectVillagerGoal, selectBuildBarracksGoal})
+	Training_AddGoalSequence(buildBarracksSequence)
+end
+
+function TrainingGoal_AddBuildWonder_Xbox()
+	
+	-- Build a Landmark to advance to the next Age. PRESS A to select a Villager.
+	local selectVillagerGoal = Training_Goal("Squad",
+		{
+			Message = "$1000605", 
+			DataTemplate="GenericTrainingDataTemplate"
+		}, 
+		UserHasSelectedAVillager)
+	
+	-- You are ready to advance to the next Age! Hold RT to choose your Landmark.
+	local openRadialGoal = Training_Goal("Squad",
+		{
+			Message = "$11248581",
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		York_LM_openRadialIsComplete
+	)
+	
+	-- Press Y to view the Landmarks you can build.
+	local viewWonderGoal = Training_Goal("RadialDPadTop", 
+		{
+			Message= "$1000988",  
+			DataTemplate="RadialTrainingDataTemplate"
+		}, 
+		UserIsGoingToBuildAWonder
+	)
+	local buildWonderGoal = Training_Goal("LooseReticle", 
+		{Message= "$1000992", DataTemplate="GenericTrainingDataTemplate"}, 
+		UserIsBuildingAWonder)
+
+	local buildAWonderGoalSequence = Training_GoalSequence(goal_build_wonder, 
+		1, 0, 
+		TimeHasPassedAndUserCanBuildAWonder_Xbox, 
+		UserCannotBuildAWonder, 
+		nil, 
+		UserKnowsHowToBuildWonders, 
+		true, 
+		{selectVillagerGoal, openRadialGoal, viewWonderGoal, buildWonderGoal})
+	Training_AddGoalSequence(buildAWonderGoalSequence)
+end
+
+
+function York_LM_openRadialIsComplete(goal)
+	-- this exists to prevent the next step from regressing here once on the Landmarks page
+	return (UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu) or UI_XboxIsLandmarkRadialOpen()
+end
+
+
+
+function TrainingGoal_AddBuildWonder()
+	-- Build a Landmark to Age Up
+	local selectVillagerGoal = Training_Goal("Squad",
+		{Message = "$11193220", 
+			DataTemplate="LeftClickTrainingDataTemplate"}, 
+		UserHasSelectedAVillager)
+	local selectWonderGoal = Training_Goal("PBG", 
+		{Message= "$11180976",  
+			DataTemplate="LeftClickTrainingDataTemplate"}, UserIsGoingToBuildAWonder)
+	local buildWonderGoal = Training_Goal("Cursor", 
+		{Message= "$11180975", DataTemplate="LeftClickTrainingDataTemplate"}, 
+		UserIsBuildingAWonder)
+	local buildAWonderGoalSequence = Training_GoalSequence(goal_build_wonder, 
+		1, 0, 
+		TimeHasPassedAndUserCanBuildAWonder, 
+		UserCannotBuildAWonder, 
+		nil, 
+		UserKnowsHowToBuildWonders, 
+		true, 
+		{selectVillagerGoal, selectWonderGoal, buildWonderGoal})
+	Training_AddGoalSequence(buildAWonderGoalSequence)
+end
+
+function UserIsBuildingOrHasBuiltBarracks()
+	if UserIsGoingToBuildABarracks() or UserHasEnoughBarracks() then
+		return true
+	end
+	return false
+end
+
+function UserCannotBuildAWonder(goalSequence)
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		if UserCanBuildAWonder(goalSequence) == false then
+			return true
+		end
+		
+		if UserCannotSeeSquadKey(goalSequence) == false then
+			return false
+		end
+		
+		return false
+	end
+end
+
+function UserHasBuiltPalisade(goalSequence)
+	if g_palisadeWallBuilt ~= nil then
+		return g_palisadeWallBuilt
+	end
+	return false
+end
+
+function UserHasBuiltPalisadeOrTimeHasPassed(goalSequence)
+	if UserHasBuiltPalisade(goalSequence) or AShortPeriodOfTimeHasPassed(goalSequence) then
+		return true
+	end
+	return false
+end
+
+function TargetNotValid(goalSequence)
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		local target = goalSequence.goals[goalSequence.currentGoalIndex].key
+		if target == nil then
+			return true
+		end
+		
+		if scartype(target) == ST_ENTITY then
+			if not Misc_IsEntityOnScreen(target, 100) then
+				return true
+			end
+		end
+		
+		return false
+	end
+end
+
+function UserCannotBuildABarracks(goalSequence)
+		if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		local localPlayer = Game_GetLocalPlayer()
+		local bp = Cardinal_ConvertTypeToEntityBlueprint("barracks", localPlayer)
+		return not Player_CanConstruct(localPlayer, bp)
+	end
+end
+
+--function TrainingGoal_EnableGatherFood()
+	--Training_EnableGoalSequenceByID(goal_sequence_gather_food, true)
+--end
+
+--function TrainingGoal_DisableGatherFood()
+	--Training_EnableGoalSequenceByID(goal_sequence_gather_food, false)
+--end
+
+
+function TrainingGoal_EnableBuildLandmark()
+	Training_EnableGoalSequenceByID(goal_sequence_build_landmark, true)
+end
+
+function TrainingGoal_EnableBuildPalisade()
+	Training_EnableGoalSequenceByID(goal_sequence_build_palisade, true)
+end
+
+function TrainingGoal_DisableBuildPalisade()
+	Training_EnableGoalSequenceByID(goal_sequence_build_palisade, false)
+end
+
+function TrainingGoal_EnableBuildBarracks()
+	Training_EnableGoalSequenceByID(goal_sequence_build_barracks, true)
+end
+
+function TrainingGoal_DisableBuildBarracks()
+	Training_EnableGoalSequenceByID(goal_sequence_build_barracks, false)
+end
+
+function UserHasOpenedTheDiplomacyMenu()
+	if not _userHasOpenedDiplomacyMenu and _diplomacy ~= nil and _diplomacy.data_context ~= nil then
+		_userHasOpenedDiplomacyMenu = _diplomacy.data_context.is_ui_expanded
+	end	
+	return _userHasOpenedDiplomacyMenu
+end
+
+function ShouldPromptUserToSendGold(goalSequence)
+	if _diplomacy ~= nil and _diplomacy.data_context ~= nil then
+		
+		if _diplomacy.data_context.is_ui_visible then
+			if not UserHasOpenedTheDiplomacyMenu() then
+				
+				local localPlayer = Game_GetLocalPlayer()
+				if Player_GetResource(localPlayer, RT_Gold) >= 100 then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+function TrainingGoal_AddSendGold()
+	local send_gold_goal = Training_Goal("DiplomacyButton",
+		{Message = UI_PickIDForInputMode(11189533, 11248588), DataTemplate="GenericTrainingDataTemplate"}, 
+		UserHasOpenedTheDiplomacyMenu)
+	local send_gold_sequence = Training_GoalSequence(goal_sequence_send_gold,
+		1, 0, 
+		ShouldPromptUserToSendGold, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		UserHasOpenedTheDiplomacyMenu, 
+		true, 
+		{send_gold_goal})
+	Training_AddGoalSequence(send_gold_sequence)
+end
+
+function TrainingGoal_EnableSendGold()
+	Training_EnableGoalSequenceByID(goal_sequence_send_gold, true)
+end
+
+function TrainingGoal_DisableSendGold()
+	Training_EnableGoalSequenceByID(goal_sequence_send_gold, false)
+end

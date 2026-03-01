@@ -1,0 +1,574 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("MissionOMatic/MissionOMatic.scar")
+import("obj_expand.scar")
+import("obj_upgrade.scar")
+import("obj_capture.scar")
+import("training_sal_chp2_dinan.scar")
+
+-- ////// MISSION START FUNCTIONS ///////////////////////////////////////////////////////////////////////////////
+
+-- This is called so early that there is little you can do but simple stuff like gathering player IDs
+function Mission_OnGameSetup()
+	
+	player1 = World_GetPlayerAt(1) 
+	Setup_SetPlayerName(player1, "$999303") -- Mathilde
+	
+	player2 = World_GetPlayerAt(2) 
+	Setup_SetPlayerName(player2, 999307) --Brittany
+	
+	player3 = World_GetPlayerAt(3)
+	Setup_SetPlayerName(player3, 11172025) --Neutral
+	
+end
+
+-- This is called as soon as the game has loaded and things start running.
+function Mission_OnInit()
+	
+	-- Dynamic training is key to this tutorial mission
+	Training_SetForceEnableTraining(true)
+	
+	-- Force enable HUD widgets that are explained in the tutorial
+	UI_SetTutorializedWidgetsRequired(true)
+	
+	Game_SetPlayerSlotColour(player3, 9)
+	Game_SetPlayerUISlotColour(player3, 9)
+	
+	Player_SetCurrentAge(player1, AGE_FEUDAL)
+	Player_SetMaximumAge(player1, AGE_FEUDAL)
+	
+	Player_SetCurrentAge(player2, AGE_DARK)
+	Player_SetMaximumAge(player2, AGE_DARK)
+	
+	Player_SetCurrentAge(player3, AGE_FEUDAL)
+	Player_SetMaximumAge(player3, AGE_FEUDAL)
+	
+	Player_SetRelationship(player3, player1, R_NEUTRAL)
+	Player_SetRelationship(player1, player3, R_NEUTRAL)
+	Player_SetRelationship(player3, player2, R_NEUTRAL)
+	Player_SetRelationship(player2, player3, R_NEUTRAL)
+	
+	World_EnableSharedLineOfSight(player1, player3, true)
+end
+
+-- This is a good place to initialize global variables. SGroups, data tables, Objectives etc.
+function Mission_SetupVariables()
+	
+	Modify_PlayerProductionRate(player1, 3) 
+	local construction_rate_multiplier = 0.5
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE, construction_rate_multiplier)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_UNIT_INFANTRY_CONTROL_FRE, construction_rate_multiplier)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_UNIT_CAVALRY_CONTROL_FRE, construction_rate_multiplier)
+	Modify_EntityBuildTime(player1, EBP.FRENCH.BUILDING_UNIT_RANGED_CONTROL_FRE, construction_rate_multiplier)
+	
+	intro_skipped = false
+	final_shot = false
+	
+	Expand_InitObjectives()
+	UpgradeUnits_InitObjectives()
+	Capture_InitObjectives()
+	
+	-- Designer variables for enemy amounts
+	num_spear_outpost = 4
+	num_archers_outpost = 4
+	num_garrison = 3
+	
+	num_spear_ext = 3
+	num_archers_ext_per_mkr = 3
+	
+	num_spear_front_per_mkr = 4
+	num_spear_docks_per_mkr = 4
+	
+	num_spear_tc = 3
+	num_cavalry_tc = 4
+	num_archers_tc = 4
+	num_cavalry_rear = 4
+	
+	num_cavalry_keep = 4
+	num_spear_keep = 5
+	num_archers_keep_per_mkr = 3
+	num_garrison_keep = 5
+	
+	-- Patrol amounts
+	num_spear_patrol_01 = 3
+	num_archers_patrol_01 = 3
+	num_spear_patrol_02 = 3
+	num_archers_patrol_02 = 3
+	
+	-- Raid amount
+	num_raid_horsemen = 4
+	num_raid_archers = 6
+	
+end
+
+-- Values that we want to change depending on difficulty mode, we declare them as variables in here.
+function Mission_SetDifficulty()
+	
+end
+
+-- If we want to lock out any abilities, units, or other items, we usually do that in this function.
+function Mission_SetRestrictions()
+	
+	-- Give the research upgraded in the last mission
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1)
+	
+	-- Remove access to certain units/buildings/upgrades
+	Player_SetConstructionMenuAvailability(player1, "fre_age4", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age3_wonders", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age3", ITEM_REMOVED)
+	Player_SetConstructionMenuAvailability(player1, "fre_age2_wonders", ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_INFANTRY_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_NAVAL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_OUTPOST_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_PALISADE_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_PALISADE_GATE_FRE, ITEM_REMOVED)
+	
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_SCOUT_1_FRE, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_VILLAGER_HUNTING_GEAR_1, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_SCOUT_FORESTER, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_VILLAGER_HEALTH, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_FOOD_HARVEST_RATE_3, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_HARVEST_RATE_3, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_GOLD_HARVEST_RATE_3, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_STONE_HARVEST_RATE_2, ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_RANGED_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TECH_UNIT_INFANTRY_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TECH_UNIT_RANGED_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_ECON_MARKET_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TOWN_CENTER_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_TOWN_CENTER_CAPITAL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_UNIT_CAVALRY_CONTROL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_TOWER_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_WALL_BASTION_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_WALL_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.BUILDING_DEFENSE_WALL_GATE_FRE, ITEM_REMOVED)
+	
+		
+	-- Hide from Barracks/Ranges/Stables
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_SPEARMAN_1_FRE, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_MANATARMS_3_FRE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_UNIT_SPEARMAN_2, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_UNIT_MANATARMS_4, ITEM_REMOVED)
+	
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_KNIGHT_2_FRE, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_HORSEMAN_2_FRE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_UNIT_HORSEMAN_3, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.FRENCH.UPGRADE_UNIT_KNIGHT_3_FRE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.FRENCH.UPGRADE_CAVALRY_CHIVALRY_FRE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.FRENCH.UPGRADE_CAVALRY_CANTLED_SADDLE_FRE, ITEM_REMOVED)
+	
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_ARCHER_2_FRE, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_CROSSBOWMAN_3_FRE, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.FRENCH.UNIT_HANDCANNON_4_FRE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_UNIT_ARCHER_3, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_UNIT_CROSSBOWMAN_4, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.FRENCH.UPGRADE_UNIT_CROSSBOWMAN_4_FRE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.FRENCH.UPGRADE_RANGED_CROSSBOW_STIRRUPS_FRE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.FRENCH.UPGRADE_RANGED_CROSSBOW_CRANEQUIN_FRE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.FRENCH.UPGRADE_RANGED_CROSSBOW_DRILLS_FRE, ITEM_REMOVED)
+	
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_CAVALRY_GRAPERED_LANCE, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_SIEGE_ENGINEERS, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_SPEARMAN_ELITE_SPEAR_TACTICS, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_TECH_MILITARY_ACADEMY, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_CAVALRY_BARDING, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_MELEE_DAMAGE_II, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_RANGED_ARMOR_I, ITEM_REMOVED)
+	Player_SetUpgradeAvailability(player1, UPG.COMMON.UPGRADE_RANGED_DAMAGE_I, ITEM_REMOVED)
+	
+	-- Hide Siege from Spearmen
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.UNIT_SIEGE_TOWER_3_FRE, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.FRENCH.UNIT_RAM_3_FRE, ITEM_REMOVED)
+	
+	-- Hide Death
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_unit_death"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_building_scuttle"), ITEM_REMOVED)
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_building_scuttle_no_enemies"), ITEM_REMOVED)
+	
+	-- Hide Auto Train Villagers
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("core_xbox_auto_train_villager"), ITEM_REMOVED)
+
+end
+
+-- Called right before the in-game cinematic starts. We spawn starting units, apply upgrades and issue orders.
+function Mission_Preset()
+
+	AssignVillagersToWood(sg_woodVillagers)
+	AssignVillagersToGold(sg_goldVillagers)
+	AssignVillagersToFarms(sg_farmVillagers)
+	
+	Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_ECON_RESOURCE_FOOD_HARVEST_RATE_2)
+	
+	if Music_UnlockIntensity then
+        Sound_SetForceMusic(false)
+    else
+        Sound_SetForceMusic(true)
+    end
+	
+end
+
+-- No clue, I think at basically the same time as Mission_Start but just before it.
+function Mission_PreStart()
+	
+	sg_startVillagers = SGroup_CreateIfNotFound("sg_startVillagers")
+	UnitEntry_DeploySquads(player1, sg_startVillagers, {{type = "scar_villager", numSquads = 3 }}, mkr_starting_villagerse)
+	
+	EGroup_SetInvulnerable(eg_player_tc, 0.5)
+	EGroup_SetInvulnerable(eg_player_start_buildings, 0.5)
+	
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities,"scar_house", FILTER_KEEP)
+	
+	starting_houses_count = EGroup_CountSpawned(eg_allentities)
+end
+
+-- This is triggered after the intro, just as control is passed to the player
+function Mission_Start()
+	
+	Game_SetVisibility(VF_XboxUIBuildQueue, true)
+	Game_SetVisibility(VF_XboxUIQueueModifier, true)
+	Game_SetVisibility(VF_XboxUIContextualRadial, true)
+	Game_SetVisibility(VF_XboxUIQuickFind, true)
+	Game_SetVisibility(VF_XboxUIFindMenu, true)
+	Game_SetVisibility(VF_XboxUIResourceCard, true)
+	Game_SetVisibility(VF_XboxUIVillagerPriorities, true)
+	Game_SetVisibility(VF_XboxUIControlGroups, true)
+	Game_SetVisibility(VF_XboxUIQuickCommands, true)
+	
+	-- Hide outro relic
+	EGroup_Hide(eg_relic, true)
+	
+	World_SetInteractionStage(0)
+	
+	-- Mission-o-Matic handles playing the intro
+	Rule_AddInterval(Mission_Start_WaitForSpeechToFinish, 0.5)
+end
+
+function Mission_Start_WaitForSpeechToFinish()
+	
+	if not Event_IsAnyRunning() then
+		Rule_RemoveMe()
+
+		-- Toggle the starting objective so designers can try things out quicker
+		Objective_Start(OBJ_VillagerPriorities, true, true)
+		
+		--SpawnDinanCheatArmy()
+		--Objective_Start(OBJ_Capture, true, true)--]]
+		
+		--[[ Test Outro
+		World_SetInteractionStage(1)
+		Mission_Complete()
+		--]]
+	end
+end
+
+function SpawnDinanCheatArmy()
+	
+	sg_spearmen = SGroup_CreateIfNotFound("sg_spearmen")
+	sg_horsemen = SGroup_CreateIfNotFound("sg_horsemen")
+	sg_archers = SGroup_CreateIfNotFound("sg_archers")
+	
+	UnitEntry_DeploySquads(player1, sg_spearmen, {{type = "scar_spearman", numSquads = 10 }}, mkr_william_target01)
+	UnitEntry_DeploySquads(player1, sg_horsemen, {{type = "scar_horseman", numSquads = 10 }}, mkr_william_target01)
+	UnitEntry_DeploySquads(player1, sg_archers, {{type = "scar_archer", numSquads = 10 }}, mkr_william_target01)
+end
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+-- Mission-o-Matic Recipe
+function GetRecipe()
+
+	local recipe = {
+		
+		introNIS = EVENTS.Dinan_Intro,
+		outroNIS = EVENTS.Dinan_Outro,
+		
+		onStart = {
+			titleCard = {
+				icon = "icons/campaign/campaign_angevin_rebellion",
+				title = "$999307",
+				date = "$1000626",
+			},
+		},
+	
+	}
+			
+	return recipe
+
+end
+
+-- //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+function GivePlayerRequired(unit, count)
+	
+	local squadPBG = Cardinal_ConvertTypeToSquadBlueprint(unit, player1)
+	local cost = Player_GetSquadBPCost(player1, squadPBG)
+	local playerResources = Player_GetResources(player1)
+	
+	-- Food
+	local foodRequired = cost["food"] * count
+	if playerResources["food"] < foodRequired then
+		Player_SetResource(player1, RT_Food, foodRequired)
+	end
+	-- Wood
+	local woodRequired = cost["wood"] * count
+	if playerResources["wood"] < woodRequired then
+		Player_SetResource(player1, RT_Wood, woodRequired)
+	end
+	-- Gold
+	local goldRequired = cost["gold"] * count
+	if playerResources["gold"] < goldRequired then
+		Player_SetResource(player1, RT_Gold, goldRequired)
+	end
+end
+
+function ProduceBuildingsObjectiveTracker(context, data)
+	-- data = {objective, building_type, desired_amount}
+
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, data.building_type, FILTER_KEEP)
+	
+	i_last_buildings = EGroup_CountSpawned(eg_allentities)
+	
+	Rule_Add(ProduceBuildings_Monitor, data)
+end
+
+function ProduceBuildings_Monitor(context, data)
+	-- data = {objective, building_type, desired_amount}
+
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, data.building_type, FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	current_buildings = EGroup_CountSpawned(eg_allentities)
+	local new_buildings = current_buildings - i_last_buildings
+	i_last_buildings = current_buildings
+	
+	if new_buildings >= 1 then 
+		
+		Objective_IncreaseCounter(data.objective, new_units)
+		
+		if Objective_GetCounter(data.objective) >= data.desired_amount then 
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Complete(data.objective, false, true)
+			Rule_RemoveMe()
+		else
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		end
+	end
+end
+
+function ProduceUnitsObjectiveTracker(context, data)
+	-- data = {objective, unit_type, desired_amount, production_egroup, startingCount}
+	
+	GivePlayerRequired(data.unit_type, data.desired_amount)
+
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, data.unit_type, FILTER_KEEP)
+	
+	data.startingCount = SGroup_CountSpawned(sg_allsquads)
+	training_units_queued = false
+	
+	Rule_Add(ProduceUnits_Monitor, data)
+end
+
+function ProduceUnits_Monitor(context, data)
+	-- data = {objective, unit_type, desired_amount, production_egroup, startingCount}
+
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, data.unit_type, FILTER_KEEP)
+	
+	local count = SGroup_CountSpawned(sg_allsquads) - data.startingCount
+	
+	local queued = count
+	for i = 1, EGroup_Count(data.production_egroup), 1 do
+		queued = queued + Entity_GetProductionQueueSize(EGroup_GetEntityAt(data.production_egroup, i))
+	end
+
+	if(queued >= data.desired_amount) then
+		training_units_queued = true
+	end
+	
+	if count >= data.desired_amount then  
+		training_units_queued = true
+		Objective_Complete(data.objective, true, true)
+		Rule_RemoveMe()
+	else if (Objective_GetCounter(data.objective) ~= count) then
+			Objective_SetCounter(data.objective, count, data.desired_amount)
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		end
+	end
+end
+
+-- ////// OUTRO FUNCTIONS ///////////////////////////////////////////////////////////////////////////////////////
+
+function Spawn_Corpses()
+	
+	 -- Spawn Field of Corpses
+	local corpse = BP_GetSquadBlueprint("unit_spearman_2_eng_infinite_corpse")
+	local corpses_a = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_01, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_01, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_01, rad_max = 5, rad_min = 2},
+	}
+	local corpses_b = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_02, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_02, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_02, rad_max = 5, rad_min = 2},
+	}
+	local corpses_c = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_03, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_03, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_03, rad_max = 5, rad_min = 2},
+	}
+	local corpses_d = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_04, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_04, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_04, rad_max = 5, rad_min = 2},
+	}
+	local corpses_e = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_05, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_05, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_05, rad_max = 5, rad_min = 2},
+	}
+	local corpses_f = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_06, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_06, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_06, rad_max = 5, rad_min = 2},
+	}
+	local corpses_g = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_07, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_07, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_07, rad_max = 5, rad_min = 2},
+	}
+	local corpses_h = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_08, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_08, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_08, rad_max = 5, rad_min = 2},
+	}
+	local corpses_i = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_09, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_09, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_09, rad_max = 5, rad_min = 2},
+	}
+	local corpses_j = {
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_10, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_10, rad_max = 5, rad_min = 2},
+		{sbp = corpse, numSquads = 1, spawn = mkr_corpse_spawn_10, rad_max = 5, rad_min = 2},
+	}
+	
+	Util_CorpseField(corpses_a, mkr_corpse_spawn_01)
+	Util_CorpseField(corpses_b, mkr_corpse_spawn_02)
+	Util_CorpseField(corpses_c, mkr_corpse_spawn_03)
+	Util_CorpseField(corpses_d, mkr_corpse_spawn_04)
+	Util_CorpseField(corpses_e, mkr_corpse_spawn_05)
+	Util_CorpseField(corpses_f, mkr_corpse_spawn_06)
+	Util_CorpseField(corpses_g, mkr_corpse_spawn_07)
+	Util_CorpseField(corpses_h, mkr_corpse_spawn_08)
+	Util_CorpseField(corpses_i, mkr_corpse_spawn_09)
+	Util_CorpseField(corpses_j, mkr_corpse_spawn_10)
+	
+end
+
+function Destroy_Buildings()
+	
+	local _SetOnFire = function(gid, idx, eid)
+		local desiredHealth = World_GetRand(25, 60) / 100
+		
+		Entity_SetHealth(eid, desiredHealth)
+		Entity_SetOnFire(eid)
+	end
+	EGroup_ForEach(eg_dinan_buildings, _SetOnFire)
+	EGroup_ForEach(eg_enemy_tc, _SetOnFire)
+	
+end
+
+function Shot_01()
+
+    Player_SetRelationship(player1, player2, R_ALLY)
+	Game_SetPlayerSlotColour(player2, 2)
+    Game_SetPlayerUISlotColour(player2, 2)
+	
+	-- Declare SGroups
+	sg_cheerers_outro = SGroup_CreateIfNotFound("sg_cheerers_outro")
+	
+	UnitEntry_DeploySquads(player1, sg_cheerers_outro, {{type = "scar_spearman", numSquads = 2 }}, mkr_cheerers_01)
+	UnitEntry_DeploySquads(player1, sg_cheerers_outro, {{type = "scar_spearman", numSquads = 3 }}, mkr_cheerers_04)
+	UnitEntry_DeploySquads(player1, sg_cheerers_outro, {{type = "scar_spearman", numSquads = 2 }}, mkr_cheerers_07)
+	UnitEntry_DeploySquads(player1, sg_cheerers_outro, {{type = "scar_archer", numSquads = 4 }}, mkr_cheerers_02)
+	UnitEntry_DeploySquads(player1, sg_cheerers_outro, {{type = "scar_archer", numSquads = 2 }}, mkr_cheerers_05)
+	UnitEntry_DeploySquads(player1, sg_cheerers_outro, {{type = "scar_archer", numSquads = 4 }}, mkr_cheerers_08)
+	UnitEntry_DeploySquads(player1, sg_cheerers_outro, {{type = "scar_horseman", numSquads = 3 }}, mkr_cheerers_03)
+	UnitEntry_DeploySquads(player1, sg_cheerers_outro, {{type = "scar_horseman", numSquads = 2 }}, mkr_cheerers_06)
+	
+	SGroup_EnableCheering(sg_cheerers_outro, true)
+	
+end
+
+function Shot_02()
+	
+	-- Declare SGroups
+	sg_williams_company = SGroup_CreateIfNotFound("sg_williams_company")
+	sg_harolds_gift_01 = SGroup_CreateIfNotFound("sg_harolds_gift_01")
+	sg_harolds_gift_02 = SGroup_CreateIfNotFound("sg_harolds_gift_02")
+	sg_harolds_gift_03 = SGroup_CreateIfNotFound("sg_harolds_gift_03")
+	
+	sg_william_outro = SGroup_CreateIfNotFound("sg_william_outro")
+	
+	sg_harold_outro = SGroup_CreateIfNotFound("sg_harold_outro")
+	
+	EGroup_Hide(eg_relic, false)
+	
+	UnitEntry_DeploySquads(player1, sg_harold_outro, {{sbp = SBP.ENGLISH.UNIT_EARL_HAROLD_CMP_ENG, numSquads = 1 }}, mkr_harold_spawn)
+	UnitEntry_DeploySquads(player1, sg_william_outro, {{sbp = SBP.CAMPAIGN.UNIT_DUKE_WILLIAM_CMP_SAL, numSquads = 1 }}, mkr_william_spawn)
+	
+	UnitEntry_DeploySquads(player1, sg_williams_company, {{type = "scar_spearman", numSquads = 1 }}, mkr_william_company_spawn_01)
+	UnitEntry_DeploySquads(player1, sg_williams_company, {{type = "scar_spearman", numSquads = 1 }}, mkr_william_company_spawn_02)
+	UnitEntry_DeploySquads(player1, sg_harolds_gift_01, {{type = "scar_spearman", numSquads = 1 }}, mkr_william_company_spawn_03)
+	UnitEntry_DeploySquads(player1, sg_williams_company, {{type = "scar_spearman", numSquads = 1 }}, mkr_william_company_spawn_04)
+	UnitEntry_DeploySquads(player1, sg_williams_company, {{type = "scar_spearman", numSquads = 1 }}, mkr_william_company_spawn_05)
+	UnitEntry_DeploySquads(player1, sg_harolds_gift_02, {{type = "scar_spearman", numSquads = 1 }}, mkr_william_company_spawn_06)
+	UnitEntry_DeploySquads(player1, sg_williams_company, {{type = "scar_spearman", numSquads = 1 }}, mkr_william_company_spawn_07)
+	UnitEntry_DeploySquads(player1, sg_williams_company, {{type = "scar_spearman", numSquads = 1 }}, mkr_william_company_spawn_08)
+	UnitEntry_DeploySquads(player1, sg_harolds_gift_03, {{type = "scar_spearman", numSquads = 1 }}, mkr_william_company_spawn_09)
+	
+	Cmd_Move(sg_harolds_gift_01, mkr_william_company_dest_01a)
+	Cmd_Move(sg_harolds_gift_01, mkr_william_company_dest_01b, true)
+	Cmd_Move(sg_harolds_gift_01, mkr_william_company_dest_01c, true)
+	
+	Cmd_Move(sg_harolds_gift_02, mkr_william_company_dest_02a)
+	Cmd_Move(sg_harolds_gift_02, mkr_william_company_dest_02b, true)
+	Cmd_Move(sg_harolds_gift_02, mkr_william_company_dest_02c, true)
+	
+	Cmd_Move(sg_harolds_gift_03, mkr_william_company_dest_03a)
+	Cmd_Move(sg_harolds_gift_03, mkr_william_company_dest_03b, true)
+	Cmd_Move(sg_harolds_gift_03, mkr_william_company_dest_03c, true)
+	
+	Modify_UnitSpeed(sg_harolds_gift_01, 0.3)
+	Modify_UnitSpeed(sg_harolds_gift_02, 0.3)
+	Modify_UnitSpeed(sg_harolds_gift_03, 0.3)
+	
+	SGroup_EnableLeaderCrown(sg_harold_outro, false)
+	SGroup_EnableLeaderCrown(sg_william_outro, false)
+	
+end
+
+function Shot_03()
+	
+	EGroup_Hide(eg_relic, true)
+	
+	SGroup_FormationWarpToMarker(sg_harolds_gift_01, mkr_william_company_dest_01c, mkr_william_company_spawn_02)
+	SGroup_FormationWarpToMarker(sg_harolds_gift_02, mkr_william_company_dest_02c, mkr_william_company_spawn_01)
+	SGroup_FormationWarpToMarker(sg_harolds_gift_03, mkr_william_company_dest_03c, mkr_william_company_spawn_03)
+	
+	Cmd_Move(sg_harolds_gift_01, mkr_william_company_exit_01)
+	Cmd_Move(sg_harolds_gift_02, mkr_william_company_exit_02)
+	Cmd_Move(sg_harolds_gift_03, mkr_william_company_exit_03)
+	Cmd_Move(sg_harold_outro, mkr_william_exit)
+	
+	Modify_UnitSpeed(sg_harold_outro, 0.3)
+	
+end

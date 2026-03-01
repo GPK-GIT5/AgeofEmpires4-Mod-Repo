@@ -1,0 +1,211 @@
+-----------------------------------------------------------------------
+--
+-- Abbasid Training Goals
+--
+-- (c) Relic Entertainment 2021
+--
+-----------------------------------------------------------------------
+
+import("training.scar")
+import("training/abbasidtrainingconditions.scar")
+import("training/coretraininggoals.scar")
+import("training/coretrainingconditions.scar")
+
+Core_RegisterModule("AbbasidTrainingGoals")
+
+local goal_build_house_of_wisdom = "build_house_of_wisdom"
+local goal_age_up_abb = "age_up_abb"
+local goal_golden_age_abb = "golden_age_abb"
+
+local training_goals_abb =
+{
+	goal_build_house_of_wisdom,
+	goal_age_up_abb,
+	goal_golden_age_abb
+}
+
+function AbbasidTrainingGoals_OnInit()
+	
+	if Player_GetRaceName(Game_GetLocalPlayer()) ~= "abbasid" then
+		return	
+	end
+	
+	sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	eg_currentSelection = EGroup_CreateIfNotFound("eg_currentSelection")
+	eg_nearbyDeposits = EGroup_CreateIfNotFound("eg_nearbyDeposits")
+	
+	training_currentConstructionBlueprint = nil
+	training_currentHoverBlueprint = nil
+	training_previousConstructionBlueprint = nil
+	
+	if ( UI_IsXboxControllerUI() == false ) then -- PC/KBM Hints
+		
+		-- Common
+		local selectVillagerGoal = Training_Goal("Squad", 
+			{ID= "LEFT CLICK to select a Villager.", Message= 11180986, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasSelectedAVillager)
+		local openVillagerEconomicTabGoal = Training_Goal("EconomicCommandCardTab",
+			{ID= "Open the economic tab", Message= 1001507, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasVillagerEconomicCardTabOpen)
+		local openCommandTabGoal = Training_Goal("CommandsCommandCardTab",
+			{ID= "Open the commands tab", Message= 1001506, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasCommandsCommandCardTabOpen)
+		
+		-- Build a House of Wisdom
+		local selectHouseOfWisdomGoal = Training_Goal("PBG",
+			{ID= "The Abbasid Dynasty progresses in Age by expanding the House of Wisdom . LEFT CLICK the icon to select the House of Wisdom.", Message= 11205232, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			UserIsGoingToBuildAHouseOfWisdom)
+		local buildHouseOfWisdomGoal = Training_Goal("Cursor",
+			{ID= "LEFT CLICK in a valid location to start construction.", Message= 11180975, 
+			DataTemplate="LeftClickTrainingDataTemplate"}, 
+			UserHasStartedToBuildAHouseOfWisdom)
+		
+		local buildHouseOfWisdomSequenceGoals = {selectVillagerGoal, selectHouseOfWisdomGoal, buildHouseOfWisdomGoal}
+		if(UI_IsXboxKBMUI()) then
+			buildHouseOfWisdomSequenceGoals = {selectVillagerGoal, openVillagerEconomicTabGoal, selectHouseOfWisdomGoal, buildHouseOfWisdomGoal}
+		end
+		
+		local buildHouseOfWisdomSequence = Training_GoalSequence(goal_build_house_of_wisdom, 
+			1, 0, 
+			TimeHasPassedWithoutBuildingAHouseOfWisdom, 
+			nil, --UserCannotSeeSquadKey
+			nil, 
+			UserHasStartedToBuildAHouseOfWisdom,
+			true, 
+			buildHouseOfWisdomSequenceGoals)
+		Training_AddGoalSequence(buildHouseOfWisdomSequence)
+		
+		-- Abbasid Age Up Mechanic
+		local selectHouseOfWisdom = Training_Goal("Entity", 
+			{ID= "LEFT CLICK to select the House of Wisdom.", Message= 11205233, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasSelectedHouseOfWisdom)
+		local openHouseOfWisdomCommandsTabGoal = Training_Goal("CommandsCommandCardTab",
+			{ID= "Open the commands tab", Message= 1001506, DataTemplate="LeftClickTrainingDataTemplate"},
+			UserHasHouseOfWisdomCommandsCardTabOpen)
+		local buildWingUpgrade = Training_Goal("PBG", 
+			{ID= "Select one of the following to age up: Economic Wing, Military Wing, Culture Wing, or Trade Wing.", Message= 11205235, DataTemplate="LeftClickTrainingDataTemplate"}, 
+			UserHasBegunWingUpgrade)
+		
+		local houseOfWisdomViewsWingsSequenceGoals = {selectHouseOfWisdom, buildWingUpgrade}
+		if(UI_IsXboxKBMUI()) then
+			houseOfWisdomViewsWingsSequenceGoals = {selectHouseOfWisdom, openHouseOfWisdomCommandsTabGoal, buildWingUpgrade}
+		end
+		
+		local houseOfWisdomViewsWings = Training_GoalSequence(goal_age_up_abb, 
+			1, 1, --repeat max and remind max
+			TimeHasPassedAndUserCanAgeUp, --trigger
+			UserCannotSeeEntityKey, --ignore
+			nil, --remind
+			UserHasBegunWingUpgrade, --bypass 
+			true, --can regress
+			houseOfWisdomViewsWingsSequenceGoals)
+		Training_AddGoalSequence(houseOfWisdomViewsWings)
+		
+		-- Abbasid Golden Age Mechanic
+		if(UI_IsXboxKBMUI()) then -- KBM
+			
+			local goldenAge_OpenMenu = Training_Goal("XboxAbbasidGoldenAgeWidget",
+				{ID= "Build structures nearby to advance towards Golden Age bonuses. View the requirements here.", Message= 11205236, DataTemplate="GenericTrainingDataTemplate"},
+				UserHasOpenedGoldenAgeMenu)
+			
+			local viewGoldenAgeRequirements = Training_GoalSequence(goal_golden_age_abb, 
+				1, 1, --repeat max and remind max
+				TimeHasPassedAndUserHasHouseOfWisdom, --trigger
+				UserCannotSeeEntityKey, --ignore
+				nil, --remind
+				nil, --bypass 
+				true, --can regress
+				{goldenAge_OpenMenu})
+			Training_AddGoalSequence(viewGoldenAgeRequirements)
+			
+		else -- PC
+			
+			local viewGoldenAgeReqs = Training_Goal("PBG", 
+				{ID= "Build structures nearby to advance towards Golden Age bonuses. View the requirements here.", Message= 11205236, DataTemplate="LeftClickTrainingDataTemplate"}, 
+				UserHasViewedGoldenAge)
+			
+			local viewGoldenAgeRequirements = Training_GoalSequence(goal_golden_age_abb, 
+				1, 1, --repeat max and remind max
+				TimeHasPassedAndUserHasHouseOfWisdom, --trigger
+				UserCannotSeeEntityKey, --ignore
+				nil, --remind
+				nil, --bypass 
+				true, --can regress
+				{selectHouseOfWisdom, viewGoldenAgeReqs })
+			Training_AddGoalSequence(viewGoldenAgeRequirements)
+		end
+		
+	else -- Xbox Hints
+		
+		-- Abbasid Build a House of Wisdom
+		local buildHouseOfWisdom_SelectVillager = Training_Goal("Squad",
+			{ID="The House of Wisdom is a key feature of the Abbasids. PRESS A to select a Villager.", Message= 1001534, DataTemplate="GenericTrainingDataTemplate"},
+			UserHasSelectedAVillager)
+		local buildHouseOfWisdom_OpenRadial = Training_Goal("Squad",
+			{ID="Press RT to open the radial menu.", Message= 1000968, DataTemplate="GenericTrainingDataTemplate"},
+			UserHasOpenedContextualRadial)
+		local buildHouseOfWisdom_OpenEconomy = Training_Goal("RadialDPadLeft",
+			{ID="Press d-pad left to access Economic Buildings.", Message= 1001027, DataTemplate="RadialTrainingDataTemplate"},
+			UserHasOpenedEconomyRadialPage)
+		local buildHouseOfWisdom_SelectRadial = Training_Goal("PBG",
+			{ID="The House of Wisdom is where the Abbasid Dynasty advances to the next Age. Highlight the icon with LS, then press A.", Message= 1000995, DataTemplate="RadialTrainingDataTemplate"},
+			UserIsGoingToBuildAHouseOfWisdom)
+		local buildHouseOfWisdom_BuildLocation = Training_Goal("LooseReticle",
+			{ID="Press A in a valid location to start construction.", Message= 1001021, DataTemplate="GenericTrainingDataTemplate"},
+			UserHasStartedToBuildAHouseOfWisdom)
+		
+		local buildHouseOfWisdomSequence = Training_GoalSequence(goal_build_house_of_wisdom, 
+			1, 0, 
+			UserCanBuildHouseOfWisdom, 
+			nil, --UserCannotSeeSquadKey
+			nil, 
+			UserHasStartedToBuildAHouseOfWisdom,
+			true, 
+			{buildHouseOfWisdom_SelectVillager, buildHouseOfWisdom_OpenRadial, buildHouseOfWisdom_OpenEconomy, buildHouseOfWisdom_SelectRadial, buildHouseOfWisdom_BuildLocation})
+		Training_AddGoalSequence(buildHouseOfWisdomSequence)
+		
+		-- Abbasid Golden Age Mechanic
+		local goldenAge_OpenMenu = Training_Goal("XboxAbbasidGoldenAgeWidget",
+			{ID="Golden Age tiers provide extra benefits for the Abbasids. PRESS LT + LS to view the Golden Age tiers.", Message= 1001526, DataTemplate="GenericTrainingDataTemplate"},
+			UserHasOpenedGoldenAgeMenu)
+		local goldenAge_ViewRequirements = Training_Goal("XboxAbbasidGoldenAgeRequirements",
+			{ID="Build structures nearby to advance towards Golden Age bonuses. View the requirements here. Press B to close the menu when finished.", Message= 1001527, DataTemplate="GenericTrainingDataTemplate"},
+			UserHasClosedGoldenAgeMenu)
+		
+		local viewGoldenAgeRequirements = Training_GoalSequence(goal_golden_age_abb, 
+			1, 1, --repeat max and remind max
+			TimeHasPassedAndUserHasHouseOfWisdom, --trigger
+			UserCannotSeeEntityKey, --ignore
+			nil, --remind
+			nil, --bypass 
+			true, --can regress
+			{goldenAge_OpenMenu, goldenAge_ViewRequirements})
+		Training_AddGoalSequence(viewGoldenAgeRequirements)
+		
+		-- Abbasid Age Up
+		local ageUp_SelectHouseOfWisdom = Training_Goal("Entity",
+			{ID="Wings are required to Age Up. PRESS A to select the House of Wisdom.", Message= 1001535, DataTemplate="GenericTrainingDataTemplate"},
+			UserHasSelectedHouseOfWisdom)
+		local ageUp_OpenRadial = Training_Goal("Entity",
+			{ID="Press RT to open the radial menu.", Message= 1000968, DataTemplate="GenericTrainingDataTemplate"},
+			UserHasOpenedContextualRadial)
+		local ageUp_BuildWing = Training_Goal("PBG",
+			{ID="Build Wings to access unique technology to research.", Message= 1001536, DataTemplate="RadialTrainingDataTemplate"},
+			UserHasBegunWingUpgrade)
+		
+		local houseOfWisdomAgeUp = Training_GoalSequence(goal_golden_age_abb, 
+			1, 1, --repeat max and remind max
+			TimeHasPassedAndUserCanAgeUp, --trigger
+			UserCannotSeeEntityKey, --ignore
+			nil, --remind
+			UserHasBegunWingUpgrade, --bypass 
+			true, --can regress
+			{ageUp_SelectHouseOfWisdom, ageUp_OpenRadial, ageUp_BuildWing})
+		Training_AddGoalSequence(houseOfWisdomAgeUp)
+		
+	end
+end
+
+
+function AbbasidTrainingGoals_OnGameOver()
+end

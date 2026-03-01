@@ -1,0 +1,229 @@
+import("training/campaigntraininggoals.scar")
+
+goal_sequence_naval_banner = "campaign_abb_m3_redsea_banner"
+goal_sequence_patrol = "goal_sequence_patrol"
+goal_sequence_outpost_hint = "campaign_abb_m3_redsea_outpost"
+
+function MissionTutorial_Init()	-- called from the mission's Mission_Start() function, so post-intro
+
+end
+
+--
+-- SELECTING THE ALLY BANNER
+--
+
+function _Predicate_CompletedBannerHint(goal)
+	return Misc_IsEGroupSelected(eg_player_allied_banner, ANY)
+end
+
+function _Predicate_TriggerBanner(goalSequence)
+	if ABriefPeriodOfTimeHasPassed(goalSequence) then
+		local entity = EGroup_GetEntityAt(eg_player_allied_banner, 1)
+		goalSequence.goals[goalSequence.currentGoalIndex].key = entity
+		return true
+	end
+	return false
+end
+
+function MissionTutorial_AddHintToAlliedBanners()
+
+	local GoalUI = {
+		ID = "Select the Allied Banner and reposition it to direct your allies to occupy and defend an area.", 
+		Message = "$11245629", 
+		DataTemplate = "GenericTrainingDataTemplate",
+	}
+	local GoalSelectBanner = Training_Goal(
+		nil, 
+		GoalUI, 
+		_Predicate_CompletedBannerHint
+	)
+	local GoalSequenceSelectBanner = Training_GoalSequence(
+		goal_sequence_naval_banner, 						-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		_Predicate_TriggerBanner, 							-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		_Predicate_CompletedBannerHint, 					-- bypass
+		false, 												-- canRegress
+		{GoalSelectBanner}									-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceSelectBanner)
+		
+	Training_EnableGoalSequenceByID(goal_sequence_naval_banner, true)
+	
+end
+
+--
+-- ORDERING UNITS TO PATROL
+--
+
+function MissionTutorial_Patrol()
+	
+	local GoalDhowSelected = Training_Goal(
+		"Squad", 
+		{
+			ID = "SelectDhow",
+			Message ="$11247383", -- double click dhows
+			DataTemplate = "LeftClickTrainingDataTemplate",
+		}, 
+		Predicate_DhowsSelected
+	)
+		
+	-- step 2 do patrol
+	
+	local GoalDoPatrol = Training_Goal(
+		"Position", 
+		{
+			ID = "Patrol",
+			Message= "$11247385", --"Patrol"
+			DataTemplate="LeftClickTrainingDataTemplate",
+		}, 
+		DhowsArePatrolling
+	)
+	local GoalSequenceDhowPatrol = Training_GoalSequence(
+		goal_sequence_patrol, 								-- id
+		2, 													-- repeatMax
+		2, 													-- remindMax
+		UserHasDhowsOnScreen, 								-- trigger
+		IgnorePredicate_PatrolUsed, 						-- ignore							
+		nil,										 		-- remind
+		DhowsArePatrolling, 				      			-- bypass
+		true, 												-- canRegress
+		{GoalDhowSelected, GoalDoPatrol}					-- goals
+	)
+	
+	Training_AddGoalSequence(GoalSequenceDhowPatrol)
+	Training_EnableGoalSequenceByID(goal_sequence_patrol, true)
+	
+end
+
+--? Patrol goal completion criteria
+function DhowsArePatrolling(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if Squad_IsOfType(squad, "scar_war_galley") or Squad_IsOfType(squad, "scar_combat_ship") then
+			if Squad_IsPatrolling(squad) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function UserHasDhowsOnScreen(goalSequence)
+	
+	Player_GetAll(player1)
+	
+	SGroup_Filter(sg_allsquads, {"scar_war_galley", "scar_combat_ship"}, FILTER_KEEP)
+	
+	local n_OnScreen = 0
+	local targetSquad = nil
+	local function _CountOnScreen(group, index, squad)
+		if Misc_IsSquadOnScreen(squad, 0.85) then
+			n_OnScreen = n_OnScreen + 1
+			if targetSquad == nil then
+				targetSquad = squad
+			end
+		end
+	end
+	
+	if SGroup_CountSpawned(sg_allsquads) > 0 then
+		SGroup_ForEach(sg_allsquads, _CountOnScreen)
+		if n_OnScreen > 2 then
+			goalSequence.goals[1].key = targetSquad
+			goalSequence.goals[2].key = Util_GetPosition(mkr_training_patrol)
+			return true
+		end
+	end
+	
+	return false
+
+end
+
+function Predicate_DhowsSelected(goal)
+	-- return true if I have more than 2 dhows selected
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	SGroup_Filter(sg_currentSelection, {"scar_war_galley", "scar_combat_ship"}, FILTER_KEEP)
+	return SGroup_CountSpawned(sg_currentSelection) > 2
+
+end
+
+function IgnorePredicate_PatrolUsed(goalSequence)
+	return false
+end
+
+--
+-- SHORE DEFENSE INFO 
+--
+
+function _Predicate_CompletedSeaOutpostHint(goal)
+	return EGroup_Count(eg_player4_outpost_sea) <= 0 or Misc_IsEGroupSelected(eg_player4_outpost_sea, ANY)
+end
+
+function _Predicate_TriggerSeaOutpost(goalSequence)
+	if ABriefPeriodOfTimeHasPassed(goalSequence) then
+		local entity = EGroup_GetEntityAt(eg_player4_outpost_sea, 1)
+		goalSequence.goals[goalSequence.currentGoalIndex].key = entity
+		return true
+	end
+	return false
+end
+
+function MissionTutorial_AddHintToSeaOutpost()
+	local GoalUI = {
+		ID = "Defensive structures deal bonus damage against naval units.", 
+		Message = Loc_GetString("$11254670"), 
+		DataTemplate = "GenericTrainingDataTemplate",
+	}
+	local GoalLookAtOutpost = Training_Goal(
+		nil, 
+		GoalUI, 
+		_Predicate_CompletedSeaOutpostHint
+	)
+	local GoalSequenceObserveOutpost = Training_GoalSequence(
+		goal_sequence_outpost_hint, 						-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		_Predicate_TriggerSeaOutpost, 						-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		_Predicate_CompletedSeaOutpostHint, 				-- bypass
+		false, 												-- canRegress
+		{GoalLookAtOutpost}									-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceObserveOutpost)
+	Training_EnableGoalSequenceByID(goal_sequence_outpost_hint, true)
+end
+
+--
+-- TRAINING GUIDANCE
+--
+
+function MissionTutorial_TagDock()
+	local entity = EGroup_GetEntityAt(eg_dock_6_center, 1)
+	
+	-- Adapt this for whether it's on KBM or gamepad
+	local messageString = Loc_GetString("$11252780")
+	local template = "RightClickTrainingDataTemplate"
+	if UI_IsXboxControllerUI() then
+		messageString = Loc_GetString("$11257375")
+		template = "GenericTrainingDataTemplate"
+	end
+	
+	local data = {
+		ID = "Setup Trade with Allied Docks",
+		Message = messageString,
+		DataTemplate = template
+	}
+	UI_CreateTagForEntity(entity, data)
+	g_tradingHintActive = true
+end
+
+
+function MissionTutorial_UntagDock()
+	local entity = EGroup_GetEntityAt(eg_dock_6_center, 1)
+	UI_DestroyTagForEntity(entity)
+	g_tradingHintActive = false
+end

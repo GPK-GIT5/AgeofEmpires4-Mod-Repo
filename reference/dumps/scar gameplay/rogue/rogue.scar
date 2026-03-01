@@ -1,0 +1,496 @@
+import("cardinal.scar")
+import("rogue/rogue_data.scar")
+import("rogue/rogue_factions.scar")
+import("rogue/rogue_tech_tree.scar")
+import("rogue/rogue_wave_templates.scar")
+import("rogue/rogue_lanes.scar")
+import("rogue/rogue_rounds.scar")
+import("rogue/rogue_events.scar")
+import("rogue/rogue_favors.scar")
+import("rogue/rogue_boons.scar")
+import("rogue/rogue_objectives.scar")
+import("rogue/rogue_misc.scar")
+import("rogue/rogue_outlaws.scar")
+import("rogue/rogue_poi.scar")
+import("rogue/rogue_resource_spots.scar")
+import("rogue/rogue_roamers.scar")
+import("rogue/rogue_sites.scar")
+
+Core_RegisterModule("Rogue")
+
+--? A function to be called before the game loading completes.
+--? Precaching resources must be done before the game loading completes so that the visuals are properly spawned when
+--? OnInit function is called on frame 1.
+function Rogue_OnLoading()
+	Rogue_Objectives_Precache()
+	Rogue_Poi_Precache()
+end
+Scar_AddInit(Rogue_OnLoading)
+
+--? Float initial_income_multiplier (default = 1.0) AI's starting income rate will be multiplied by this value. Use this
+--? to tune the initial difficulty of the AI waves. 2.0 would make it twice as hard, 0.5 would make it half as hard.
+--? Float income_scaling_multiplier (default = 1.0) The rate that AI income scales will be multiplied by this value. Use 
+--? to tune the late-game difficulty of the AI waves. 2.0 would make it twice as hard, 0.5 would make it half as hard.
+function Rogue_OnInit()
+	print("Initializing Rogue System")
+	RogueData_Init()
+	Factions_Init()
+	TechTree_Init()
+	TechTree_GrantStartingUpgrades()
+	Lanes_Init()
+	Boons_OnInit()
+	Rogue_InitObjectives()
+	boss_round_times = {}
+	Rule_AddOneShot(Rogue_Init_Delayed, 0.25)
+	
+	if conqueror_is_enabled then
+		Roamers_Init()
+		for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+			Player_CompleteUpgrade(player, BP_GetUpgradeBlueprint("conqueror_mode_dummy_rogue"))
+		end
+	end
+	
+	Rogue_DisableSiegeTowers()
+	Rogue_HideWallHealthBars()
+end
+
+function Rogue_Init_Delayed()
+	Favors_ApplyFavors()
+	Rogue_OttomanVizierFix()
+end
+
+--? @shortdesc Instructs the Rogue System to plan out all the events that the mission
+--? has specified.A summary of the outcome of this simulation can be found in the scarlog
+function Rogue_SimulateEvents()
+	WaveTemplates_Init()
+	Lanes_IdentifyAllyLane()
+	
+	if debug_sim_events then
+		print("------ Simulating Rounds ------")
+	end
+	for i = 0, ROUNDS_REPEAT_END do
+		Events_OnSecond(nil, { state_name = "sim" })
+	end
+	Rounds_IdentifyWarningPosition()
+	
+	if debug_upgrades then
+		TechTree_PrintCombatUpgrades()
+	end
+	if Game_RogueModeConquerorEnabled() and debug_roamers then
+		Roamers_PrintDebug()
+	end
+end
+
+function Rogue_Start()
+	local d1 = Rogue_DifVar({ "Easiest", "Easy", "Intermediate", "Hard", "Hardest", "Ridiculous", "Outrageous", "Absurd" })
+	local d2 = "("..Game_GetSPDifficulty()..")"
+	print("------------------------------------------------------------------------")
+	print("------------- "..mission_name.." starting with "..d1.." difficulty "..d2.." -------------")
+	print("------------------------------------------------------------------------")
+	
+	-- Apply conqueror mode stressors
+	if Game_RogueModeConquerorEnabled() then
+		Rogue_ApplyConquerorModeStressors()
+	end
+	
+	ROGUE_ALL_WAVE_SQUADS_SGROUP = SGroup_CreateUniqueWithPrefix("rogue_wave_squads_")
+	Rule_AddIntervalWithDelay(Rogue_CheckForIdleAttackers, 30, 30, nil)	
+end
+
+function Rogue_Unpause()
+	if Rule_Exists(Events_OnSecond) == false then
+		Rule_AddInterval(Events_OnSecond, 1, { state_name = "game" })
+	end
+	Rule_AddOneShot(Rogue_StartObjectives, 1.125)
+	
+	if scartype(Mission_Unpause == ST_FUNCTION) then
+		Mission_Unpause()
+	end
+end
+
+function Rogue_ApplyConquerorModeStressors()
+	
+	-- Reduce reosurces by 50%
+	local _reduce_deposit = function(gid, idx, eid)
+		if Entity_IsOfType(eid, "animal") == false then
+			Entity_SetRemainingResourceDepositAmount(eid, Entity_GetRemainingResourceDepositAmount(eid) * 0.5)
+		end
+		if Entity_IsOfType(eid, "deep_water_fish") == true then
+			Entity_SetStateModelBool(eid, "farm_reseed_signal", true)
+		end
+	end
+	
+	local eg_all_gaia = EGroup_Create("eg_all_gaia")
+	World_GetAllEntitiesOfType(eg_all_gaia, "gaia")
+	EGroup_ForEach(eg_all_gaia, _reduce_deposit)
+end
+
+--------------------------------------------------
+-------------------- Mission API -----------------
+--------------------------------------------------
+
+--? @shortdesc Sets up a lane for enemy waves to travel along. Requires positions of the format: 
+--? mkr_name_left_01, mkr_name_center_01, mkr_name_right_01
+--? @args String name, Bool is_locked (defaults to false)
+function Rogue_AddLane(name, is_locked, wave_template_validator, boss_sbp)
+	if is_locked == nil then
+		is_locked = false
+	end
+	Lane_Init(name, is_locked, wave_template_validator, boss_sbp)
+end
+
+--? @shortdesc Instruct the AI to start gathering resources at the specified time
+--? @args Integer time (in seconds)
+function Rogue_StartGatheringAt(time)
+	Event_InitStartGathering(time)
+end
+
+--? @shortdesc Instructs the Rogue System to send a round of units at the player.
+--? Measured in seconds.
+--? @args Integer arrive_at, Float reserve_usage (defaults to 0.5)
+function Rogue_AddRoundAt(arrive_at, reserve_usage)
+	local round = Round_Init(arrive_at, reserve_usage)
+	local event = Event_InitRoundArrive(arrive_at, round)
+	return event
+end
+
+--? @shortdesc Instructs the Rogue System to Age Up the enemy units at the specified time.
+--? Measured in seconds.
+--? @args Integer time
+function Rogue_AgeUpAt(time)
+	Event_InitAgeUp(time)
+end
+
+--? @shortdesc Instructs the Rogue System to grant combat upgrades to a player at the specified time
+--? Combat upgrades don't include unit tier upgrades in this context, those upgrades are granted when
+--? the player ages up.
+--? @args Integer time (measured in seconds), Player player, Integer age (1-4)
+--? @result 
+function Rogue_GrantUpgrades(time, age)
+	Event_InitGrantCombatUpgrades(time, age)
+end
+
+--? @shortdesc Instructs the Rogue System update the Max Lanes at the specified time.
+--? Measured in seconds.
+--? @args Integer time
+function Rogue_IncreaseMaxLanes(time)
+	Event_InitIncreaseMaxLanes(time)
+end
+
+--? @shortdesc Instructs the Rogue System update the Max Lanes at the specified time.
+--? Measured in seconds.
+--? @args Integer time
+function Rogue_IncreaseMinLanes(time)
+	Event_InitIncreaseMinLanes(time)
+end
+
+--? @args Integer time, String lane_name
+function Rogue_UnlockLane(lane_name, time)
+	Event_InitUnlockLane(time, lane_name)
+end
+
+--? @shortdesc Instructs the Rogue System to send a Boss along with a wave.
+--? The boss will be included in the last wave that arrives BEFORE the specified time.
+--? @args Integer time
+function Rogue_AddBossWaveBefore(time)
+	table.insert(boss_round_times, time)
+end
+
+function Rogue_SuperRamsEnabled(start, interval)
+	print("Super ram enabled")
+	next_super_ram_at = start
+	SUPER_RAM_INTERVAL = interval
+end
+
+function Rogue_SpawnRoamers(time, value)
+	Event_InitSpawnRoamers(time, value)
+end
+
+function Rogue_UseDefaultSchedule(include_boss_waves, unlock_lanes_from_start, interval_modifier)
+	local first_lane = "north"
+	local second_lane
+	local third_lane
+	if World_GetRand(1,2) == 1 then
+		second_lane = "west"
+		third_lane = "east"
+	else
+		second_lane = "east"
+		third_lane = "west"
+	end
+	
+	-- bronze = 1500
+	-- silver = 2100
+	-- gold = 2700
+	-- endless = 3300
+	if include_boss_waves and ROGUE_STRESS_TEST == false then
+		Rogue_AddBossWaveBefore(1440)
+		Rogue_AddBossWaveBefore(2040)
+		Rogue_AddBossWaveBefore(2640)
+	end
+	
+	if conqueror_is_enabled and ROGUE_STRESS_TEST == false then
+		Rogue_SuperRamsEnabled(900, 600)
+	end
+	
+	local first_wave_time
+	local initial_interval
+	local final_interval
+	
+	if ROGUE_STRESS_TEST == true then
+		first_wave_time = 35
+		initial_interval = 35
+		final_interval = 35
+		
+		Rogue_StartGatheringAt(1)
+		Rogue_AddRoundsAtDecreasingIntervals(first_wave_time, initial_interval, final_interval, false)
+		
+		Rogue_UnlockLane(second_lane, 1)
+		Rogue_UnlockLane(third_lane, 1)
+		
+		Rogue_IncreaseMaxLanes(1)
+		Rogue_IncreaseMinLanes(1)
+		Rogue_IncreaseMaxLanes(2)
+		Rogue_IncreaseMinLanes(2)
+		
+		Rogue_GrantUpgrades(1, 1)
+		Rogue_AgeUpAt(1)
+		Rogue_GrantUpgrades(2, 2)
+		Rogue_AgeUpAt(3)
+		Rogue_GrantUpgrades(4, 3)
+		Rogue_AgeUpAt(5)
+		Rogue_GrantUpgrades(6, 4)
+	else	
+		first_wave_time = GetIntegerInExponentialRange(630, 210)
+		initial_interval = GetIntegerInExponentialRange(210, 70) * interval_modifier
+		final_interval = GetIntegerInExponentialRange(105, 35) * interval_modifier
+		
+		initial_interval = math.ceil(initial_interval)
+		final_interval = math.ceil(final_interval)
+		
+		Rogue_StartGatheringAt(first_wave_time - 150)
+		Rogue_AddRoundsAtDecreasingIntervals(first_wave_time, initial_interval, final_interval, include_boss_waves)
+		
+		if unlock_lanes_from_start then
+			Rogue_UnlockLane(second_lane, 1)
+			Rogue_UnlockLane(third_lane, 1)
+		else
+			Rogue_UnlockLane(second_lane, first_wave_time * 2)
+			Rogue_UnlockLane(third_lane, first_wave_time * 5)
+		end
+		Rogue_IncreaseMaxLanes(first_wave_time* 2)
+		Rogue_IncreaseMinLanes(first_wave_time * 4)
+		Rogue_IncreaseMaxLanes(first_wave_time * 5)
+		Rogue_IncreaseMinLanes(first_wave_time* 7)
+		
+		Rogue_GrantUpgrades(1, 1)
+		Rogue_AgeUpAt(1)
+		Rogue_GrantUpgrades(GetIntegerInExponentialRange(1200,  600), 2)
+		Rogue_AgeUpAt(		GetIntegerInExponentialRange(1700,  850))
+		Rogue_GrantUpgrades(GetIntegerInExponentialRange(2200, 1100), 3)
+		Rogue_AgeUpAt(		GetIntegerInExponentialRange(2700, 1350))
+		Rogue_GrantUpgrades(GetIntegerInExponentialRange(3200, 1600), 4)
+	end
+	
+	if conqueror_is_enabled then
+		roamer_start_at = roamer_start_at or GetIntegerInExponentialRange(1000, 400)
+		roamer_interval = roamer_interval or GetIntegerInExponentialRange(625, 250)
+		roamer_value_initial = roamer_value_initial or GetIntegerInExponentialRange(120, 300)
+		roamer_value_increment = roamer_value_increment or GetIntegerInExponentialRange(30, 75)
+		
+		local first_roamer = true
+		if Marker_Exists("mkr_roamer", "") == true then
+			local time = roamer_start_at
+			local roamer_value = roamer_value_initial
+			while true do
+				if time > ROUNDS_REPEAT_START then
+					break
+				end
+				Rogue_SpawnRoamers(time, roamer_value)
+				if first_roamer then
+					first_roamer = false
+					Rogue_SpawnRoamers(time, roamer_value)	
+				end
+				time = time + roamer_interval
+				roamer_value = roamer_value + roamer_value_increment
+			end	
+		end
+	end
+end
+
+--? @shortdesc Instructs the Rogue System to send rounds forevers, but with an interval that starts longers, and
+--? gets shorter with each round.
+--? @args All arguments are measured as Integer Seconds
+function Rogue_AddRoundsAtDecreasingIntervals(first_wave_time, initial_interval, final_interval, include_boss_waves)
+	local last_event = nil
+	
+	local time = first_wave_time
+	local boss_round_index = 1
+	local event = Rogue_AddRoundAt(time)
+	
+	Rogue_PrintIntervalString(time, false)
+	local rounds_since_break = -1 -- starting at -1 makes it so the militia wave doesn't count
+	while true do
+		local time_progress_ratio = (time - first_wave_time) / (MAX_CADENCE_AT - first_wave_time)
+		local interval = initial_interval + ((final_interval - initial_interval) * time_progress_ratio)
+
+		local break_time = 0.0
+		local boss_time = 0.0
+		rounds_since_break = rounds_since_break + 1
+		if rounds_since_break >= BREAK_INTERVAL then
+			break_time = interval * BREAK_FACTOR
+		end
+		
+		local after_boss = false
+		if include_boss_waves then
+			after_boss = boss_round_index <= #boss_round_times and time + interval + break_time >= boss_round_times[boss_round_index]
+			if after_boss then
+				last_event.is_boss_round = true
+				last_event.round.reserve_usage = BOSS_RESERVE_USAGE
+				boss_round_index = boss_round_index + 1
+				boss_time = interval * BOSS_FACTOR
+			end
+		end
+		
+		if boss_time > 0 then
+			if debug_round_intervals then print("Boss Break") end
+			time = time + interval + boss_time
+			--rounds_since_break = 0
+		elseif break_time > 0 then
+			time = time + interval + break_time
+			if debug_round_intervals then print("Break") end
+			rounds_since_break = 0
+		else
+			time = time + interval
+		end
+			
+		time = math.floor(time + 0.5)
+		
+		event = Rogue_AddRoundAt(time)
+		Rogue_PrintIntervalString(time, false, after_boss)
+
+		last_event = event
+		
+		if interval <= final_interval then
+			break
+		end
+	end
+	
+	local break_time = 0.0
+	rounds_since_break = rounds_since_break + 1
+	if rounds_since_break >= BREAK_INTERVAL then
+		break_time = final_interval * BREAK_FACTOR
+		rounds_since_break = 0
+	end
+	if break_time > 0.0 then
+		if debug_round_intervals then print("Break") end
+	end
+	
+	local first_repeating_round_time = math.floor(last_event.time + final_interval + break_time)
+	Rogue_AddRepeatingRoundAt(first_repeating_round_time, final_interval, nil, rounds_since_break)
+end
+
+
+--? @shortdesc Instructs the Rogue System to continually send rounds of units at the player.
+--? Measured in seconds.
+--? @args Integer first_arrival_at, Integer interval, Float reserve_usage (defaults to 0.5)
+function Rogue_AddRepeatingRoundAt(first_arrival_at, interval, reserve_usage, rounds_since_break)
+	local time = first_arrival_at
+	local rounds_repeated = 0
+	while true do
+		if time < ROUNDS_REPEAT_START then
+			local round = Round_Init(time, reserve_usage)
+			Event_InitRoundArrive(time, round)
+			Rogue_PrintIntervalString(time, false)
+		else
+			local round = Round_Init(time, reserve_usage, interval)
+			Event_InitRoundArrive(time, round)
+			rounds_repeated = rounds_repeated + 1
+			Rogue_PrintIntervalString(time, true)
+		end
+		
+		if rounds_repeated >= ROUNDS_REPEATED then
+			ROUNDS_REPEAT_END = time
+			break
+		end
+		
+		local break_time = 0.0
+		rounds_since_break = rounds_since_break + 1
+		if rounds_since_break >= BREAK_INTERVAL then
+			break_time = interval * BREAK_FACTOR
+			rounds_since_break = 0
+		end
+		if break_time > 0.0 then
+			if debug_round_intervals then  print("Break") end
+		end
+		time = time + interval + break_time
+		time = math.floor(time + 0.5)
+	end
+end
+
+function Rogue_PrintIntervalString(round_time, is_infinite, after_boss)
+	if debug_round_intervals then
+		local interval_string = "Round queued at "..Util_ConvertIntegerSecondsToStringTime(round_time)
+		if last_round_time ~= nil then
+			interval_string = interval_string.." - "..Util_ConvertIntegerSecondsToStringTime(round_time - last_round_time).." Interval"
+		end
+		if after_boss then
+			interval_string = interval_string.." - After Boss"
+		end
+		if is_infinite then
+			interval_string = interval_string.." - Infinite"
+		end
+		print(interval_string)
+	end
+	last_round_time = round_time
+end
+
+function Rule_Surrender()
+	if EGroup_Exists("eg_player_wonder") then		
+		local eg_wonder = EGroup_FromName("eg_player_wonder")
+		if EGroup_CountSpawned(eg_wonder) > 0 then
+			Camera_MoveTo(eg_wonder)
+			EGroup_Kill(eg_wonder)
+		end
+	end		
+end
+
+function Rogue_OnSurrenderMatchRequested()
+	-- fired on presentation thread. Defer the call.
+	Rule_AddOneShot(Rule_Surrender, 0)	
+end
+
+function Rogue_DisableSiegeTowers()
+	for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+		Player_SetEntityProductionAvailability(player, BP_GetEntityBlueprintsWithType("siege_tower"), ITEM_REMOVED)
+	end
+end
+
+function Rogue_HideWallHealthBars()
+	World_GetAllEntitiesOfType(eg_temp, "defensive_structure")
+	eg_allwalls = EGroup_CreateUnique()
+	eg_allgates = EGroup_CreateUnique()
+	eg_alltowers = EGroup_CreateUnique()
+	
+	EGroup_Filter(eg_temp, "stone_wall", FILTER_REMOVE, eg_allwalls)
+	EGroup_Filter(eg_temp, "stone_gate", FILTER_REMOVE, eg_allgates)
+	EGroup_Filter(eg_temp, "stone_wall_tower", FILTER_REMOVE, eg_alltowers)
+	EGroup_EnableUIDecorator(eg_allwalls, false, true)
+	EGroup_EnableUIDecorator(eg_allgates, false, true)
+	EGroup_EnableUIDecorator(eg_alltowers, false, true)
+	
+	local _RenameWalls = function(gid, index, eid)
+		Entity_OverrideScreenName(eid, "$11271510")
+	end
+	EGroup_ForEach(eg_allwalls, _RenameWalls)  
+	
+	local _RenameGates = function(gid, index, eid)
+		Entity_OverrideScreenName(eid, "$11271511")
+	end
+	EGroup_ForEach(eg_allgates, _RenameGates)
+	
+	local _RenameTower = function(gid, index, eid)
+		Entity_OverrideScreenName(eid, "$11271512")
+	end
+	EGroup_ForEach(eg_alltowers, _RenameTower)
+	
+end

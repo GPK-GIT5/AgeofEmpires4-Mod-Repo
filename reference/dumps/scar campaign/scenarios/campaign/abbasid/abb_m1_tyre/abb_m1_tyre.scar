@@ -1,0 +1,1184 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("abb_m1_tyre.events")
+import("abb_m1_tyre_data.scar")
+import("abb_m1_tyre_camps.scar")
+import("abb_m1_tyre_objectives.scar")
+import("abb_m1_tyre_ambush.scar")
+import("abb_m1_tyre_automated.scar")
+import("abb_m1_tyre_training.scar")
+
+MissionOMatic_UpdateHolyOrderFlags()
+
+-- This is called very early on in the mission's initialization. So early, in fact, that there 
+-- is very little you can do. You can, however, use it to do simple stuff like gathering player IDs
+function Mission_SetupPlayers()
+	content_pack = CONTENT_PACK_ABBASID_CAMPAIGN
+	
+	player1 = World_GetPlayerAt(1)
+	player2 = World_GetPlayerAt(2)
+	player3 = World_GetPlayerAt(3)
+	player4 = World_GetPlayerAt(4)
+	
+	Setup_SetPlayerName(player1, "$11256336") --Damascenes
+	Player_SetCurrentAge(player1, AGE_DARK)
+	Player_SetMaximumAge(player1, AGE_FEUDAL)
+	
+	Setup_SetPlayerName(player2, "$11250539") --Franks
+	Player_SetCurrentAge(player2, AGE_FEUDAL)
+	Player_SetMaximumAge(player2, AGE_FEUDAL)
+	
+	Setup_SetPlayerName(player3, "$11234478") --Tyre
+	Player_SetCurrentAge(player3, AGE_CASTLE)
+	Player_SetMaximumAge(player3, AGE_CASTLE)
+	
+	Setup_SetPlayerName(player4, "$11234478") --Tyre
+	Player_SetCurrentAge(player4, AGE_CASTLE)
+	Player_SetMaximumAge(player4, AGE_CASTLE)
+	
+	TechTree_HideProductionByAge_UsingTypes(player1, AGE_FEUDAL)
+	
+	Player_SetUpgradeAvailability(player1, UPG.AYYUBID_CMP.UPGRADE_NAVAL_ALLIED_DOCK_HEAL_AYY, ITEM_REMOVED)--REMOVING MISSION-SPECIFIC UPGRADE
+	Player_SetAbilityAvailability(player2, BP_GetAbilityBlueprint("deploy_palings"), ITEM_REMOVED)
+	
+	Player_SetPopCapOverride(player2, 200)
+	Player_SetResource(player2, RT_Wood, 250)
+	
+	Player_SetRelationship(player2, player4, R_ALLY)
+	Player_SetRelationship(player4, player2, R_ALLY)
+	World_EnableSharedLineOfSight(player2, player4, false)
+	
+	Player_SetRelationship(player1, player3, R_ALLY)
+	Player_SetRelationship(player3, player1, R_ALLY)
+	Player_SetRelationship(player1, player4, R_ALLY)
+	Player_SetRelationship(player4, player1, R_ALLY)
+
+	PlayerColour_Enable()
+	Game_SetPlayerSlotColour(player1, COLOR_BLUE)
+    Game_SetPlayerSlotColour(player2, COLOR_RED)
+	Game_SetPlayerSlotColour(player3, COLOR_YELLOW)
+	Game_SetPlayerSlotColour(player4, COLOR_YELLOW)
+	
+	Game_SetPlayerUISlotColour(player1, COLOR_BLUE)
+    Game_SetPlayerUISlotColour(player2, COLOR_RED)
+	Game_SetPlayerUISlotColour(player3, COLOR_YELLOW)
+	Game_SetPlayerUISlotColour(player4, COLOR_YELLOW)
+	
+	Player_SetAIResourceBonus(player2, 1.0) -- this is a multiplier - it defaults to 0 for campaign. Set it to 1 so the player gets resources.
+	
+	Tyre_SpawnAllyDefenders()
+end
+
+-- This is a good place to initialize all of your global variables. For example, creating any 
+-- SGroups or EGroups you want to use in the mission, any tables of data, etc
+function Mission_SetupVariables()
+	Tyre_InitData1()
+end
+
+-- This is called right before the swoopy-cam starts, as the game fades up from black. After the recipe is processed.
+-- We do things such as spawning starting units or applying upgrades
+function Mission_Preset()
+	Tyre_InitData2()
+	
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_wood", MUT_Multiplication, false, VILLAGER_GATHER_SPEED, EBP.CRUSADER_CMP.UNIT_VILLAGER_CRU), player2, 0.0)
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_food", MUT_Multiplication, false, VILLAGER_GATHER_SPEED, EBP.CRUSADER_CMP.UNIT_VILLAGER_CRU), player2, 0.0)
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_gold", MUT_Multiplication, false, VILLAGER_GATHER_SPEED, EBP.CRUSADER_CMP.UNIT_VILLAGER_CRU), player2, 0.0)
+	Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_stone", MUT_Multiplication, false, VILLAGER_GATHER_SPEED, EBP.CRUSADER_CMP.UNIT_VILLAGER_CRU), player2, 0.0)
+	
+	Player_CompleteUpgrade(player1, UPG.AYYUBID_CMP.UPGRADE_MIL_PARTHIAN_TACTICS_AYY)
+	
+	Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_SIEGE_ENGINEERS)
+	
+	Rule_AddGlobalEvent(OnUpgradeStart, GE_UpgradeStart)
+	Rule_AddGlobalEvent(OnUpgradeCancelled, GE_UpgradeCancelled)
+	
+	Cmd_InstantUpgrade(eg_outpost_springald, UPG.COMMON.UPGRADE_OUTPOST_SPRINGALD)
+	--Cmd_InstantUpgrade(eg_outpost_springald, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	Cmd_InstantUpgrade(eg_p2_keep, UPG.COMMON.UPGRADE_KEEP_SPRINGALD)
+	FoodReserves_Init()
+	
+	Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_ECON_RESOURCE_WOOD_FELL_RATE_1)
+	Player_CompleteUpgrade(player4, UPG.COMMON.UPGRADE_UNIT_RELIGIOUS_HERBAL_MEDICINE_4)
+	
+	--These outposts are not reachable, and therefore should not draw aggro
+	EGroup_SetTargetingType(eg_base_outpost, Targeting_None)
+
+	
+	if t_diff.research_level >= 2 then
+		--normal, hard, expert
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_MELEE_DAMAGE_I)
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_MELEE_ARMOR_I)
+	end
+	
+	if t_diff.research_level >= 3 then
+		--hard, expert
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_RANGED_DAMAGE_I)
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_RANGED_ARMOR_I)
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_UNIT_SPEARMAN_2)
+	end
+	
+	if t_diff.research_level >= 4 then
+		--expert
+		Player_CompleteUpgrade(player2, UPG.CRUSADER_CMP.UPGRADE_UNIT_MANATARMS_2_CRU)
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_MELEE_DAMAGE_II)
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_MELEE_ARMOR_II)
+		Player_CompleteUpgrade(player2, UPG.COMMON.UPGRADE_VILLAGER_HEALTH)
+		
+		Cmd_InstantUpgrade(eg_camp_siege_outposts, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+		Cmd_InstantUpgrade(eg_camp4_outpost, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	end
+	
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_TOWN_CENTER_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_TOWN_CENTER_CAPITAL_AYY, ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_DEFENSE_WALL_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_DEFENSE_WALL_GATE_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.BUILDING_DEFENSE_TOWER_AYY, ITEM_REMOVED)
+	
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.UNIT_RAM_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.UNIT_MANGONEL_BUILDABLE_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.UNIT_SIEGE_TOWER_AYY, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.AYYUBID_CMP.UNIT_SPRINGALD_BUILDABLE_AYY, ITEM_REMOVED)
+	
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_NAVAL_BAGHLAH_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_NAVAL_DHOW_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_NAVAL_EXPLOSIVE_DHOW_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_NAVAL_TRADE_SHIP_AYY, ITEM_DEFAULT)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_NAVAL_TRANSPORT_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_NAVAL_XEBEC_AYY, ITEM_REMOVED)
+	
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_CAMEL_RIDER_3_AYY, ITEM_REMOVED)
+	Player_SetSquadProductionAvailability(player1, SBP.AYYUBID_CMP.UNIT_CAMEL_RIDER_4_AYY, ITEM_REMOVED)
+	
+	Player_ModifyAyyubidMilitaryBuildTimes(player1, Util_DifVar({ 0.5, 0.75, 1, 1 }))
+	PlayerUpgrades_ApplyHealthBonuses(player1)
+	
+	RemoveFeudalWings()
+	
+	SGroup_Clear(sg_temp)
+	CreateUnits(player1, {type = "scar_scout", numSquads = 1}, mkr_p1_init_scout1, sg_temp)
+	CreateUnits(player1, {type = "scar_scout", numSquads = 1}, mkr_p1_init_scout2, sg_temp)
+	SGroup_RemoveAbility(sg_temp, BP_GetAbilityBlueprint("core_unit_death"))
+	SGroup_AddGroup(sg_scuttle_removed, sg_temp)
+	
+	Tyre_SpawnWallArchers("mkr_tyre_wall_archer_spawn", 17)
+	
+	--DEBUG: Auto Test--
+	AutoTest_OnInit()
+
+end
+
+-- This is run after the swoopy-cam finishes, but before the HUD is revealed and the player is granted control
+function Mission_PreStart()
+	Tyre_RegisterObjectives()
+end
+
+-- This is run after the HUD is revealed and the player is granted control. It's a good place to
+-- start the first objectives
+function Mission_Start()
+	
+	Tyre_InitRamArmy()
+	
+	Sound_Play2D("sfx_campaign_scripted_large_group_celebrate")
+	UI_CreateMinimapBlip(sg_temp, 10, "general")
+	
+	Objective_Start(OBJ_FranksGathering, false, false)
+	Objective_Start(OBJ_ClearCamps, true, true)
+	
+	Objective_Start(OBJ_PauseMenu, false, false)
+	
+	Util_StartIntel(EVENTS.TughtekinArrives)
+	
+	Rule_AddOneShot(Training_Tyre_GeneralAura, 60)
+	
+end
+
+function Tyre_CheckOutpostHint1()
+	
+	local message = "$11257154" -- Horse Archers are weak against outposts. Avoid attacking them
+	
+	if Player_AreSquadsNearMarker(player1, mkr_camp3_outpost_ui) and EGroup_CountSpawned(eg_camp3_outpost) > 0 then
+		hpid_outpost1 = HintPoint_Add(mkr_camp3_outpost_ui, true, message, 9)
+		Rule_AddOneShot(Tyre_RemoveOutpostHint1, 25)
+		Rule_RemoveMe()
+	end
+	
+	if Player_AreSquadsNearMarker(player1, mkr_camp4_outpost_ui) and EGroup_CountSpawned(eg_camp4_outpost) > 0 then
+		hpid_outpost1 = HintPoint_Add(mkr_camp4_outpost_ui, true, message, 9)
+		Rule_AddOneShot(Tyre_RemoveOutpostHint1, 25)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Tyre_CheckOutpostHint2()
+	
+	local message = "$11257907" --Villagers will exit the outpost when you leave the area.
+	
+	if EGroup_IsHoldingAny(eg_camp3_outpost) then
+		hpid_outpost2 = HintPoint_Add(mkr_camp3_outpost_ui, true, message, 9)
+		Rule_AddOneShot(Tyre_RemoveOutpostHint2, 25)
+		Rule_RemoveMe()
+	end
+	
+	if EGroup_IsHoldingAny(eg_camp4_outpost) then
+		hpid_outpost2 = HintPoint_Add(mkr_camp4_outpost_ui, true, message, 9)
+		Rule_AddOneShot(Tyre_RemoveOutpostHint2, 25)
+		Rule_RemoveMe()
+	end
+end
+
+function Tyre_RemoveOutpostHint1()
+	if hpid_outpost1 ~= nil then
+		HintPoint_Remove(hpid_outpost1)
+		Rule_AddInterval(Tyre_CheckOutpostHint2, 2)
+	end
+end
+
+function Tyre_RemoveOutpostHint2()
+	if hpid_outpost2 ~= nil then
+		HintPoint_Remove(hpid_outpost2)
+	end
+end
+
+function Tyre_MonitorHorseArcherCount()
+	
+	if base_phase_started then
+		Rule_RemoveMe()
+	end
+	
+	if SGroup_CountSpawned(sg_p1_horse_archers) <= NUM_STARTING_HORSE_ARCHERS * 0.5 then
+		Rule_RemoveMe()
+		
+		if base_phase_started == false then
+			Objective_Start(OBJ_HorseArchers, true, true)
+		end
+	end
+end
+
+function Tyre_MonitorTughtekin()
+	
+	if SGroup_CountSpawned(sg_tughtekin) == 0 then
+		
+		if leader_tent_training_triggered == false then
+			leader_tent_training_triggered = true
+			Rule_AddOneShot(Training_Tyre_LeaderTent, 5)
+		end
+		
+		-- see if tughtekin has respawned
+		Player_GetAll(player1)
+		SGroup_Filter(sg_allsquads, "scar_leader", FILTER_KEEP)
+		
+		if SGroup_CountSpawned(sg_allsquads) > 0 then
+			SGroup_AddGroup(sg_tughtekin, sg_allsquads)
+			SGroup_AddGroup(sg_p1_raiders, sg_allsquads)
+		end
+	end
+end
+
+--? @shortdesc Gives the player control of the base
+function Tyre_StartBasePhase()
+	
+	base_phase_started = true
+	
+	Rule_AddGlobalEvent(Tyre_HouseOfWisdomComplete, GE_ConstructionComplete)
+	Rule_AddGlobalEvent(Tyre_TradeShip_Built, GE_BuildItemComplete)
+	
+	EGroup_SetPlayerOwner(eg_player_base, player1)
+	SGroup_SetPlayerOwner(sg_init_sheep, player1)
+	
+	SGroup_AddAbility(sg_scuttle_removed, BP_GetAbilityBlueprint("core_unit_death"))
+
+	sg_p1_villagers = CreateUnits(player1, {type = "scar_villager", numSquads = 5}, mkr_p1_init_villagers, "sg_p1_villagers")
+	
+	Rule_AddOneShot(Tyre_StartAgeUpObjective, FIRST_OBJECTIVE_AT)
+	
+	if Objective_IsStarted(OBJ_HorseArchers) then
+		Objective_Complete(OBJ_HorseArchers, false, false)
+	end
+	
+	Objective_Start(OBJ_DefendLandmarks, false, false)
+	
+	EventCues_CallToAction("$11252307", CTA_CELEBRATE, EVENTS.PlayerGetsSettlement_CTA, nil, eg_player_base, 30, "icons/cta/illustrations/player_reinforcement_arrived")
+
+	Sound_Play2D("mus_stinger_campaign_positive")
+	Sound_Play2D("sfx_campaign_scripted_small_group_celebrate")
+	
+	Rule_AddOneShot(Util_AutoSave, 3)
+	
+	Tyre_SpawnTransport()
+	Tyre_InitSkirmishArmy()
+	
+	Rule_AddOneShot(Training_Tyre_BuildFishingBoat, 10)
+	Rule_AddOneShot(Training_Tyre_ProduceVillagers, 60)
+end
+
+function Tyre_SpawnTransport()
+	
+	-- tyre reinforcements
+	sg_p3_transport = CreateUnits(player3, {type = "scar_transport_ship", numSquads = 1}, mkr_tyre_transport, "sg_p3_transport")
+	Rule_AddOneShot(Tyre_MoveTransportToDest, 0.5)
+	
+	SGroup_DisableHold(sg_p3_transport)
+end
+
+function Tyre_MoveTransportToDest()
+	
+	Cmd_Move(sg_p3_transport, mkr_tyre_transport_dest)
+	Rule_AddInterval(Tyre_CheckTransportArrival, 1)
+end
+
+function Tyre_CheckTransportArrival()
+	
+	if Prox_AreSquadsNearMarker(sg_p3_transport, mkr_tyre_transport_trigger, ANY) then
+		Rule_RemoveMe()
+		
+		local p1_init_units = {
+			{type = "scar_spearman", numSquads = 5},
+			{type = "scar_archer", numSquads = 5},
+			{type = "scar_horseman", numSquads = 5}
+		}
+		
+		sg_p1_init_army = CreateUnits(player1, p1_init_units, mkr_p1_init_army, "sg_p1_init_army")
+		Rule_AddOneShot(Tyre_MoveP1InitArmy, 1)
+	end
+end
+
+function Tyre_MoveP1InitArmy()
+	Cmd_FormationMove(sg_p1_init_army, mkr_p1_init_army_dest)
+	Rule_AddOneShot(Tyre_MoveTransportFinal, 5)
+end
+
+function Tyre_MoveTransportFinal()
+	Cmd_Move(sg_p3_transport, mkr_tyre_transport_final_dest, false, true)
+end
+
+--? @shortdesc Utility function for spawning scattered units at a set of markers, all with the same name
+function Tyre_SpawnScatteredUnits(player, markerName, unitTable)
+	
+	local markers = AllMarkers_FromName(markerName, "")
+	for i, marker in ipairs(markers) do
+		CreateUnits(player, unitTable, marker)
+	end
+end
+
+-------------------------------------------------
+----------------- Ally Behavior -----------------
+-------------------------------------------------
+--? @shortdesc Spawns scattered ally units
+function Tyre_SpawnAllyDefenders()
+	
+	Tyre_SpawnScatteredUnits(player3, "mkr_tyre_archer", {type = "scar_archer", numSquads = 1})
+	Tyre_SpawnScatteredUnits(player3, "mkr_tyre_militia", {sbp = BP_GetSquadBlueprint("unit_militia_ayy"), numSquads = 1})
+end
+
+function Tyre_CheckStartPreparing()
+	
+	if VOPlayed_History_Tyre == false then
+		VOPlayed_History_Tyre = true
+		EventCues_CallToAction("$11252305", CTA_UNIQUE_STAKES, EVENTS.History_Tyre_CTA, nil, mkr_CTA_tyrewalls, 30, "icons/cta/illustrations/alarm")
+		Tyre_StartPreparing()
+	end
+end
+
+function Tyre_StartPreparing()
+	
+	Tyre_InitAllySkirmishArmy()
+	
+	wall_marker_index = 1
+	num_wall_markers = 17
+	
+	Rule_AddInterval(Tyre_MoveWallArchersLoop, 0.5)
+end
+
+--? @shortdesc Spawns ally archers and sends them to the walls of Tyre
+function Tyre_SpawnWallArchers(markerStem, numMarkers)
+	
+	for i = 1, numMarkers do
+		if Marker_Exists(markerStem..tostring(i),"") then
+			local marker = Marker_FromName(markerStem..tostring(i), "")
+			SGroup_Clear(sg_temp)
+			sg_temp = CreateUnits(player3, {sbp = BP_GetSquadBlueprint("unit_militia_archer_ayy"), numSquads = 1}, marker, sg_temp)
+			
+			SGroup_AddGroup(sg_p3_wall_archers, sg_temp)
+		end
+	end
+end
+
+function Tyre_MoveWallArchersLoop()
+	
+	if wall_marker_index <= num_wall_markers then
+		if Marker_Exists("mkr_tyre_wall_archer"..tostring(wall_marker_index),"") then
+			local marker = Marker_FromName("mkr_tyre_wall_archer"..tostring(wall_marker_index), "")
+			
+			if SGroup_CountSpawned(sg_p3_wall_archers) >= wall_marker_index then
+				
+				local squad = SGroup_GetSquadAt(sg_p3_wall_archers, wall_marker_index)
+				SGroup_Clear(sg_temp)
+				SGroup_Add(sg_temp, squad)
+				Cmd_Move(sg_temp, marker)
+			end
+		end
+	else
+		Rule_RemoveMe()
+	end
+	
+	wall_marker_index = wall_marker_index + 1
+end
+
+
+-----------------------------------------------------------------
+--------- Skirmishing - Ally
+-----------------------------------------------------------------
+--? @shortdesc Initializes the ally skirmish army
+function Tyre_InitAllySkirmishArmy()
+	
+	ALLY_SKIRMISH_UNIT_COUNT_MAX = 14
+	
+	ally_skirmish_spawn_delay = 5
+	ally_skirmish_spawn_counter = 0
+	ally_skirmish_attack_threshold = 12
+	ally_skirmish_retreat_threshold = 8
+	ally_skirmish_phase = "spawn"
+	
+	ally_skirmish_army_params = {
+		name = "ally_skirmish_army",
+		player = player3,
+		spawn = mkr_ally_spawn_tc,
+		targetOrder = TARGET_ORDER_LINEAR,
+		attackBuildings = BUILDINGS_ALL,
+		targets = {mkr_ally_skirmish_path1},
+		units = {{type = "scar_archer", numSquads = 4}}
+	}
+	ally_skirmish_army = Army_Init(ally_skirmish_army_params)
+	sg_ally_skirmish = SGroup_CreateUniqueWithPrefix("sg_ally_skirmish")
+
+	Rule_AddInterval(Tyre_MonitorAllySkirmishing, 4)
+end
+
+--? @shortdesc Monitors the ally skirmish army for retreating and reinforcement
+function Tyre_MonitorAllySkirmishing(context, data)
+	
+	if ally_skirmish_phase == "spawn" then
+		
+		if SGroup_CountSpawned(sg_ally_skirmish) < ALLY_SKIRMISH_UNIT_COUNT_MAX then
+			
+			ally_skirmish_spawn_counter = ally_skirmish_spawn_counter + 1
+			if ally_skirmish_spawn_counter >= ally_skirmish_spawn_delay then
+				
+				ally_skirmish_spawn_counter = 0
+				
+				if EGroup_CountSpawned(eg_ally_infantry) > 0 then
+					CreateUnits(player3, {type = "scar_spearman", numSquads = 1}, mkr_ally_spawn_infantry, sg_ally_skirmish)
+				end
+				
+				if EGroup_CountSpawned(eg_ally_ranged1) > 0 then
+					CreateUnits(player3, {type = "scar_archer", numSquads = 1}, mkr_ally_spawn_ranged1, sg_ally_skirmish)
+				end
+			end
+		end
+			
+		if SGroup_CountSpawned(sg_ally_skirmish) >= ally_skirmish_attack_threshold then
+			ally_skirmish_phase = "attack"
+			Army_AddSGroup(ally_skirmish_army, sg_ally_skirmish)
+			Army_SetTargets(ally_skirmish_army, Tyre_GetMarkers("mkr_ally_skirmish_path", 4))
+		end
+		
+	elseif ally_skirmish_phase == "attack" then
+	
+		-- check retreat conditions
+		if SGroup_CountSpawned(sg_ally_skirmish) <= ally_skirmish_retreat_threshold then
+			
+			if SGroup_CountSpawned(sg_ally_skirmish) > 0 then
+				Army_RemoveSGroup(ally_skirmish_army, sg_ally_skirmish)
+			end
+			ally_skirmish_phase = "disband"
+		end
+		
+	elseif ally_skirmish_phase == "disband" then
+		
+		if SGroup_CountSpawned(sg_ally_skirmish) > 0 then
+			Cmd_Move(sg_ally_skirmish, mkr_ally_rally)
+		end
+		ally_skirmish_phase = "retreat"
+		
+	elseif ally_skirmish_phase == "retreat" then
+		
+		-- check if units have all died, or have gotten back to the rally point
+		if SGroup_CountSpawned(sg_ally_skirmish) == 0 then
+			ally_skirmish_phase = "spawn"
+		elseif Prox_AreSquadsNearMarker(sg_ally_skirmish, mkr_ally_rally, ANY) then
+			ally_skirmish_phase = "spawn"
+		end
+	end
+	
+end
+
+
+-----------------------------------------------------------------
+--------- Skirmishing - Enemy
+-----------------------------------------------------------------
+--? @shortdesc Initializes the enemy skirmish army
+function Tyre_InitSkirmishArmy()
+	
+	SKIRMISH_UNIT_COUNT_MAX = t_diff.skirmish_attack_threshold + 5
+	
+	skirmish_spawn_delay = t_diff.skirmish_spawn_delay
+	skirmish_spawn_counter = 0
+	skirmish_attack_threshold = t_diff.skirmish_attack_threshold
+	skirmish_retreat_threshold = t_diff.skirmish_attack_threshold * 0.5
+	skirmish_phase = "spawn"
+	
+	skirmish_army_params = {
+		name = "skirmish_army",
+		player = player2,
+		spawn = mkr_army_skirmish,
+		targetOrder = TARGET_ORDER_PATROL,
+		--attackBuildings = BUILDINGS_THREATENING,
+		targets = {mkr_skirmish_path1},
+		units = {}
+	}
+	skirmish_army = Army_Init(skirmish_army_params)
+	sg_skirmish = SGroup_CreateUniqueWithPrefix("sg_skirmish")
+	
+	
+	skirmish_units = {
+		{
+			index = 1,
+			type = "scar_archer",
+			spawn = mkr_army_skirmish_ranged,
+			producer = eg_skirmish_ranged
+		},
+		{
+			index = 2,
+			type = "scar_militia",
+			spawn = mkr_army_skirmish_infantry,
+			producer = eg_skirmish_infantry
+		},
+		{
+			index = 3,
+			type = "scar_manatarms",
+			spawn = mkr_army_skirmish_infantry,
+			producer = eg_skirmish_infantry
+		},
+		{
+			index = 4,
+			type = "scar_horseman",
+			spawn = mkr_army_skirmish_cavalry,
+			producer = eg_skirmish_cavalry
+		},
+		{
+			index = 5,
+			type = "scar_knight",
+			spawn = mkr_army_skirmish_cavalry,
+			producer = eg_skirmish_cavalry
+		},
+	}
+	
+	skirmish_unit_mix_index = 1
+	skirmish_unit_mix = {
+		{2, 1}, --militia, archer
+		{4, 1}, --horseman, archer
+		{3, 1}, --manatarms, archer
+		{5, 1}, --knight, archer
+		{5, 3, 1}, --knight, manatarms, archer
+		{5, 3, 1, 1}, --knight, manatarms, archer, archer
+	}
+	
+	Rule_AddInterval(Tyre_MonitorSkirmishing, 2)
+end
+
+--? @shortdesc Monitors the enemy skirmish army for retreating and reinforcement
+function Tyre_MonitorSkirmishing(context, data)
+	
+	if skirmish_phase == "spawn" then
+		
+		if SGroup_CountSpawned(sg_skirmish) < SKIRMISH_UNIT_COUNT_MAX then
+			
+			skirmish_spawn_counter = skirmish_spawn_counter + 1
+			if skirmish_spawn_counter >= skirmish_spawn_delay then
+				
+				local unit_mix = skirmish_unit_mix[skirmish_unit_mix_index]
+				skirmish_spawn_counter = 0
+				
+				for i = 1, #unit_mix do
+					local idx = unit_mix[i]
+					local unit = skirmish_units[idx]
+					
+					if EGroup_CountSpawned(unit.producer) > 0 then
+						CreateUnits(player2, {type = unit.type, numSquads = 1}, unit.spawn, sg_skirmish)
+					end
+				end
+				
+			end
+		end
+			
+		if SGroup_CountSpawned(sg_skirmish) >= skirmish_attack_threshold then
+			skirmish_phase = "attack"
+			Army_AddSGroup(skirmish_army, sg_skirmish)
+			Army_SetTargets(skirmish_army, Tyre_GetMarkers("mkr_skirmish_path", 5))
+			
+			--final target
+			if Objective_IsStarted(OBJ_DefendTyre) then
+				Army_AddTarget(skirmish_army, mkr_escort_target_final)
+			else
+				Army_AddTargets(skirmish_army, Tyre_GetMarkers("mkr_player_base_path", 4))
+			end
+			
+			if skirmish_unit_mix_index < t_diff.skirmish_unit_mix_cap then
+				skirmish_unit_mix_index = skirmish_unit_mix_index + 1
+			end
+		end
+		
+	elseif skirmish_phase == "attack" then
+	
+		-- check retreat conditions
+		if SGroup_CountSpawned(sg_skirmish) <= skirmish_retreat_threshold then
+			
+			if SGroup_CountSpawned(sg_skirmish) > 0 then
+				Army_RemoveSGroup(skirmish_army, sg_skirmish)
+			end
+			skirmish_phase = "disband"
+		end
+		
+	elseif skirmish_phase == "disband" then
+		
+		if SGroup_CountSpawned(sg_skirmish) > 0 then
+			Cmd_Move(sg_skirmish, mkr_army_skirmish)
+		end
+		skirmish_phase = "retreat"
+		
+	elseif skirmish_phase == "retreat" then
+		
+		-- check if units have all died, or have gotten back to the siege camp
+		if SGroup_CountSpawned(sg_skirmish) == 0 then
+			skirmish_phase = "spawn"
+		elseif Prox_AreSquadsNearMarker(sg_skirmish, mkr_army_skirmish, ANY) then
+			skirmish_phase = "spawn"
+		end
+	end
+	
+end
+
+--? @shortdesc Dissolves all enemy armies and retreats them back to the main camp
+function Tyre_StartFinalRetreat()
+	
+	final_retreat_started = true
+	skirmish_phase = "final_retreat"
+	
+	Rule_Remove(Tyre_MonitorSkirmishing)
+	Rule_Remove(Tyre_MonitorRam)
+
+	sg_retreat = SGroup_CreateIfNotFound("sg_retreat")
+	
+	Army_Dissolve(escort_army1, sg_retreat)
+	Army_Dissolve(escort_army2, sg_retreat)
+	Army_Dissolve(escort_army3, sg_retreat)
+	Army_Dissolve(skirmish_army, sg_retreat)
+	
+	Rule_AddOneShot(Tyre_CompleteFinalRetreat, 1)
+end
+
+function Tyre_CompleteFinalRetreat()
+	Cmd_Move(sg_retreat, mkr_retreat_dest, false, true)
+end
+
+-------------------------------------------------
+------------------ Ram Army ------------------
+-------------------------------------------------
+--? @shortdesc Initializes armies for The Beast and its escort groups (note: 'The Beast' and 'Ram' are used interchangeably)
+function Tyre_InitRamArmy()
+	
+	ram_phase = 0
+	ram_unit_count = 0
+	ram_unit_type = ""
+	ram_spawn_counter = 0
+	ram_spawn_threshold = 0
+	ram_spawn_triggered = false
+	ram_spawn_on = false
+	ram_total_spawned = 0
+	ram_spawn_rate = 5
+	
+	escort_phase = "prepare" -- prepare, escort, mole, final
+	
+	ram_targets = AllMarkers_FromName("mkr_ram_target", "")
+	NUM_RAM_TARGETS = #ram_targets
+	
+	ram_army_params = {
+		name = "ram_army",
+		player = player2,
+		spawn = mkr_ram_spawn,
+		combatRange = 30,
+		combatRangeEnRoute = 30,
+		targetOrder = TARGET_ORDER_LINEAR,
+		attackBuildings = BUILDINGS_THREATENING,
+		ramPassengerCount = 0,
+		targets = ram_targets,
+		units = {}
+	}
+	ram_army = Army_Init(ram_army_params)
+	
+	sg_ram = SGroup_CreateIfNotFound("sg_ram")
+	
+	escort_army1 = Army_FindFromName("escort_1")
+	escort_army2 = Army_FindFromName("escort_2")
+	escort_army3 = Army_FindFromName("escort_3")
+	
+end
+
+--? @shortdesc Spawns units for the escort armies and limits their speed so they follow The Beast
+function Tyre_SpawnEscorts()
+	
+	escort_request_idx = 1
+	escort_requests = {
+		{ type = "scar_horseman", army = escort_army1, cost = 120, dest = mkr_escort_rally1 },
+		{ type = "scar_manatarms", army = escort_army2, cost = 120, dest = mkr_escort_rally2 },
+		{ type = "scar_militia", army = escort_army3, cost = 60, dest = mkr_escort_rally3 },
+		{ type = "scar_knight", army = escort_army1, cost = 240, dest = mkr_escort_rally1 },
+		{ type = "scar_archer", army = escort_army2, cost = 90, dest = mkr_escort_rally2 },
+		{ type = "scar_archer", army = escort_army3, cost = 90, dest = mkr_escort_rally3 },
+		{ type = "scar_archer", army = escort_army1, cost = 90, dest = mkr_escort_rally1 },
+		{ type = "scar_spearman", army = escort_army2, cost = 80, dest = mkr_escort_rally2 },
+		{ type = "scar_militia", army = escort_army3, cost = 60, dest = mkr_escort_rally3 }
+	}
+	
+	sg_escorts = SGroup_Create("sg_escorts") 
+	
+	SGroup_AddGroups(sg_escorts, {escort_army1.sgroup, escort_army2.sgroup, escort_army3.sgroup})
+	
+	Modify_UnitSpeedWhenNotInCombat(sg_escorts, 0.4, MUT_Multiplication)
+	
+	minimum_stockpile = 250
+	Rule_AddInterval(Tyre_ReinforceEscorts, 2)
+end
+
+--? @shortdesc Adds units to the escort groups during the 'franks are gathering resources' phase
+function Tyre_ReinforceEscorts()
+	
+	if Objective_IsComplete(OBJ_FranksGathering) and enemy_resource_stockpile < minimum_stockpile then
+		Rule_RemoveMe()
+	end
+	
+	if enemy_resource_stockpile >= minimum_stockpile then
+		
+		local request = escort_requests[escort_request_idx]
+		
+		if enemy_resource_stockpile >= request.cost then
+
+			SGroup_Clear(sg_temp)
+			CreateUnits(player2, { type = request.type, numSquads = 1 }, mkr_escort_reinforce, sg_temp)
+			
+			Cmd_Move(sg_temp, request.dest)
+			
+			Army_AddSGroup(request.army, sg_temp)
+			
+			enemy_resource_stockpile = enemy_resource_stockpile - request.cost
+		end
+		
+		escort_request_idx = escort_request_idx + 1
+		if escort_request_idx > #escort_requests then
+			escort_request_idx = 1
+		end
+	end
+	
+end
+
+--? @shortdesc Spawns special villagers to start building The Beast
+function Tyre_SpawnRamBuilders()
+	
+	--spawn ram builders on right
+	for i = 1, 5 do
+		if Marker_Exists("mkr_ram_builder"..tostring(i),"") then
+			local marker = Marker_FromName("mkr_ram_builder"..tostring(i), "")
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player2, sg_temp, { sbp = SBP.CRUSADER_CMP.UNIT_VILLAGER_RAM_BUILDER_CRU, numSquads = 1 }, marker)
+			SGroup_AddGroup(sg_ram_builders, sg_temp)
+			SGroup_AddGroup(sg_ram_builders_right, sg_temp)
+		end
+	end
+	
+	--spawn ram builders on left
+	for i = 6, 10 do
+		if Marker_Exists("mkr_ram_builder"..tostring(i),"") then
+			local marker = Marker_FromName("mkr_ram_builder"..tostring(i), "")
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(player2, sg_temp, { sbp = SBP.CRUSADER_CMP.UNIT_VILLAGER_RAM_BUILDER_CRU, numSquads = 1 }, marker)
+			SGroup_AddGroup(sg_ram_builders, sg_temp)
+			SGroup_AddGroup(sg_ram_builders_left, sg_temp)
+		end
+	end
+end
+
+--? @shortdesc Starts the construction of The Beast, using construction states from The Tower of the Sultan
+function Tyre_ConstructRamTower()
+	
+	if debug_skipArmyCountdown then
+		Modify_EntityBuildTime(player2, BP_GetEntityBlueprint("unit_ram_tower_construct_cru"), 0.1)
+	else
+		Modify_EntityBuildTime(player2, BP_GetEntityBlueprint("unit_ram_tower_construct_cru"), 4)
+	end
+	
+	Cmd_Construct(sg_ram_builders, BP_GetEntityBlueprint("unit_ram_tower_construct_cru"), mkr_ram_spawn)
+	
+	Rule_AddInterval(Tyre_FindSiegeTower, 1)
+end
+
+
+--? @shortdesc Finds the entity used for The Beast's construction state
+function Tyre_FindSiegeTower()
+	
+	Player_GetAll(player2)
+	local _Check = function(gid, idx, eid)
+		
+		if Entity_IsOfType(eid, "siege_tower") then
+			
+			hpid_ram_construct = HintPoint_Add(mkr_ram_spawn, true, "$11229622", 15)
+			
+			entity_siege_tower = eid
+			
+			Rule_AddGlobalEvent(Tyre_RamTowerComplete, GE_ConstructionComplete)
+			Rule_RemoveMe()
+		end
+	end
+	EGroup_ForEach(eg_allentities, _Check)
+	
+end
+
+--? @shortdesc Detects completion of The Beast and replaces the special construct entity with the proper unit
+function Tyre_RamTowerComplete(context, data)
+	
+	if Entity_IsOfType(context.entity, "siege_tower") then
+	
+		--destroy and replace the siege tower with the proper ram tower
+		HintPoint_Remove(hpid_ram_construct)
+			
+		Cmd_Move(sg_ram_builders_right, mkr_ram_builders_right)
+		Cmd_Move(sg_ram_builders_left, mkr_ram_builders_left)
+			
+		Entity_DeSpawn(context.entity)
+		Tyre_SpawnRam()
+		Rule_RemoveMe()
+	end
+end
+
+--? @shortdesc Spawns the proper unit for The Beast
+function Tyre_SpawnRam()
+	
+	ram_has_spawned = true
+	
+	ram_phase = 1
+	ram_unit_count = t_diff.numSquads_ram
+	ram_spawn_threshold = 30
+	
+	CreateUnits(player2, {sbp = SBP.CRUSADER_CMP.UNIT_RAM_TOWER_CRU, numSquads = 1}, mkr_ram_spawn, sg_ram)
+	
+	Cmd_Move(sg_ram, mkr_ram_dest)
+	
+	-- show garrison going into the ram
+	garrison_units_spawned = 0
+	Rule_AddInterval(Tyre_SpawnRamGarrison, 0.75)
+	
+	-- modify weapon cooldown
+	Modify_WeaponCooldown(sg_ram, "hardpoint_01", t_diff.ram_weapon_cooldown)
+	
+	-- reveal ram
+	FOW_PlayerRevealSGroup(player1, sg_ram, 25, -1)
+	
+	if t_diff.ram_health_multiplier ~= 1 then
+		Tyre_ModifyRamHealth()
+	end
+end
+
+--? @shortdesc Spawns the garrison for The Beast (note: this is a scripted garrison without using hold_ext)
+function Tyre_SpawnRamGarrison()
+	
+	for i = 1, t_diff.numSquads_ram_wave_maa do
+		CreateUnits(player2, {type = "scar_manatarms", numSquads = 1}, Table_GetRandomItem(RAM_GARRISON_SPAWNS), sg_temp)
+		Modify_UnitSpeed(sg_temp, 1.2)
+		Cmd_Move(sg_temp, mkr_ram_dest, false, true)
+		garrison_units_spawned = garrison_units_spawned + 1
+	end
+	
+	for i = 1, t_diff.numSquads_ram_wave_militia do
+		CreateUnits(player2, {type = "scar_militia", numSquads = 1}, Table_GetRandomItem(RAM_GARRISON_SPAWNS), sg_temp)
+		Modify_UnitSpeed(sg_temp, 1.2)
+		Cmd_Move(sg_temp, mkr_ram_dest, false, true)
+		garrison_units_spawned = garrison_units_spawned + 1
+	end
+	
+	if garrison_units_spawned >= t_diff.numSquads_ram then
+		Rule_RemoveMe()
+	end
+
+end
+
+--? @shortdesc Modifies The Beast's health based on difficulty
+function Tyre_ModifyRamHealth()
+	local modHealth = Modifier_Create(MAT_Entity, "health_maximum_modifier", MUT_Multiplication, false, t_diff.ram_health_multiplier, "")
+	local _modifyHealthValues = function(gid, idx, sid)
+		local entity = Squad_GetFirstEntity(sid)
+		Modifier_ApplyToEntity(modHealth, entity, 0)
+	end
+	
+	SGroup_ForEach(sg_ram, _modifyHealthValues)
+end
+
+--? @shortdesc Adds The Beast unit to its army and sets targets leading to Tyre
+function Tyre_LaunchRam()
+	
+	ram_spawn_on = true
+	ram_target_index = 1
+	target_index_prev = 0
+	
+	Army_AddSGroup(ram_army, sg_ram)
+
+	Army_SetTargets(ram_army, ram_army_params.targets)
+	
+	Rule_AddInterval(Tyre_MonitorRam, 2)
+	
+	hpid_ram_garrison = HintPoint_Add(sg_ram, true, Loc_FormatText("$11256237", ram_unit_count, ram_unit_count), 10)
+	
+	escort_phase = "escort"
+	
+	--redirect the skirmish army to attack tyre
+	Army_SetTargets(skirmish_army, Tyre_GetMarkers("mkr_skirmish_path", 5))
+	Army_AddTarget(skirmish_army, mkr_escort_target_final)
+	
+	Sound_Play2D("mus_stinger_campaign_alert")
+	Music_LockIntensity(MUSIC_TENSE_RARE, 30)
+end
+
+--? @shortdesc Splits up the escorts once The Beast reaches the first palisade on the land bridge (aka 'the mole')
+function Tyre_CheckMoleTrigger1()
+	
+	if SGroup_CountSpawned(sg_ram) > 0 then
+		if Prox_AreSquadsNearMarker(sg_ram, mkr_trigger_mole1, ANY, 60) then
+			
+			escort_phase = "mole1"
+			
+			Army_AddTarget(escort_army1, mkr_escort_target_n1)
+			Army_AddTarget(escort_army2, mkr_escort_target_s1)
+			Army_AddTarget(escort_army3, mkr_escort_target_c1)
+		end
+	end
+end
+
+--? @shortdesc Splits up the escorts once The Beast reaches the second palisade on the land bridge
+function Tyre_CheckMoleTrigger2()
+	
+	if SGroup_CountSpawned(sg_ram) > 0 then
+		if Prox_AreSquadsNearMarker(sg_ram, mkr_trigger_mole2, ANY, 30) then
+			
+			escort_phase = "mole2"
+			
+			Army_AddTarget(escort_army1, mkr_escort_target_n2)
+			Army_AddTarget(escort_army2, mkr_escort_target_s2)
+			Army_AddTarget(escort_army3, mkr_escort_target_c2)
+		end
+	end
+end
+
+--? @shortdesc Checks whether The Beast should start spawning units
+function Tyre_CheckRamTrigger()
+
+	local escort_count = SGroup_CountSpawned(escort_army1.sgroup) + SGroup_CountSpawned(escort_army2.sgroup) + SGroup_CountSpawned(escort_army3.sgroup)
+		
+	if escort_count <= ram_spawn_threshold then
+		ram_spawn_triggered = true
+	end
+	
+	if SGroup_GetAvgHealth(sg_ram) < 0.75 then
+		ram_spawn_triggered = true
+	end
+end
+
+--? @shortdesc Monitors The Beast's progress and updates targets for the escort armies
+function Tyre_MonitorRam(context, data)
+	
+	if SGroup_CountSpawned(sg_ram) > 0 then
+		
+		if VOPlayed_RamAttackedByPlayer == false then
+			if SGroup_IsUnderAttackByPlayer(sg_escorts, player1, 1) then
+				VOPlayed_RamAttackedByPlayer = true
+				Util_StartIntel(EVENTS.RamAttackedByPlayer)
+			end
+		end
+		
+		if Objective_IsStarted(OBJ_DefendTyre) and escort_phase ~= "final" then
+			
+			if Prox_AreSquadsNearMarker(sg_ram, mkr_tyre_entry, ALL) then
+
+				escort_phase = "final"
+				Army_SetTarget(escort_army1, mkr_escort_target_final)
+				Army_AddTarget(escort_army2, mkr_escort_target_final)
+				Army_AddTarget(escort_army3, mkr_escort_target_final)
+			end
+		end
+		
+		if escort_phase == "escort" then
+			
+			local target_index = Army_GetTargetIndex(ram_army)
+			
+			if target_index > target_index_prev then
+				
+				target_index_prev = target_index
+				
+				if target_index < NUM_RAM_TARGETS then
+					Army_SetTarget(escort_army1, ram_targets[target_index + 1])
+				end
+				
+				if target_index > 1 then
+					Army_SetTarget(escort_army2, ram_targets[target_index - 1])
+				end
+				
+				if target_index > 2 then
+					Army_SetTarget(escort_army3, ram_targets[target_index - 2])
+				end
+			end
+			
+			Tyre_CheckMoleTrigger1()
+			
+		elseif escort_phase == "mole1" then
+			
+			Tyre_CheckMoleTrigger2()
+		end
+	end
+	
+	
+	if ram_spawn_triggered == false then
+		Tyre_CheckRamTrigger()
+	end
+	
+	if ram_spawn_triggered and ram_spawn_on then
+		
+		if SGroup_CountSpawned(sg_ram) > 0 then
+			
+			HintPoint_Remove(hpid_ram_garrison)
+			
+			SGroup_Clear(sg_temp)
+			
+			local ram_units = {
+				{type = "scar_manatarms", numSquads = t_diff.numSquads_ram_wave_maa},
+				{type = "scar_militia", numSquads = t_diff.numSquads_ram_wave_militia},
+			}
+			
+			local spawnLocation = World_GetOffsetPosition(SGroup_GetPosition(sg_ram), Squad_GetHeading(SGroup_GetSquadAt(sg_ram, 1)), 0, 5)
+			
+			local sg_ram_units = SGroup_CreateUnique("sg_ram_units")
+			CreateUnits(player2, ram_units, spawnLocation, sg_ram_units)
+			
+			Cmd_AttackMove(sg_ram_units, spawnLocation)
+			
+			Rule_AddOneShot(Tyre_MergeRamUnits, 20, {sgroup = sg_ram_units})
+			
+			ram_total_spawned = ram_total_spawned + ram_spawn_rate
+			
+			if ram_total_spawned >= ram_unit_count then
+				ram_total_spawned = 0
+				ram_spawn_on = false
+			else
+				hpid_ram_garrison = HintPoint_Add(sg_ram, true, Loc_FormatText("$11256237", ram_unit_count - ram_total_spawned, ram_unit_count), 10)
+			end
+			
+		else
+			ram_spawn_on = false
+		end
+	end
+	
+end
+
+--? @shortdesc Merges The Beast's garrison into the last escort army
+function Tyre_MergeRamUnits(context, data)
+	if final_retreat_started == false then
+		Army_AddSGroup(escort_army3, data.sgroup)
+	end
+end
+
+
+-------------------------------------------------
+------------------- TESTING --------------------
+-------------------------------------------------
+
+function TyreDebug_SkipFranksGathering() 
+	
+	local missing_resources = (t_diff.enemy_resource_target * 0.75) - enemy_resource_total
+	if missing_resources < 0 then missing_resources = 0 end
+	
+	enemy_resource_total = enemy_resource_total + missing_resources
+	enemy_resource_stockpile = enemy_resource_stockpile + missing_resources
+	
+	if VOPlayed_History_Tyre == false then
+		VOPlayed_History_Tyre = true
+		Tyre_StartPreparing()
+	end
+	
+	if Objective_IsComplete(OBJ_FranksGathering) == false then
+		Objective_Complete(OBJ_FranksGathering, false, false)
+	end
+end
+
+function TyreDebug_SkipEconPhase()
+	debug_skipEconPhase = true
+end
+
+function TyreDebug_SkipArmyCountdown() 
+	
+	if Objective_IsStarted(OBJ_AssaultCountdown) then
+		Objective_Complete(OBJ_AssaultCountdown, false, false)
+	end
+	
+	Modify_EntityBuildTime(player2, BP_GetEntityBlueprint("unit_ram_tower_construct_cru"), 0.01)
+end
+
+
+-------------------------------------------------
+------------------- UPGRADES --------------------
+-------------------------------------------------
+function OnUpgradeStart(context, data)
+	local dark_age_upgrades = { 
+		UPG.ABBASID.UPGRADE_ADD_CULTURE_WING,
+		UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING,
+		UPG.ABBASID.UPGRADE_ADD_MILITARY_WING,
+		UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_AYY,
+	}
+	if Table_Contains(dark_age_upgrades, context.upgrade) then
+		for i, upgrade in ipairs(dark_age_upgrades) do
+			Player_SetUpgradeAvailability(player1, upgrade, ITEM_REMOVED)
+		end
+	end
+end
+
+function OnUpgradeCancelled(context, data)
+	local dark_age_upgrades = { 
+		UPG.ABBASID.UPGRADE_ADD_CULTURE_WING,
+		UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING,
+		UPG.ABBASID.UPGRADE_ADD_MILITARY_WING,
+		UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_AYY,
+	}
+	if Table_Contains(dark_age_upgrades, context.upgrade) then
+		for i, upgrade in ipairs(dark_age_upgrades) do
+			Player_SetUpgradeAvailability(player1, upgrade, ITEM_DEFAULT)
+		end
+	end
+end
+
+function RemoveFeudalWings()
+	local removed_upgrades = {
+		UPG.ABBASID.UPGRADE_ADD_CULTURE_WING_FEUDAL,
+		UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING_FEUDAL,
+		UPG.ABBASID.UPGRADE_ADD_MILITARY_WING_FEUDAL,
+		UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_FEUDAL_AYY,
+		UPG.ABBASID.UPGRADE_ADD_CULTURE_WING_CASTLE,
+		UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING_CASTLE,
+		UPG.ABBASID.UPGRADE_ADD_MILITARY_WING_CASTLE,
+		UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_CASTLE_AYY,
+		UPG.ABBASID.UPGRADE_ADD_CULTURE_WING_IMPERIAL,
+		UPG.ABBASID.UPGRADE_ADD_ECONOMY_WING_IMPERIAL,
+		UPG.ABBASID.UPGRADE_ADD_MILITARY_WING_IMPERIAL,
+		UPG.AYYUBID_CMP.UPGRADE_ADD_TRADE_WING_IMPERIAL_AYY,
+	}
+	for i, upgrade in ipairs(removed_upgrades) do
+		Player_SetUpgradeAvailability(player1, upgrade, ITEM_REMOVED)
+	end
+end
+

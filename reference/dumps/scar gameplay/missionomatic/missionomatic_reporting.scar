@@ -1,0 +1,163 @@
+-- 
+-- Mission-O-Matic - Reporting
+--
+-- Generates the mission report that is passed back to the metagame 
+--
+
+function MissionOMatic_GenerateMissionReport(win)
+
+	local report = {
+		
+		win = win,
+		gameLength = World_GetGameTime(),
+		
+		location = MissionOMatic_GenerateMissionReport_Location(),
+		battalions = MissionOMatic_GenerateMissionReport_Battalions(),
+		objectives = MissionOMatic_GenerateMissionReport_Objectives(),
+		excessUnits = MissionOMatic_GenerateExcessUnitList(),
+		
+		-- custom stuff (driven by recipe metrics requests)
+		metrics = MissionOMatic_CalculateCustomMetrics(),		-- found in missionomatic_custommetrics.scar
+		
+	}
+	
+	return report
+
+end
+
+-- gather data about the location (what buildings are present, etc)
+function MissionOMatic_GenerateMissionReport_Location()
+
+	local location = {}
+
+
+	return location 
+	
+end
+
+-- count units from battalions
+function MissionOMatic_GenerateMissionReport_Battalions()
+
+	local battalions = {}
+	
+	if scartype(MissionRecipe.battalions) == ST_TABLE then
+	
+		for index, battalion in pairs(MissionRecipe.battalions) do 
+			
+			if battalion.source ~= nil then		-- only report this battalion if it has something to be written back to in the metamap
+			
+				local entry = {
+					source = battalion.source,
+					hasBeenSpawned = battalion.hasBeenSpawned,
+					capturing_player = battalion.capturing_player,
+				}
+				
+				if battalion.hasBeenSpawned == true then
+				
+					entry.units = UnitTable_GenerateFromSGroup(battalion.sgroup)
+					
+					if scartype(battalion.companies) == ST_TABLE then
+						entry.companies = {}
+						for idx, companyData in pairs(battalion.companies) do
+							local companyEntry = {
+								id = companyData.id,
+								units = UnitTable_GenerateFromSGroup(companyData.sgroup)
+							}
+							table.insert(entry.companies, companyEntry)
+						end
+					end
+					
+				else
+				
+					entry.units = battalion.units
+				
+				end
+				
+				table.insert(battalions, entry)					
+				
+			end
+			
+		end
+		
+	end	
+	
+	return battalions 
+	
+end
+
+-- return a list of units for each player that aren't included in any of the batallions
+function MissionOMatic_GenerateExcessUnitList()
+
+	local excessUnits = {}
+	
+	for playerIndex, player in pairs(MissionRecipe.players) do 
+		
+		-- get everything for this player
+		Player_GetAll(player.id) 
+
+		-- remove everything that was spawned via script (i.e. battalions, etc), so you only have things that were constructed by the player remaining
+		SGroup_RemoveGroup(sg_allsquads, sg_scriptSpawnedUnits)
+		
+		---- Make sure we actually have battalions - special A-level missions won't
+		--if scartype(MissionRecipe.battalions) == ST_TABLE then
+		
+			---- remove everything that's part of a battalion for this player
+			--for index, battalion in pairs(MissionRecipe.battalions) do
+				--if battalion.player == player.descriptor and battalion.sgroup ~= nil then 
+					--SGroup_RemoveGroup(sg_allsquads, battalion.sgroup)
+				--end
+			--end
+			
+		--end
+		
+		-- add it to the list
+		if SGroup_CountSpawned(sg_allsquads) >= 1 then
+			local entry = {
+				player = player.descriptor,
+				units = UnitTable_GenerateFromSGroup(sg_allsquads),
+			}
+			table.insert(excessUnits, entry)
+		end
+		
+	end
+
+	return excessUnits
+	
+end
+
+-- get the state of all of the objectives
+function MissionOMatic_GenerateMissionReport_Objectives()
+
+	local objectives = {}
+	
+	if scartype(MissionRecipe.objectives) == ST_TABLE then
+	
+		for index, objective in pairs(MissionRecipe.objectives) do 
+			
+			local obj = MissionOMatic_FindObjective(objective.descriptor)
+			local status = Obj_GetState(obj.ID)
+			
+			if status == OS_Off then
+				status = "not started"
+			elseif status == OS_Incomplete then
+				status = "started"
+			elseif status == OS_Complete then 
+				status = "complete"
+			elseif status == OS_Failed then
+				status = "failed"
+			end
+			
+			local entry = {
+				descriptor = objective.descriptor,
+				status = status,
+			}
+	
+			table.insert(objectives, entry)	
+			
+		end	
+		
+	end
+	
+	return objectives 
+	
+end

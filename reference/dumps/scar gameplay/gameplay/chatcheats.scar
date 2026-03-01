@@ -1,0 +1,690 @@
+function CheatConvertSelectedUnits(player, squads)
+
+	local sgroup_selected = SGroup_Create("sg_selected_squads")
+	Misc_AddSquadsToGroup(sgroup_selected, squads)
+	
+	local spawned_squad_count = SGroup_CountSpawned(sgroup_selected)
+	if spawned_squad_count == 0 then
+		SGroup_Destroy(sgroup_selected)
+		return
+	end
+	
+	-- We don't allow mixed selections, so assume that they all have the same owner
+	-- Check the first squad's owner, if they're allied or neutral units, there's nothing to do
+	local test_squad = SGroup_GetSquadAt(sgroup_selected, 1)
+	if World_OwnsSquad(test_squad) then
+		SGroup_Destroy(sgroup_selected)
+		return
+	end
+	
+	local test_squad_owner = Squad_GetPlayerOwner(test_squad)
+	local is_enemy = Player_ObserveRelationship(player, test_squad_owner) == R_ENEMY
+	if not is_enemy then
+		SGroup_Destroy(sgroup_selected)
+		return
+	end
+	
+	-- We need to keep track of all the converted units, excluding the ones killed, so we can perform post-conversion actions
+	local sgroup_converted = SGroup_Create("sg_converted_squads")
+	
+	local current_pop_cap = Player_GetCurrentPopulationCap(player, CT_Personnel)
+	
+	-- Keeps track of whether we converted any units so we can provide feedback that the conversion happened
+	-- This flag doesn't care if the unit survived the conversion or not
+	local performed_any_conversion = false
+	
+	local sgroup_scouts = SGroup_Create("scout_sgroup_wololo_cheat")
+	
+	for i = 1, spawned_squad_count do
+		local squad = SGroup_GetSquadAt(sgroup_selected, i) 
+		
+		if Squad_IsOfType(squad, "can_be_converted") then
+
+			local entity = Squad_GetFirstEntity(squad)
+			if not Entity_IsInHold(entity) then
+				
+				performed_any_conversion = true
+				
+				Squad_SetPlayerOwner(squad, player)
+				
+				-- Villager only logic
+				if Squad_IsOfType(squad, "villager") then
+				
+					-- Villagers need to preserve visuals and audio even after being BP converted
+					Entity_SetLockCurrentTierVisuals(entity, true)
+					
+					local villagerSBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", player, false)
+					local villagerEBP = SBP_GetFirstEBP(villagerSBP)
+					
+					Entity_ConvertBlueprint(entity, villagerEBP)
+					Squad_ConvertBlueprint(squad, villagerSBP)
+				end
+				
+				local current_population = Player_GetCurrentPopulation(player, CT_Personnel)
+				
+				-- Kill the unit if it made us pass the pop cap
+				if current_population > current_pop_cap then 
+					Squad_Kill(squad)
+				else
+					if Squad_IsOfType(squad, "scout") then
+						SGroup_Add(sgroup_scouts, squad)
+					end
+				
+					SGroup_Add(sgroup_converted, squad)
+				end
+			end
+		end
+	end
+
+	-- Send stop command to all converted units
+	if SGroup_Count(sgroup_converted) > 0 then
+		LocalCommand_Squad(player, sgroup_converted, SCMD_Stop, false)
+	end
+	
+	-- Make scouts drop their attachments
+	if SGroup_Count(sgroup_scouts) > 0 then
+	
+		local drop_ability_bp = BP_GetAbilityBlueprint("drop_attached_entity");
+		
+		-- The function only takes sgroups. Can't batch the request since each of them
+		-- has to drop at their own position
+		local sgroup_single_scout_temp = SGroup_Create("scout_sgroup_single_temp")
+		
+		local send_drop_attachment_command_func = function(groupid, itemindex, curSquad)
+			SGroup_Add(sgroup_single_scout_temp, curSquad)
+			
+			LocalCommand_SquadPosAbility(player, sgroup_single_scout_temp, Squad_GetPosition(curSquad), drop_ability_bp, true, false)
+			
+			SGroup_Remove(sgroup_single_scout_temp, curSquad)
+		end
+		
+		SGroup_ForEach(sgroup_scouts, send_drop_attachment_command_func)
+		
+		SGroup_Destroy(sgroup_single_scout_temp)
+	end
+	
+	if performed_any_conversion then
+		-- Wololo sound
+		Sound_Play2D("sfx_ability_monk_conversion_cast") 
+	end
+	
+	-- Cleanup
+	SGroup_Destroy(sgroup_converted)
+	SGroup_Destroy(sgroup_selected)
+	SGroup_Destroy(sgroup_scouts)
+end
+
+
+
+function CheatReplaceSheepWithWolves(player)
+	
+	local function _KillSheepAndReplace(gid, idx, eid)
+		local positionTemp = Entity_GetPosition(eid)
+		Squad_CreateAndSpawnTowardENVCheat(BP_GetSquadBlueprint( 'gaia_huntable_wolf'), 0, positionTemp, positionTemp)
+		Entity_Destroy(eid)
+	end
+	
+	local eg_sheep = EGroup_Create("eg_temp_KillAllSheep")
+	
+	--Grab all the neutral entities for the scene (GAIA)
+    World_GetAllNeutralEntities(eg_sheep)	
+	
+	--Grab all the entities that belong to players and put them into the group
+	for i = 1, World_GetPlayerCount() do
+		EGroup_AddEGroup(eg_sheep, Player_GetAllEntities(World_GetPlayerAt(i)))
+	end
+	
+	--Filter the group and only keep "scar_sheep" flagged entities
+	EGroup_Filter(eg_sheep, "scar_sheep", FILTER_KEEP)
+	
+	--Filter the group and remove corpses (They have a resource type which alive sheep do not)
+	EGroup_Filter(eg_sheep, "resource", FILTER_REMOVE)
+	
+	--Kill and replace sheep with wolves
+	EGroup_ForEach(eg_sheep, _KillSheepAndReplace)
+	EGroup_Destroy(eg_sheep)
+end
+
+function ResourcesCheatFood(player)
+	local max = Player_GetResourceCapMax(player, RT_Food)
+	Player_GiftResource(player, RT_Food, max)
+end
+
+function ResourcesCheatGold(player)
+	local max = Player_GetResourceCapMax(player, RT_Gold)
+	Player_GiftResource(player, RT_Gold, max)
+end
+
+function ResourcesCheatWood(player)
+	local max = Player_GetResourceCapMax(player, RT_Wood)
+	Player_GiftResource(player, RT_Wood, max)
+end
+
+function ResourcesCheatStone(player)
+	local max = Player_GetResourceCapMax(player, RT_Stone)
+	Player_GiftResource(player, RT_Stone, max)
+end
+
+function ResourcesCheatOil(player)
+	if (Player_GetRaceName(player) == 'byzantine' or Player_GetRaceName(player) == 'byzantine_ha_mac' ) then
+		local max = Player_GetResourceCapMax(player, RT_Merc_Byz)
+		Player_GiftResource(player, RT_Merc_Byz, max)
+	end
+end
+
+function ResourcesCheatAllBasic(player)
+	ResourcesCheatFood(player)
+	ResourcesCheatGold(player)
+	ResourcesCheatWood(player)
+	ResourcesCheatStone(player)
+	ResourcesCheatOil(player)
+	
+	-- Jeanne D'Arc experience points are tracked via a state model, not a resource.
+	experience = Player_GetStateModelFloat(player, "jeanne_d_arc_total_experience") + 1600
+	Player_SetStateModelFloat(player, "jeanne_d_arc_total_experience", experience)
+end
+
+function CheatSetCurrentPopCapToMax(player)
+	Player_SetPopCapOverride(player, Player_GetMaxPopulationCapOverride(player, CT_Personnel))
+end
+
+function DestroyAllInEGroup(context, data)
+	local group_name = data.entity_group_name
+	if EGroup_Exists(group_name) then
+		local group = EGroup_FromName(group_name)
+		EGroup_DestroyAllEntities(group)
+		EGroup_Destroy(group)
+	end
+end
+
+function CheatKillAllGaia(player)
+	local function _KillEntity(gid, idx, eid)
+		if(not Entity_IsInvincible(eid)) then
+			Entity_Kill(eid)
+		else
+			--Remove it from the group so that it isn't destroyed later.
+			EGroup_Remove(gid, eid)
+		end
+	end
+	
+	local group = nil
+	local group_name = "FindAllGaiaAnimals"
+	
+	--Handle case where cheat is triggered multiple times in a very short period of time
+	if EGroup_Exists(group_name) then
+		group = EGroup_FromName(group_name)
+	else
+		group = EGroup_Create(group_name)
+	end	
+	
+	World_GetAllNeutralEntities(group)
+	for i = 1, World_GetPlayerCount() do
+		EGroup_AddEGroup(group, Player_GetAllEntities(World_GetPlayerAt(i)))
+	end
+	EGroup_Filter(group, "animal", FILTER_KEEP)
+	EGroup_ForEach(group, _KillEntity)
+	Rule_AddOneShot(DestroyAllInEGroup, 1.0, {entity_group_name = group_name})  -- Clean up any corpses created
+end
+
+function CheatHideAllUIExceptForChat(player)
+	if UI_IsReplay() then
+		return
+	end
+	
+	local playerLocalID = Game_GetLocalPlayer().PlayerID
+	local playerCheatingID = player.PlayerID
+	
+	if playerLocalID ~= playerCheatingID then
+		return
+	end
+	
+	if (gHideUICheat == nil) then
+		gHideUICheat = {}
+	end
+	if (gHideUICheat[playerCheatingID] == nil) then
+		gHideUICheat[playerCheatingID] = false
+	end
+	
+	if gHideUICheat[playerCheatingID] then
+		Game_SetVisibility(VF_Components, true)
+		gHideUICheat[playerCheatingID] = false
+	else
+		Game_SetVisibility(VF_Components, false)
+		Game_SetVisibility(VF_ComponentChatControl, true)
+		gHideUICheat[playerCheatingID] = true
+	end
+end
+
+function CheatExploredAll(player)
+	local function _RevealEntity(gid, idx, eid)
+		UI_SetEntityGhostSpottedStaggered(eid)
+	end
+	local playerLocalID = Game_GetLocalPlayer().PlayerID
+	local playerCheatingID = player.PlayerID
+	if playerLocalID == playerCheatingID then
+		local eg_world_entities = EGroup_Create("FindAllWorldEntitesFoW")
+		World_GetAllNeutralEntities(eg_world_entities)
+		EGroup_ForEach(eg_world_entities, _RevealEntity)
+		EGroup_Destroy(eg_world_entities)
+	end
+	Game_SetMapExplored(player)
+end
+
+function SpawnUnitBPForPlayer(unit, player, pos, needsLoad)
+	
+	if scartype(unit) == ST_STRING then
+		if SBP_Exists(unit) then
+			unit = BP_GetSquadBlueprint(unit)
+		else
+			unit = Cardinal_ConvertTypeToSquadBlueprint(unit, player)
+		end
+	end
+		
+	local currentPop = Player_GetCurrentPopulation(player, CT_Personnel)	
+	local foundSBP = unit
+	if foundSBP == nil then
+		return
+	end
+	
+	local foundEBP = SBP_GetFirstEBP(unit)
+	if foundEBP == nil then
+		return
+	end
+	
+	local unitPopCost = EBP_PopulationCost(foundEBP,player,CT_Personnel)
+	
+	if (currentPop + unitPopCost) <= Player_GetMaxPopulationCap(player, CT_Personnel) then 
+		if(needsLoad) then
+			Squad_SlowLoadResources(foundSBP,player);
+		end
+		Squad_CreateAndSpawnToward( foundSBP, player, 0, pos, pos )	
+	end
+end	
+
+hasLoadedRace = {}
+function CheatSpawnCoreUnits(player, pos)
+	local spawnedCheatUnits = {
+		"scar_spearman",
+		"scar_archer",
+		"scar_manatarms",
+		"scar_handcannon",
+		"scar_crossbowman",
+		"scar_horseman",
+		"scar_knight",
+	}
+	local raceName = Player_GetRaceName(player)
+
+	local needsLoad = (hasLoadedRace[raceName] == nil)
+	if needsLoad then
+		hasLoadedRace[raceName] = true;
+	end
+	
+	for i,unit in pairs(spawnedCheatUnits) do
+		--this set matches the race we want so spawn this set
+		local unitBP = Cardinal_ConvertTypeToSquadBlueprint(unit, player, false)
+		SpawnUnitBPForPlayer(unitBP,player,pos,needsLoad)
+		
+	end
+	
+end	
+
+function GetTownCentrePosition(player)
+	local townEntity = null
+	local playerEntities = Player_GetEntities(player)
+	local numEntities =  EGroup_Count(playerEntities)
+	for i = 1, numEntities do
+		local entity = EGroup_GetEntityAt(playerEntities,i)
+		local ebp = Entity_GetBlueprint(entity);
+		if (Entity_IsEBPOfType(ebp,"town_center_capital")) then
+			townEntity = entity
+		end		
+	end
+	if townEntity == null then
+		return nil
+	end
+
+	local pos = Entity_GetPosition(townEntity)		
+	return pos;
+end
+
+
+function SpawnCheatArmy(player)
+	local pos = GetTownCentrePosition(player)	
+	if pos ~= nil then
+		CheatSpawnCoreUnits(player,pos)	
+	end
+	
+end
+
+
+hasLoadedPhoton = false
+
+function SpawnCheatPhotonMan(player)	
+	local needsLoad = hasLoadedPhoton == false;
+	local pos = GetTownCentrePosition(player)	
+	if pos ~= nil then
+		SpawnUnitBPForPlayer("unit_photon_man",player,pos, needsLoad)
+		hasLoadedPhoton = true;
+	end
+end
+
+function CheatSwapAOEAlarmSound()
+	World_CheatSwapAttackAlarmAoeii()
+end
+
+function ManageTheFires(context, data)
+
+	local _feelTheBurn = function(egid, idx, eid)
+		
+		-- Check for building having been destroyed
+		if not Entity_IsValid(Entity_GetID(eid)) then
+			EGroup_Remove(eg_burning_buildings, eid)
+		
+		-- Repairs should put out the fire 
+		elseif Entity_IsUnderRepair(eid) then
+			local entity_id = Entity_GetID(eid)
+			local modifier_id = _cheat_burn_buildings_modifier_table[entity_id] 
+			Modifier_Remove(modifier_id)
+			_cheat_burn_buildings_modifier_table[entity_id] = nil
+			Entity_StopFire(eid)
+			EGroup_Remove(eg_burning_buildings, eid)
+
+		-- Landmarks will burn down to zero health and extinguish themselves, just tidy up		
+		elseif not Entity_IsBurning(eid) then
+			local entity_id = Entity_GetID(eid)
+			Modifier_Remove(_cheat_burn_buildings_modifier_table[entity_id])
+			_cheat_burn_buildings_modifier_table[entity_id] = nil
+			EGroup_Remove(eg_burning_buildings, eid)
+		end		
+	end
+
+	local burning_buildings_group_name = "eg_cheat_burn_buildings_selected"
+
+	if EGroup_Exists(burning_buildings_group_name) then
+		eg_burning_buildings = EGroup_FromName(burning_buildings_group_name)
+		-- Check the state of the fire for each building
+		EGroup_ForEach(eg_burning_buildings, _feelTheBurn)
+		
+		-- If there's no buildings left to process then shut everything down
+		if EGroup_Count(eg_burning_buildings) == 0 then
+			EGroup_Destroy(eg_burning_buildings)
+			_cheat_burn_buildings_modifier_table = nil
+			Rule_RemoveMe()
+		end
+	else		
+		Rule_RemoveMe()
+	end
+end
+
+function CheatSetFireToBuildings(player, buildings)
+	
+	local _burnBuilding = function(egid, idx, eid)
+		
+		if Entity_IsBuilding(eid) then
+			if not Entity_IsBurning(eid) then
+				if not Entity_IsUnderConstruction(eid) then
+					local on_fire_health_threshold = Entity_GetOnFireHealthPercentThreshold(eid)
+					
+					if on_fire_health_threshold > 0.0 then
+						-- Increase the on_fire_health_threshold so we can set fire to the building at any health level
+						local on_fire_health_increase = math.floor((1.0 / on_fire_health_threshold) + 0.5)
+						local modifier_fire_health_threshold = Modifier_Create(MAT_Entity, "on_fire_health_percentage_modifier", MUT_Multiplication, false, on_fire_health_increase, "")	
+						local modifier_id = Modifier_ApplyToEntity(modifier_fire_health_threshold, eid, 0)
+						_cheat_burn_buildings_modifier_table[Entity_GetID(eid)] = modifier_id
+						Entity_SetOnFire(eid)
+						EGroup_Add(eg_burning_buildings, eid)
+					end
+				end
+			end
+		end
+	end
+		
+	local burning_buildings_group_name = "eg_cheat_burn_buildings_selected"
+	local includeSquads = false
+		
+	if not EGroup_Exists(burning_buildings_group_name) then
+		-- We don't have any building fires that this cheat has started currently 
+		eg_burning_buildings = EGroup_Create(burning_buildings_group_name)
+		-- Create a global table for storing modifiers, same lifetime as group "eg_cheat_burn_buildings_selected"
+		_cheat_burn_buildings_modifier_table = {}
+		local eg_new_selection = EGroup_CreateUniqueWithPrefix("")		
+		Misc_AddEntitiesToGroup(eg_new_selection, buildings, includeSquads)
+		EGroup_ForEach(eg_new_selection, _burnBuilding)
+		EGroup_Destroy(eg_new_selection)
+		-- If we've started any buildings burning then begin the fire management callbacks
+		if EGroup_Count(eg_burning_buildings) > 0 then
+			Rule_AddInterval(ManageTheFires, 1.0)
+		else
+			EGroup_Destroy(eg_burning_buildings)
+			_cheat_burn_buildings_modifier_table = nil
+		end
+	else
+		-- We have fires previously started by this cheat
+		eg_burning_buildings = EGroup_FromName(burning_buildings_group_name)
+		local eg_new_selection = EGroup_CreateUniqueWithPrefix("")		
+		Misc_AddEntitiesToGroup(eg_new_selection, buildings, includeSquads)
+		-- Remove any entities which exist in both groups from eg_new_selection
+		EGroup_RemoveAllMatching(eg_new_selection, eg_burning_buildings)
+		EGroup_ForEach(eg_new_selection, _burnBuilding)
+		EGroup_Destroy(eg_new_selection)
+	end	
+end
+
+function ChatCheatFOW(player)
+	if(gFoWCheat == nil)then
+		gFoWCheat = {}
+	end
+	local playerIndex = Player_GetID(player)
+	if(gFoWCheat[playerIndex] == nil) then
+		gFoWCheat[playerIndex]=false
+	end
+	if(gFoWCheat[playerIndex] == false) then
+		FOW_PlayerRevealAll(player)
+		gFoWCheat[playerIndex] = true
+	else
+		FOW_PlayerUnRevealAll(player)
+		FOW_PlayerUnExploreAll(player)
+		gFoWCheat[playerIndex] = false
+	end
+end
+
+function ChatCheatInstantBuildAndGather(player)
+	
+	if(gInstantBuildCheat == nil)then
+		gInstantBuildCheat = {}
+	end
+	
+	if (gModifierList == nil)then
+		gModifierList = {}
+	end
+	
+	local playerIndex = Player_GetID(player)
+	if(gInstantBuildCheat[playerIndex] == nil) then
+		gInstantBuildCheat[playerIndex]=false
+	end
+	
+	local speed_multiplier = 1000.0
+	
+	if(gInstantBuildCheat[playerIndex] == false) then
+		gInstantBuildCheat[playerIndex] = true
+	else
+		gInstantBuildCheat[playerIndex] = false
+		Modifier_Remove(gModifierList[playerIndex])
+		return
+	end
+	
+	local playerRace = Player_GetRace(player)
+	
+	local modifiers = {}
+	
+	local ebps = BP_GetEntityBlueprintsWithType_Internal({"villager"}, true)		
+
+	for _, ebp in pairs(ebps) do
+		local ebp_name = BP_GetName(ebp)
+		if BP_GetEntityTypeExtRaceCount(ebp_name) >=1 then
+			if BP_GetEntityTypeExtRaceBlueprintAtIndex(ebp_name, 0) == playerRace then
+				table.insert(modifiers, Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_food", MUT_Multiplication, false, speed_multiplier, ebp), player, 0.0))
+				table.insert(modifiers, Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_wood", MUT_Multiplication, false, speed_multiplier, ebp), player, 0.0))
+				table.insert(modifiers, Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_gold", MUT_Multiplication, false, speed_multiplier, ebp), player, 0.0))
+				table.insert(modifiers, Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "resource_entity_harvest_rate_stone", MUT_Multiplication, false, speed_multiplier, ebp), player, 0.0))
+				table.insert(modifiers, Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "construction_rate", MUT_Multiplication, false, speed_multiplier, ebp), player, 0.0))
+			end
+		end
+	end
+
+	ebps = BP_GetEntityBlueprintsWithType_Internal({"building"}, true)		
+	for _, ebp in pairs(ebps) do
+		local ebp_name = BP_GetName(ebp)
+		if BP_GetEntityTypeExtRaceCount(ebp_name) >=1 then
+			if BP_GetEntityTypeExtRaceBlueprintAtIndex(ebp_name, 0) == playerRace then
+				table.insert(modifiers, Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "production_speed_modifier", MUT_Multiplication, false, speed_multiplier, ebp), player, 0.0))
+			end
+		end
+	end
+	
+	local typeList = {"infantry"}
+	
+	if (Player_GetRaceName(player) == "abbasid_ha_01") then
+		table.insert(typeList, "cavalry")
+	end
+
+	ebps = BP_GetEntityBlueprintsWithType_Internal(typeList, false)
+	for _, ebp in pairs(ebps) do
+		local ebp_name = BP_GetName(ebp)
+		if BP_GetEntityTypeExtRaceCount(ebp_name) >=1 then
+			if BP_GetEntityTypeExtRaceBlueprintAtIndex(ebp_name, 0) == playerRace then
+				table.insert(modifiers, Modifier_ApplyToPlayer(Modifier_Create(MAT_EntityType, "construction_rate", MUT_Multiplication, false, speed_multiplier, ebp), player, 0.0))
+			end
+		end
+	end
+	
+	
+	gModifierList[playerIndex] = modifiers
+	
+end
+
+function ChatCheatAgeUpMultiplayer(player)
+	if Player_HasUpgrade(player, BP_GetUpgradeBlueprint("feudal_age")) == false then
+		LocalCommand_PlayerUpgrade(player, BP_GetUpgradeBlueprint("feudal_age"), true, false)
+	elseif Player_HasUpgrade(player, BP_GetUpgradeBlueprint("castle_age")) == false then
+		LocalCommand_PlayerUpgrade(player, BP_GetUpgradeBlueprint("castle_age"), true, false)
+	elseif Player_HasUpgrade(player, BP_GetUpgradeBlueprint("imperial_age")) == false then
+		LocalCommand_PlayerUpgrade(player, BP_GetUpgradeBlueprint("imperial_age"), true, false)
+	end
+end
+
+function ChatCheatDestroySelected(playerID, entities)
+	
+	local _killEntity = function(egid, idx, eid)
+		if(not Entity_IsInvincible(eid)) then
+			Entity_Kill(eid)
+		end
+	end
+	
+	local squadsOrBuildings = true
+	local eg_new_selection = EGroup_CreateUniqueWithPrefix("")
+	Misc_AddEntitiesToGroup(eg_new_selection, entities, squadsOrBuildings)
+	EGroup_ForEach(eg_new_selection, _killEntity)
+	EGroup_Destroy(eg_new_selection)
+end
+
+function ChatCheatInvulnerable(player)
+	
+	if(gInvulnerableCheat == nil)then
+		gInvulnerableCheat = {}
+	end
+	
+	local playerIndex = Player_GetID(player)
+	if(gInvulnerableCheat[playerIndex] == nil) then
+		gInvulnerableCheat[playerIndex]=false
+	end
+	
+	local SetSquadInvunlerable = function( groupid, itemindex, curSquad )
+		Squad_SetInvulnerableMinCap(curSquad, Squad_GetHealthPercentage(curSquad, false), -1)
+	end
+	
+	local SetEntityInvunlerable = function( groupid, itemindex, curEntity )
+		Entity_SetInvulnerableMinCap(curEntity, Entity_GetHealthPercentage(curEntity), -1)
+	end
+	
+	local UnsetSquadInvunlerable = function( groupid, itemindex, curSquad )
+		Squad_SetInvulnerableMinCap(curSquad, 0, -1)
+	end
+	
+	local UnsetEntityInvunlerable = function( groupid, itemindex, curEntity )
+		Entity_SetInvulnerableMinCap(curEntity, 0, -1)
+	end
+	
+	if(gInvulnerableCheat[playerIndex] == false) then
+		SGroup_ForEach(Player_GetSquads(player), SetSquadInvunlerable)
+		EGroup_ForEach(Player_GetEntities(player), SetEntityInvunlerable)
+		gInvulnerableCheat[playerIndex] = true
+	else
+		SGroup_ForEach(Player_GetSquads(player), UnsetSquadInvunlerable)
+		EGroup_ForEach(Player_GetEntities(player), UnsetEntityInvunlerable)
+		gInvulnerableCheat[playerIndex] = false
+	end
+end
+
+function CheatTurbo(player)
+	rate = Misc_GetSimRate()
+	
+	if not( math.abs(rate - 1000.0) < 1.0 ) then
+		rate = 1000.0
+	else
+		rate = Misc_GetSimDefaultStepsPerSecond()
+	end
+	
+	Misc_SetSimRate(rate)
+end
+
+function CheatSlow(player)
+	rate = Misc_GetSimRate()
+	
+	if not( math.abs(rate - 1.0) < 1.0 ) then
+		rate = 1.0
+	else
+		rate = Misc_GetSimDefaultStepsPerSecond()
+	end
+	
+	Misc_SetSimRate(rate)
+end
+
+function CheatTeleportSelectedSquads(player, squads, cursorPos)
+	local sg_temp = SGroup_Create( "sg_teleport_selected_squads" )
+	SGroup_Clear(sg_temp)
+	Misc_AddSquadsToGroup(sg_temp, squads)
+	
+	if( SGroup_CountSpawned( sg_temp ) <= 0) then
+		SGroup_Destroy(sg_temp)
+		return
+	end
+		
+	-- We don't allow mixed selections, so assume that they all have the same owner
+	-- Check the first squad's owner, if they're allied or neutral units, there's nothing to do
+	local test_squad = SGroup_GetSpawnedSquadAt(sg_temp, 1)
+	if not Squad_IsOwnedByPlayer(test_squad, player) then
+		SGroup_Destroy(sg_temp)
+		return
+	end
+	
+	local function _TeleportSquad(gid, idx, sid)
+		-- This function will resolve to a valid position for that unit
+		Squad_SetPosition(sid, cursorPos, cursorPos)
+	end
+	
+	SGroup_ForEach(sg_temp, _TeleportSquad)
+	
+	SGroup_Destroy(sg_temp)
+end
+
+function CheatLoseInstantly(player)
+	
+	local playerLocalID = Game_GetLocalPlayer().PlayerID
+	local playerCheatingID = player.PlayerID
+	
+	if playerLocalID == playerCheatingID then
+		OnSurrenderMatchRequested()
+	end
+	
+end

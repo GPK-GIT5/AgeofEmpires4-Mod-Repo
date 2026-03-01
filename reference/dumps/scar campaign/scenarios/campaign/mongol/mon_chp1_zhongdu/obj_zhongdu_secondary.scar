@@ -1,0 +1,244 @@
+--
+-- Mission Title and Date - Objective Capture villages 
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+g_reinforcementThreshold = 250
+
+-- Initialize the objective
+function ZhongduRaid_InitObjectives()
+
+	OBJ_Raid = { Title = "$11178625", Type = ObjectiveType_Primary,
+		
+		Intel_Start = EVENTS.Raid_Objective,
+		Intel_Complete = nil,
+		
+		PreStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_HoardGold)
+		end,
+		
+		OnComplete = function()
+			
+		end,
+		
+		IsFailed = function()
+			Player_GetAll(g_playerMongol, sg_allsquads)
+			SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+			-- Don't fail this objective after the first stage - other objectives will handle failure then
+			return SOBJ_HoardGold.reinforcementStage == 1 and SGroup_Count(sg_allsquads) <= 1
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_HoardGold = { Title = Loc_FormatText("$11191999", g_reinforcementThreshold), Type = ObjectiveType_Optional, Parent = OBJ_Raid, StartAlongsideParent = true,
+		
+		-- Gold since the last reset of the counter
+		newGold = 0,
+		offset = 0,
+		reinforcementStage = 1,
+		totalStages = 4,
+		reinforcementBuildings_age1 = {
+			SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON,
+			SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON,
+			SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON,
+		},
+		reinforcementBuildings_age2 = {
+			SBP.MONGOL.BUILDING_UNIT_INFANTRY_MOVING_MON,
+			SBP.MONGOL.BUILDING_UNIT_CAVALRY_MOVING_MON,
+			SBP.MONGOL.BUILDING_UNIT_RANGED_MOVING_MON,
+		},
+		
+		PreStart = function()
+			g_lastCheckedGold = 0
+			Objective_SetCounter(SOBJ_HoardGold, SOBJ_HoardGold.newGold, g_reinforcementThreshold)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			-- Update the gold count, iff we've got more. Otherwise, we may have gone down or stayed static, so don't bother
+			local goldCurrent = Player_GetResource(g_playerMongol, RT_Gold)
+			local goldIncrease = goldCurrent - g_lastCheckedGold
+			if goldIncrease < 0 then
+				goldIncrease = 0
+			end
+			
+			local tentative = goldCurrent - SOBJ_HoardGold.offset
+			--if tentative > SOBJ_HoardGold.newGold then
+			if goldIncrease > 0 then
+				SOBJ_HoardGold.newGold = SOBJ_HoardGold.newGold + goldIncrease
+				print(string.format("ZHONGDU: Setting gold to %s, %s offset by %s", SOBJ_HoardGold.newGold, goldCurrent, SOBJ_HoardGold.offset))
+				Objective_SetCounter(SOBJ_HoardGold, SOBJ_HoardGold.newGold, g_reinforcementThreshold)
+				if SOBJ_HoardGold.reinforcementStage == 1 then
+					Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+				end
+			else
+				print(string.format("ZHONGDU: Not setting gold, tentative was %s, newGold was %s", tentative, SOBJ_HoardGold.newGold))
+			end
+			
+			-- Track this for next time
+			g_lastCheckedGold = goldCurrent
+			
+			-- If we've passed a threshold, we want to send reinforcements
+			if SOBJ_HoardGold.newGold >= g_reinforcementThreshold then
+				print(string.format("ZHONGDU: %s > 0, %s >= %s", SOBJ_HoardGold.newGold, SOBJ_HoardGold.newGold, g_reinforcementThreshold))
+				-- Try to spanw the reinforcements - if it doesn't work, don't advance the threshold yet
+				if Zhongdu_SpawnReinforcements() == true then
+					-- Remove this increment from consideration
+					local debugBefore = string.format("Gold was %s", SOBJ_HoardGold.newGold)
+					-- Reset the gold amount - carry-over confuses some players
+					SOBJ_HoardGold.newGold = 0
+					SOBJ_HoardGold.offset = SOBJ_HoardGold.offset + g_reinforcementThreshold
+					SOBJ_HoardGold.reinforcementStage = SOBJ_HoardGold.reinforcementStage + 1
+					-- Don't forget to update the visuals
+					Objective_SetCounter(SOBJ_HoardGold, SOBJ_HoardGold.newGold, g_reinforcementThreshold)
+					print(string.format("------ZHONGDU: %s, is now %s, offset is now %s", debugBefore, SOBJ_HoardGold.newGold, SOBJ_HoardGold.offset))
+					-- We want to do special things if this is the first stage being completed
+					if SOBJ_HoardGold.reinforcementStage == 2 then
+						-- Trigger autosave
+						Util_AutoSave()
+						-- Boost the threshold for the next reinforcements
+						g_reinforcementThreshold = 500
+						Objective_UpdateText(SOBJ_HoardGold, Loc_FormatText("$11192003", g_reinforcementThreshold), nil, false)
+						Objective_SetCounter(SOBJ_HoardGold, SOBJ_HoardGold.newGold, g_reinforcementThreshold)
+						Util_StartIntel(EVENTS.RaidObjective_Reinforcements)
+						-- Also, for the lowest difficulty setting, provide a hint for players who may not be sure what to do
+						if Game_GetSPDifficulty() <= GD_NORMAL then
+							Objective_Start(OBJ_EasyHint)
+						end
+						
+					elseif SOBJ_HoardGold.reinforcementStage == 3 then
+						
+					elseif SOBJ_HoardGold.reinforcementStage == 4 then
+						
+					elseif SOBJ_HoardGold.reinforcementStage == 5 then
+						
+					end
+					
+				end
+			end
+			-- The objective is fully complete if we've gone through all the reinforcement waves
+			return SOBJ_HoardGold.reinforcementStage > SOBJ_HoardGold.totalStages
+		end,
+		
+		OnComplete = function()
+			-- We need to check this in case the player has cheated their way to the end of this objective
+			-- If they have, the objective won't properly trigger the next one
+			if Objective_IsStarted(OBJ_StarveCity) == false then
+				Objective_Start(OBJ_StarveCity)	
+			end
+		end,
+	}
+	
+	Objective_Register(OBJ_Raid)
+	Objective_Register(SOBJ_HoardGold)
+	
+end
+
+--? @shortdesc Spawns a group of reinforcements for the player
+function Zhongdu_SpawnReinforcements()
+	
+	-- How many do we want to spawn?
+	local popMinimum = 10
+	-- How many units are we allowed to spawn?
+	local popLeeway = 200 - Player_GetCurrentPopulation(g_playerMongol, CT_Personnel)
+	-- Don't give them anything if they've got less than 10 left
+	if popLeeway <= popMinimum then
+		print("Not enough pop for reinforcements!")
+		return false
+	end
+	
+	local sgroupNewSpawns = SGroup_CreateUnique("")
+	-- What's the core unit list we want to add?
+	local necessaryPop = 6
+	local unitList = {
+		{ type = "scar_villager", numSquads = necessaryPop, },
+	}
+	
+	-- If this is the very first wave, we also need to add some other critical buildings
+	if SOBJ_HoardGold.reinforcementStage == 1 then
+		-- Stuff to get the player economy started
+		table.insert(unitList, { sbp = SBP.MONGOL.BUILDING_TOWN_CENTER_MOVING_MON, numSquads = 1, })
+		table.insert(unitList, { sbp = SBP.MONGOL.BUILDING_PASTURE_MOVING_MON, numSquads = 1, })
+		table.insert(unitList, { sbp = SBP.MONGOL.BUILDING_HOUSE_MOVING_MON, numSquads = 1, })
+		necessaryPop = necessaryPop + 3
+		
+		-- We could do this, but it breaks a pattern:
+		-- UI_SetPlayerDataContext(g_playerMongol, { PopulationCapOn = true })
+		-- Instead, we want to do this, for safety:
+		for index, player in pairs(PLAYERS) do
+			if player.isLocal == true then
+				player.scarModel.PopulationCapOn  = true
+				UI_SetPlayerDataContext(g_playerMongol, player.scarModel)
+			end
+	    end
+		
+	-- If it's not the very first, just add a production building, players will love it
+	else
+		-- Dark age requires one set of buildings
+		local thisBuildingBP = Table_GetRandomItem(SOBJ_HoardGold.reinforcementBuildings_age2)
+		if Player_GetCurrentAge(g_playerMongol) == AGE_DARK then
+			thisBuildingBP = Table_GetRandomItem(SOBJ_HoardGold.reinforcementBuildings_age1)
+		end
+		
+		if thisBuildingBP ~= nil then
+			table.insert(unitList, { sbp = thisBuildingBP, numSquads = 1, })
+			-- We don't want things resetting on age-up, so remove the first occurence of the thing from both
+			Table_RemoveFirstItem(SOBJ_HoardGold.reinforcementBuildings_age1, thisBuildingBP)
+			Table_RemoveFirstItem(SOBJ_HoardGold.reinforcementBuildings_age2, thisBuildingBP)
+		end
+		
+		necessaryPop = necessaryPop + 1
+	end
+	
+	-- Remove the ones we just added
+	popLeeway = popLeeway - necessaryPop
+	-- Figure out how many others we can add
+	local unitsToSpawn = 20
+	if popLeeway < unitsToSpawn then
+		unitsToSpawn = popLeeway
+	end
+	print(string.format("To spawn: %s units (of %s)", unitsToSpawn, popLeeway))
+	
+	-- What set of reinforcements should we provide?
+	local randomList = World_GetRand(1, 3)
+	if randomList == 1 then
+		table.insert(unitList, { type = "scar_horseman", numSquads = unitsToSpawn / 3, })
+		table.insert(unitList, { type = "scar_spearman", numSquads = unitsToSpawn / 3, })
+		table.insert(unitList, { type = "scar_archer", numSquads = unitsToSpawn / 3, })
+	elseif randomList == 2 then
+		table.insert(unitList, { type = "scar_manatarms", numSquads = unitsToSpawn / 2, })
+		table.insert(unitList, { type = "scar_crossbowman", numSquads = unitsToSpawn / 2, })
+	else
+		table.insert(unitList, { type = "scar_knight", numSquads = unitsToSpawn / 2, })
+		table.insert(unitList, { type = "scar_horsearcher", numSquads = unitsToSpawn / 2, })
+	end
+	
+	UnitEntry_DeploySquads(g_playerMongol,
+		sgroupNewSpawns,
+		unitList,
+		mkr_mongol_start)
+	
+	-- Issue the delayed command, and CTA
+	EventCues_CallToAction("$11180934", CTA_CELEBRATE, nil, nil, sgroupNewSpawns, 30) -- More Mongols arrive, having heard of loot!
+	Sound_Play2D("mus_stinger_campaign_triumph_short")
+	MissionOMatic_SGroupCommandDelayed(sgroupNewSpawns, mkr_mongol_start_destination_3, false, 1)
+	Sound_PlayWallaCelebrateOnSGroup(sgroupNewSpawns)
+	
+	return true
+	
+end

@@ -1,0 +1,467 @@
+-------------------------------------------------------------------------
+---- Challenge Mission: Early Economy - Tutorial Elements
+-------------------------------------------------------------------------
+
+import("training/coretrainingconditions.scar")
+import("training/coretraininggoals.scar")
+
+Core_RegisterModule("EarlyEconomyTrainingGoals")
+
+--------------------------------------------------------------------------------------
+-- Variables for the dynamic training hints - Feel free to adjust this.
+__t_challengeStartIdleTC = 15
+__t_challengeIntervalIdleTC = 5
+__t_challengeIdleTCRepeatMax = -1
+__t_challengeStartIdleVillager = 10
+__t_challengeIntervalIdleVillager = 5
+__t_challengeIdleVillagerRepeatMax = -1
+__t_challengeStartIdleScout = 20
+__t_challengeIntervalIdleScout = 10
+__t_challengeIdleScoutRepeatMax = -1
+__n_challengeScoutAreasToExplore = 3
+local __n_challengeScoutRepeatMaxCurrentSession = 0
+--------------------------------------------------------------------------------------
+
+
+local exploredWest = false
+local exploredEast = false
+local exploredNorthWest = false
+local exploredNorth = false 
+local exploredSouth = false
+local areasExplored = 0
+
+local goal_sequence_villager_training = "train_villager"
+local goal_sequence_idle_villager = "idle_villager"
+local goal_sequence_idle_scout = "idle_scout"
+
+local training_goals_early_economy = 
+{ 
+	goal_sequence_villager_training,
+	goal_sequence_idle_villager,
+	goal_sequence_idle_scout	
+} 
+
+function TrainingGoal_EnableEarlyEconomyGoals()
+	for i, goalSequenceID in ipairs(training_goals_early_economy) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function TrainingGoal_DisableEarlyEconomyGoals()
+	for i, goalSequenceID in ipairs(training_goals_early_economy) do
+		Training_EnableGoalSequenceByID(goalSequenceID, false)
+	end
+end
+
+function EarlyEconomyTrainingGoals_InitVillagerTraining_Xbox()
+	
+	-- Train a villager
+	local selectTCGoal = Training_Goal("Entity",
+		{ID="Select your Town Center to train Villagers.", Message= "$11202187", DataTemplate="GenericTrainingDataTemplate"},
+		UserHasSelectedTownCenter)
+	
+	local openRadialGoal = Training_Goal("Entity",
+		{ID= "Press RT to open the radial menu.", Message= "$1000968", DataTemplate="GenericTrainingDataTemplate"}, 
+		UserHasOpenedContextualRadial)
+	
+	local buildVillGoal = Training_Goal("PBG",
+		{ID= "Select this option to queue production of additional Villagers.", Message= "$11249020", DataTemplate="GenericTrainingDataTemplate"}, 
+		TCHasStartedToTrainAVillager)
+	
+	local trainVillagerSequence = Training_GoalSequence(goal_sequence_villager_training,
+		__t_challengeIdleTCRepeatMax, 0,
+		UserHasIdleTownCenter_Xbox, 
+		nil,--NoIdleVillagers, 
+		nil,
+		nil,
+		true,
+		{selectTCGoal, openRadialGoal, buildVillGoal})
+	Training_AddGoalSequence(trainVillagerSequence)
+end
+
+function EarlyEconomyTrainingGoals_InitVillagerTraining()
+	
+	-- Train a villager
+	local selectTCGoal = Training_Goal("Entity",
+		{ID="Select your Town Center to train Villagers.", Message= "$11202187", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedTownCenter)
+	
+	local buildVillGoal = Training_Goal("PBG",
+		{ID= "Click here to queue up additional Villagers.", Message= "$11202188", DataTemplate="LeftClickTrainingDataTemplate"}, 
+		TCHasStartedToTrainAVillager)
+	
+	local trainVillagerSequence = Training_GoalSequence(goal_sequence_villager_training,
+		__t_challengeIdleTCRepeatMax, 0,
+		UserHasIdleTownCenter, 
+		nil,--NoIdleVillagers, 
+		nil,
+		nil,
+		true,
+		{selectTCGoal, buildVillGoal})
+	Training_AddGoalSequence(trainVillagerSequence)
+end
+
+function EarlyEconomyTrainingGoals_OnInit()
+	
+	-- Disable core training goals for testing purposes
+	-- TrainingGoal_DisableCoreControlGoals()
+	-- TrainingGoal_DisableCoreEconGoals()
+	
+	-------------------------------------------------------------------------
+	---- Goal Sequences
+	-------------------------------------------------------------------------
+	
+	if UI_IsXboxControllerUI() then
+		EarlyEconomyTrainingGoals_InitVillagerTraining_Xbox()
+	else
+		EarlyEconomyTrainingGoals_InitVillagerTraining()   
+	end
+	
+	-- Use idle Villager
+	local selectNextIdleVillagerGoal = Training_Goal("PBG",
+		{ID= "Select the next idle Villager and assign it to a job.", Message= "$11202189", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedAnIdleVillager)
+	local selectNextIdleVillagerSequence = Training_GoalSequence(goal_sequence_idle_villager,
+		__t_challengeIdleVillagerRepeatMax, 0,
+		SelectNextIdleIfVillagersIdle, 
+		NoIdleVillagers, 
+		nil,
+		nil,
+		true,
+		{selectNextIdleVillagerGoal})
+	Training_AddGoalSequence(selectNextIdleVillagerSequence)
+	
+	-- Use idle scout
+	local selectScoutGoal = Training_Goal("Squad",
+		{ID= "Do not forget about your Scout. You must explore to find more resources.", Message= "$11202190", DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedAScout)
+	local selectScoutSequence = Training_GoalSequence(goal_sequence_idle_scout,
+		__t_challengeIdleScoutRepeatMax, 0,
+		UserHasIdleScout, 
+		EnoughMarkersExplored, 
+		nil,
+		nil,
+		true,
+		{selectScoutGoal})
+	Training_AddGoalSequence(selectScoutSequence)
+	
+end
+
+
+-----------------------------------------------------------------------
+-- Functions, Goals, & Predicates
+-----------------------------------------------------------------------
+
+-- Predicate - When the player's Town Center is idle it will prompt the player to select it.
+function UserHasIdleTownCenter_Xbox(goalSequence)
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			if player._challenge ~= nil then
+				local currentTime = Timer_GetElapsed(goalSequence.timerID)
+				local timeElapsed = World_GetGameTime() - player._challenge.startTime
+				
+				-- give the player some time at the start
+				if timeElapsed >= __t_challengeStartIdleVillager then
+					
+					local currentTime = Timer_GetElapsed(goalSequence.timerID)
+					if currentTime > __t_challengeIntervalIdleVillager then
+						local localPlayer = Game_GetLocalPlayer()
+						local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+						
+						Player_GetAll(localPlayer)
+						EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+						EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+						local aTownCenterExists = EGroup_Count(eg_allentities) > 0
+
+						if aTownCenterExists then
+							local townCenter = EGroup_GetEntityAt(eg_allentities, 1)	
+							local villagerCost = Player_GetSquadBPCost(localPlayer, villagerBP)
+							local foodResources = Player_GetResource(localPlayer, RT_Food)
+							
+							-- Check if the player still needs to train villagers
+							if Objective_IsComplete(_challenge.victory.objectiveVillagers) then
+								return false						
+							end
+							
+							-- Check if the town center is producing a villager
+							if Entity_IsProducingSquad(townCenter, villagerBP) then
+								return false
+							end
+							
+							-- Check if the player has the resources and population space to train more villagers
+							if foodResources >= villagerCost.food and Player_GetCurrentPopulation(localPlayer, CT_Personnel) < Player_GetCurrentPopulationCap(localPlayer, CT_Personnel) then
+								goalSequence.goals[1].key = Entity_GetID(townCenter)
+								goalSequence.goals[2].key = Entity_GetID(townCenter)
+								goalSequence.goals[3].key = villagerBP
+								return true
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	return false
+	
+end
+
+function UserHasIdleTownCenter(goalSequence)
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			if player._challenge ~= nil then
+				local currentTime = Timer_GetElapsed(goalSequence.timerID)
+				local timeElapsed = World_GetGameTime() - player._challenge.startTime
+				
+				-- give the player some time at the start
+				if timeElapsed >= __t_challengeStartIdleVillager then
+					
+					local currentTime = Timer_GetElapsed(goalSequence.timerID)
+					if currentTime > __t_challengeIntervalIdleVillager then
+						local localPlayer = Game_GetLocalPlayer()
+						local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+						
+						Player_GetAll(localPlayer)
+						EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+						EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+						local aTownCenterExists = EGroup_Count(eg_allentities) > 0
+
+						if aTownCenterExists then
+							local townCenter = EGroup_GetEntityAt(eg_allentities, 1)	
+							local villagerCost = Player_GetSquadBPCost(localPlayer, villagerBP)
+							local foodResources = Player_GetResource(localPlayer, RT_Food)
+							
+							-- Check if the player still needs to train villagers
+							if Objective_IsComplete(_challenge.victory.objectiveVillagers) then
+								return false						
+							end
+							
+							-- Check if the town center is producing a villager
+							if Entity_IsProducingSquad(townCenter, villagerBP) then
+								return false
+							end
+							
+							-- Check if the player has the resources and population space to train more villagers
+							if foodResources >= villagerCost.food and Player_GetCurrentPopulation(localPlayer, CT_Personnel) < Player_GetCurrentPopulationCap(localPlayer, CT_Personnel) then
+								goalSequence.goals[1].key = Entity_GetID(townCenter)
+								goalSequence.goals[2].key = villagerBP
+								return true
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	return false
+	
+end
+
+-- IsComplete - Check whether the user is training a Villager.
+function UserIsTrainingVillager(goalSequence)
+	local localPlayer = Game_GetLocalPlayer()
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+	
+	Player_GetAll(localPlayer)
+	EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	local aTownCenterExists = EGroup_Count(eg_allentities) > 0
+
+	if aTownCenterExists then
+		local townCenter = EGroup_GetEntityAt(eg_allentities, 1)
+	
+		if Entity_IsProducingSquad(townCenter, villagerBP) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+-- IsComplete - Check whether the player has selected the Town Center.
+function UserHasSelectedTownCenter(goal)
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+	if EGroup_Count(eg_currentSelection) == 1 then
+		local entity = EGroup_GetEntityAt(eg_currentSelection, 1)
+		if Entity_GetID(entity) == goal.key then
+			return true
+		end
+	end
+	
+	return false
+end
+
+-- IsComplete - Check whether the player has started to train a Villager at the selected Town Center.
+function TCHasStartedToTrainAVillager(goal)
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", Game_GetLocalPlayer())
+	
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+	if EGroup_Count(eg_currentSelection) == 1 then
+		local townCenter = EGroup_GetEntityAt(eg_currentSelection, 1)
+		return Entity_IsProducingSquad(townCenter, villagerBP)
+	end
+	
+	return false
+end
+
+----------------------------------------------------------------------------------------------
+
+-- Predicate - If a villager is idle for a certain amount of time it prompts the player to click on the "population button".
+function SelectNextIdleIfVillagersIdle(goalSequence)
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			if player._challenge ~= nil then
+				local timeElapsed = World_GetGameTime() - player._challenge.startTime
+				
+				-- give the player some time at the start
+				if timeElapsed >= __t_challengeStartIdleVillager then
+					
+					local villagerIsIdle = false
+					local localPlayer = Game_GetLocalPlayer()
+					local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+					local squads = Player_GetSquads(localPlayer)
+					
+					goalSequence.goals[1].idleVillagers = {}
+					
+					for i = 1, SGroup_Count(squads) do
+						local squad = SGroup_GetSquadAt(squads, i)
+						
+						if Squad_IsIdle(squad) and Squad_GetBlueprint(squad) == villagerBP then
+							villagerIsIdle = true
+							break
+						end
+					end
+					
+					if villagerIsIdle then
+						if Timer_IsPaused(goalSequence.timerID) then
+							Timer_Resume(goalSequence.timerID)
+						end
+					else
+						if not Timer_IsPaused(goalSequence.timerID) then
+							Timer_Pause(goalSequence.timerID)
+						end
+					end
+					
+					local currentTime = Timer_GetElapsed(goalSequence.timerID)
+					if currentTime > __t_challengeIntervalIdleVillager and villagerIsIdle then
+						goalSequence.goals[1].key = "PopulationButton"
+						return true
+					end
+					
+					goalSequence.goals[1].key = nil
+				end
+			end
+		end
+	end
+	
+	return false
+end
+
+
+----------------------------------------------------------------------------------------------
+
+-- Predicate - If a Scout is idle it will prompt the player to use it.
+function UserHasIdleScout(goalSequence)
+	
+	-- For every player
+	for i, player in pairs(PLAYERS) do
+		
+		-- If the player is local (not one of the AI players)
+		if player.isLocal then
+			if player._challenge ~= nil then
+				local timeElapsed = World_GetGameTime() - player._challenge.startTime
+				local currentTime = Timer_GetElapsed(goalSequence.timerID)
+				-- give the player some time at the start
+				if timeElapsed >= __t_challengeStartIdleScout then
+					
+					local scoutIsIdle = false
+					local localPlayer = Game_GetLocalPlayer()
+					local scoutBP = Cardinal_ConvertTypeToSquadBlueprint("scout", localPlayer)
+					local squads = Player_GetSquads(localPlayer)
+					
+					goalSequence.goals[1].idleScout = {}
+					
+					local scout = nil
+					for i = 1, SGroup_Count(squads) do
+						local squad = SGroup_GetSquadAt(squads, i)
+						
+						if Squad_IsIdle(squad) and Squad_GetBlueprint(squad) == scoutBP then
+							scoutIsIdle = true
+							scout = SGroup_GetSquadAt(squads, i)
+							break
+						end
+					end
+					
+					if scoutIsIdle then
+						if Timer_IsPaused(goalSequence.timerID) then
+							Timer_Resume(goalSequence.timerID)
+						end
+					else
+						if not Timer_IsPaused(goalSequence.timerID) then
+							Timer_Pause(goalSequence.timerID)
+						end
+					end
+					
+					local currentTime = Timer_GetElapsed(goalSequence.timerID)
+					if currentTime > __t_challengeIntervalIdleScout and scoutIsIdle and __n_challengeScoutRepeatMaxCurrentSession < 5 then
+						goalSequence.goals[1].key = Squad_GetID(scout)
+						__n_challengeScoutRepeatMaxCurrentSession = __n_challengeScoutRepeatMaxCurrentSession + 1
+						return true
+					end
+					
+					goalSequence.goals[1].key = nil
+				end
+			end
+		end
+	end
+	return false	
+end
+
+-- Ignore - Checks whether the player has explored __n_challengeScoutAreasToExplore areas.
+function EnoughMarkersExplored(goalSequence)
+	
+	local westMarker = Marker_GetPosition(mkr_exploration_west)
+	local eastMarker = Marker_GetPosition(mkr_exploration_east)
+	local northwestMarker = Marker_GetPosition(mkr_exploration_northwest)
+	local northMarker = Marker_GetPosition(mkr_exploration_north)
+	local southMarker = Marker_GetPosition(mkr_exploration_south)
+	
+	if Player_CanSeePosition(localPlayer, westMarker) and exploredWest == false then
+		areasExplored = areasExplored + 1
+		exploredWest = true
+	end
+	if Player_CanSeePosition(localPlayer, eastMarker) and exploredEast == false then
+		areasExplored = areasExplored + 1
+		exploredEast = true
+	end
+	if Player_CanSeePosition(localPlayer, northwestMarker) and exploredNorthWest == false then
+		areasExplored = areasExplored + 1
+		exploredNorthWest = true
+	end
+	if Player_CanSeePosition(localPlayer, northMarker) and exploredNorth == false then
+		areasExplored = areasExplored + 1
+		exploredNorth = true
+	end
+	if Player_CanSeePosition(localPlayer, southMarker) and exploredSouth == false then
+		areasExplored = areasExplored + 1
+		exploredSouth = true
+	end
+	
+	if areasExplored >= __n_challengeScoutAreasToExplore then
+		return true
+	end
+	return false
+end

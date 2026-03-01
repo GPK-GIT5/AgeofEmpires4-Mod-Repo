@@ -1,0 +1,536 @@
+-----------------------------------------------------------------------
+--
+-- Score tracking 
+--
+-- Tracks player score. See http://relicwiki/display/CARD/Score for details.
+-- Military = 20% of resource value of units/buildings destroyed by player
+-- Economy = 20% of resource value of *current* units & buildings + 10% of all resources owned 
+-- Tech = 20% of resource value of every tech
+--
+-- (c) Relic Entertainment 2017
+--
+-----------------------------------------------------------------------
+
+-- Provide data to replay system through this script
+import("replay/replaystatviewer.scar")
+
+-----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+Core_RegisterModule("Score")
+
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+
+_score = _score or {
+	is_initialized = false,						-- true when score UI has been created		
+	is_diplomacy_enabled = false,				-- true = dynamic diplomacy, false = locked teams
+	multiplier = {
+		military = 0.2,
+		economy = 0.2,		
+		society = 0.2,
+		technology = 0.2,
+		resource = 0.1
+	},
+	age = {										-- Loc_string lookup table (indexed by age)
+		Loc_GetString(11149423),				-- "Age I"
+		Loc_GetString(11149424),  				-- "Age II"
+		Loc_GetString(11149425),  				-- "Age III"
+		Loc_GetString(11149426), 				-- "Age IV"
+	},
+	entity_types = {
+		military = { 
+			"wall", 
+			"tower", 
+			"outpost", 
+			"castle", 
+			"barracks", 
+			"stable", 
+			"archery_range", 
+			"siege_workshop",
+			"siege", -- Handles siege units constructed with Siege Engineering
+		},
+		society = {
+			"landmark",
+			"wonder",
+		}
+	}
+}
+
+
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+
+
+-- Callback invoked by Core::OnInit()
+function Score_OnInit()
+	Score_CreateDataContext() 
+	Rule_AddGlobalEvent(Score_OnConstructionComplete, GE_ConstructionComplete) 
+	Rule_AddGlobalEvent(Score_OnItemComplete, GE_BuildItemComplete)
+	Rule_AddGlobalEvent(Score_OnEntityKilled, GE_EntityKilled)
+	Rule_AddGlobalEvent(Score_OnUpgradeStart, GE_UpgradeStart)
+	Rule_AddGlobalEvent(Score_OnUpgradeComplete, GE_UpgradeComplete)
+		
+	ReplayStatViewer_PopulateReplayStatTabs({"PlayerScoreTemplate"})
+	ReplayStatViewer_RegisterPlayerDataContextUpdater(Score_UpdatePlayerStats)
+	
+	-- Cache for player score functions
+	for i, player in pairs(PLAYERS) do
+		player._score = {upgrades_in_progress = {}}
+	end
+	
+	-- Tells to UI to show the scores.
+	-- UI handles everything excpet score values.
+	-- Scripts needs to feed the score values via state model. Currently, only total_score is polled. Please contact UI team if we want to show more.
+	UI_SetShowPlayerScores(true)
+end	
+
+-- Callback invoked (normally from the the OnInit() function of the game mode script) to indicate whether diplomacy is enabled.  
+function Score_DiplomacyEnabled(is_enabled)
+	 _score.is_diplomacy_enabled = is_enabled
+end
+
+
+
+function Score_Start()
+	-- Account for initial squads
+	for i, context_player in pairs(_score.data_context.players) do
+		local player = Core_GetPlayersTableEntryFromIndex(context_player.index)
+		local squads = Player_GetSquads(player.id)
+		for j = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, j)
+			Score_OnItemComplete({ 
+				pbg = Squad_GetBlueprint(squad),
+				player = player.id,
+				spawnedSqaud = squad
+			})
+		end 
+		context_player.age = _score.age[Score_GetCurrentAge(player.id)]		-- Used by replay stats
+	end
+
+end
+
+
+-- Callback invoked when relationship changes (via diplomacy)
+function Score_OnRelationshipChanged(observer_id, target_id)
+	if _score ~= nil then
+		if Game_GetLocalPlayer() == target_id then 
+			local player_local = Core_GetPlayersTableEntry(Game_GetLocalPlayer())
+			for _, context_player in pairs(_score.data_context.players) do
+				local player = Core_GetPlayersTableEntryFromIndex(context_player.index)
+				if player.id == target_id then
+					context_player.color_name = UI_GetColourAsString(Player_GetUIColour(player.id))
+					context_player.is_ally = Player_ObserveRelationship(player.id, player_local.id) == R_ALLY
+					context_player.is_enemy = Player_ObserveRelationship(player.id, player_local.id) == R_ENEMY					
+					break
+				end
+			end			
+		end
+	end
+end
+
+
+-- Callback invoked by Core_SetPlayerDefeated() when a player is eliminated.
+function Score_OnPlayerDefeated(player, reason)
+	if player ~= nil then 		
+		for i, context_player in pairs(_score.data_context.players) do
+			if context_player.index == player.index then
+				context_player.is_eliminated = true
+				break
+			end
+		end
+	end
+end
+
+
+-- Callback invoked by Core_OnGameOver() 
+function Score_OnGameOver()	
+	UI_SetShowPlayerScores(false)
+	Rule_RemoveGlobalEvent(Score_OnConstructionComplete)
+	Rule_RemoveGlobalEvent(Score_OnItemComplete)
+	Rule_RemoveGlobalEvent(Score_OnEntityKilled)
+	Rule_RemoveGlobalEvent(Score_OnUpgradeStart)
+	Rule_RemoveGlobalEvent(Score_OnUpgradeComplete)
+end
+
+-- Global event callback for GE_ConstructionComplete
+function Score_OnConstructionComplete(context)
+	
+	local IsEPBOfType = function(ebp, entity_types)
+		for _, entity_type in pairs(entity_types) do
+			if Entity_IsEBPOfType(ebp, entity_type) then
+				return true
+			end
+		end
+		return false
+	end
+	
+	-- Get constructing player
+	local owner = Core_GetPlayersTableEntry(context.player)
+	-- Create egroup to track constructed entities
+	_score.eg_constructed = EGroup_CreateIfNotFound("eg_constructed")
+	
+	-- If owner is not nil/eliminated
+	if owner ~= nil and not owner.isEliminated and not EGroup_ContainsEntity(_score.eg_constructed, context.entity) then
+		
+		-- Confirm that constructed is not a squad entity (e.g. Siege Tower)
+		if not Entity_IsPartOfSquad(context.entity) then
+			-- Add entity to constructed egroup
+			EGroup_Add(_score.eg_constructed, context.entity)
+		end
+		
+		-- Get BP cost
+		local cost = Score_TotalCost(Player_GetEntityBPCost(context.player, context.pbg))
+		
+		-- If building is Society
+		if IsEPBOfType(context.pbg, _score.entity_types.society) then 
+			Score_ModifySocietyScore(owner.id, cost)
+			--print(string.format("%s built %s, society_score +%d", owner.playerName.LocString, BP_GetName(context.pbg), 0.2 * Score_TotalCost(Player_GetEntityBPCost(context.player, context.pbg))))
+			
+			-- If building is a Wonder
+			if Entity_IsEBPOfType(context.pbg, "wonder_imperial_age") then
+				return
+			end
+			
+		-- If building is Military
+		else 
+			if IsEPBOfType(context.pbg, _score.entity_types.military) then 
+				Score_ModifyMilitaryScore(owner.id, cost)
+				--print(string.format("%s built %s, military_score +%d", owner.playerName.LocString, BP_GetName(context.pbg), 0.2 * Score_TotalCost(Player_GetEntityBPCost(context.player, context.pbg))))
+				
+				-- If building is not Military, count as Economic
+			else
+				Score_ModifyEconomicScore(owner.id, cost)
+				--print(string.format("%s built %s, economy_score +%d", owner.playerName.LocString, BP_GetName(context.pbg), 0.2 * Score_TotalCost(Player_GetEntityBPCost(context.player, context.pbg))))
+
+			end
+		end
+	end
+end
+
+
+-- Global event callback for GE_BuildItemComplete
+function Score_OnItemComplete(context)	
+	local owner = Core_GetPlayersTableEntry(context.player)		
+	if owner ~= nil and not owner.isEliminated then 
+		local cost = Score_TotalCost(Player_GetSquadBPCost(context.player, context.pbg))
+		if Squad_IsSBPOfType(context.pbg, "military") then 
+			Score_ModifyMilitaryScore(owner.id, cost)
+			--print(string.format("%s produced %s, military_score +%d", owner.playerName.LocString, BP_GetName(context.pbg), 0.2 * Score_TotalCost(Player_GetSquadBPCost(context.player, context.pbg))))
+		else
+			Score_ModifyEconomicScore(owner.id, cost)
+			--print(string.format("%s produced %s, economy_score +%d", owner.playerName.LocString, BP_GetName(context.pbg), 0.2 * Score_TotalCost(Player_GetSquadBPCost(context.player, context.pbg))))
+		end
+	end
+end
+
+
+-- Global event callback for GE_EntityKilled
+function Score_OnEntityKilled(context)
+	local victimEntityID = context.victim;
+	local victimOwnerID = context.victimOwner;
+	if victimOwnerID == nil or victimEntityID == nil then
+        return
+    end
+	
+	local victimSquadID = context.victimSquad
+	if victimSquadID ~= nil then 
+		if not Squad_IsOfType(victimSquadID, "mongol_moving_structure") then
+			-- Decrements player's military/economic score by the resource cost of the squad when it's killed. 
+			if not Squad_IsOfType(victimSquadID, "khan") then
+				local squadBP = Squad_GetBlueprint(victimSquadID)
+				local squadBPCost = Player_GetSquadBPCost(victimOwnerID, squadBP)
+				local cost = Score_TotalCost(squadBPCost)
+				if Squad_IsOfType(victimSquadID, "military") then
+					Score_ModifyMilitaryScore(victimOwnerID, -cost)
+					--print(string.format("%s lost %s, military_score -%d", owner.playerName.LocString, BP_GetName(Squad_GetBlueprint(victimSquad)), 0.2 * Score_TotalCost(Player_GetSquadBPCost(owner.id, Squad_GetBlueprint(victimSquad)))))
+				-- Exclude packed Mongol buildings as these are accounted for above.
+				else 
+					Score_ModifyEconomicScore(victimOwnerID, -cost)
+					--print(string.format("%s lost %s, military_score -%d", owner.playerName.LocString, BP_GetName(Squad_GetBlueprint(victimSquad)), 0.2 * Score_TotalCost(Player_GetSquadBPCost(owner.id, Squad_GetBlueprint(victimSquad)))))
+				end
+			end
+			return
+		end
+	end
+	
+	local IsEntityOfType = function(entity, entity_types)
+		for _, entity_type in pairs(entity_types) do
+			if Entity_IsOfType(entity, entity_type) then
+				return true
+			end
+		end
+		return false
+	end
+	
+	if victimSquadID ~= nil or (Entity_IsBuilding(victimEntityID) and Entity_GetBuildingProgress(victimEntityID) >= 1.0) then
+		local cost = Score_TotalCost(Player_GetEntityBPCost(victimOwnerID, Entity_GetBlueprint(victimEntityID)))
+		if IsEntityOfType(victimEntityID, _score.entity_types.military) then
+			Score_ModifyMilitaryScore(victimOwnerID, -cost)
+			--print(string.format("%s lost %s, military_score -%d", owner.playerName.LocString, BP_GetName(Entity_GetBlueprint(entity)), 0.2 * Score_TotalCost(Player_GetEntityBPCost(owner.id, Entity_GetBlueprint(entity)))))
+		elseif IsEntityOfType(victimEntityID, _score.entity_types.society) then
+			Score_ModifySocietyScore(victimOwnerID, -cost)
+			--print(string.format("%s lost %s, society_score -%d", owner.playerName.LocString, BP_GetName(Entity_GetBlueprint(entity)), 0.2 * Score_TotalCost(Player_GetEntityBPCost(owner.id, Entity_GetBlueprint(entity)))))
+		else			
+			Score_ModifyEconomicScore(victimOwnerID, -cost)
+			--print(string.format("%s lost %s, economy_score -%d", owner.playerName.LocString, BP_GetName(Entity_GetBlueprint(entity)), 0.2 * Score_TotalCost(Player_GetEntityBPCost(owner.id, Entity_GetBlueprint(entity)))))
+		end
+	end
+end
+
+-- Global event callback for GE_UpgradeStart
+function Score_OnUpgradeStart(context)
+	
+	if scartype(context.executer) == ST_ENTITY then
+		if not World_OwnsEntity(context.executer) then
+			
+			-- Get player who upgraded
+			local owner = Core_GetPlayersTableEntry(Entity_GetPlayerOwner(context.executer))
+			-- Track the cost of the upgrade at time of purchase
+			local cost = Score_TotalCost(Player_GetUpgradeBPCost(owner.id, context.upgrade))
+			
+			if (cost == 0 and owner.raceName == "sultanate") then
+				cost = Player_GetUpgradeTimeCost(context.upgrade)
+			end
+			
+			-- Create a table that contains the upgrade and its initial cost
+			local upgrade_data = {
+				upgrade_bp = context.upgrade,
+				upgrade_cost = cost
+			}
+			
+			-- Cache the cost paid by player at start of upgrade (in some cases it will change upon upgrade completion)
+			table.insert(owner._score.upgrades_in_progress, upgrade_data)
+		end
+	end
+end
+
+-- Global event callback for GE_UpgradeComplete
+function Score_OnUpgradeComplete(context)
+	if scartype(context.executer) == ST_ENTITY then
+		if not World_OwnsEntity(context.executer) then
+			
+			-- Get player who upgraded
+			local owner = Core_GetPlayersTableEntry(Entity_GetPlayerOwner(context.executer))
+			-- Track the cost of the upgrade
+			local cost
+			
+			-- Use the upgrade cost cached in Score_OnUpgradeStart() if it exists
+			for i, upgrade in pairs(owner._score.upgrades_in_progress) do
+				-- If completed upgrade has a cached cost
+				if upgrade.upgrade_bp == context.upgrade then
+					cost = upgrade.upgrade_cost
+					table.remove(owner._score.upgrades_in_progress, i)
+					break
+				end
+			end
+				
+			-- If completed upgrade's initial cost was not cached
+			if cost == nil then
+				-- Get upgrade's cost on completion
+				cost = Score_TotalCost(Player_GetUpgradeBPCost(owner.id, context.upgrade))
+			end
+			
+			-- If upgrade is an Age Up
+			if BP_IsUpgradeOfType(context.upgrade, "wonder_age_upgrade") then				
+				local context_player = Score_GetPlayerDataContext(owner.index)
+				context_player.age = _score.age[Score_GetCurrentAge(owner.id)]	-- Used by replay stats
+				
+			-- If upgrade is a constructed Abbasid House of Wisdom wing
+			elseif BP_IsUpgradeOfType(context.upgrade, "abbasid_wing_upgrade") then
+				
+				Score_ModifySocietyScore(owner.id, cost)
+				--print(string.format("%s built %s, society_score +%d", owner.playerName.LocString, BP_GetName(context.upgrade), 0.2 * cost))
+				
+			-- If any other upgrade
+			else
+				Score_ModifyTechnologyScore(owner.id, cost)	
+				--print(string.format("%s researched %s, technology_score +%d", owner.playerName.LocString, BP_GetName(context.upgrade), math.floor(0.2 * cost)))				
+			end
+		end
+	end
+end
+
+
+-- Callback invoked by UpdatePlayerDataContexts() in replaystatviewer.scar to fetch player progress
+function Score_UpdatePlayerStats(player, scarModel)
+	scarModel.PlayerScore_Current = player.score
+	scarModel.PlayerScore_Target = 0
+end
+
+
+-----------------------------------------------------------------------
+-- Utility Functions
+-----------------------------------------------------------------------
+
+-- Used by replay stats.
+function Score_GetCurrentAge(playerID)
+	if Player_HasUpgrade(playerID, BP_GetUpgradeBlueprint("imperial_age")) then
+		return 4
+	elseif Player_HasUpgrade(playerID, BP_GetUpgradeBlueprint("castle_age")) then
+		return 3
+	elseif Player_HasUpgrade(playerID, BP_GetUpgradeBlueprint("feudal_age")) then
+		return 2
+	else
+		return 1
+	end
+end
+
+
+-- Updates a player's economic score by a given amount. Accounts for the player's current resource float.
+-- Total score is updated as well.
+function Score_ModifyEconomicScore(playerID, cost)
+	local player = Core_GetPlayersTableEntry(playerID)
+	if player ~= nil and not player.isEliminated then
+		local context_player = Score_GetPlayerDataContext(player.index)	
+
+		context_player.score.economy = context_player.score.economy + math.floor(cost * _score.multiplier.economy)
+
+		-- TODO:Account for unspent resources in economy score. 
+		-- 		This must be tracked in code instead of script since Player_GetResources() is presentation 
+		--		only and causes sync error when result used with Player_SetStateModelFloat().
+
+		-- Used by replay stats
+		player.score = math.floor(context_player.score.military + context_player.score.economy + context_player.score.society + context_player.score.technology)
+
+		-- Save to state model variable for telemetry tracking 
+		Player_SetStateModelFloat(playerID, "economy_score", context_player.score.economy)
+		Player_SetStateModelFloat(playerID, "total_score", player.score)
+	end
+end
+
+
+-- Updates a player's military score by a given amount.     
+function Score_ModifyMilitaryScore(playerID, cost)
+	local player = Core_GetPlayersTableEntry(playerID)
+	if player ~= nil and not player.isEliminated then
+		local context_player = Score_GetPlayerDataContext(player.index)
+		local context_player_score = context_player.score 
+		context_player_score.military = context_player_score.military + math.floor(cost * _score.multiplier.military)
+		
+		-- Used by replay stats
+		player.score = math.floor(context_player_score.military + context_player_score.economy + context_player_score.society + context_player_score.technology)	
+		
+		-- Save to state model variable for telemetry tracking
+		Player_SetStateModelFloat(playerID, "military_score", context_player_score.military)
+		Player_SetStateModelFloat(playerID, "total_score", player.score)
+	end
+end
+
+
+function Score_ModifySocietyScore(playerID, cost)
+	local player = Core_GetPlayersTableEntry(playerID)
+	if player ~= nil and not player.isEliminated then
+		local context_player = Score_GetPlayerDataContext(player.index)			
+		
+		context_player.score.society = context_player.score.society + math.floor(cost * _score.multiplier.society)
+		
+		-- Used by replay stats
+		player.score = math.floor(context_player.score.military + context_player.score.economy + context_player.score.society + context_player.score.technology)	
+				
+		-- Save to state model variable for telemetry tracking
+		Player_SetStateModelFloat(playerID, "society_score", context_player.score.society)
+		Player_SetStateModelFloat(playerID, "total_score", player.score)
+	end	
+end
+
+
+
+function Score_ModifyTechnologyScore(playerID, cost)
+	local player = Core_GetPlayersTableEntry(playerID)
+	if player ~= nil and not player.isEliminated then
+		local context_player = Score_GetPlayerDataContext(player.index)	
+		
+		context_player.score.technology = context_player.score.technology + math.floor(cost * _score.multiplier.technology)
+		
+		-- Used by replay stats
+		player.score = math.floor(context_player.score.military + context_player.score.economy + context_player.score.society + context_player.score.technology)	
+				
+		-- Save to state model variable for telemetry tracking
+		Player_SetStateModelFloat(playerID, "technology_score", context_player.score.technology)
+		Player_SetStateModelFloat(playerID, "total_score", player.score)
+	end	
+end
+
+
+function Score_TotalCost(cost)
+	return math.floor(cost.food + cost.gold + cost.stone + cost.wood) 
+end
+
+
+function Score_GetPlayerDataContext(player_index)
+	for _, context_player in pairs(_score.data_context.players) do 
+		if context_player.index == player_index then
+			return context_player
+		end
+	end
+end
+
+
+-----------------------------------------------------------------------
+-- UI Functions
+-----------------------------------------------------------------------
+
+function Score_CreateDataContext()
+	if _score.data_context ~= nil then
+		return
+	end
+	
+	_force_show_score = Misc_IsCommandLineOptionSet("score")		-- true if only total score should be displayed
+	local show_scores = Misc_IsCommandLineOptionSet("scores")		-- true if military, economic, and total scores should be displayed 
+	local player_local = Core_GetPlayersTableEntry(Game_GetLocalPlayer())
+	
+	_score.data_context = {
+		command_toggle_visibility = UI_CreateCommand("Score_ToggleVisibility"),
+		is_expanded = false,
+		is_visible = _force_show_score or show_scores,		-- whether to display the score widget
+		players = {
+			{	-- Show local player first in list
+				index = player_local.index,
+				name = Player_GetDisplayName(player_local.id).LocString,
+				color_name = UI_GetColourAsString(Player_GetUIColour(player_local.id)), 
+				color_score = "#FFFFFFFF",
+				age = Loc_Empty(),
+				is_ally = false,
+				is_enemy = false,
+				is_eliminated = player_local.isEliminated,
+				team_number = player_local.team.index,		-- used for sorting
+				score = {
+					military = 0,
+					economy = 0,
+					society = 0,
+					technology = 0
+				},
+				show_scores = show_scores,
+			}
+		}
+	}
+	
+	for _, player in pairs(PLAYERS) do
+		if not player.isLocal then 
+			local context_player = {
+				index = player.index,
+				name = Player_GetDisplayName(player.id).LocString,
+				color_name = UI_GetColourAsString(Player_GetUIColour(player.id)), 
+				color_score = "#FFFFFFFF",
+				age = Loc_Empty(),
+				is_ally = Player_ObserveRelationship(player.id, player_local.id) == R_ALLY,
+				is_enemy = Player_ObserveRelationship(player.id, player_local.id) == R_ENEMY,
+				is_eliminated = player.isEliminated,
+				team_number = player.team.index,
+				score = {
+					military = 0,
+					economy = 0,
+					society = 0,
+					technology = 0
+				},
+				show_scores = show_scores,
+			}
+			table.insert(_score.data_context.players, context_player)
+		end
+	end
+end

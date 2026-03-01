@@ -1,0 +1,290 @@
+--
+-- Kalka River  1223- Setup Ambush for Rus
+--
+
+function SetupTheRusAmbush_InitObjectives()		-- rename this function to use your prefix for this part of the mission
+
+	
+	OBJ_SetupTheRusAmbush = {
+	
+		Title =  "$11198387", -- Prepare your army to ambush the Rus
+		Type = ObjectiveType_Primary,
+		Icon = "icons/objectives/capture_objective",
+		Intel_Start = EVENTS.Set_Ambush_Positioning,
+		OnStart = setup_Ambush_Start,
+		OnComplete = SetupTheRusAmbush_OnComplete,
+	}
+	
+	OBJ_RusTimer = {
+		
+		Title = "$11172116",--Rus army arriving from the west
+		Type = ObjectiveType_Information,
+		SetupUI = function()
+			Objective_StartTimer(OBJ_RusTimer,COUNT_DOWN,Util_DifVar({70, 60, 50, 50}),10)
+		end,
+		
+		OnStart = RusArrivalTimer_Start,
+		
+		OnComplete = function()
+			Objective_RemoveUIElements(SOBJ_GetSquadToPositionC,hpid_AmbushC)
+			Objective_RemoveUIElements(SOBJ_GetSquadToPositionB,hpid_AmbushB)
+			Objective_RemoveUIElements(SOBJ_GetSquadToPositionA,hpid_AmbushA)
+	
+			if not Objective_IsComplete(SOBJ_GetSquadToPositionA) then
+				Objective_Fail(SOBJ_GetSquadToPositionA,false,false)
+				Rule_Remove(GetSquadProgressA_Monitor)
+			end
+			if not Objective_IsComplete(SOBJ_GetSquadToPositionB) then
+				Objective_Fail(SOBJ_GetSquadToPositionB,false,false)
+				Rule_Remove(GetSquadProgressB_Monitor)
+			end
+			if not Objective_IsComplete(SOBJ_GetSquadToPositionC) then
+				Objective_Fail(SOBJ_GetSquadToPositionC,false,false)
+				Rule_Remove(GetSquadProgressC_Monitor)
+			end
+			
+			Objective_Complete(OBJ_SetupTheRusAmbush,false,true)
+			
+			Rule_AddOneShot(Kalka_DelayedInteractivityChange, 25)
+		end,
+	}
+	
+	SOBJ_GetSquadToPositionA = {
+	
+		Title = "$11172118", -- move some units to the western ford
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SetupTheRusAmbush,
+		StartAlongsideParent = true,
+		SetupUI = GetSquadToPositionA_UI,
+		OnStart = GetSquadToAmbushPositionA_Start,
+		OnComplete = GetSquadToPositionA_OnComplete,
+	}
+	
+	SOBJ_GetSquadToPositionB = {
+	
+		Title = "$11172119", --move some units to the eastern ford
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SetupTheRusAmbush,
+		StartAlongsideParent = true, 
+		SetupUI = GetSquadToPositionB_UI,
+		OnStart = GetSquadToPositionB_Start,
+		OnComplete = GetSquadToPositionB_OnComplete,
+	}
+		
+	
+	SOBJ_GetSquadToPositionC = {
+	
+		Title = "$11172120", -- move some units into the central woods
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_SetupTheRusAmbush,
+		StartAlongsideParent = true, 
+		SetupUI = GetSquadToPositionC_UI,
+		OnStart = GetSquadToPositionC_Start,
+		OnComplete = GetSquadToPositionC_OnComplete,
+	}
+	
+	Objective_Register(OBJ_RusTimer)
+	Objective_Register(OBJ_SetupTheRusAmbush)
+--	Objective_Register(SOBJ_GetSquadsToAmbushPt)
+	Objective_Register(SOBJ_GetSquadToPositionA) 
+	Objective_Register(SOBJ_GetSquadToPositionB) 
+	Objective_Register(SOBJ_GetSquadToPositionC) 
+	
+end
+
+
+function Kalka_DelayedInteractivityChange(context, data)
+	World_SetInteractionStage(1)
+end
+
+function RusArrivalTimer_Start()
+	Rule_Add(RusArrivalTimer_Monitor)
+end
+
+function RusArrivalTimer_Monitor()
+	if Objective_GetTimerSeconds(OBJ_RusTimer) <= 0 then
+		Objective_Complete(OBJ_RusTimer,false,false)
+		Rule_RemoveMe()
+	end
+end
+
+function setup_Ambush_Start()
+
+	Rule_AddGlobalEvent(kalka_OnAbilityExecuted, GE_AbilityExecuted)
+	
+	Music_StopAfterObjective(5)
+	Music_UnlockIntensity()
+	
+end
+
+function kalka_OnAbilityExecuted(context)
+	
+	-- We want to watch this ability
+	g_khan_speed_arrows = BP_GetAbilityBlueprint("khan_attack_speed_signal_arrow_mon")
+	g_khan_maneuver_arrows = BP_GetAbilityBlueprint("khan_maneuver_signal_arrow_mon")
+	
+	if context.ability == g_khan_speed_arrows or context.ability == g_khan_maneuver_arrows then
+		
+		Rule_RemoveGlobalEvent(kalka_OnAbilityExecuted)
+		
+		b_used_khan_ability = true 
+
+	end
+
+end
+
+
+function GetSquadsToAmbushPt_UI()
+		--hpid_AmbushPT = Objective_AddUIElements(SOBJ_GetSquadsToAmbushPt, mkr_ambush_pointRiver, true,"$11180878", true, nil, nil, nil) -- Ambush Area
+end
+
+function GetSquadsToAmbushPt_Start()
+	Rule_Add(GetSquadsToAmbushPt_Monitor)
+
+end
+
+function GetSquadsToAmbushPt_Monitor()
+	if Prox_ArePlayersNearMarker(player1,Marker_GetPosition(mkr_ambush_pointRiver),ANY,20,SBP.MONGOL.UNIT_SUBUTAI_3_CMP_MON,FILTER_REMOVE) then
+		Objective_Complete(SOBJ_GetSquadsToAmbushPt)
+		Rule_RemoveMe()
+	end	
+end
+
+function GetSquadsToAmbushPt_OnComplete()
+--	Objective_Start(SOBJ_GetSquadToPositionA)
+--	Objective_Start(SOBJ_GetSquadToPositionB)
+--	Objective_Start(SOBJ_GetSquadToPositionC)
+end
+
+-- function starts the get positionA UI
+
+function GetSquadToPositionA_UI()
+	
+	hpid_AmbushA = Objective_AddUIElements(SOBJ_GetSquadToPositionA, mkr_ambush_position_a, true,"$11172158", true, nil, nil, nil)
+	Objective_SetProgressBar(SOBJ_GetSquadToPositionA,0)
+	Objective_AddGroundReticule(SOBJ_GetSquadToPositionA, mkr_ambush_position_a, Marker_GetProximityRadius(mkr_ambush_position_a), BP_GetReticuleBlueprint("capture_friendly"))
+
+	
+end
+
+function GetSquadToAmbushPositionA_Start()
+	
+	Rule_Add(GetSquadProgressA_Monitor)
+end
+
+function GetSquadProgressA_Monitor()
+	
+	local sg_tempA = SGroup_CreateIfNotFound("sg_tempA")
+	
+	Player_GetAllSquadsNearMarker(player1,sg_tempA,mkr_ambush_position_a, 25)
+--	SGroup_Filter(sg_tempA,SBP.MONGOL.UNIT_KNIGHT_2_MON, FILTER_KEEP)
+	
+	local unitCount = SGroup_CountSpawned(sg_tempA)
+
+	if unitCount < AMOUNT_ALLY_AT_POINTS then 
+		Objective_SetProgressBar(SOBJ_GetSquadToPositionA, (unitCount / AMOUNT_ALLY_AT_POINTS))
+	else
+		Objective_SetProgressBar(SOBJ_GetSquadToPositionA, (unitCount / AMOUNT_ALLY_AT_POINTS))
+		Rule_RemoveMe()
+		Objective_Complete(SOBJ_GetSquadToPositionA)
+
+	end
+
+	
+end
+
+function GetSquadToPositionA_OnComplete()
+	
+	Objective_RemoveUIElements(SOBJ_GetSquadToPositionA,hpid_AmbushA)
+
+end
+
+function GetSquadToPositionB_UI()
+	
+	hpid_AmbushB = Objective_AddUIElements(SOBJ_GetSquadToPositionB, mkr_ambush_position_b, true,"$11172159", true, nil, nil, nil)
+	Objective_SetProgressBar(SOBJ_GetSquadToPositionB,0)
+	Objective_AddGroundReticule(SOBJ_GetSquadToPositionB, mkr_ambush_position_b, Marker_GetProximityRadius(mkr_ambush_position_b), BP_GetReticuleBlueprint("capture_friendly"))
+
+end
+
+
+-- function starts the Position Squad B monitor
+function GetSquadToPositionB_Start()
+	
+	Rule_Add(GetSquadProgressB_Monitor)
+end
+
+function GetSquadProgressB_Monitor()
+	
+	local sg_tempB = SGroup_CreateIfNotFound("sg_tempB")
+	
+	Player_GetAllSquadsNearMarker(player1,sg_tempB,mkr_ambush_position_b, 25)
+--	SGroup_Filter(sg_tempB,SBP.MONGOL.UNIT_KNIGHT_2_MON, FILTER_KEEP)
+	
+	local unitCount = SGroup_CountSpawned(sg_tempB)
+
+	if unitCount < AMOUNT_ALLY_AT_POINTS then 
+		Objective_SetProgressBar(SOBJ_GetSquadToPositionB, (unitCount / AMOUNT_ALLY_AT_POINTS))
+	else
+		Objective_SetProgressBar(SOBJ_GetSquadToPositionB, (unitCount / AMOUNT_ALLY_AT_POINTS))
+		Objective_Complete(SOBJ_GetSquadToPositionB)
+		Rule_RemoveMe()
+	end
+
+	
+end
+
+function GetSquadToPositionB_OnComplete()
+	
+	Objective_RemoveUIElements(SOBJ_GetSquadToPositionB,hpid_AmbushB)
+
+end
+
+function GetSquadToPositionC_UI()
+	
+	hpid_AmbushC = Objective_AddUIElements(SOBJ_GetSquadToPositionC, mkr_ambush_position_c, true,"$11172160", true, nil, nil, nil)
+	Objective_SetProgressBar(SOBJ_GetSquadToPositionC, 0)
+	Objective_AddGroundReticule(SOBJ_GetSquadToPositionC, mkr_ambush_position_c, Marker_GetProximityRadius(mkr_ambush_position_c), BP_GetReticuleBlueprint("capture_friendly"))
+
+end
+
+-- function starts the Position Squad C monitor
+function GetSquadToPositionC_Start()
+	
+	Rule_Add(GetSquadProgressC_Monitor)
+end
+
+
+function GetSquadProgressC_Monitor()
+	local sg_tempC = SGroup_CreateIfNotFound("sg_tempC")
+	
+	Player_GetAllSquadsNearMarker(player1,sg_tempC,mkr_ambush_position_c, 20)
+--	SGroup_Filter(sg_tempC,SBP.MONGOL.UNIT_KNIGHT_2_MON, FILTER_KEEP)
+	
+	local unitCount = SGroup_CountSpawned(sg_tempC)
+
+	if unitCount < AMOUNT_ALLY_AT_POINTS_Central then 
+		Objective_SetProgressBar(SOBJ_GetSquadToPositionC, (unitCount / AMOUNT_ALLY_AT_POINTS_Central))
+	else
+		Objective_SetProgressBar(SOBJ_GetSquadToPositionC, (unitCount / AMOUNT_ALLY_AT_POINTS_Central))
+		Objective_Complete(SOBJ_GetSquadToPositionC)
+		Rule_RemoveMe()
+	end
+
+	
+end
+
+function GetSquadToPositionC_OnComplete()
+	
+	Objective_RemoveUIElements(SOBJ_GetSquadToPositionC,hpid_AmbushC)
+
+end
+
+
+-- function called when ambush setup is done
+function SetupTheRusAmbush_OnComplete()
+	Music_RestartAfterObjective(2.5)
+	
+	Objective_Start(OBJ_DestroyTheRusUltimate, false, true)
+	
+end

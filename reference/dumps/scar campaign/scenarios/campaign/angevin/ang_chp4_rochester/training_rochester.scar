@@ -1,0 +1,684 @@
+--
+-- Rochester - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+
+--
+--Template Refrences--
+--"LeftClickTrainingDataTemplate"
+--"RightClickTrainingDataTemplate"
+--"GenericTrainingDataTemplate"
+--
+
+local goal_heal = "healing"
+local goal_holysite = "holysite"
+local goal_buildrelic = "buildrelic"
+local goal_market = "market"
+local goal_buysell = "buysell"
+local goal_producetrader = "producetraders"
+local goal_assigntrader = "assigntraders"
+
+function Rochester_Tutorials_Init()
+	-- if on xbox, a couple training sequences have variant steps
+	if UI_IsXboxControllerUI() then
+		MissionTutorial_Healing_Xbox()
+		MissionTutorial_Market_Xbox()
+	else
+		MissionTutorial_Healing()
+		MissionTutorial_Market()	
+	end
+	
+	MissionTutorial_HolySite()
+	MissionTutorial_BuySell()
+	MissionTutorial_ProduceTrader()
+	MissionTutorial_AssignTrader()
+end
+
+function MissionTutorial_Init()	-- called from the mission's Mission_Start() function, so post-intro
+	
+	-- this enables the tutorial system, regardless of preferences
+	
+	--Training_Init()
+	--Training_ForceGoalsActive()	
+	
+	--if Rule_Exists(Training_Update) == false then -- if it hasn't already been started up...
+		--Rule_AddInterval( Training_Update, 0.5)
+	--end
+	
+end
+
+--------------------------------------------------------------
+-- Monks Healing training hints
+--------------------------------------------------------------
+
+function MissionTutorial_Healing_Xbox()
+	
+	-- "Wounded units can be healed when not in combat. Press D-Pad Right to Select a Monk."
+	local selectMonk = Training_Goal("Squad", {Message = "$11248621", DataTemplate="GenericTrainingDataTemplate"}, Healing_MonkIsSelected)
+	
+	--"Move the Monk close to a wounded unit and they will begin healing."
+	local targetWounded = Training_Goal("Squad", {Message = "$11248622", DataTemplate="GenericTrainingDataTemplate"}, Healing_TargetWounded)
+
+	healSequence = Training_GoalSequence(goal_heal, 1, 0, Healing_TriggerPredicate_Xbox, CampaignTraining_TimeoutIgnorePredicate, nil, nil, true, {selectMonk, targetWounded})
+	
+	Training_AddGoalSequence(healSequence)
+	Training_EnableGoalSequenceByID(healSequence, true)
+end
+
+function MissionTutorial_Healing()
+	
+	-- "Wounded units can be healed when not in combat. Select a Monk."
+	local selectMonk = Training_Goal("Squad", {Message = "$11191769", DataTemplate="LeftClickTrainingDataTemplate"}, Healing_MonkIsSelected)
+	
+	-- "Use Heal."
+	local useHeal = Training_Goal("PBG", {Message = "$11191770", DataTemplate="LeftClickTrainingDataTemplate"}, Healing_UseHeal)
+	
+	--"Target wounded units."
+	local targetWounded = Training_Goal("Squad", {Message = "$11191771", DataTemplate="LeftClickTrainingDataTemplate"}, Healing_TargetWounded)
+
+	healSequence = Training_GoalSequence(goal_heal, 1, 0, Healing_TriggerPredicate, CampaignTraining_TimeoutIgnorePredicate, nil, nil, true, {selectMonk, useHeal, targetWounded})
+	
+	Training_AddGoalSequence(healSequence)
+	Training_EnableGoalSequenceByID(healSequence, true)
+end
+
+function Healing_TriggerPredicate_Xbox(goalSequence)
+	sg_monks = SGroup_CreateIfNotFound("sg_monks")
+	Player_GetAll(player1, sg_monks)
+	SGroup_Filter(sg_monks, "scar_monk", FILTER_KEEP)
+		
+	if SGroup_CountSpawned(sg_monks) > 0 then
+		goalSequence.goals[1].key = SGroup_GetSquadAt(sg_monks, 1)
+		local woundedBool, woundedTarget = FindWounded()
+		if woundedTarget ~= nil and woundedBool == true then
+			goalSequence.goals[2].key = woundedTarget
+			return true
+		end
+	end	
+	
+end
+
+function Healing_TriggerPredicate(goalSequence)
+	sg_monks = SGroup_CreateIfNotFound("sg_monks")
+	Player_GetAll(player1, sg_monks)
+	SGroup_Filter(sg_monks, "scar_monk", FILTER_KEEP)
+		
+	if SGroup_CountSpawned(sg_monks) > 0 then
+		goalSequence.goals[1].key = SGroup_GetSquadAt(sg_monks, 1)
+		goalSequence.goals[2].key = BP_GetAbilityBlueprint("monk_heal_target")
+		local woundedBool, woundedTarget = FindWounded()
+		if woundedTarget ~= nil and woundedBool == true then
+			goalSequence.goals[3].key = woundedTarget
+			return true
+		end
+	end	
+	
+end
+
+function Healing_MonkIsSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Filter(sg_currentSelection, "scar_monk", FILTER_KEEP)
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function Healing_UseHeal(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Clear(sg_temp)
+	SGroup_Filter(sg_currentSelection, "scar_monk", FILTER_KEEP, sg_temp)
+	if SGroup_CountSpawned(sg_currentSelection) > 0 and SGroup_CountSpawned(sg_temp) < 1 then
+		return training_currentAbilityBlueprint == BP_GetAbilityBlueprint("monk_heal_target")
+	else
+		return false
+	end
+end
+
+function Healing_TargetWounded(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Clear(sg_temp)
+	SGroup_Filter(sg_currentSelection, "scar_monk", FILTER_KEEP, sg_temp)
+	if SGroup_CountSpawned(sg_currentSelection) > 0 and SGroup_CountSpawned(sg_temp) < 1 then
+		if goal.key == nil then
+			local woundedBool, woundedTarget = FindWounded()
+			goal.key = woundedTarget
+		end
+		return Entity_GetStateModelInt(Squad_GetFirstEntity(SGroup_GetSquadAt(sg_currentSelection, 1)), "healing_count") > 0
+		--return Squad_GetHealthPercentage(goal.key, false) >= 1.0
+	else
+		return false
+	end
+end
+
+function FindWounded()
+	
+	local squadID = nil
+	
+	local _IsCanidate = function(gid, index, sid)
+		if Squad_GetHealthPercentage(sid, false) < 1.0 then
+			if Squad_IsUnderAttack(sid, 3) == false and Squad_IsAttacking(sid, 3) == false then
+				squadID = sid
+				return true
+			end
+		end
+	end
+	
+	Player_GetAll(player1)
+	
+	--Remove gaia (we don't want to heal sheep)
+	SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+	return SGroup_ForEachAllOrAny(sg_allsquads, ANY, _IsCanidate), squadID
+end
+
+--------------------------------------------------------------
+-- Relic training hints
+--------------------------------------------------------------
+
+function MissionTutorial_HolySite()
+	
+	-- "Monks can secure holy sites. Select a Monk."
+	local selectMonk = Training_Goal("Squad", {Message = "$11191772", DataTemplate="LeftClickTrainingDataTemplate" }, MonkIsSelected)
+	
+	-- "Secure the holy site by moving your monk to it."
+	local secureHolySite = Training_Goal("Entity", {Message = "$11191773", DataTemplate="RightClickTrainingDataTemplate"}, MonkIsAtSite)
+	
+	holysiteSequence = Training_GoalSequence(goal_holysite, 1, 0, 
+		HolySite_TriggerPredicate, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		HolySite_BypassPredicate, 
+		true, 
+		{selectMonk, secureHolySite}
+	)
+	
+	Training_AddGoalSequence(holysiteSequence)
+	Training_EnableGoalSequenceByID(holysiteSequence, true)
+	
+end
+
+function HolySite_TriggerPredicate(goalSequence)
+	
+	local _HolySiteLocation = function(gid, index, eid)
+		if Player_CanSeeEntity(player1, eid) then
+			goalSequence.goals[2].key = eid
+			return
+		end
+	end
+	EGroup_ForEachAllOrAny(eg_holysites, ANY, _HolySiteLocation)
+		
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_monk", FILTER_KEEP)
+	
+	if scartype(goalSequence.goals[2].key) == ST_ENTITY and SGroup_CountSpawned(sg_allsquads) > 0 then
+		goalSequence.goals[1].key = SGroup_GetSquadAt(sg_allsquads, 1)
+		return true
+	end
+	
+end
+
+function HolySite_BypassPredicate(goalSequence)
+	
+	local _HolySiteLocation = function(gid, index, eid)
+		if World_OwnsEntity(eid) ~= true then
+			if Entity_GetPlayerOwner(eid) == player1 then
+				return true
+			end
+		end
+	end
+	if EGroup_ForEachAllOrAny(eg_holysites, ANY, _HolySiteLocation) then
+		return true
+	end
+end
+
+function MonkIsSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Filter(sg_currentSelection, "scar_monk", FILTER_KEEP)
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function MonkIsAtSite(goal)
+	local site_pos = Util_GetPosition(goal.key)
+	Player_GetAllSquadsNearMarker(player1, sg_temp, site_pos, 12)
+	SGroup_Filter(sg_temp, "scar_monk", FILTER_KEEP)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		return true
+	end
+end
+
+--------------------------------------------------------------
+-- Build Relic training hints
+--------------------------------------------------------------
+--function MissionTutorial_BuildRelics()
+	--local selectMonastery = Training_Goal("Entity", {Message = "Relics can be produced at monasteries. Select a monastery.", DataTemplate="LeftClickTrainingDataTemplate" }, BuildRelic_MonasteryIsSelected)
+	--local buildRelic = Training_Goal("PBG", {Message = "Produce a relic.", DataTemplate="LeftClickTrainingDataTemplate"}, BuildRelic_RelicIsBuilding)
+	
+	--buildRelicSequence = Training_GoalSequence(goal_buildrelic, 1, 0, BuildRelic_TriggerPredicate, BuildRelic_IgnorePredicate, nil, BuildRelic_BypassPredicate, true, {selectMonastery, buildRelic})
+	
+	--Training_AddGoalSequence(buildRelicSequence)
+	--Training_EnableGoalSequenceByID(buildRelicSequence, true)
+--end
+
+--function BuildRelic_TriggerPredicate(goalSequence)	
+	----eg_holysites = EGroup_CreateIfNotFound("eg_holysites")
+	----World_GetAllNeutralEntities(eg_holysites)
+	----EGroup_Filter(eg_holysites, BP_GetEntityBlueprintByPbgID(193967), FILTER_KEEP) --Holy Sites
+	----Use region_dist_relics instead
+	
+	--local _HolySiteSpotted = function(gid, index, eid)
+		--if Player_CanSeeEntity(player1, eid) then
+			--return true
+		--end
+	--end
+	----EGroup_ForEachAllOrAny(eg_holysites, ANY, _HolySiteLocation)
+	
+	--eg_monasteries = EGroup_CreateIfNotFound("eg_monasteries")
+	--Player_GetAll(player1, eg_monasteries)
+	--EGroup_Filter(eg_monasteries, "monastery", FILTER_KEEP)
+	--EGroup_FilterUnderConstruction(eg_monasteries, FILTER_REMOVE)
+		
+	--if EGroup_ForEachAllOrAny(region_dist_relics, ANY, _HolySiteSpotted) and EGroup_CountSpawned(eg_monasteries) > 0 and Player_GetResource(player1, RT_Gold) >= 150 then
+		--goalSequence.goals[1].key = EGroup_GetEntityAt(eg_monasteries, 1)
+		--goalSequence.goals[2].key = BP_GetAbilityBlueprint("monastery_create_relic")
+		--return true
+	--end
+--end
+
+--function BuildRelic_IgnorePredicate(goalSequence)
+	----eg_relics = EGroup_CreateIfNotFound("eg_relics")
+	----World_GetAllNeutralEntities(eg_relics)
+	----EGroup_Filter(eg_relics, "relic", FILTER_KEEP)
+	
+	--local _RelicSpotted = function(gid, index, eid)
+		--if Player_CanSeeEntity(player1, eid) then
+			--return true
+		--end
+	--end
+	--return EGroup_ForEachAllOrAny(eg_relics, ANY, _RelicSpotted)
+--end
+
+--function BuildRelic_BypassPredicate(goalSequence)
+	--eg_monasteries = EGroup_CreateIfNotFound("eg_monasteries")
+	--Player_GetAll(player1, eg_monasteries)
+	--EGroup_Filter(eg_monasteries, "monastery", FILTER_KEEP)
+	
+	--local _HasRelic = function(gid, index, eid) 
+		--if Entity_GetStateModelFloat(eid, "Relic_Count") > 0 then
+			--return true
+		--end
+	--end
+	--return EGroup_ForEachAllOrAny(eg_monasteries, ANY, _HasRelic)
+--end
+
+--function BuildRelic_MonasteryIsSelected(goal)
+	--Misc_GetSelectedEntities(eg_currentSelection, true)
+	--EGroup_Filter(eg_currentSelection, "monastery", FILTER_KEEP)
+	--if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		--return true
+	--end
+	
+	--return false
+--end
+
+--function BuildRelic_RelicIsBuilding(goal)
+	--if training_currentAbilityBlueprint == goal.key or training_previousAbilityBlueprint == goal.key then
+		--return true
+	--end
+--end
+
+
+--------------------------------------------------------------
+-- Market training hints
+--------------------------------------------------------------
+
+function MissionTutorial_Market()
+
+	local selectVillager = Training_Goal("Squad", {Message = "$11191774", DataTemplate="LeftClickTrainingDataTemplate"}, Market_VillagerIsSelected) --"Select a villager to build a Market."
+	local openEconomicTab = Training_Goal("EconomicCommandCardTab", {ID= "Open the economic tab", Message= 1001507, DataTemplate="LeftClickTrainingDataTemplate"}, UserHasEconomicCommandCardTabOpen) -- "Open the economic tab."
+	local isGoingToBuildMarket = Training_Goal(EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG, {Message = "$11191775", DataTemplate="LeftClickTrainingDataTemplate"}, Market_PlayerIsGoingToBuild) --"Select the Market."
+	local hasBuiltMarket = Training_Goal("Cursor", {Message = "$11191776", DataTemplate="GenericTrainingDataTemplate"}, Market_IsBuilt) --"Place the Market in an open location"
+	
+	local goals_table = {selectVillager, isGoingToBuildMarket, hasBuiltMarket}
+	if UI_IsXboxKBMUI() then -- Xbox KBM needs the correct command card to be selected to build the market
+		goals_table = {selectVillager, openEconomicTab, isGoingToBuildMarket, hasBuiltMarket}
+	end
+	
+	marketSequence = Training_GoalSequence(goal_market, 1, 0, 
+		Market_TriggerPredicate, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		Market_MarketExists, 
+		true, 
+		goals_table
+	)
+	
+	Training_AddGoalSequence(marketSequence)
+	Training_EnableGoalSequenceByID(marketSequence, true)
+	
+end
+
+function MissionTutorial_Market_Xbox()
+
+	local selectVillager = Training_Goal("Squad", {Message = "$11254264", DataTemplate="GenericTrainingDataTemplate"}, Market_VillagerIsSelectedAndRadialOpen) --"Select a villager to build a Market."
+	local econBuildings = Training_Goal ("RadialDPadLeft", {Message = "$1001027", DataTemplate="RadialTrainingDataTemplate"}, Market_EconRadialOpen )
+	local isGoingToBuildMarket = Training_Goal(EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG, {Message = "$11191775", DataTemplate="RadialTrainingDataTemplate"}, Market_PlayerIsGoingToBuild) --"Select the Market."
+	local hasBuiltMarket = Training_Goal("LooseReticle", {Message = "$11191776", DataTemplate="GenericTrainingDataTemplate"}, Market_IsBuilt) --"Place the Market in an open location"
+	
+	marketSequence = Training_GoalSequence(goal_market, 1, 0, 
+		Market_TriggerPredicate, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		Market_MarketExists, 
+		true, 
+		{selectVillager, econBuildings, isGoingToBuildMarket, hasBuiltMarket}
+	)
+	
+	Training_AddGoalSequence(marketSequence)
+	Training_EnableGoalSequenceByID(marketSequence, true)
+	
+end
+
+
+function Market_TriggerPredicate(goalSequence)
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+
+	if SGroup_CountSpawned(sg_allsquads) > 0 
+		and Player_CanConstruct(player1, EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG) then
+			local squad = SGroup_GetSquadAt(sg_allsquads, 1)
+			goalSequence.goals[1].key = Squad_GetID(squad)
+			return true
+	end
+end
+
+function Market_VillagerIsSelected(goal)
+	Misc_GetSelectedSquads(sg_temp, false)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		return SGroup_ContainsBlueprints(sg_temp, SBP.ENGLISH.UNIT_VILLAGER_1_ENG, ALL)
+	end
+	
+	return false
+end
+
+function Market_VillagerIsSelectedAndRadialOpen(goal)
+	
+	if IsEntityBeingPlacedOrBuilt (EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG) then
+		-- check if we are placing the market to prevent regressing at that step
+		return true
+	else
+		return Market_VillagerIsSelected(goal) and (UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu)
+	end
+end
+
+function Market_EconRadialOpen(goal)
+	
+	if IsEntityBeingPlacedOrBuilt (EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG) then
+		-- check if we are placing the market to prevent regressing at that step
+		return true
+	else
+		return (UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu) and (UI_GetActiveRelicRadialMenuDirection() == RMD_Left)
+	end
+end
+
+
+function Market_PlayerIsGoingToBuild(goal)
+	return IsEntityBeingPlacedOrBuilt (EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG)
+end
+
+function Market_IsBuilt(goal)
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG, FILTER_KEEP)
+	return EGroup_CountSpawned(eg_allentities) > 0	
+end
+
+function Market_MarketExists(goalSequence)
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG, FILTER_KEEP)
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		return true
+	end
+end
+		
+--------------------------------------------------------------
+-- Market Buy/Sell training hints
+--------------------------------------------------------------
+	
+function MissionTutorial_BuySell()
+	local selectMarket = Training_Goal("Entity", {Message = "$11191777", DataTemplate="LeftClickTrainingDataTemplate"}, BuySell_MarketIsSelected) --"You have surplus resources, select the Market to trade."
+	
+	local goal_OpenRadial = Training_Goal(
+		"OpenContextualRadial",
+		{
+			ID = "goal_OpenRadial",
+			Message = "$1001463", -- Press RT to show the Villager Radial Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		UserHasOpenedContextualRadial
+	)
+	
+	local hoverResource = Training_Goal("PBG", {Message = "$11191778", DataTemplate="LeftClickTrainingDataTemplate"}, BuySell_ResourceIsHovered) --"You can sell surplus resources for gold."
+
+	-- set the goals table for the sequence based on what input type this is
+	-- xbox gets a few extra steps
+	local goals_table = {selectMarket, hoverResource	}
+	if UI_IsXboxControllerUI() then
+		goals_table = {selectMarket, goal_OpenRadial, hoverResource	}
+	end
+	
+	
+	
+	buysellSequence = Training_GoalSequence(goal_buysell, 
+		1, 0, 
+		BuySell_TriggerPredicate, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		nil, 
+		true, 
+		goals_table
+	)
+	
+	Training_AddGoalSequence(buysellSequence)
+	Training_EnableGoalSequenceByID(buysellSequence, true)
+	
+	end
+
+function BuySell_TriggerPredicate(goalSequence)
+	local gold = {amount = Player_GetResource(player1, RT_Gold), type = RT_Gold, buyABP = nil, sellABP = nil}
+	local wood = {amount = Player_GetResource(player1, RT_Wood), type = RT_Wood, buyABP = BP_GetAbilityBlueprint("core_market_buy_wood"), sellABP = BP_GetAbilityBlueprint("core_market_sell_wood")}
+	local food = {amount = Player_GetResource(player1, RT_Food), type = RT_Food, buyABP = BP_GetAbilityBlueprint("core_market_buy_food"), sellABP = BP_GetAbilityBlueprint("core_market_sell_food")}
+	local stone = {amount = Player_GetResource(player1, RT_Stone), type = RT_Stone, buyABP = BP_GetAbilityBlueprint("core_market_buy_stone"), sellABP = BP_GetAbilityBlueprint("core_market_sell_stone")}
+	local resources = {
+		wood,
+		food,
+		stone,		
+	}
+	local lowestResource = nil
+	local highestResource = nil
+	
+	-- the index of the goal that points to the proper ability varies per control scheme
+	local PBGindex = 2
+	if UI_IsXboxControllerUI() then
+		PBGindex = 3
+	end
+		
+	local _GetMinMax = function(check)
+		if lowestResource == nil or check.amount <= lowestResource.amount then
+			lowestResource = check
+		end
+		
+		if highestResource == nil or check.amount >= highestResource.amount then
+			highestResource = check
+		end
+	end
+	
+	for i in ipairs(resources) do
+		_GetMinMax(resources[i])
+	end
+	
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "trade_post", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		goalSequence.goals[1].key = EGroup_GetEntityAt(eg_allentities, 1)
+		if gold.amount > 500 and lowestResource.amount <= 100 then
+			if lowestResource.buyABP ~= nil then
+				goalSequence.goals[PBGindex].key = lowestResource.buyABP
+			end
+			goalSequence.goals[PBGindex].data.Message = Loc_GetString(11191779) --"You can buy resources with surplus gold."
+			return true
+		elseif highestResource.amount >= 1000 and gold.amount <= 100 then
+			if highestResource.sellABP ~= nil then
+				goalSequence.goals[PBGindex].key = highestResource.sellABP
+			end
+			goalSequence.goals[PBGindex].data.Message = Loc_GetString(11191778) --"You can sell surplus resources for gold."
+			return true
+		else
+			return false
+		end
+	end	
+end
+
+function BuySell_MarketIsSelected(goal)
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	EGroup_Filter(eg_currentSelection, "trade_post", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function BuySell_ResourceIsHovered(goal)
+	return PredicateHelper_HasUserHoveredOverBP(goal, goal.key)
+end
+
+--------------------------------------------------------------
+-- Market Produce Traders training hints
+--------------------------------------------------------------
+function MissionTutorial_ProduceTrader()
+	local selectMarket = Training_Goal("Entity", {Message="$11191780", DataTemplate="LeftClickTrainingDataTemplate"}, ProduceTrader_MarketIsSelected) --"You can make gold trading with other settlements. Select the Market."
+	local buildTrader = Training_Goal("PBG", {Message="$11191781", DataTemplate="LeftClickTrainingDataTemplate"}, ProduceTrader_TraderIsBuilding) --"Produce a trader."
+
+	produceTraderSequence = Training_GoalSequence(goal_producetrader, 
+		1, 0, 
+		ProduceTrader_TriggerPredicate, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		ProduceTrader_BypassPredicate, 
+		true, 
+		{selectMarket, buildTrader}
+	)
+	
+	Training_AddGoalSequence(produceTraderSequence)
+	Training_EnableGoalSequenceByID(produceTraderSequence, true)
+end
+
+function ProduceTrader_TriggerPredicate(goalSequence)
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, EBP.ENGLISH.BUILDING_ECON_MARKET_CONTROL_ENG, FILTER_KEEP)
+	if EGroup_CountSpawned(eg_allentities) > 0 
+		and Player_CanSeeEGroup(player1, eg_trade_settlement, ANY)
+		and Player_GetResource(player1, RT_Gold) >= 50 
+		and Player_GetResource(player1, RT_Wood) >= 100 then
+		goalSequence.goals[1].key = EGroup_GetEntityAt(eg_allentities, 1)
+		goalSequence.goals[2].key = Cardinal_ConvertTypeToSquadBlueprint("scar_trade_cart", player1)
+		return true
+	end
+end
+
+function ProduceTrader_BypassPredicate(goalSequence)
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_trade_cart", FILTER_KEEP)
+	if SGroup_CountSpawned(sg_allsquads) > 0 then
+		return true
+	end
+end
+
+function ProduceTrader_MarketIsSelected(goal)
+	Misc_GetSelectedEntities(eg_currentSelection, true)
+	EGroup_Filter(eg_currentSelection, "trade_post", FILTER_KEEP)
+	if EGroup_CountSpawned(eg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function ProduceTrader_TraderIsBuilding(goal)
+	Player_GetAll(player1)
+	EGroup_Filter(eg_allentities, "trade_post", FILTER_KEEP)
+	
+	local _isBuildingTrader = function(gid, index, eid)
+		if Entity_IsProducingSquad(eid, SBP.ENGLISH.UNIT_TRADE_CART_ENG) then
+			return true
+		end
+	end
+	
+	return EGroup_ForEachAllOrAny(eg_allentities, ANY, _isBuildingTrader)	
+end
+
+
+--------------------------------------------------------------
+-- Market Assign Traders training hints
+--------------------------------------------------------------
+function MissionTutorial_AssignTrader()
+	local selectTrader = Training_Goal("Squad", {Message = "$11191782", DataTemplate="LeftClickTrainingDataTemplate"}, AssignTrader_TraderIsSelected) --"You can make gold trading with other settlements. Select the Trader."
+	local assignTrader = Training_Goal("Entity", {Message = "$11191783", DataTemplate="RightClickTrainingDataTemplate"}, AssignTrader_TraderIsAssigned) --"Assign the trader to the trade settlement."
+
+	assignTraderSequence = Training_GoalSequence(goal_assigntrader, 
+		1, 0, 
+		AssignTrader_TriggerPredicate, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		AssignTrader_BypassPredicate, 
+		true, 
+		{selectTrader, assignTrader}
+	)
+	
+	Training_AddGoalSequence(assignTraderSequence)
+	Training_EnableGoalSequenceByID(assignTraderSequence, true)
+end
+
+function AssignTrader_TriggerPredicate(goalSequence)
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "scar_trade_cart", FILTER_KEEP)
+	if SGroup_CountSpawned(sg_allsquads) > 0 and Player_CanSeeEGroup(player1, eg_trade_settlement, ANY) then
+		goalSequence.goals[1].key = SGroup_GetSquadAt(sg_allsquads, 1)
+		goalSequence.goals[2].key = EGroup_GetEntityAt(eg_trade_settlement, 1)
+		return true
+	end
+end
+
+function AssignTrader_BypassPredicate(goalSequence)
+	if AnyTradersTrading(player1) then
+		return true
+	end
+end
+
+function AssignTrader_TraderIsSelected(goal)
+	Misc_GetSelectedSquads(sg_currentSelection, true)
+	SGroup_Filter(sg_currentSelection, "scar_trade_cart", FILTER_KEEP)
+	if SGroup_CountSpawned(sg_currentSelection) > 0 then
+		return true
+	end
+	
+	return false
+end
+
+function AssignTrader_TraderIsAssigned(goal)
+	return AnyTradersTrading(player1)
+end
+
+
+function AnyTradersTrading(player)
+	return Player_GetActiveTraderCount(player) > 0
+end

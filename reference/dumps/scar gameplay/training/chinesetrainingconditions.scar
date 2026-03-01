@@ -1,0 +1,380 @@
+-----------------------------------------------------------------------
+--
+-- Chinese Training Conditions
+--
+-- (c) Relic Entertainment 2019
+--
+-----------------------------------------------------------------------
+
+import("training.scar")
+import("cardinal.scar")
+
+function UserCannotSeeEntityKey(goalSequence)
+	local key = goalSequence.goals[goalSequence.currentGoalIndex].key
+	
+	if scartype(key) == ST_NUMBER then 
+		
+		if Entity_IsValid(key) == false then
+			return true
+		elseif Entity_IsAlive(Entity_FromID(key)) == false then
+			return true
+		elseif Misc_IsEntityOnScreen(Entity_FromID(key), 100) == false then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function HasTownCenterNoOfficial(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingLongInterval then	
+		local localPlayer = Game_GetLocalPlayer()
+		Player_GetAll(localPlayer)
+		local officialBP = Cardinal_ConvertTypeToSquadBlueprint("official", localPlayer)
+		local townCenterBP = BP_GetEntityBlueprint("building_town_center_chi")
+		local townCenterCapitalBP = BP_GetEntityBlueprint("building_town_center_capital_chi")
+		local entities = Player_GetEntities(localPlayer)
+		local hasTax = false
+		local taxRequirement = 50
+		
+		goalSequence.goals[1].key = nil
+		goalSequence.goals[2].key = nil
+		
+		for i = 1, EGroup_Count(entities) do
+			local entity = EGroup_GetEntityAt(entities, i)
+			if entity ~= nil then
+				-- Does any building have more than the required amount of tax collected.
+				if hasTax == false and Entity_GetStateModelFloat(entity, "additional_carry_gold_amount") > taxRequirement then
+					hasTax = true
+				end
+				-- Does that player have a town center on screen.
+				if (Entity_GetBlueprint(entity) == townCenterBP or Entity_GetBlueprint(entity) == townCenterCapitalBP) and Misc_IsEntityOnScreen(entity, 100) then
+					goalSequence.goals[1].key = Entity_GetID(entity)
+				end
+				-- If both requirements are found then end the for loop.
+				if hasTax and goalSequence.goals[1].key ~= nil then
+					goalSequence.goals[2].key = officialBP
+					return true
+				end
+			end
+		end
+		
+		--if goalSequence.goals[1].key ~= nil and hasTax then
+			--return true
+		--end
+	end
+	
+	return false
+end
+
+function UserHasSelectedTownCenter(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	local townCenterBP = BP_GetEntityBlueprint("building_town_center_chi")
+	local townCenterCapitalBP = BP_GetEntityBlueprint("building_town_center_capital_chi")
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+	for i = 1, EGroup_Count(eg_currentSelection) do
+		local entity = EGroup_GetEntityAt(eg_currentSelection, i)
+		if Entity_GetBlueprint(entity) == townCenterBP or Entity_GetBlueprint(entity) == townCenterCapitalBP then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasViewedOfficial(goal)
+	if _g_tempOfficialTimer == nil then
+		_g_tempOfficialTimer = Training_GetNewTimerID()
+		Timer_Start(_g_tempOfficialTimer, 6)
+	else
+		local currentTime = Timer_GetRemaining(_g_tempOfficialTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_tempOfficialTimer)
+			_g_tempOfficialTimer = nil
+			return true	
+		end
+	end
+end
+
+-- check if player has already built a Tax Official (bypass hint)
+function UserHasBuiltOfficial(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	local officialBP = Cardinal_ConvertTypeToSquadBlueprint("official", localPlayer)
+	
+	Player_GetAll(localPlayer)
+	EGroup_Filter(eg_allentities, "town_center", FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	local aTownCenterExists = EGroup_Count(eg_allentities) > 0
+
+	if aTownCenterExists then
+		local townCenter = EGroup_GetEntityAt(eg_allentities, 1)
+	
+		if Entity_IsProducingSquad(townCenter, officialBP) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+-------------------------------------------------------
+-- Conditions for Excess Tax Gold on a building
+-------------------------------------------------------
+
+-- checks if the player has a building on screen that has a lot of tax gold
+function UserHasBuildingWithTooMuchTax(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingLongInterval then	
+		local player = Game_GetLocalPlayer()
+		local entities = Player_GetEntities(player)
+		local taxRequirement = 70
+		goalSequence.goals[1].key = nil
+		
+		-- find building with enough tax in it
+		for i = 1, EGroup_Count(entities) do
+			local entity = EGroup_GetEntityAt(entities, i)
+			if entity ~= nil then
+				-- if the player has the building on screen then return true
+				if Misc_IsEntityOnScreen(entity, 100) and Entity_GetStateModelFloat(entity, "additional_carry_gold_amount") > taxRequirement then
+					goalSequence.goals[1].key = Entity_GetID(entity)
+					return true
+				end
+			end
+		end
+		
+		return false
+	end
+end
+
+-- check if the player has selected the building with too much tax
+function UserHasSelectedBuildingWithTooMuchTax(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	local building_id = goal.key
+	Misc_GetSelectedEntities(eg_currentSelection, false)
+
+	for i = 1, EGroup_Count(eg_currentSelection) do
+		local entity = EGroup_GetEntityAt(eg_currentSelection, i)
+		if building_id ~= nil and Entity_GetID(entity) == building_id then
+			return true
+		end
+	end
+
+	
+	return false
+end
+
+-- after a timer, remove hint about floating tax
+function UserHasViewedFloatingBuilding(goal)
+	if _g_FloatTaxBuildingTimer == nil then
+		_g_FloatTaxBuildingTimer = Training_GetNewTimerID()
+		Timer_Start(_g_FloatTaxBuildingTimer, 6)
+	else
+		local currentTime = Timer_GetRemaining(_g_FloatTaxBuildingTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_FloatTaxBuildingTimer)
+			_g_FloatTaxBuildingTimer = nil
+			return true	
+		end
+	end
+end
+
+-------------------------------------------------------
+-- Conditions for creating a Dynasty
+-------------------------------------------------------
+
+-- check if:
+-- there is an idle villager in view
+-- the player has built a dark age landmark
+-- the player can afford the 2nd dark age landmark
+function UserCanAffordSecondLandmark(goalSequence)
+	local localPlayer = Game_GetLocalPlayer()
+	local t_dark_age_wonder_ebps = Cardinal_ConvertTypeToEntityBlueprint("wonder_dark_age", localPlayer, true)
+	Player_GetAll(localPlayer)
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+	local squads = Player_GetSquads(localPlayer)
+	
+	goalSequence.goals[1].key = nil
+	goalSequence.goals[2].key = nil
+	
+	-- Get an idle Villager in view
+	for i = 1, SGroup_Count(squads) do
+		local squad = SGroup_GetSquadAt(squads, i)
+		
+		if squad ~= nil and Squad_GetBlueprint(squad) == villagerBP then
+			if Misc_IsSquadOnScreen(squad, 100) and Squad_IsIdle(squad) then
+				goalSequence.goals[1].key = Squad_GetID(squad)
+				break
+			end
+		end
+	end
+	
+	-- if the player has already built a Dark Age Landmark and can afford a second landmark and has an idle villager in view
+	if goalSequence.goals[1].key ~= nil and Player_GetStateModelFloat(localPlayer, "age1_wonders_built_chi") >= 1.0 then
+		for k, v in pairs(t_dark_age_wonder_ebps) do
+			if Player_CanConstruct(localPlayer, v) then
+				goalSequence.goals[2].key = v
+				return true
+			end	
+		end
+	end
+	
+	return false
+end
+
+-- check if player can afford the entity bp
+function Player_CanAffordEntity(player, entitybp)
+	local entity_res = Player_GetEntityBPCost(player, entitybp)
+	local player_res = Player_GetResources(player)
+	
+	if player_res.food >= entity_res.food
+	  and player_res.wood >= entity_res.wood
+	  and player_res.stone >= entity_res.stone
+	  and player_res.gold >= entity_res.gold then
+		
+		return true
+	end
+	return false
+end
+
+-- checks if Player selected the Villager
+function UserHasSelectedVillager(goal)
+	local localPlayer = Game_GetLocalPlayer()
+	local squad_id = goal.key
+	local villagerBP = Cardinal_ConvertTypeToSquadBlueprint("scar_villager", localPlayer)
+	if Squad_IsValid(squad_id) == false then
+		return false
+	end
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	for i = 1, SGroup_Count(sg_currentSelection) do
+		local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+		if squad ~= nil and Squad_GetBlueprint(squad) == villagerBP then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function UserHasViewedLandmark(goal)
+	if _g_tempLandmarkTimer == nil then
+		_g_tempLandmarkTimer = Training_GetNewTimerID()
+		Timer_Start(_g_tempLandmarkTimer, 6)
+	else
+		local currentTime = Timer_GetRemaining(_g_tempLandmarkTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_tempLandmarkTimer)
+			_g_tempLandmarkTimer = nil
+			return true	
+		end
+	end
+end
+
+-------------------------------------------------------
+-- Conditions for Pagoda Training
+-------------------------------------------------------
+
+function UserHasPagodaAndIdleMonk(goalSequence)
+	local player = Game_GetLocalPlayer()
+	pagodaEBP = Cardinal_ConvertTypeToEntityBlueprint("pagoda_chi", player, true)
+	local monkSBP = Cardinal_ConvertTypeToSquadBlueprint("scar_monk", player)
+	goalSequence.goals[1].key = nil
+	Player_GetAll(player)
+	SGroup_Filter(sg_allsquads, monkSBP, FILTER_KEEP)
+	EGroup_Filter(eg_allentities, pagodaEBP, FILTER_KEEP)
+	
+	-- check if player has at least one monk and pagoda
+	local count = EGroup_Count(eg_allentities)
+	if SGroup_Count(sg_allsquads) > 0 and count > 0 then
+		-- find an empty Pagoda
+		for i = 1, count do
+			local entity = EGroup_GetEntityAt(eg_allentities, i)
+			if Entity_IsHoldingAny(entity) == false and Misc_IsEntityOnScreen(entity, 100) then
+				goalSequence.goals[1].key = Entity_GetID(entity)
+				return true
+			end
+		end
+		-- didn't find an empty pagoda
+		return false
+	else
+		return false
+	end
+end
+
+
+function UserHasGarrisonedPagodaBypass(goal)
+	local player = Game_GetLocalPlayer()
+	pagodaEBP = Cardinal_ConvertTypeToEntityBlueprint("pagoda_chi", player, true)
+	Player_GetAll(player)
+	EGroup_Filter(eg_allentities, pagodaEBP, FILTER_KEEP)
+	
+	-- check if player has at least one garrisoned pagoda
+	local count = EGroup_Count(eg_allentities)
+	if count > 0 then
+		-- find an empty Pagoda
+		for i = 1, count do
+			local entity = EGroup_GetEntityAt(eg_allentities, i)
+			if Entity_IsHoldingAny(entity) == true then
+				return true
+			end
+		end
+		-- didn't find a garrisoned pagoda
+		return false
+	else
+		return false
+	end
+end
+
+-- check if the Pagoda was garrisoned
+function UserGarrisonedPagoda(goal)
+	
+	if goal.key ~= nil and Entity_IsHoldingAny(Entity_FromID(goal.key)) == true then
+		return true
+	else
+		return false
+	end
+end
+
+-------------------------------------------------------
+-- Conditions for Granary Training
+-------------------------------------------------------
+
+function UserHasBuiltGranary(goalSequence)
+	local player = Game_GetLocalPlayer()
+	granaryEBP = BP_GetEntityBlueprint("building_dynasty_granary_control_chi")
+	farmBP = Cardinal_ConvertTypeToEntityBlueprint("farm", player, false)
+	Player_GetAll(player)
+	EGroup_Filter(eg_allentities, granaryEBP, FILTER_KEEP)
+	goalSequence.goals[1].key = nil
+	local count = EGroup_Count(eg_allentities)
+	
+	if count > 0 then
+		
+		for i = 1, count do
+			local entity = EGroup_GetEntityAt(eg_allentities, i)
+			-- get nearby entities around the granaries and check for a farm
+			if Prox_ArePlayerEntitiesNearMarker(player, Util_GetPosition(entity), ANY, 30, farmBP, FILTER_KEEP) == false and Misc_IsEntityOnScreen(entity, 100) and Entity_GetBuildingProgress(entity) >= 1.0 and Player_CanConstruct(player, farmBP) then
+				goalSequence.goals[1].key = Entity_GetID(entity)
+				return true
+			else
+				return false
+			end
+		end
+	else
+		return false
+	end
+end
+
+-- check if there is a farm near the Granary
+function UserHasBuiltFarmNearGranary(goal)
+	local player = Game_GetLocalPlayer()
+	local entity = Entity_FromID(goal.key)
+	farmBP = Cardinal_ConvertTypeToEntityBlueprint("farm", player, true)
+	
+	if Prox_ArePlayerEntitiesNearMarker(player, Util_GetPosition(entity), ANY, 30, farmBP, FILTER_KEEP) == true then
+		return true
+	else
+		return false
+	end
+end

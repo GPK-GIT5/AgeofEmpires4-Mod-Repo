@@ -1,0 +1,529 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("sal_chp3_brokenpromise.scar")  
+
+function BeginInvasion_InitObjectives()
+
+	OBJ_BeginInvasion = {
+		Title = "$999676", -- BEGIN THE INVASION
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.SetSailStart,
+
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_BeginInvasion, ALL)
+		end
+	}
+
+	SOBJ_SetSail = {
+		Title = "$999677", -- Set Sail for England
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BeginInvasion,
+		StartAlongsideParent = true,
+		SetupUI = SetSail_UI,
+		PreStart = SetSail_PreStart,
+		OnStart = SetSail_Start,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			FOW_RevealMarker(mkr_pevensey_fow_reveal_01, 0)
+			FOW_RevealMarker(mkr_pevensey_fow_reveal_02, 0)
+			FOW_RevealMarker(mkr_pevensey_fow_reveal_03, 0)
+			FOW_RevealMarker(mkr_pevensey_fow_reveal_04, 0)
+			Objective_Start(SOBJ_UnloadArmy, false, true)
+		end
+	}
+
+	SOBJ_UnloadArmy = {
+		Title = "$999683", -- Disembark
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BeginInvasion,
+		StartAlongsideParent = false,
+		SetupUI = UnloadArmy_UI,
+		PreStart = UnloadArmy_PreStart,
+		OnStart = UnloadArmy_Start,
+		Intel_Start = EVENTS.UnloadArmyStart,
+		
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_BeachAmbush, true, true)
+		end
+	}
+	
+	SOBJ_BeachAmbush = {
+		Title = "$1001302", -- Repel the Ambush
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_BeginInvasion,
+		StartAlongsideParent = false,
+		SetupUI = BeachAmbush_UI,
+		PreStart = BeachAmbush_PreStart,
+		OnStart = BeachAmbush_StartSurviveAmbush,
+		
+		OnComplete = function()
+			Objective_Start(SOBJ_TakePevensey, true, true)
+		end
+	}
+
+	SOBJ_TakePevensey = {
+		Title = "$999685", -- Take Pevensey
+ 		Type = ObjectiveType_Primary,
+		Parent = OBJ_BeginInvasion,
+		StartAlongsideParent = false,
+		SetupUI = TakePevensey_UI,
+		OnStart = TakePevensey_Start,
+		Intel_Start = EVENTS.TakePevenseyStart,
+		Intel_Complete = EVENTS.PevenseyTaken,
+
+		OnComplete = function()
+			Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_army)
+	        World_SetInteractionStage(2)
+	        EGroup_SetPlayerOwner(eg_pevensey_structures, player1)
+	        sg_newVillagers = SGroup_CreateUnique()
+	        UnitEntry_DeploySquads(player1, sg_newVillagers, {{sbp = SBP.FRENCH.UNIT_VILLAGER_1_FRE, numSquads = 5 }}, mkr_pevensey_villager_spawn)
+	        Cmd_Move(sg_newVillagers, mkr_pevensey_villager_dest)
+	        Init_HastingsDefenders()
+	        --remove the various modifiers we added to Pevensey to prevent the player from burning it down
+	        EGroup_RestoreTargetingType(eg_pevensey_structures)
+	        EGroup_SetBurnExtEnabled(eg_pevensey_structures, true)
+	        Modifier_Remove(mod_pevensey1)
+	        Modifier_Remove(mod_pevensey2)
+	        ApplyProductionPromptMarkers()
+			Objective_Start(OBJ_LocateHastings, true, true)
+		end
+	}
+		
+	OBJ_LocateHastings = {
+		Title = "$1000928", -- Locate the Town of Hastings
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.MarchHastingsStart,
+		SetupUI = LocateHastings_UI,
+		OnStart = LocateHastings_Start,
+		
+		OnComplete = function()
+			Spawn_HastingsReinforcement()
+		end
+	}
+	
+	OBJ_TakeHastings = {
+		Title = "$999687", -- TAKE HASTINGS
+		Type = ObjectiveType_Primary,
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_TakeHastings, ALL)
+		end,
+		OnComplete = function()
+			Mission_Complete()
+		end
+	}
+
+	SOBJ_DestroyTC = {
+		Title = "$999689", -- Destroy the Town Center
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_TakeHastings,
+		StartAlongsideParent = true,
+		SetupUI = DestroyTC_UI,
+		OnStart = DestroyTC_Start,
+	}
+	-- Register all objectives
+	Objective_Register(OBJ_BeginInvasion)
+	Objective_Register(SOBJ_SetSail)
+	Objective_Register(SOBJ_UnloadArmy)
+	Objective_Register(SOBJ_BeachAmbush)
+	Objective_Register(SOBJ_TakePevensey)
+	Objective_Register(OBJ_LocateHastings)
+	Objective_Register(OBJ_TakeHastings)
+	Objective_Register(SOBJ_DestroyTC)
+end
+
+-- ///// SetSail //////////////////////////////////////////////
+function SetSail_UI()
+	
+	Objective_AddUIElements(SOBJ_SetSail, mkr_pevensey_landing, true, "$999677", true, 5)
+	Objective_AddGroundReticule(SOBJ_SetSail, mkr_pevensey_landing, 10, BP_GetReticuleBlueprint("aura_ring"), false)
+	
+end
+
+function SetSail_PreStart()
+	
+	Game_SetVisibility(VF_XboxUIMinimapFocus, true)
+	
+end
+
+function SetSail_Start()
+	
+	Goals_Minimap()
+	Rule_Add(SetSail_Monitor)
+	Rule_Add(SetSail_DialogueMonitor)
+	
+end
+
+function SetSail_Monitor()
+
+	if  Prox_AreSquadMembersNearMarker(sg_ships, mkr_pevensey_landing, false, 10) then
+
+		FOW_RevealMarker(mkr_beach_fow_reveal_01, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_02, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_03, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_04, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_05, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_06, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_07, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_08, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_09, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_10, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_11, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_12, 0)
+		FOW_RevealMarker(mkr_beach_fow_reveal_13, 0)
+		
+		Objective_Complete(SOBJ_SetSail, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+function SetSail_DialogueMonitor()
+
+	if Prox_AreSquadMembersNearMarker(sg_ships, mkr_pevensey_proximity, false) then
+		
+		Util_StartIntel(EVENTS.SetSailComplete)
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+-- ///// UnloadArmy //////////////////////////////////////////////
+function UnloadArmy_UI()
+	
+	Objective_AddUIElements(SOBJ_UnloadArmy, mkr_beach_fow_reveal_03, true, "$999683", true, 10)
+	Objective_AddGroundReticule(SOBJ_UnloadArmy, mkr_beach_fow_reveal_03, Marker_GetProximityRadiusOrDefault(mkr_beach_fow_reveal_03, 15), BP_GetReticuleBlueprint("aura_ring"), false)
+	Objective_SetProgressBar(SOBJ_UnloadArmy, 0)
+	
+end
+
+function UnloadArmy_PreStart()
+	
+	Player_SetAbilityAvailability(player1, BP_GetAbilityBlueprint("naval_hold_unload"), ITEM_DEFAULT)
+	disembarkedPevensey = false
+	
+	Rule_Add(UnloadArmy_Monitor)
+	Rule_AddInterval(ShipsMaintainPosition_Monitor, 1)
+	loadedTotal = GetTroopsEmbarked(sg_ships)
+	SGroup_SetSelectable(sg_embarked, false) 
+	
+end
+
+function UnloadArmy_Start()
+	
+	Goals_UnloadTroops()
+	
+end
+
+function UnloadArmy_Monitor()
+
+	local remainingLoaded = GetTroopsEmbarked(sg_ships)
+	
+	if not disembarkedPevensey and GetTroopsEmbarked(sg_ships) == 0 then
+
+		disembarkedPevensey = true
+		SGroup_SetSelectable(sg_ships, false) 
+	else
+		Objective_SetProgressBar(SOBJ_UnloadArmy, (loadedTotal-remainingLoaded)/loadedTotal)
+	end 
+	
+	if disembarkedPevensey then
+		
+		Objective_Complete(SOBJ_UnloadArmy, false, true)
+		
+		-- Give back control of all units except ships
+		Player_GetAll(player1)
+		SGroup_Filter(sg_allsquads, SBP.FRENCH.UNIT_NAVAL_TRANSPORT_SHIP_2_FRE, FILTER_REMOVE)
+		SGroup_SetSelectable(sg_allsquads, true)
+		
+		Rule_Remove(ShipsMaintainPosition_Monitor)
+		Rule_RemoveMe()
+	end
+
+end
+
+function ShipsMaintainPosition_Monitor()
+	
+	sg_ship = SGroup_CreateIfNotFound("sg_ship")
+	
+	for i = 1, SGroup_Count(sg_ships) do
+		
+		SGroup_Clear(sg_ship)
+		Util_SGroupAdd(sg_ship, SGroup_GetSpawnedSquadAt(sg_ships, i))
+		
+		if not Prox_AreSquadsNearMarker(sg_ship, mkr_pevensey_landing, ALL, 50) then
+			
+		    Cmd_Move(sg_ship, mkr_pevensey_landing)
+			SGroup_SetSelectable(sg_ship, false)
+			
+		elseif Prox_AreSquadsNearMarker(sg_ship, mkr_pevensey_landing, ALL, 50) then
+			
+			SGroup_SetSelectable(sg_ship, true)	
+		end
+	end
+	
+end
+
+-- ///// Beach Ambush //////////////////////////////////////////////
+function BeachAmbush_UI()
+	
+	Game_SetVisibility(VF_XboxUISelectAllOnScreen, true)
+	
+	Objective_AddUIElements(SOBJ_BeachAmbush, SGroup_GetSpawnedSquadAt(sg_landing_ambush_02, 1), false, "$11096699", true)
+
+end
+
+function BeachAmbush_PreStart()
+	
+	SpawnLandingAmbush()
+	Misc_ClearSelection()	
+	
+end
+
+function BeachAmbush_StartSurviveAmbush()
+	
+	landingAmbushTotal = SGroup_CountSpawned(sg_landingAmbush)
+
+	local attackPosition = Marker_GetPosition(mkr_beach_fow_reveal_03)
+	
+	Cmd_AttackMove(sg_landingAmbush, attackPosition)
+	Goals_SurviveAmbush()
+	
+	Rule_Add(BeachAmbush_Monitor)
+	
+end
+
+function BeachAmbush_HasSurvivedAmbush()
+	
+	local remaining = SGroup_CountSpawned(sg_landingAmbush)	
+	return remaining == 0
+end
+
+function BeachAmbush_Monitor()
+	
+	if BeachAmbush_HasSurvivedAmbush() then
+		
+		Cmd_FormationMove(sg_ships, mkr_ships_return)
+		SGroup_SetSelectable(sg_ships, true) 
+		Rule_Remove(MonitorPlayerShips)
+		Objective_Complete(SOBJ_BeachAmbush, true, true)
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+-- ///// TakePevensey //////////////////////////////////////////////
+function TakePevensey_UI()
+	
+	Objective_AddUIElements(SOBJ_TakePevensey, mkr_pevensey_castle, true, "$999685", true, 5)
+	Objective_SetProgressBar(SOBJ_TakePevensey, 0)
+end
+
+function TakePevensey_Start()
+	
+	SGroup_AddGroup(sg_pevensey, sg_pevensey_garrison_01)
+	SGroup_AddGroup(sg_pevensey, sg_pevensey_garrison_02)
+	SGroup_AddGroup(sg_pevensey, sg_pevensey_garrison_03)
+	SGroup_AddGroup(sg_pevensey, sg_pevensey_garrison_04)
+	SGroup_AddGroup(sg_pevensey, sg_pevensey_garrison_05)
+	
+	pevenseyTotal = SGroup_CountSpawned(sg_pevensey)
+	--Goals_TakePevensey()
+	Rule_Add(TakePevensey_Monitor)
+end
+
+function TakePevensey_Monitor()
+
+	local remaining = SGroup_CountSpawned(sg_pevensey)
+	
+	if remaining == 0 then
+
+		Objective_Complete(SOBJ_TakePevensey, false, true)
+		Rule_RemoveMe()
+	else
+		Objective_SetProgressBar(SOBJ_TakePevensey, (pevenseyTotal-remaining)/pevenseyTotal)
+	end
+
+end
+
+function ApplyProductionPromptMarkers()
+	
+	if EGroup_Count(eg_pevensey_barracks) >= 1 then
+		
+		hpb = HintPoint_Add(eg_pevensey_barracks, true, "$1000833", 1)
+		
+	end
+	
+	if EGroup_Count(eg_pevensey_archery) >= 1 then
+		
+		hpa = HintPoint_Add(eg_pevensey_archery, true, "$11119565", 1)
+		
+	end
+	
+	if EGroup_Count(eg_pevensey_stables) >= 1 then
+		
+		hps = HintPoint_Add(eg_pevensey_stables, true, "$1000845", 1)
+		
+	end
+	
+end
+
+-- ///// LocateHastings //////////////////////////////////////////////
+function LocateHastings_UI()
+	
+end
+
+function LocateHastings_Start()
+
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_01)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_02)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_03)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_04)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_05)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_06)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_07)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_08)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_09)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_10)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_11)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_12)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_13)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_14)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_15)
+	SGroup_AddGroup(sg_hastings, sg_hastings_garrison_16)
+	
+	Misc_ClearSelection()
+	
+	LocateHastings_SpawnScout()
+	Rule_AddInterval(LocateHastings_Monitor, 1)
+	Goals_MarchHastings()
+end
+
+function LocateHastings_SpawnScout()
+	
+	Player_GetAll(player1, sg_scouts)
+	SGroup_Filter(sg_scouts, "scar_scout", FILTER_KEEP)
+	sg_scoutReinforce = SGroup_CreateIfNotFound("sg_scout_reinforcement")
+	
+	local scoutsTotal = SGroup_CountSpawned(sg_scouts)
+	if scoutsTotal <= 0 then
+		UnitEntry_DeploySquads(player1, sg_scoutReinforce, {{sbp = SBP.FRENCH.UNIT_SCOUT_1_FRE, numSquads = 1 }}, mkr_pevensey_reinforcement_spawn)
+		SGroup_AddGroup(sg_scouts, sg_scoutReinforce)
+		
+		Cmd_Move(sg_scoutReinforce, mkr_pevensey_reinforcement_waypoint, true)
+		Cmd_Move(sg_scoutReinforce, mkr_pevensey_reinforcement_destination, true)
+	end
+end
+
+function LocateHastings_Monitor()
+
+	LocateHastings_SpawnScout()
+	
+	if Prox_ArePlayerMembersNearMarker(player1, Marker_GetPosition(mkr_hastings_prox), ANY, 175) then
+
+		FOW_RevealMarker(mkr_hastings_fow_reveal_01, 0)
+		FOW_RevealMarker(mkr_hastings_fow_reveal_02, 0)
+		FOW_RevealMarker(mkr_hastings_fow_reveal_03, 0)
+		
+		
+		Objective_Complete(OBJ_LocateHastings, true, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+-- ///// ClearAngloSaxons //////////////////////////////////////////////
+function ClearAngloSaxons_UI()
+	
+	Objective_SetProgressBar(SOBJ_ClearAngloSaxons, 0)
+end
+
+function ClearAngloSaxons_Start()
+
+	hastingsTotal = SGroup_CountSpawned(sg_hastings)
+	Rule_Add(ClearAngloSaxons_Monitor)
+end
+
+function ClearAngloSaxons_Monitor()
+
+	local remaining = SGroup_CountSpawned(sg_hastings)
+	
+	if remaining == 0 then
+
+		Objective_Complete(SOBJ_ClearAngloSaxons, false, true)
+		Rule_RemoveMe()
+	else
+		Objective_SetProgressBar(SOBJ_ClearAngloSaxons, (hastingsTotal-remaining)/hastingsTotal)
+	end
+
+end
+
+-- ///// DestroyTC //////////////////////////////////////////////
+function DestroyTC_UI()
+	
+	Objective_AddUIElements(SOBJ_DestroyTC, mkr_hastings_tc, true, "$999689", true, 5)
+end
+
+function DestroyTC_Start()
+
+	Rule_Add(DestroyTC_Monitor)
+	Rule_AddEGroupEvent( DestroyHastingsGate, eg_hastings_wall, GE_EntityKilled)
+end
+
+function DestroyHastingsGate(context)
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_army)
+	Rule_RemoveMe()
+end
+
+function DestroyTC_Monitor()
+
+	if EGroup_CountSpawned(eg_enemy_tc) == 0 then
+
+		Objective_Complete(SOBJ_DestroyTC, false, true)
+		Rule_RemoveMe()
+	end
+
+end
+
+function PlayerNearTarget()
+	
+	if Prox_AreSquadsNearMarker(sg_start_army, mkr_hastings_cavalry_03, false, 50) then
+
+		Cmd_AttackMove(sg_hastings, mkr_hastings_cavalry_03)
+		Rule_RemoveMe()
+	end
+	
+end
+
+-- ///// HastingsReinforcement //////////////////////////////////////////////
+function Spawn_HastingsReinforcement()
+	
+	sg_armySpearmen = Player_GetSquadsFromType( player1, "scar_spearman") 
+	sg_armyHorsemen = Player_GetSquadsFromType( player1, "scar_horseman") 
+	sg_armyArchers = Player_GetSquadsFromType( player1, "scar_archer")
+	
+	local sg_spearReinforce = SGroup_CreateUnique()
+	local sg_archerReinforce = SGroup_CreateUnique()
+	local sg_horseReinforce = SGroup_CreateUnique()
+	
+	sg_reinforcements = SGroup_CreateUnique()
+
+	
+	UnitEntry_DeploySquads(player1, {sg_start_army, sg_spearReinforce}, {{sbp = SBP.FRENCH.UNIT_SPEARMAN_2_FRE, numSquads = 15 }}, mkr_pevensey_reinforcement_spawn)
+	SGroup_AddGroup(sg_armySpearmen, sg_spearReinforce)
+	SGroup_AddGroup(sg_reinforcements, sg_spearReinforce)
+	UnitEntry_DeploySquads(player1, {sg_start_army, sg_archerReinforce}, {{sbp = SBP.FRENCH.UNIT_ARCHER_2_FRE, numSquads = 10 }}, mkr_pevensey_reinforcement_spawn)
+	SGroup_AddGroup(sg_armyArchers, sg_archerReinforce)
+	SGroup_AddGroup(sg_reinforcements, sg_archerReinforce)	
+	UnitEntry_DeploySquads(player1, {sg_start_army, sg_horseReinforce}, {{sbp = SBP.FRENCH.UNIT_HORSEMAN_2_FRE, numSquads = 10 }}, mkr_pevensey_reinforcement_spawn)
+	SGroup_AddGroup(sg_armyHorsemen, sg_horseReinforce)
+	SGroup_AddGroup(sg_reinforcements, sg_horseReinforce)
+	
+	Cmd_FormationMove(sg_reinforcements, mkr_pevensey_reinforcement_waypoint, true)
+	Cmd_FormationMove(sg_reinforcements, mkr_pevensey_reinforcement_destination, true)
+	
+	EventCues_CallToAction("$11202439", CTA_UNIQUE_CHANGE, EVENTS.TakeHastingsStart, nil, sg_reinforcements, 25)
+	Objective_Start(OBJ_TakeHastings, true, true)
+end

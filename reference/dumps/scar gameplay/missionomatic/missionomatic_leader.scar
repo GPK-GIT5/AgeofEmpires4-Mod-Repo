@@ -1,0 +1,409 @@
+--
+-- Mission-o-Matic - Leaders
+--
+-- Functions for managing leader units, such that they do not simply die the way other units do
+--
+
+--? @group MissionOMatic
+
+--? @shortdesc Sets up a Leader unit's custom Leader behaviour for use in a campaign mission
+--? @args TABLE bare data table
+--? @result TABLE filled data table
+function Missionomatic_InitializeLeader(initData)
+	
+	-- Fix up names!
+	if scartype(initData.name) == ST_NUMBER or scartype(initData.name) == ST_STRING then
+		initData.name = Loc_GetString(initData.name)
+	end
+	
+	-- Pass in a correct Leader owner, or else!
+	if scartype(initData.name) ~= ST_LOCSTRING then
+		fatal("Leader unit doesn't have a valid Name! Name is "..tostring(Debug_ScartypeToString(initData.name)).." with value "..tostring(initData.name))
+	elseif scartype(initData.owner) ~= ST_PLAYER then
+		fatal("Leader unit doesn't have a valid Owner! Owner is "..tostring(Debug_ScartypeToString(initData.owner)).." with value "..tostring(initData.owner))
+	elseif scartype(initData.neutralHolder) ~= ST_PLAYER then
+		fatal("Leader unit doesn't have a valid Neutral Holder! Owner is "..tostring(Debug_ScartypeToString(initData.neutralHolder)).." with value "..tostring(initData.neutralHolder))
+	end
+	
+	-- Standardize the data
+	local leaderData = {
+		name = initData.name,
+		owner = initData.owner,
+		neutralHolder = initData.neutralHolder,
+		initialized = false,
+		inDownedState = false,
+		sgroup = SGroup_CreateUnique("sg_leader"),
+		position = nil,
+		ui = nil,
+		modifiers = {},
+		sbp = nil,
+		respawns = initData.respawns or {},
+		previousControlGroups = {},
+	}
+	
+	if t_allLeaders == nil then t_allLeaders = {} end
+	table.insert(t_allLeaders, leaderData)
+	
+	-- What health will leaders revive at?
+	g_leaderReviveHealthDiffed = { 1.0, 0.5, 0.4, 0.3 }
+	
+	-- A global objective is used to help handle the case of multiple leaders
+	if OBJ_RecoverDownedLeader == nil then
+		
+		OBJ_RecoverDownedLeader = {
+			Title = "$11172067", -- Rescue your Leader!
+			Intel_Start = function()
+				CTRL.Event_Delay(2)
+				CTRL.WAIT()
+			end,	
+			Type = ObjectiveType_LeaderInjured,
+			blip = true,
+		}
+		
+		-- Register this unique objective
+		Objective_Register(OBJ_RecoverDownedLeader)
+		
+	end 
+	
+	-- Log that this player has a leader
+	g_playersWithLeader = g_playersWithLeader or {}
+	g_playersWithLeader[leaderData.owner.PlayerID] = true
+	
+	-- Setup the checking interval
+	leaderData.monitorRuleID = Rule_AddInterval(Missionomatic_CheckLeader, 0.125, {leaderData = leaderData})
+	
+	-- If the owner is a Mongol, we don't want them to spawn Khans when this leader is disabled!
+	if Player_GetRace(leaderData.owner) == RACE.MONGOL then
+		Player_SetStateModelBool(leaderData.owner, "khan_spawning_enabled", false)
+	end
+	
+	-- If the player doesn't have this upgrade yet, add it!
+	if (Player_HasUpgrade(leaderData.owner, BP_GetUpgradeBlueprint("upgrade_revive_leader")) == false) then
+		Player_CompleteUpgrade(leaderData.owner, BP_GetUpgradeBlueprint("upgrade_revive_leader"))
+	end
+	
+	-- Make sure LOS is correctly shared and blocked to prevent spillover
+	local playerCount = World_GetPlayerCount()
+	for idx = 1, playerCount do
+		local thisPlayer = World_GetPlayerAt(idx)
+		if Player_IsHuman(thisPlayer) == true then
+			World_EnableSharedLineOfSight(thisPlayer, leaderData.neutralHolder, true)
+			World_EnableSharedLineOfSight(leaderData.neutralHolder, thisPlayer, true)
+		elseif thisPlayer ~= leaderData.neutralHolder then
+			World_EnableSharedLineOfSight(thisPlayer, leaderData.neutralHolder, false)
+			World_EnableSharedLineOfSight(leaderData.neutralHolder, thisPlayer, false)
+		end
+	end
+	
+	-- Make sure the color is right
+	Game_SetPlayerSlotColour(leaderData.neutralHolder, 1) 
+	Game_SetPlayerUISlotColour(leaderData.neutralHolder, 1)
+	
+	return leaderData
+	
+end
+
+--? @shortdesc Regularly check on the Leader unit to see if it needs to surrender or do anything else; should only be called as a rule at a set interval
+--? @args TABLE leader data table
+function Missionomatic_CheckLeader(context, data)
+	
+	local leaderData = data.leaderData
+	
+	local recoveryCounterThreshold = 40
+	
+	-- Only check if we actually have a Leader. If we don't have a leader and don't expect to, exit
+	if SGroup_CountSpawned(leaderData.sgroup) <= 0 then
+		return
+	end
+	
+	-- Update the leader's position!
+	if  SGroup_CountSpawned(leaderData.sgroup) >= 1 then 
+		leaderData.position = Util_GetPosition(Squad_GetFirstEntity(SGroup_GetSpawnedSquadAt(leaderData.sgroup, 1)))
+	end
+	
+	--
+	-- This is one-time stuff that should only be called after things are added to the leader
+	--
+	if leaderData.initialized == false and SGroup_CountSpawned(leaderData.sgroup) >=1 then
+		
+		-- Find the relevant entities
+		local squadLeader = SGroup_GetSpawnedSquadAt(leaderData.sgroup, 1)
+		
+		-- We want all leaders to heal. Some leaders may have this ability already, but if they don't, add it!
+		if SGroup_HasAbility(leaderData.sgroup, BP_GetAbilityBlueprint("general_heal_self"), true) == false then
+			SGroup_AddAbility(leaderData.sgroup, BP_GetAbilityBlueprint("general_heal_self"))
+		end
+		-- We want leaders to never be deleted!. Most leaders have this ability already - remove it!
+		if SGroup_HasAbility(leaderData.sgroup, BP_GetAbilityBlueprint("core_unit_death"), true) == true then
+			SGroup_RemoveAbility(leaderData.sgroup, BP_GetAbilityBlueprint("core_unit_death"))
+		end
+		-- Crown VFX ("regicide_crown_state") are enabled via the AE instead, because not all leaders run through this script (enemy leaders don't for example)
+
+		-- store entity/squad/bp details
+		leaderData.squad = Squad_GetID(squadLeader)		
+		leaderData.entity = Entity_GetID(Squad_GetFirstEntity(squadLeader))				
+		leaderData.sbp = Squad_GetBlueprint(squadLeader)
+		leaderData.position = Util_GetPosition(squadLeader)
+		
+		-- And start tracking potential death
+		Rule_AddEntityEvent(Missionomatic_OnLeaderBridged, Entity_FromID(leaderData.entity), GE_DamageReceived, { leaderData = leaderData })
+
+		leaderData.initialized = true
+		
+	elseif leaderData.initialized == true then
+		
+		if Squad_IsValid(leaderData.squad) == false then
+		
+			-- If we've gone DOWN in count, that means a leader died! That's bad! Respawn it?
+			leaderData.initialized = false
+			print("LEADER DOWN!")
+			
+		else
+			
+			-- update the leader's postion
+			if Squad_IsValid(leaderData.squad) then 
+				leaderData.position = Util_GetPosition(Squad_FromID(leaderData.squad))	
+			end
+			
+			-- get the current state of this leader
+			
+			local entityBool
+			if Entity_IsValid(leaderData.entity) then
+				entityBool = Entity_GetStateModelBool(Entity_FromID(leaderData.entity), "hero_inactive")
+			end
+			
+			if leaderData.inDownedState == false and entityBool == true then 
+				Missionomatic_LeaderSurrender(leaderData)
+			elseif leaderData.inDownedState == true and entityBool == false then
+				Missionomatic_LeaderRecovery(leaderData)
+			end
+			
+		end
+		
+	end
+	
+end
+
+--? @shortdesc Initiates the surrender of a leader unit, temporarily removing it from player control
+--? @args TABLE leader data table
+function Missionomatic_LeaderSurrender(leaderData)
+	
+	-- Music stinger alert
+	Music_PlayStinger("mus_stinger_leader_dead")
+	
+	-- If the leader is in any selection or control group, remove it!
+	local sg_leader_ctrl_group = SGroup_CreateIfNotFound("sg_leader_ctrl_group")
+	leaderData.previousControlGroups = {}
+	for ctrl = 0, 9 do
+		Misc_GetControlGroupContents(ctrl, sg_leader_ctrl_group, eg_temp)
+		if SGroup_ContainsSGroup(sg_leader_ctrl_group, leaderData.sgroup, ANY) then
+			local _AssignBack = function(gid, idx, sid)
+				Misc_SetSquadControlGroup(sid, ctrl)
+			end
+			Misc_ClearControlGroup(ctrl)
+			SGroup_RemoveGroup(sg_leader_ctrl_group, leaderData.sgroup)
+			-- Reconstitute the control group without the leader, to avoid messing with the player
+			SGroup_ForEach(sg_leader_ctrl_group, _AssignBack)
+			table.insert(leaderData.previousControlGroups, ctrl)
+		end
+	end
+	
+	-- If the leader is selected, unselect it!
+	local sg_leader_selection = SGroup_CreateIfNotFound("sg_leader_selection")
+	Misc_GetSelectedSquads(sg_leader_selection, false)
+	if SGroup_ContainsSGroup(sg_leader_selection, leaderData.sgroup, ANY) then
+		Misc_ClearSelection()
+		SGroup_RemoveGroup(sg_leader_selection, leaderData.sgroup)
+		Misc_SelectSGroup(sg_leader_selection, true)
+	end
+
+	-- Reduce the leader's LoS
+	table.insert(leaderData.modifiers, Modify_SightRadius(leaderData.sgroup, 0.35))
+	
+	-- Give the Leader over to a Neutral player and immobilize it
+	SGroup_SetPlayerOwner(leaderData.sgroup, leaderData.neutralHolder)
+	
+	-- Stop the leader from attacking
+	AI_LockSquads(leaderData.neutralHolder, leaderData.sgroup)
+	
+	-- Start the recovery objective
+	if not Objective_IsStarted(OBJ_RecoverDownedLeader) then
+		Objective_Start(OBJ_RecoverDownedLeader, bFirstTimeForLeaderRecovery, bFirstTimeForLeaderRecovery)
+	end
+	
+	-- Stop any hints related to this leader
+	Missionomatic_DisableTrainingByGoalKey(SGroup_GetSpawnedSquadAt(leaderData.sgroup, 1))
+	
+	-- Kick off an Event Cue
+	local visibility = ECV_Queue
+	if bFirstTimeForLeaderRecovery == false then 
+		visibility = ECV_Queue | ECV_Title
+	end
+	
+	UI_CreateEventCue(Loc_FormatText(11189636, leaderData.name), Loc_Empty(), "high_priority_negative", "", "", visibility)
+	
+	bFirstTimeForLeaderRecovery = false
+
+	-- Set up the associated objective UI
+	if Squad_IsValid(leaderData.squad) then 
+		local squadLeader = Squad_FromID(leaderData.squad)
+		local objectiveArrowOffsetUseDefault = nil
+		leaderData.ui = Objective_AddUIElements(OBJ_RecoverDownedLeader, squadLeader, true,	"$11201853", true, objectiveArrowOffsetUseDefault,	squadLeader)
+	end
+	
+	-- Mark this leader as inactive, so we can tell when it changes back to active
+	leaderData.inDownedState = true
+	
+end
+
+--? @shortdesc Recovers the Leader from surrender and returns it to player control
+--? @args TABLE leader data table
+function Missionomatic_LeaderRecovery(leaderData)
+
+	-- End the recovery objective
+	Objective_RemoveUIElements(OBJ_RecoverDownedLeader, leaderData.ui)
+	leaderData.ui = nil
+	
+	-- Remove all the modifiers we applied
+	for index, modifier in pairs(leaderData.modifiers) do
+		Modifier_Remove(modifier)
+		leaderData.modifiers[index] = nil
+	end
+	
+	-- Transfer back to player owner
+	SGroup_SetPlayerOwner(leaderData.sgroup, leaderData.owner)
+	
+	-- Re-enable attacking behaviour
+	AI_UnlockSquads(leaderData.owner, leaderData.sgroup)
+
+	-- Disable the UI
+	if Missionomatic_CountLeadersInDownedState() == 1 then		-- we check for 1 because this leader is still marked as inDownedState (flag is not cleared until the end of this sequence)
+		Objective_Stop(OBJ_RecoverDownedLeader)
+	end
+	
+	-- music positive stinger for lead coming back alive
+	Music_PlayStinger("mus_stinger_leader_revived")
+	
+	-- Bump up the Leader's health to make sure it doesn't immediately surrender again when revived; on lower difficulties, the recovery health is higher
+	local reviveHealthRatio = Util_DifVar(g_leaderReviveHealthDiffed)
+	SGroup_SetAvgHealth(leaderData.sgroup, reviveHealthRatio)
+	
+	-- Make them briefly untargetable
+	SGroup_SetInvulnerable(leaderData.sgroup, 0.05, 8.0)
+	
+	-- Mark this leader as active again
+	leaderData.inDownedState = false
+	
+	-- Put back in any control groups
+	if #leaderData.previousControlGroups > 0 then
+		for index, ctrl in pairs(leaderData.previousControlGroups) do
+			local leaderSquad = SGroup_GetSquadAt(leaderData.sgroup, 1)
+			print("Ctrl group "..tostring(ctrl).." for "..tostring(leaderSquad).." from idx "..tostring(index))
+			Misc_SetSquadControlGroup(leaderSquad, ctrl)
+		end
+	end
+	leaderData.previousControlGroups = {}
+	
+end
+
+function Missionomatic_CountLeadersInDownedState()		
+	
+	local count = 0
+
+	for index, leader in pairs(t_allLeaders) do
+		if leader.inDownedState == true then 
+			count = count + 1 
+		end
+	end
+	
+	return count 
+
+end
+
+--? @shortdesc Watches for the death of a leader, which requires special handling
+function Missionomatic_OnLeaderBridged(context, data)
+		
+	if context.isRepairing == true or context.currentHealth > 0 or context.attacker ~= nil then
+		return
+	end
+		
+	local leaderData = data.leaderData
+	print(string.format("Leader %s took fatal damage from a nil attacker, probably a bridge", Entity_GetBlueprint(context.victim)))
+	-- Set this flag now - it'll prevent the surrender logic from happening fully, so we don't display objectives and stuff
+	local fullRecovery = false
+	if leaderData.inDownedState == false then
+		leaderData.inDownedState = true
+	else
+		fullRecovery = true
+	end
+	-- Where should we respawn?
+	local closestRespawn = Player_GetStartingPosition(leaderData.owner)
+	if #leaderData.respawns > 0 then
+		closestRespawn = Util_GetClosestMarker(Util_GetPosition(context.victim), leaderData.respawns)
+	end
+	
+	-- Give the leader a moment to die in bridgy indignity before reviving and teleporting away
+	Rule_AddOneShot(Missionomatic_RespawnLeader, 1, { leaderData = leaderData, respawn = closestRespawn, fullRecovery = fullRecovery })
+	
+end
+
+--? @shortdesc Revives a leader at a defaulted or designated spawn point
+function Missionomatic_RespawnLeader(context, data)
+	
+	local leaderData = data.leaderData
+	SGroup_WarpToPos(leaderData.sgroup, Util_GetPosition(data.respawn))
+	
+	local reviveHealthRatio = Util_DifVar(g_leaderReviveHealthDiffed)
+	SGroup_SetAvgHealth(leaderData.sgroup, reviveHealthRatio)
+	
+	if scartype(leaderData.sgroup) ~= ST_SGROUP or SGroup_Count(leaderData.sgroup) <= 0 then
+		print("LEADER WARNING: Attempting to respawn leader, but no leader was found!")
+		return
+	end
+	
+	local squad = SGroup_GetSpawnedSquadAt(leaderData.sgroup, 1)
+	local entity = Squad_GetFirstEntity(squad)
+	Entity_SetStateModelBool(entity, "hero_inactive", false)
+	
+	Entity_ClearPendingDeathFlag(entity)
+	
+	-- If we need to do a full recovery, that'll take care of inDownedState, but otherwise we want to flip that back again
+	if data.fullRecovery == true then
+		Missionomatic_LeaderRecovery(leaderData)
+	else
+		leaderData.inDownedState = false
+	end
+end
+
+--? @shortdesc If the passed SquadID corresponds to a leader, flips its Up/Down state
+function Missionomatic_FlipLeader(squadID)
+		
+	-- Make sure input is valid
+	local thisSquad = Squad_FromID(squadID)
+	if scartype(thisSquad) ~= ST_SQUAD then
+		return
+	end
+	
+	for index, leaderData in pairs(t_allLeaders) do
+		if SGroup_CountSpawned(leaderData.sgroup) > 0 and SGroup_ContainsSquad(leaderData.sgroup, squadID, false) then
+				
+			local squad = SGroup_GetSpawnedSquadAt(leaderData.sgroup, 1)
+			local entity = Squad_GetFirstEntity(squad)
+			
+			local entityBool = Entity_GetStateModelBool(entity, "hero_inactive")
+			
+			if entityBool == true then
+				Player_SetStateModelInt(leaderData.owner, "num_downed_leaders", Player_GetStateModelInt(leaderData.owner, "num_downed_leaders") - 1)
+				Entity_SetStateModelBool(entity, "hero_inactive", false) 
+				Missionomatic_LeaderRecovery(leaderData)
+			else
+				Player_SetStateModelInt(leaderData.owner, "num_downed_leaders", Player_GetStateModelInt(leaderData.owner, "num_downed_leaders") + 1)
+				Entity_SetStateModelBool(entity, "hero_inactive", true)
+				Missionomatic_LeaderSurrender(leaderData)
+				SGroup_SetAvgHealth(leaderData.sgroup, 0.0)
+			end
+			
+		end
+	end
+	
+end

@@ -1,0 +1,73 @@
+--
+-- Liegnitz - Tutorial elements
+--
+
+import("training/campaigntraininggoals.scar")
+
+local goal_sequence_bees = "liegnitz_bees_training_id"
+
+function Liegnitz_InitializeBeesTrainingHints()
+
+	--Goals
+	local beesAttacking = Training_Goal("Squad", {Message = 11191321, DataTemplate = "GenericTrainingDataTemplate"}, Liegnitz_BeesComplete)
+	
+	--Goal Sequence
+	local beesSequence = Training_GoalSequence(goal_sequence_bees, 1, 0, Liegnitz_BeesAreAlive, Liegnitz_IgnoreBeesDead, nil, Liegnitz_SkipBeesTip, true, {beesAttacking})
+	
+	--Initialize
+	Training_AddGoalSequence(beesSequence)
+	Training_EnableGoalSequenceByID(goal_sequence_bees, true)
+	
+	Rule_AddGlobalEvent(Liegnitz_DamageCheck, GE_DamageReceived)
+	Rule_AddEventFilter_EntityBlueprint(Liegnitz_DamageCheck, FC_Attacker, FO_AND, { EBP.CHINESE.UNIT_NEST_OF_BEES_4_CHI }, { })
+end
+
+function Liegnitz_BeesAreAlive(goalSequence)
+
+	if SGroup_CountSpawned(sg_rocketsiege) > 0 then
+		
+		if goalSequence.goals[1].key == "Squad" then
+			goalSequence.goals[1].key = SGroup_GetSquadAt(sg_rocketsiege, 1)
+			return true
+		end
+		
+	end
+	return false
+end
+
+function Liegnitz_IgnoreBeesDead(goalSequence)
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		if SGroup_CountSpawned(sg_rocketsiege) == 0 then
+			return true
+		end
+		return false
+	end
+end
+
+function Liegnitz_SkipBeesTip(goalSequence)
+	return b_BeesHaveKilledBeforeAndWillDoItAgain
+end
+
+function Liegnitz_BeesComplete(goal)
+	b_BeesHaveEngagedTheEnemy = b_BeesHaveEngagedTheEnemy or false
+	
+	return b_BeesHaveEngagedTheEnemy
+end
+
+function Liegnitz_DamageCheck(context)
+
+		--This is called whenever something is damaged, it looks for military units that have been attacked by the nests of bees.
+	if context.victim ~= nil and context.attacker ~= nil then
+		if Entity_GetBlueprint(context.attacker) == EBP.CHINESE.UNIT_NEST_OF_BEES_4_CHI then
+
+			if not World_OwnsEntity(context.victim) and Entity_GetPlayerOwner(context.victim) ~= player1 then
+				b_BeesHaveEngagedTheEnemy = true
+				
+				Rule_RemoveMe()
+			end
+
+		end
+	end
+end

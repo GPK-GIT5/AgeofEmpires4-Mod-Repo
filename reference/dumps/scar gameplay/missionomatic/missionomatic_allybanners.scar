@@ -1,0 +1,93 @@
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+--? @shortdesc Initializes an allied banner and an allied army to go along with it
+--? @args EGROUP bannerEgroup, PLAYER alliedPlayer, MARKER mkrSpawn, TABLE armyComposition, NUMBER unitMinimum
+--? @result nil
+function Init_AlliedBanner(bannerEgroup, alliedPlayer, mkrSpawn, armyComposition, unitMinimum)
+	
+	-- Make sure the egroup passed contains banners
+	EGroup_Filter(bannerEgroup, {EBP.CAMPAIGN.ALLY_BANNER, EBP.CAMPAIGN.ALLY_BANNER_NAVAL}, FILTER_KEEP)
+	if EGroup_Count(bannerEgroup) == 0 then
+		fatal(string.format("Allied Banner: No valid banners in egroup %s", EGroup_GetName(bannerEgroup)))
+		return
+	end
+	
+	-- Make sure the AI player is valid
+	if scartype(alliedPlayer) ~= ST_PLAYER then
+		fatal(string.format("Allied Banner: Invalid player passed of type %s", scartype_tostring(alliedPlayer)))
+		return
+	end
+	
+	-- Ditto the spawn point
+	if scartype(mkrSpawn) ~= ST_MARKER and scartype(mkrSpawn) ~= ST_SCARPOS then
+		fatal(string.format("Allied Banner: Invalid spawn point passed of type %s", scartype_tostring(mkrSpawn)))
+		return
+	end
+	
+	-- Ditto the unit list, though validating this is difficult to do perfectly, so let's just check some basics
+	if scartype(armyComposition) ~= ST_TABLE or #armyComposition == 0 or scartype(armyComposition[1]) ~= ST_TABLE then
+		fatal(string.format("Allied Banner: Invalid unit list passed: ", tostring(armyComposition)))
+		return
+	end
+	
+	-- We can set this to a default if it's not set
+	local unitMinimum = unitMinimum or 50
+	local bannerEntity = EGroup_GetEntityAt(bannerEgroup, 1)
+	
+	g_allied_banner_armies = g_allied_banner_armies or {}
+	
+	local bannerPosition = Entity_GetPosition(bannerEntity)
+	local params = {
+		player = alliedPlayer,
+		name = string.format("banner_army_%s", #g_allied_banner_armies + 1),
+		spawn = mkrSpawn,
+		units = armyComposition,
+		targets = {
+			bannerPosition,
+		},
+	}
+	alliedArmy = Army_Init(params)
+	alliedArmy.unitMinimum = unitMinimum
+	alliedArmy.armyComposition = armyComposition
+	alliedArmy.reinforcementSpawnPoint = mkrSpawn
+	table.insert(g_allied_banner_armies, alliedArmy)
+	
+	-- Each banner needs a unique entity event rule
+	Rule_AddEntityEvent(_ControlAlliedArmy, bannerEntity, GE_AbilityExecuted, {thisArmy = alliedArmy, bannerEntity = bannerEntity})
+	
+	-- All banners can share the same monitoring function
+	if Rule_Exists(_MonitorAllyArmy) == false then
+		Rule_AddInterval(_MonitorAllyArmy, 15)
+	end
+	
+end
+
+-- For reacting to a banner move
+function _ControlAlliedArmy(context, data)
+	local thisArmy = data.thisArmy
+	local bannerEntity = data.bannerEntity
+	
+	if SGroup_CountSpawned(thisArmy.sgroup) > 0 then
+		if Util_GetDistanceSquared(thisArmy.targets[1].position, Entity_GetPosition(bannerEntity)) > 8 then
+			Army_SetTarget(thisArmy, Entity_GetPosition(bannerEntity))
+		end
+	end
+end
+
+-- For monitoring all allied army banners
+function _MonitorAllyArmy(context, data)
+	
+	if #g_allied_banner_armies == 0 then
+		Rule_RemoveMe()
+		return
+	end
+	
+	for index, army in pairs(g_allied_banner_armies) do
+		if SGroup_CountSpawned(army.sgroup) < army.unitMinimum then
+			SGroup_Clear(sg_temp)
+			UnitEntry_DeploySquads(army.player, sg_temp, army.armyComposition, army.reinforcementSpawnPoint)
+			Army_AddSGroup(army, sg_temp)
+		end
+	end
+end

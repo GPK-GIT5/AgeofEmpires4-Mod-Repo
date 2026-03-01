@@ -1,0 +1,1527 @@
+--
+-- Hastings 1066 - Defeat Saxon Army objective
+--
+
+
+function DefeatSaxons_InitObjectives()
+
+	OBJ_DefeatSaxons = {
+	
+		Title = "$11181631", -- Attack Harold's Army
+		Type = ObjectiveType_Battle,
+		
+		SetupUI = function()
+			hpid_initialAttack = Objective_AddUIElements(OBJ_DefeatSaxons, mkr_hintpoint_firstattack, true, "$11181632", true, 2.5) -- Attack the army at the top of the hill
+			
+			-- Choose one of the following two launch methods: 
+			--UI_LaunchAttackButton_SetVisible(true)			-- use this line if you want to show the button, or
+			--b_attackLaunched = true 							-- use this line if you want to launch the units automatically
+			
+		end,
+		
+		PreStart = function()
+		    Sound_Play2D("sfx_camp_battlle_of_hastings_walla_transition_loop_play")
+			Rule_Add(InitialAttack_WaitForPlayerToIssueCommand)
+			InitialAttack_StartReinforcements()
+		end,
+		
+	}
+	
+	SOBJ_Phase2_KillFyrd = {
+		
+		Title = "$11191229",		-- Kill the Fyrd from the shield wall
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DefeatSaxons,
+		
+		Intel_Start = EVENTS.DefeatSaxons_Phase2_KillFyrd,
+		
+		SetupUI = function()
+			Objective_Show(OBJ_DefeatSaxons, true)		-- bring the parent objective back on screen
+		end,
+		
+		PreStart = function()
+			DefeatSaxons_Phase2_PreStart()
+		end,
+		OnStart = function()
+			DefeatSaxons_Phase2_OnStart()
+		end,
+		
+	}
+	SOBJ_Phase3_UseArchers = {
+		
+		Title = "$11191230", 		-- Use archers against the enemy spearmen
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DefeatSaxons,
+		
+		--Intel_Start = EVENTS.DefeatSaxons_Phase3_UseArchers,
+		
+		PreStart = function()
+			DefeatSaxons_Phase3_PreStart()
+		end,
+		SetupUI = function()
+			DefeatSaxons_Phase3_OnStart()
+		end,
+		
+	}
+	SOBJ_Phase4_KillSpearmen = {
+		
+		Title = "$11191231", 		-- Kill the enemy spearmen to allow cavalry on the field
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DefeatSaxons,
+		
+		Intel_Start = EVENTS.DefeatSaxons_Phase4_KillSpearmen,
+		
+		PreStart = function()
+			DefeatSaxons_Phase4_PreStart()
+		end,
+		SetupUI = function()
+			DefeatSaxons_Phase4_OnStart()
+		end,
+		
+	}
+	SOBJ_Phase5_UseCavalry = {
+		
+		Title = "$11191232", 		-- Use cavalry against enemy archers
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_DefeatSaxons,
+
+		--Intel_Start = EVENTS.DefeatSaxons_Phase5_UseCavalry,
+		
+		PreStart = function()
+			DefeatSaxons_Phase5_PreStart()
+		end,
+		OnStart = function()
+			DefeatSaxons_Phase5_OnStart()
+		end,
+		
+	}
+
+	Objective_Register(OBJ_DefeatSaxons)
+	Objective_Register(SOBJ_Phase2_KillFyrd)
+	Objective_Register(SOBJ_Phase3_UseArchers)
+	Objective_Register(SOBJ_Phase4_KillSpearmen)
+	Objective_Register(SOBJ_Phase5_UseCavalry)
+
+
+	
+	--
+	-- any other variable initialization can go in here
+	--
+	
+	b_archersUnlocked = false
+	b_cavalryUnlocked = false
+
+	t_playerReinforcementEventCueData = {}
+
+	i_activeUnitCount_player1 = 0
+	i_activeUnitCount_player2 = 0
+	
+	t_killCounts = {
+		phase2 = {sgroup = sg_saxons_phase2_all, count = 0, lastKilledPosition = Util_ScarPos(0, 0, 0)},
+		phase3 = {sgroup = sg_saxons_phase3_all, count = 0, lastKilledPosition = Util_ScarPos(0, 0, 0)},
+		phase4 = {sgroup = sg_saxons_phase4_all, count = 0, lastKilledPosition = Util_ScarPos(0, 0, 0)},
+		phase5 = {sgroup = sg_saxons_phase5_all, count = 0, lastKilledPosition = Util_ScarPos(0, 0, 0)},
+	}
+	Rule_AddGlobalEvent(DefeatSaxons_UpdateKillCounts, GE_SquadKilled)
+	
+	t_boostRPS = {}
+	
+end
+
+
+function DefeatSaxons_InitReinforcementCounterObjective()
+
+	OBJ_Reinforcements = {
+		
+		Title = "$11197283",					-- Remaining reinforcements:
+		Type = ObjectiveType_Information,
+		
+		SetupUI = function()
+			Objective_SetProgressBar(OBJ_Reinforcements, 1)
+		end,
+		
+	}
+	
+	Objective_Register(OBJ_Reinforcements)
+
+	DefeatSaxons_SetPlayerReinforcementFocus("manatarms")		-- sets initial threshold and reinforcement amounts
+	
+	REINFORCEMENTS_INTERVAL = 7						-- min amount of time between one set of reinforcements being given to the player and the next
+	REINFORCEMENTS_AUTOCHARGEUNITS = false 			-- should units passed to the player auto-charge up the hill if left idle for a certain amount of time 
+	REINFORCEMENTS_AUTOCHARGEUNITS_DELAY = 15		-- how long after units are passed to the player should they charge up the hill
+	
+	i_numReinforcementsGiven = 0
+	i_numReinforcementsPassedToPlayer = 0
+	
+	b_playerReinforcementsStopped = false 
+	
+	Rule_AddOneShot(DefeatSaxons_InitPlayerReinforcements, 5)
+	
+	
+	
+end
+
+
+--
+-- any other script relating to this objective should go down below here
+--
+
+function DefeatSaxons_StartObjective()
+	
+	Objective_Start(SOBJ_Phase2_KillFyrd)
+
+	Music_LockIntensity(MUSIC_COMBAT)
+	
+	SGroup_SetAutoTargetting(sg_archers, ALL, false)
+	Cmd_Stop(sg_archers)
+	
+	DefeatSaxons_StartPlayerReinforcements()
+	
+	Player_GetAll(player1)
+	SGroup_AddGroup(sg_activeUnits_player1, sg_allsquads)
+	SGroup_AddGroup(sg_activeUnits_player1, sg_dukewilliam)
+
+	local data_hillLeft = {
+		sgroup = sg_saxons_left,
+		module = MissionOMatic_FindModule("DefendHillLeft"),
+		potentialTargets = {
+			mkr_hill_left, 
+			mkr_hill_center, 
+			mkr_hill_lower_left, 
+		},
+		idleTarget = mkr_hill_left,
+	}
+	
+	local data_hillCenter = {
+		sgroup = sg_saxons_center,
+		module = MissionOMatic_FindModule("DefendHillCenter"),
+		potentialTargets = {
+			mkr_hill_center, 
+			mkr_hill_left, 
+			mkr_hill_right, 
+			mkr_hill_lower_center, 
+		},
+		idleTarget = mkr_hill_center,
+	}
+	
+	local data_hillRight = {
+		sgroup = sg_saxons_right,
+		module = MissionOMatic_FindModule("DefendHillRight"),
+		potentialTargets = {
+			mkr_hill_right, 
+			mkr_hill_center, 
+			mkr_hill_lower_right,
+		},
+		idleTarget = mkr_hill_right,
+	}
+	
+	Rule_AddInterval(DefeatSaxons_UpdateHillDefendModules, {delay = 0, interval = 3}, data_hillLeft)
+	Rule_AddInterval(DefeatSaxons_UpdateHillDefendModules, {delay = 1, interval = 3}, data_hillCenter)
+	Rule_AddInterval(DefeatSaxons_UpdateHillDefendModules, {delay = 2, interval = 3}, data_hillRight)
+	
+end
+
+
+
+
+--
+-- Phase 2 - Shield Wall units come down hill and engage player
+--
+
+function DefeatSaxons_Phase2_PreStart()
+
+	-- units running down the hill is mostly handled at the end of the feign script
+	
+	Rule_AddInterval(DefeatSaxons_Phase2_Complete, 1)
+	
+	boost_menatarms = BoostRPS_Add(player1, "scar_manatarms", 1.2)			-- make the player's MAA stronger for this bit
+	
+end
+function DefeatSaxons_Phase2_OnStart()
+	
+	
+end
+
+function DefeatSaxons_Phase2_Complete()
+	
+	if SGroup_CountSpawned(sg_saxons_phase2_all) <= 30 and Event_IsAnyRunning() == false then 
+		
+		Player_GetAll(player1)
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE, sg_allsquads)
+		
+		Modify_ReceivedDamage(sg_saxons_phase2_all, 7)			-- make the remaining units die very very quickly
+
+		Rule_AddInterval(DefeatSaxons_Phase2_CleanUp, 1)		-- and complete the objective when they're killed
+		timeStamp_startedCleanUpPhase2 = World_GetGameTime()
+		
+		Objective_Complete(SOBJ_Phase2_KillFyrd, false)			-- silently
+		DefeatSaxons_Phase3_Start()								-- start the intro for the next objective
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+function DefeatSaxons_Phase2_CleanUp()
+	
+	if SGroup_CountSpawned(sg_saxons_phase2_all) == 0 then 
+		
+		--Objective_Complete(SOBJ_Phase2_KillFyrd, false)	-- silently
+		
+		BoostRPS_Remove(boost_menatarms)
+		
+		Rule_RemoveMe()
+		
+	elseif World_GetGameTime() - timeStamp_startedCleanUpPhase2 >= 10 then	-- we really need to wind down the stragglers from this objective fast
+
+		if World_GetRand(1, 3) == 1 then
+			local squad = SGroup_GetRandomSpawnedSquad(sg_saxons_phase2_all)	
+			Squad_Kill(squad)
+		end
+		
+	end
+	
+end
+
+
+
+
+--
+-- Phase 3 - Spearmen come down the hill and attack the player, who uses archers to kill them
+--
+
+function DefeatSaxons_Phase3_Start()
+
+	EGroup_DestroyAllEntities(eg_blockers_phase3)
+	
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 3.5,  {sgroup = sg_phase3_a, destination = mkr_hill_bottom_left,   module = DefendHillLeft,   trackingGroup = sg_saxons_left})
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 3,    {sgroup = sg_phase3_b, destination = mkr_hill_bottom_left,   module = DefendHillLeft,   trackingGroup = sg_saxons_left})
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 1.5,  {sgroup = sg_phase3_c, destination = mkr_hill_bottom_center, module = DefendHillCenter, trackingGroup = sg_saxons_center})
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 1,    {sgroup = sg_phase3_d, destination = mkr_hill_bottom_center, module = DefendHillCenter, trackingGroup = sg_saxons_center})
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 1.75, {sgroup = sg_phase3_e, destination = mkr_hill_bottom_center, module = DefendHillCenter, trackingGroup = sg_saxons_center})
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 5.25, {sgroup = sg_phase3_f, destination = mkr_hill_bottom_right,  module = DefendHillRight,  trackingGroup = sg_saxons_right})
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 5.5,  {sgroup = sg_phase3_g, destination = mkr_hill_bottom_right,  module = DefendHillRight,  trackingGroup = sg_saxons_right})
+
+	Rule_AddOneShot(DefeatSaxons_Phase3_Start_PartB, 2)	
+	
+end
+function DefeatSaxons_Phase3_Start_PartB()
+	Objective_Start(SOBJ_Phase3_UseArchers)					-- start the intro for the next objective	
+end
+
+function DefeatSaxons_Phase3_PreStart()	-- objective prestart
+	
+	DefeatSaxons_MoveForwardAndPassControl(nil, {sgroup = sg_archers_left1, marker = mkr_william_left_archers1})			-- move the archers forward and pass control of them to the player
+	DefeatSaxons_MoveForwardAndPassControl(nil, {sgroup = sg_archers_center1, marker = mkr_william_center_archers1})
+	DefeatSaxons_MoveForwardAndPassControl(nil, {sgroup = sg_archers_center2, marker = mkr_william_center_archers2})
+	DefeatSaxons_MoveForwardAndPassControl(nil, {sgroup = sg_archers_right1, marker = mkr_william_right_archers1})
+
+	boost_archers = BoostRPS_Add(player1, "scar_archer", 1.2)				-- let's make the archers have their star turn for this phase
+	
+	EventCues_CallToAction("$11195632", CTA_CELEBRATE, EVENTS.DefeatSaxons_Phase3_UseArchers, nil, sg_archers, 20) -- Norman archers ready!
+	Sound_Play2D("mus_stinger_campaign_triumph_short")
+
+	Modifier_Remove(modid_playerArcherRange)
+	
+	DefeatSaxons_SetPlayerReinforcementFocus("archers")
+	
+end
+function DefeatSaxons_Phase3_OnStart() -- objective onstart
+	
+	PHASE3_MINTIME = 45
+	PHASE3_MAXTIME = 150
+	PHASE3_KILLSREQUIRED = 100
+	PHASE3_UNITCOUNT = SGroup_CountSpawned(sg_saxons_phase3_all) - 8
+	print("Phase 3 started at time stamp "..World_GetGameTime())
+	
+	
+	Rule_AddOneShot(DefeatSaxons_Phase3_SetArchersUnlocked, 7)
+
+
+	local data = {
+	
+		timeStamp_start = World_GetGameTime(),
+		timeStamp_nextReinforcement = World_GetGameTime(), 
+		
+		killsRequired = 100,		-- need to kill 100 units in this phase, however:
+		minTime = 45,					-- phase should be at least 45 seconds long
+		maxTime = 150,					-- and at most 150 seconds long					-- NOTE: This is just when the enemy reinforcements stop - you must then satisfy the goals of the onComplete callback
+		
+		phase = "phase3",
+		
+		groupToReinforce = sg_saxons_phase3_all,
+		reinforcementThreshold = 50,		-- currently start with 70 in this group
+		reinforcementSource = sg_saxons_phase4_all,
+		reinforcementSpawnPoint = mkr_harold_reinforce,
+		reinforcementAmount = {min = 4, max = 7},
+		reinforcementSBP = SBP.ENGLISH.UNIT_SPEARMAN_2_ENG,
+		reinforcementSubGroups = {
+			sg_phase4_a,	
+			sg_phase4_b,	
+			sg_phase4_c,	
+			sg_phase4_d,	
+			sg_phase4_e,	
+		},
+		
+		callbacks = {
+			onComplete = DefeatSaxons_Phase3_NoMoreEnemyReinforcements,	
+		},														
+		
+	}	
+	Rule_AddInterval(DefeatSaxons_EnemyReinforcements, 1, data)
+	
+	
+end
+
+function DefeatSaxons_Phase3_SetArchersUnlocked()		-- delayed so the units have had a chance to move into position and switch players
+
+	MissionTutorial_AddHintToArchers()
+	b_archersUnlocked = true 
+end	
+
+
+function DefeatSaxons_Phase3_NoMoreEnemyReinforcements()			-- called when the last enemy reinforcements have been spawned, so we can start checking for the complete condition now
+	Rule_AddInterval(DefeatSaxons_Phase3_Complete, 1)
+end
+function DefeatSaxons_Phase3_Complete()
+	
+	if SGroup_CountSpawned(sg_saxons_phase3_all) <= 15 and Event_IsAnyRunning() == false then 
+		
+		Modify_ReceivedDamage(sg_saxons_phase3_all, 7)			-- make the remaining units die very very quickly
+		
+		Rule_AddInterval(DefeatSaxons_Phase3_CleanUp, 1)		-- and complete the objective when they're killed
+		timeStamp_startedCleanUpPhase3 = World_GetGameTime()
+		
+		Objective_Complete(SOBJ_Phase3_UseArchers, false)		-- silently
+		Objective_Start(SOBJ_Phase4_KillSpearmen)				-- start the intro for the next objective
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+function DefeatSaxons_Phase3_CleanUp()
+	
+	if SGroup_CountSpawned(sg_saxons_phase3_all) == 0 then 
+		
+		--Objective_Complete(SOBJ_Phase3_UseArchers, false)	-- silently
+		
+		Rule_RemoveMe()
+		
+	elseif World_GetGameTime() - timeStamp_startedCleanUpPhase3 >= 10 then	-- we really need to wind down the stragglers from this objective fast
+
+		if World_GetRand(1, 3) == 1 then
+			local squad = SGroup_GetRandomSpawnedSquad(sg_saxons_phase3_all)	
+			Squad_Kill(squad)
+		end
+		
+	end
+	
+end
+
+
+
+
+--
+-- Phase 4 - Enemy archers attack your units, and are guarded by more spearmen
+--
+
+function DefeatSaxons_Phase4_PreStart()
+	
+	-- send the spearmen down the hill to run interference for the archers
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 1.25,  {sgroup = sg_phase4_a, destination = mkr_hill_bottom_left,   module = DefendHillLeft,   trackingGroup = sg_saxons_left})
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 0.25,  {sgroup = sg_phase4_b, destination = mkr_hill_bottom_center, module = DefendHillCenter, trackingGroup = sg_saxons_center})
+	DefeatSaxons_ReleaseSpearmen(nil, {sgroup = sg_phase4_c, destination = mkr_hill_bottom_center, module = DefendHillCenter, trackingGroup = sg_saxons_center})
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 0.5, {sgroup = sg_phase4_d, destination = mkr_hill_bottom_center, module = DefendHillCenter, trackingGroup = sg_saxons_center})
+	Rule_AddOneShot(DefeatSaxons_ReleaseSpearmen, 2, {sgroup = sg_phase4_e, destination = mkr_hill_bottom_right,  module = DefendHillRight,  trackingGroup = sg_saxons_right})
+	
+	Rule_AddOneShot(DefeatSaxons_Phase4_EnemySpearmenUnlocked, 7)
+	
+	
+	-- trigger the enemy archers (yes, they're who you attack in phase 5, but they're activated now)
+	Rule_AddOneShot(DefeatSaxons_ActivateEnemyArchers, 1.5,  {sgroup = sg_phase5_a, marker = mkr_phase4_a})	
+	Rule_AddOneShot(DefeatSaxons_ActivateEnemyArchers, 0.5,  {sgroup = sg_phase5_b, marker = mkr_phase4_b})	
+	Rule_AddOneShot(DefeatSaxons_ActivateEnemyArchers, 0.25, {sgroup = sg_phase5_c, marker = mkr_phase4_c})	
+	Rule_AddOneShot(DefeatSaxons_ActivateEnemyArchers, 0.75, {sgroup = sg_phase5_d, marker = mkr_phase4_d})	
+	Rule_AddOneShot(DefeatSaxons_ActivateEnemyArchers, 2.25, {sgroup = sg_phase5_e, marker = mkr_phase4_e})	
+	
+	Modifier_Remove(modid_enemyArcherRange)							-- this removes the x0 range modifier, so they can shoot again
+	Modify_WeaponRange(sg_saxons_phase5_all, "hardpoint_01", 2.5)	-- and we bring up their range to match the player's extended range
+	
+	
+end
+function DefeatSaxons_Phase4_OnStart()
+
+	Rule_AddInterval(DefeatSaxons_Phase4_Complete, 1)
+	
+	KingHarold_SpawnLastLines()
+	
+	print("Phase 4 started at time stamp "..World_GetGameTime())
+	
+	local data = {
+	
+		timeStamp_start = World_GetGameTime(),
+		timeStamp_nextReinforcement = World_GetGameTime(), 
+		
+		minTime = 45,
+		maxTime = 150,
+		killsRequired = 50,
+		
+		phase = "phase4",
+		
+		groupToReinforce = sg_saxons_phase4_all,
+		reinforcementThreshold = 30,			-- currently start with 49 in this group (but we want to keep this low as you're under attack from archers as well)
+		reinforcementSource = mkr_harold_reinforce,
+		reinforcementSpawnPoint = mkr_harold_reinforce,
+		reinforcementAmount = {min = 4, max = 7},
+		reinforcementSBP = SBP.ENGLISH.UNIT_SPEARMAN_2_ENG,
+		
+		callbacks = {
+			onComplete = DefeatSaxons_Phase4_NoMoreEnemyReinforcements,
+		},
+		
+	}	
+	Rule_AddInterval(DefeatSaxons_EnemyReinforcements, 1, data)
+	
+end
+
+function DefeatSaxons_Phase4_EnemySpearmenUnlocked()
+
+	MissionTutorial_AddHintToEnemySpearmen()
+	
+end
+
+function DefeatSaxons_Phase4_NoMoreEnemyReinforcements()			-- called when the last enemy reinforcements have been spawned, so we can start checking for the complete condition now
+	Rule_AddInterval(DefeatSaxons_Phase4_Complete, 1)
+end
+function DefeatSaxons_Phase4_Complete()
+	
+	if SGroup_CountSpawned(sg_saxons_phase4_all) <= 25 and Event_IsAnyRunning() == false then 
+		
+		Player_GetAll(player1)
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE, sg_allsquads)
+		
+		Modify_ReceivedDamage(sg_saxons_phase4_all, 7)			-- make the remaining units die very very quickly
+
+		Rule_AddInterval(DefeatSaxons_Phase4_CleanUp, 1)		-- and complete the objective when they're killed
+		timeStamp_startedCleanUpPhase4 = World_GetGameTime()		
+
+		Objective_Complete(SOBJ_Phase4_KillSpearmen, false)		-- silently
+		Objective_Start(SOBJ_Phase5_UseCavalry)					-- start the intro for the next objective
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+function DefeatSaxons_Phase4_CleanUp()
+	
+	if SGroup_CountSpawned(sg_saxons_phase4_all) == 0 then 
+		
+		--Objective_Complete(SOBJ_Phase4_KillSpearmen, false)	-- silently
+		
+		BoostRPS_Remove(boost_archers)
+		
+		Rule_RemoveMe()
+		
+	elseif World_GetGameTime() - timeStamp_startedCleanUpPhase4 >= 10 then	-- we really need to wind down the stragglers from this objective fast
+
+		if World_GetRand(1, 3) == 1 then
+			local squad = SGroup_GetRandomSpawnedSquad(sg_saxons_phase4_all)	
+			Squad_Kill(squad)
+		end
+		
+	end
+	
+end
+
+
+
+function DefeatSaxons_ActivateEnemyArchers(context, data)
+
+	-- move the group forward a bit
+	Cmd_FormationMove(data.sgroup, Util_GetOffsetPosition(data.marker, OFFSET_FRONT, 3))
+	
+	Sound_PlayWallaEngageOnSGroup(data.sgroup)
+
+	-- have the archers fire
+	SGroup_Duplicate(data.sgroup, sg_temp)
+	SGroup_Filter(sg_temp, "scar_archer", FILTER_KEEP)
+	Player_GetAll(player1)
+	Cmd_Attack(sg_temp, sg_allsquads, true)
+
+	---- remove holdground from the man at arms, so they can intercept
+	--SGroup_Duplicate(data.sgroup, sg_temp)
+	--SGroup_Filter(sg_temp, "scar_manatarms", FILTER_KEEP)
+	--Cmd_HoldPosition(sg_temp, true, true)
+	
+	if data.trackingGroup ~= nil then 
+		SGroup_AddGroup(data.trackingGroup, data.sgroup)
+	end
+	SGroup_AddGroup(sg_saxons_all, data.sgroup)	
+	
+	Rule_AddOneShot(DefeatSaxons_ActivateEnemyArchers_DelayedHoldPosition, 1, {sgroup = data.sgroup}) -- have to do this a second later, because reasons
+	
+	--Rule_AddInterval(DefeatSaxons_ReleaseSpearmen_AddToModule, {delay = 3, interval = 1}, data)
+	
+end
+function DefeatSaxons_ActivateEnemyArchers_DelayedHoldPosition(context, data)
+	Cmd_HoldPosition(data.sgroup, true)
+end
+
+--
+-- Phase 5 - Once the spearmen are taken care of, unlock the players cavalry
+--
+
+function DefeatSaxons_Phase5_PreStart()
+
+	EGroup_DestroyAllEntities(eg_blockers_phase4)
+	
+	SGroup_SetTargetingType(sg_saxons_phase5_all, Targeting_Automatic)
+	Misc_SetSGroupSelectable(sg_saxons_phase5_all, true)
+	Cmd_HoldPosition(sg_saxons_phase5_all, false)
+	SGroup_AddGroup(sg_activeUnits_player2, sg_saxons_phase5_all)
+	
+	boost_cavalry = BoostRPS_Add(player1, "scar_horseman", 1.2)				-- now it's time for the cavalry to have their star turn for this phase
+	
+	DefeatSaxons_SetPlayerReinforcementFocus("cavalry")
+
+	DefeatSaxons_MoveForwardAndPassControl(nil, {sgroup = sg_cavalry_left1, marker = mkr_william_left_cavalry1})		-- move the cavalry forward and pass control of them to the player
+	DefeatSaxons_MoveForwardAndPassControl(nil, {sgroup = sg_cavalry_center1, marker = mkr_william_center_cavalry1})
+	DefeatSaxons_MoveForwardAndPassControl(nil, {sgroup = sg_cavalry_center2, marker = mkr_william_center_cavalry2})
+	DefeatSaxons_MoveForwardAndPassControl(nil, {sgroup = sg_cavalry_right1, marker = mkr_william_right_cavalry1})
+	
+	EventCues_CallToAction("$11195635", CTA_CELEBRATE, EVENTS.DefeatSaxons_Phase5_UseCavalry, nil, sg_cavalry, 20) -- Norman cavalry ready!
+	Sound_Play2D("mus_stinger_campaign_triumph_short")
+	
+end
+function DefeatSaxons_Phase5_OnStart()
+	
+	Rule_AddInterval(DefeatSaxons_Phase5_Complete, 1)
+	
+	Rule_AddOneShot(DefeatSaxons_Phase5_SetCavalryUnlocked, 7)
+	
+end
+function DefeatSaxons_Phase5_SetCavalryUnlocked()		-- delayed so the units have had a chance to move into position and switch players
+
+	MissionTutorial_AddHintToCavalry()
+	b_cavalryUnlocked = true 
+
+	
+	
+end	
+
+
+function DefeatSaxons_Phase5_Complete()
+	
+	if SGroup_CountBlueprints(sg_saxons_phase5_all, "scar_archer") <= 6 and Event_IsAnyRunning() == false then 
+		
+		Modify_ReceivedDamage(sg_saxons_phase5_all, 7)			-- make the remaining units die very very quickly
+		
+		Rule_AddInterval(DefeatSaxons_Phase5_CleanUp, 1)		-- and complete the objective when they're killed
+		timeStamp_startedCleanUpPhase5 = World_GetGameTime()
+		
+		Objective_Complete(SOBJ_Phase5_UseCavalry, false)		-- silently
+		KillHarold_StartObjective()
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+function DefeatSaxons_Phase5_CleanUp()
+	
+	if SGroup_CountSpawned(sg_saxons_phase5_all) == 0 then 
+		
+		--Objective_Complete(SOBJ_Phase5_UseCavalry, false)	-- silently
+		
+		BoostRPS_Remove(boost_cavalry)	
+		
+		DefeatSaxons_SetPlayerReinforcementFocus("final")
+
+		Rule_RemoveMe()
+		
+	elseif World_GetGameTime() - timeStamp_startedCleanUpPhase5 >= 10 then	-- we really need to wind down the stragglers from this objective fast
+
+		if World_GetRand(1, 3) == 1 then
+			local squad = SGroup_GetRandomSpawnedSquad(sg_saxons_phase5_all)	
+			Squad_Kill(squad)
+		end
+		
+	end
+	
+end
+
+
+
+
+
+
+
+function DefeatSaxons_MoveForwardAndPassControl(context, data)
+	
+	if SGroup_CountSpawned(data.sgroup) >= 1 then 
+		
+		Sound_PlayOnSquad(WALLA_CAMP_ENGAGE_MEDIUM, data.sgroup)
+		Cmd_FormationMove(data.sgroup, Util_GetPositionFromAtoB(Util_GetPosition(data.sgroup), mkr_harold_reinforce, 10))
+		
+		Rule_Add(DefeatSaxons_PassControlWhenUnitStops, data)
+		
+	end
+	
+end
+
+function DefeatSaxons_PassControlWhenUnitStops(context, data)
+	
+	if SGroup_IsMoving(data.sgroup, ALL) == false then 
+		
+		Hastings_PassControlOfUnitsToPlayer(data.sgroup)
+		SGroup_AddGroup(sg_activeUnits_player1, data.sgroup)
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+
+
+
+
+
+
+
+
+function DefeatSaxons_UpdateHillDefendModules(context, data)
+
+	local sgroup = data.sgroup
+	local module = data.module
+		
+	
+	--
+	-- see if we can bring any idle unit in the hill groups into the module
+	--
+	
+	if Objective_IsComplete(OBJ_DefeatSaxons) == true then
+
+		SGroup_Clear(sg_temp)
+		
+		local _CheckSquad = function(gid, idx, sid)	
+			if SGroup_ContainsSquad(module.sgroup, Squad_GetID(sid), true) == false then 
+				SGroup_Add(sg_temp, sid)
+			end
+		end
+		
+		SGroup_ForEach(sgroup, _CheckSquad)
+		Prefab_DoAction(module, "AddSGroup", sg_temp)
+		
+	else
+		
+		local remainingSquads = false 
+		
+		local _CheckSquad = function(gid, idx, sid)	
+			if SGroup_ContainsSquad(module.sgroup, Squad_GetID(sid), true) == false then 
+				
+				if Squad_IsIdle(sid) and Squad_IsUnderAttack(sid, 6) == false and Squad_IsAttacking(sid, 6) == false then
+					SGroup_Single(sg_single, sid)
+					Prefab_DoAction(module, "AddSGroup", sg_single)
+				else
+					remainingSquads = true 
+				end				
+				
+			end
+		end
+		
+		SGroup_ForEach(sgroup, _CheckSquad)
+		
+	end
+	
+	
+	--
+	-- now see if we need to update the target location of the hill module
+	--
+	
+	local potentialTargetsOnTheField = false
+	
+	for index, target in ipairs(data.potentialTargets) do 
+		
+		Player_GetAllSquadsNearMarker(player1, sg_temp, target)
+		
+		if SGroup_CountSpawned(sg_temp) >= 3 or index == #data.potentialTargets then
+			
+			potentialTargetsOnTheField = true 
+			
+			if target ~= data.currentTarget then 
+				Prefab_DoAction(module, "UpdateTargetLocation", target)				
+				data.currentTarget = target			
+			end
+			
+			break
+			
+		end
+		
+	end
+		
+	if potentialTargetsOnTheField == false and data.idleTarget ~= data.currentTarget then 
+		Prefab_DoAction(module, "UpdateTargetLocation", data.idleTarget)				
+		data.currentTarget = data.idleTarget			
+	end
+	
+end
+
+
+
+
+
+
+
+function DefeatSaxons_InitPlayerReinforcements()
+
+	t_playerReinforcementZones = {
+		--{marker = mkr_william_reinforce_zone1, sgroup = sg_reinforcements_zone1, spawn = mkr_william_reinforce_zone1_spawn, destination = mkr_william_reinforce_zone1_dest},
+		{marker = mkr_william_reinforce_zone2, sgroup = sg_reinforcements_zone2, spawn = mkr_william_reinforce_zone2_spawn, destination = mkr_william_reinforce_zone2_dest},
+		{marker = mkr_william_reinforce_zone3, sgroup = sg_reinforcements_zone3, spawn = mkr_william_reinforce_zone3_spawn, destination = mkr_william_reinforce_zone3_dest},
+		{marker = mkr_william_reinforce_zone4, sgroup = sg_reinforcements_zone4, spawn = mkr_william_reinforce_zone4_spawn, destination = mkr_william_reinforce_zone4_dest},
+		--{marker = mkr_william_reinforce_zone5, sgroup = sg_reinforcements_zone5, spawn = mkr_william_reinforce_zone5_spawn, destination = mkr_william_reinforce_zone5_dest},
+	}
+
+	timeStamp_lastPlayerReinforcements = 0						-- global reinforcement rate
+	timeStamp_lastPlayerReinforcements_hornAudio = 0
+	
+	for index, zone in pairs(t_playerReinforcementZones) do 
+		zone.timeStamp_lastZoneReinforcements = 0 				-- per-zone reinforcement rate
+	end
+	
+end
+
+
+
+function DefeatSaxons_SetPlayerReinforcementFocus(focus)
+
+	--[[
+	
+		For reference, here's how many of these units you have at the start:
+		
+		Man At Arms = around 90
+		Archers = 42
+		Cavalry = 22
+		
+	--]]
+
+
+	-- baseline tunings	
+	i_reinforcements_manAtArms = {			-- keep between 40 - 50 men at arms (50 - 60 while focussed)
+		threshold = 40,
+		amount = 10,
+	}
+	
+	i_reinforcements_archers = {			-- keep between 15 - 21 archers (30 - 36 while focussed)
+		threshold = 15,
+		amount = 6,
+	}
+	
+	i_reinforcements_cavalry = {			-- keep between 8 - 12 cavalry (14 - 18 while focussed)
+		threshold = 8,
+		amount = 4,
+	}
+		
+	-- specialities, depending on the focus
+	if focus == "manatarms" then
+	
+		i_reinforcements_manAtArms.threshold = 50
+		
+	elseif focus == "archers" then
+		
+		i_reinforcements_archers.threshold = 30
+		
+	elseif focus == "cavalry" then
+		
+		i_reinforcements_cavalry.threshold = 14
+		
+	elseif focus == "final" then
+	
+		-- this is a mixed group for the remainder of the mission. values should between normal and focussed
+		i_reinforcements_manAtArms.threshold = 42
+		i_reinforcements_archers.threshold = 22
+		i_reinforcements_cavalry.threshold = 11
+		
+	end
+
+	
+end
+
+
+
+function DefeatSaxons_StartPlayerReinforcements()
+		
+	Rule_AddInterval(DefeatSaxons_PlayerReinforcements, 1)
+	
+end
+
+
+function DefeatSaxons_PlayerReinforcements()
+
+	local timeSinceLastHorn = World_GetGameTime() - timeStamp_lastPlayerReinforcements_hornAudio
+	
+	
+	if Objective_IsComplete(OBJ_KillHarold) == true then 
+		
+		Rule_RemoveMe()
+		
+	elseif b_playerReinforcementsStopped == true then 
+		
+		Rule_RemoveMe()
+		
+	elseif World_GetGameTime() - timeStamp_lastPlayerReinforcements >= REINFORCEMENTS_INTERVAL and (timeSinceLastHorn < 15 or timeSinceLastHorn > 25) then 
+		
+		-- determine what reinforcements are needed (if any)
+		
+		Player_GetAll(player1)
+
+		local options = {
+			{type = "manatarms", ratio = SGroup_CountBlueprints(sg_allsquads, SBP.CAMPAIGN.UNIT_MANATARMS_1_NRM) / i_reinforcements_manAtArms.threshold},
+		}
+		if b_archersUnlocked == true then 
+			table.insert(options, {type = "archers", ratio = SGroup_CountBlueprints(sg_allsquads, SBP.CAMPAIGN.UNIT_ARCHER_2_NRM) / i_reinforcements_archers.threshold})
+		end
+		if b_cavalryUnlocked == true then
+			table.insert(options, {type = "cavalry", ratio = SGroup_CountBlueprints(sg_allsquads, SBP.CAMPAIGN.UNIT_HORSEMAN_2_NRM) / i_reinforcements_cavalry.threshold})
+		end
+		
+		table.sort(options, function(a,b) return a.ratio < b.ratio end)		
+		local choice = options[1]											-- choice should be the one with the LOWEST ratio
+		
+		if choice.ratio < 1 then 
+			
+			if choice.type == "manatarms" then 
+				
+				local reinforcementData = {
+					units = "scar_manatarms",
+					counters = ANY,
+					reinforcementUnits = {type = "scar_manatarms", numSquads = i_reinforcements_manAtArms.amount--[[, ability = LINE_FORMATION]]},
+					eventCueMessage = "$11202514", 	-- Infantry reinforcements have arrived
+				}
+				
+				if Objective_IsComplete(OBJ_DefeatSaxons) == false and b_archersUnlocked == true then 	
+					reinforcementData.units = "scar_archer"
+				end
+				
+				if b_triggeredSpeechForReinforcements_manAtArms ~= true and Event_IsAnyRunning() == false then 
+					reinforcementData.speechEvent = EVENTS.Reinforcements_ManAtArms
+					b_triggeredSpeechForReinforcements_manAtArms = true
+				end
+				
+				DefeatSaxons_PlayerReinforcements_Create(reinforcementData)
+				
+			elseif choice.type == "archers" then 
+				
+				local reinforcementData = {
+					units = "scar_archer",
+					counters = "scar_spearman",
+					reinforcementUnits = {type = "scar_archer", numSquads = i_reinforcements_archers.amount--[[, ability = LINE_FORMATION]]},
+					eventCueMessage = "$11202515",	-- Archer reinforcements have arrived
+				}
+
+				if b_triggeredSpeechForReinforcements_archers ~= true and Event_IsAnyRunning() == false then 
+					reinforcementData.speechEvent = EVENTS.Reinforcements_Archers
+					b_triggeredSpeechForReinforcements_archers = true
+				end
+				
+				DefeatSaxons_PlayerReinforcements_Create(reinforcementData)
+				
+			elseif choice.type == "cavalry" then  
+				
+				local reinforcementData = {
+					units = "scar_horseman",
+					counters = "scar_archer",
+					reinforcementUnits = {type = "scar_horseman", numSquads = i_reinforcements_cavalry.amount--[[, ability = LINE_FORMATION]]},
+					eventCueMessage = "$11202516",	-- Cavalry reinforcements have arrived
+				}
+
+				if b_triggeredSpeechForReinforcements_cavalry ~= true and Event_IsAnyRunning() == false then 
+					reinforcementData.speechEvent = EVENTS.Reinforcements_Cavalry
+					b_triggeredSpeechForReinforcements_cavalry = true
+				end
+				
+				DefeatSaxons_PlayerReinforcements_Create(reinforcementData)
+				
+			end
+			
+		end
+		
+	end
+	
+end
+
+function DefeatSaxons_PlayerReinforcements_Create(reinforcementData)
+
+	
+	local results = {}
+	local player1squads = SGroup_CreateUnique("")
+	local player2squads = SGroup_CreateUnique("")
+	
+	for index, zone in pairs(t_playerReinforcementZones) do 
+		
+		if SGroup_CountSpawned(zone.sgroup) == 0 and World_GetGameTime() - zone.timeStamp_lastZoneReinforcements >= 10 then 
+			
+			Player_GetAllSquadsNearMarker(player1, player1squads, zone.marker)	
+			Player_GetAllSquadsNearMarker(player2, player2squads, zone.marker)	
+			SGroup_Intersection(player2squads, sg_saxons_all)
+			
+			local entry = {
+				zone = zone,
+			}
+			
+			if units == ANY then 
+				entry.numPlayerUnits = SGroup_CountSpawned(player1squads)
+			else
+				entry.numPlayerUnits = SGroup_CountBlueprints(player1squads, reinforcementData.units)			
+			end
+			
+			if counters == ANY then 
+				entry.numEnemyUnits = SGroup_CountSpawned(player2squads)
+			else
+				entry.numEnemyUnits = SGroup_CountBlueprints(player2squads, reinforcementData.counters)
+			end
+			
+			if entry.numEnemyUnits == 0 then 
+				entry.ratio = 0
+			elseif entry.numPlayerUnits == 0 then 
+				entry.ratio = entry.numEnemyUnits / 10 
+			else 
+				entry.ratio = entry.numEnemyUnits / entry.numPlayerUnits 
+			end
+			
+			table.insert(results, entry)
+			
+		end
+		
+	end
+	
+	SGroup_Destroy(player1squads)	
+	SGroup_Destroy(player2squads)	
+	
+	if #results >= 1 then 
+		
+		-- sort the results, and pick the best result
+		table.sort(results, function(a,b) return a.ratio > b.ratio end)
+		local choice = results[1]											-- this should pick the one with the HIGHEST ratio
+		
+		local destination = choice.zone.destination
+		local destinationFacing = Util_GetOffsetPosition(choice.zone.destination, OFFSET_FRONT, 10)
+		
+		-- create the reinforcement units
+		local options = {
+			destination = destination,
+			destinationFacing = destinationFacing,
+			dynamicSpawnType = DST_FURTHEST_HIDDEN,
+		}
+		UnitEntry_DeploySquads(player3, {choice.zone.sgroup, sg_waitingUnits_player1}, reinforcementData.reinforcementUnits, choice.zone.spawn, nil, nil, options)
+		Misc_SetSGroupSelectable(choice.zone.sgroup, false)
+		
+		-- play the reinforcement horn
+		if World_GetGameTime() - timeStamp_lastPlayerReinforcements_hornAudio >= 25 or reinforcementData.speechEvent ~= nil then
+			Sound_PlayOnSquad("sfx_campaign_Hastings_horn_reinforcements_arrive", choice.zone.sgroup)
+			timeStamp_lastPlayerReinforcements_hornAudio = World_GetGameTime()
+		end
+		
+		-- play speech event (if there is one)
+		if reinforcementData.speechEvent ~= nil then 
+			Util_StartIntel(reinforcementData.speechEvent)
+		end
+		
+		-- create the minimap blip and event cue (plus save the data for a potential event cue callback)
+		UI_CreateMinimapBlip(choice.zone.destination, 5, "general")
+		local cue = {
+			id = UI_CreateEventCueClickable(-1, 10, 0, 0, reinforcementData.eventCueMessage or LOC("Reinforcements"), 0, "high_priority", "", "sfx_ui_event_queue_campaign_high_priority", 255, 255, 255, 255, ECV_Queue, DefeatSaxons_PlayerReinforcements_EventCueCallback),
+			position = choice.zone.destination,
+		}
+		table.insert(t_playerReinforcementEventCueData, cue)
+		
+		timeStamp_lastPlayerReinforcements = World_GetGameTime()
+		i_numReinforcementsGiven = i_numReinforcementsGiven + 1
+
+		if t_difficulty.enableLimitedReinforcements == true then 
+			
+			if Objective_IsStarted(OBJ_Reinforcements) == false then 
+				Objective_Start(OBJ_Reinforcements, false, false)
+			else
+				
+				local wavesRemaining = (t_difficulty.maximumNumberOfReinforcements - i_numReinforcementsGiven) + 1		-- the added one is to ensure the bar is full after the first set of reinforcements, and goes down on subsequent waves
+				
+				if wavesRemaining == 0 then 
+					b_playerReinforcementsStopped = true
+				end
+				
+			end
+		end
+		
+		Rule_AddOneShot(DefeatSaxons_PlayerReinforcements_PassControl, 5, {zone = choice.zone})
+		
+	end
+	
+end
+
+function DefeatSaxons_PlayerReinforcements_PassControl(context, data)
+
+	local destination = data.zone.destination
+	local destinationFacing = Util_GetOffsetPosition(data.zone.destination, OFFSET_FRONT, 10)
+	
+	Sound_PlayOnSquad(WALLA_CAMP_ENGAGE_MEDIUM, data.zone.sgroup)
+	Hastings_PassControlOfUnitsToPlayer(data.zone.sgroup, {destination = destination, facing = destinationFacing})
+	
+	i_numReinforcementsPassedToPlayer = i_numReinforcementsPassedToPlayer + 1
+
+	if t_difficulty.enableLimitedReinforcements == true then 
+		
+		local wavesRemaining = (t_difficulty.maximumNumberOfReinforcements - i_numReinforcementsPassedToPlayer) + 1		-- the added one is to ensure the bar is full after the first set of reinforcements, and goes down on subsequent waves
+		
+		if wavesRemaining == 0 then 
+			Objective_RemoveProgressBar(OBJ_Reinforcements)
+			Objective_UpdateText(OBJ_Reinforcements, "$11197284", 0, true, true)		-- No more reinforcements
+		else
+			local percentage = wavesRemaining / t_difficulty.maximumNumberOfReinforcements
+			Objective_SetProgressBar(OBJ_Reinforcements, percentage)
+		end
+			
+	end
+	
+	data.zone.timeStamp_reinforcementsPassedToPlayer = World_GetGameTime()
+	
+	Rule_AddInterval(DefeatSaxons_PlayerReinforcements_MonitorForCommands, {delay = 4, interval = 1}, data)
+		
+end
+
+function DefeatSaxons_PlayerReinforcements_MonitorForCommands(context, data)
+	
+	if SGroup_IsIdle(data.zone.sgroup, ALL) == false or SGroup_CountSpawned(data.zone.sgroup) == 0 then 
+		
+		SGroup_AddGroup(sg_activeUnits_player1, data.zone.sgroup)
+		SGroup_RemoveGroup(sg_waitingUnits_player1, data.zone.sgroup)
+
+		SGroup_Clear(data.zone.sgroup)
+		
+		data.zone.timeStamp_lastZoneReinforcements = World_GetGameTime()
+		
+		Rule_RemoveMe()
+		
+	elseif REINFORCEMENTS_AUTOCHARGEUNITS == true and World_GetGameTime() - data.zone.timeStamp_reinforcementsPassedToPlayer > REINFORCEMENTS_AUTOCHARGEUNITS_DELAY then 
+		
+		if SGroup_CountSpawned(sg_saxons_all) >= 1 then
+			Cmd_FormationAttackMove(data.zone.sgroup, sg_saxons_all)
+		elseif Objective_IsStarted(OBJ_KillHarold) then
+			Player_GetAll(player2)
+			Cmd_FormationAttackMove(data.zone.sgroup, sg_allsquads)
+		end	
+		
+		SGroup_AddGroup(sg_activeUnits_player1, data.zone.sgroup)
+		SGroup_RemoveGroup(sg_waitingUnits_player1, data.zone.sgroup)
+
+		SGroup_Clear(data.zone.sgroup)
+		
+		data.zone.timeStamp_lastZoneReinforcements = World_GetGameTime()
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+function DefeatSaxons_PlayerReinforcements_EventCueCallback(id)
+	
+	for index, cue in pairs(t_playerReinforcementEventCueData) do 
+		if cue.id == id then 
+			Camera_MoveTo(cue.position)
+		end
+	end
+
+end
+
+
+
+
+-- Targeting_Manual
+-- Targeting_Automatic
+-- Targeting_None
+function SGroup_SetTargetingType(sgroup, targetingType)
+	
+	local _ApplyToSquad = function(gid, idx, sid)
+		local entity = Squad_GetFirstEntity(sid)
+		Entity_SetTargetingType(entity, targetingType)
+	end
+	
+	SGroup_ForEach(sgroup, _ApplyToSquad)	
+	
+end
+
+
+
+
+
+
+function DefeatSaxons_ReleaseSpearmen(context, data)
+
+	SGroup_SetTargetingType(data.sgroup, Targeting_Automatic)
+	Misc_SetSGroupSelectable(data.sgroup, true)
+	Cmd_HoldPosition(data.sgroup, false)
+	
+	Cmd_FormationAttackMove(data.sgroup, data.destination)
+	
+	if data.trackingGroup ~= nil then 
+		SGroup_AddGroup(data.trackingGroup, data.sgroup)
+	end
+	SGroup_AddGroup(sg_saxons_all, data.sgroup)	
+	SGroup_AddGroup(sg_activeUnits_player2, data.sgroup)	
+	
+	Sound_PlayOnSquad("sfx_campaign_scripted_medium_group_charge", data.sgroup)
+
+	Rule_AddInterval(DefeatSaxons_ReleaseSpearmen_AddToModule, {delay = 3, interval = 1}, data)
+	
+end
+function DefeatSaxons_ReleaseSpearmen_AddToModule(context, data)
+
+	if SGroup_CountSpawned(data.sgroup) == 0 or data.module == nil then 
+	
+		if data.deleteGroup == true then 
+			SGroup_Destroy(data.sgroup)
+		end
+		
+		Rule_RemoveMe()
+		
+	elseif SGroup_IsIdle(data.sgroup, ANY) or Prox_AreSquadsNearMarker(data.sgroup, data.destination, ANY) then 
+	
+		Prefab_DoAction(data.module, "AddSGroup", data.sgroup)
+
+		if data.deleteGroup == true then 
+			SGroup_Destroy(data.sgroup)
+		end
+		
+		Rule_RemoveMe()
+		
+	end
+	
+end
+
+
+
+
+
+function DefeatSaxons_UpdateKillCounts(context, data)
+	
+	local victim = context.victim
+
+	if scartype(victim) == ST_SQUAD and Player_OwnsSquad(player2, victim) then 
+		
+		for index, item in pairs(t_killCounts) do 
+			
+			if SGroup_ContainsSquad(item.sgroup, Squad_GetID(victim), true) then 
+				item.count = item.count + 1
+				item.lastKilledPosition = Squad_GetPosition(victim)
+				return
+			end
+			
+		end
+		
+	end
+	
+end
+
+
+
+
+
+
+function DefeatSaxons_EnemyReinforcements(context, data)
+
+	--[[
+	
+	data = {
+	
+		timeStamp_start = 
+		timeStamp_nextReinforcement = 
+		
+		minTime = 45,
+		maxTime = 150,
+		killsRequired = 100,
+		
+		phase = "phase3",
+		
+		groupToReinforce = sg_saxons_phase3_all,
+		reinforcementThreshold = 60,
+		reinforcementSource = sg_saxons_phase4_all,
+		reinforcementAmount = {min = 4, max = 7},
+		
+	}	
+	
+	]]
+	
+	local time = World_GetGameTime() - data.timeStamp_start
+	DefeatSaxons_UpdateActiveUnitCounts()
+	
+	if time >= data.maxTime 
+		or (time >= data.minTime and t_killCounts[data.phase].count >= data.killsRequired) then 
+		
+		-- stop the reinforcements 
+		
+		print(data.phase.." ended reinforcements after "..time.." seconds with "..t_killCounts[data.phase].count.." kills")
+		
+		Rule_RemoveMe()
+		
+		if scartype(data.callbacks) == ST_TABLE then 
+			if scartype(data.callbacks.onComplete) == ST_FUNCTION then 
+				data.callbacks.onComplete()
+			end
+		end
+		
+	--elseif SGroup_CountSpawned(data.groupToReinforce) < data.reinforcementThreshold and World_GetGameTime() >= data.timeStamp_nextReinforcement then 
+	elseif i_activeUnitCount_player2 < data.reinforcementThreshold and i_activeUnitCount_player2 < i_activeUnitCount_player1 and World_GetGameTime() >= data.timeStamp_nextReinforcement then 
+		
+		-- make a small reinforcement
+		 
+		if scartype(data.reinforcementSource) == ST_SGROUP then 
+			
+			-- steal units from some already on map
+			
+			SGroup_Duplicate(data.reinforcementSource, sg_temp)		-- find all the units that *aren't* moving (so this will discount all the backfill units moving into position)
+			local _CheckSquad = function(gid, idx, sid)
+				if Squad_IsMoving(sid) then
+					SGroup_Remove(gid, sid)
+				end
+			end
+			SGroup_ForEach(sg_temp, _CheckSquad)
+			
+			local sgroup = SGroup_CreateUnique("")
+			local replacementUnits = {}
+			local amount = data.reinforcementAmount
+			
+			if scartype(amount) == ST_TABLE then 
+				amount = World_GetRand(data.reinforcementAmount.min, data.reinforcementAmount.max)
+			end
+			
+			print(data.phase.." making "..amount.." reinforcements ("..time.." seconds into phase)")
+			
+			for index = 1, amount do 
+				
+				if SGroup_CountSpawned(sg_temp) >= 1 then
+					
+					local squad = SGroup_GetClosestSquad(sg_temp, t_killCounts[data.phase].lastKilledPosition)
+					
+					SGroup_Add(sgroup, squad)
+					SGroup_Remove(sg_temp, squad)
+					
+					local replacementForThisUnit = {sbp = Squad_GetBlueprint(squad), destination = Squad_GetPosition(squad), destinationFacing = Util_GetFacingFromDirection(Squad_GetPosition(squad), Marker_GetDirection(mkr_phase4_a)), --[[ability = LINE_FORMATION,]]}
+					if scartype(data.reinforcementSubGroups) == ST_TABLE then 
+						for index, subgroup in pairs(data.reinforcementSubGroups) do 
+							if SGroup_ContainsSquad(subgroup, Squad_GetID(squad), false) then 
+								replacementForThisUnit.sgroup = subgroup 
+								SGroup_Remove(subgroup, squad)
+							end
+						end
+					end
+					
+					table.insert(replacementUnits, replacementForThisUnit)
+					
+				end
+				
+			end
+			
+			SGroup_RemoveGroup(data.reinforcementSource, sgroup)
+			SGroup_AddGroup(data.groupToReinforce, sgroup)
+			DefeatSaxons_ReleaseSpearmen(nil, {sgroup = sgroup, destination = mkr_hill_bottom_center, module = DefendHillCenter, trackingGroup = sg_saxons_center, deleteGroup = true})
+			
+			-- create units to backfill where it stole units from 
+			
+			if #replacementUnits >= 1 then 
+				
+				SGroup_Clear(sg_temp)
+				
+				local options = {
+					dynamicSpawnType = DST_FURTHEST_HIDDEN,
+					holdPosition = true,
+				}
+				UnitEntry_DeploySquads(player2, sg_temp, replacementUnits, mkr_harold_reinforce, nil, nil, options)
+				
+				SGroup_SetTargetingType(sg_temp, Targeting_Manual)
+				Misc_SetSGroupSelectable(sg_temp, false)
+				
+				SGroup_AddGroup(data.reinforcementSource, sg_temp)
+				
+			end
+			
+			---- if there are any units still missing, create them from scratch 
+			
+			--if #replacementUnits < amount then 
+				
+				--local remainingAmount = amount - #replacementUnits 
+				--local sgroup = SGroup_CreateUnique("")
+
+				--local units = {
+					--{sbp = data.reinforcementSBP, numSquads = amount, ability = LINE_FORMATION},
+				--}
+				--local options = {
+					--destination = t_killCounts[data.phase].lastKilledPosition,
+					--dynamicSpawnType = DST_FURTHEST_HIDDEN,
+					--holdPosition = true,
+				--}
+				--UnitEntry_DeploySquads(player2, sgroup, units, data.reinforcementSpawnPoint, nil, nil, options)
+				--DefeatSaxons_ReleaseSpearmen(nil, {sgroup = sgroup, destination = mkr_hill_bottom_center, module = DefendHillCenter, trackingGroup = sg_saxons_center, deleteGroup = true})
+				
+				--SGroup_AddGroup(data.groupToReinforce, sgroup)
+				
+			--end
+			
+		elseif scartype(data.reinforcementSource) == ST_MARKER or scartype(data.reinforcementSource) == ST_SCARPOS then 
+
+			-- generate reinforcement units from marker
+			
+			local sgroup = SGroup_CreateUnique("")
+			
+			local amount = data.reinforcementAmount
+			if scartype(amount) == ST_TABLE then 
+				amount = World_GetRand(data.reinforcementAmount.min, data.reinforcementAmount.max)
+			end
+			
+			print(data.phase.." making "..amount.." reinforcements ("..time.." seconds into phase)")
+
+			local units = {
+				{sbp = data.reinforcementSBP, numSquads = amount, ability = LINE_FORMATION},
+			}
+			local options = {
+				destination = t_killCounts[data.phase].lastKilledPosition,
+				dynamicSpawnType = DST_FURTHEST_HIDDEN,
+				holdPosition = true,
+			}
+			UnitEntry_DeploySquads(player2, sgroup, units, data.reinforcementSource, nil, nil, options)
+			DefeatSaxons_ReleaseSpearmen(nil, {sgroup = sgroup, destination = mkr_hill_bottom_center, module = DefendHillCenter, trackingGroup = sg_saxons_center, deleteGroup = true})
+			
+			SGroup_AddGroup(data.groupToReinforce, sgroup)
+			
+			
+		end
+		
+		data.timeStamp_nextReinforcement = World_GetGameTime() + World_GetRand(1, 3)
+		
+	end
+	
+end
+
+
+
+
+
+function DefeatSaxons_UpdateActiveUnitCounts()
+	
+	i_activeUnitCount_player1 = SGroup_CountBlueprints(sg_activeUnits_player1, "scar_manatarms") + (SGroup_CountBlueprints(sg_activeUnits_player1, "scar_archer") / 2) + (SGroup_CountBlueprints(sg_activeUnits_player1, "scar_horseman") / 2)
+	i_activeUnitCount_player1 = i_activeUnitCount_player1 + (SGroup_CountBlueprints(sg_waitingUnits_player1, "scar_manatarms") / 2) + (SGroup_CountBlueprints(sg_waitingUnits_player1, "scar_archer") / 4) + (SGroup_CountBlueprints(sg_waitingUnits_player1, "scar_horseman") / 4)
+	
+	i_activeUnitCount_player2 = SGroup_CountSpawned(sg_activeUnits_player2)
+	
+end
+
+
+
+
+-- 
+-- RPS Boost system -- apply modifiers to unit types for specific sections of the mission
+--
+
+function BoostRPS_Add(player, unitType, weaponDamage, receivedDamage)
+	
+	-- create a table entry for this boost, and add it to the list of all boosts
+	local entry = {
+		
+		-- settings
+		player = player,
+		unitType = unitType,
+		weaponDamage = weaponDamage,
+		receivedDamage = receivedDamage,
+		
+		-- tracking
+		sgroup = SGroup_CreateUniqueWithPrefix("BoostRPS "..unitType),
+		modifierIDs = {},
+		
+	}
+	table.insert(t_boostRPS, entry)
+
+	BoostRPS_Apply(entry)								-- apply this boost now
+	
+	if Rule_Exists(BoostRPS_Manager) == false then		-- kick off the manager if needed, so it will monitor for new squads of the type and apply the boost to them, too 
+		Rule_AddInterval(BoostRPS_Manager, 2)
+	end
+		
+	return entry		-- return the table entry so that it can be used as a handle to remove this boost specifically in the future
+	
+end
+
+function BoostRPS_Remove(boostToRemove)
+	
+	for index = #t_boostRPS, 1, -1 do 
+		
+		local boost = t_boostRPS[index]
+		
+		if boost == boostToRemove then 
+			
+			for i, modid in pairs(boost.modifierIDs) do			-- remove all the applied modifiers 
+				Modifier_Remove(modid)
+			end
+			
+			SGroup_Destroy(boost.sgroup)						-- destroy the tracking sgroup
+
+			table.remove(t_boostRPS, index)						-- remove from the list of active boosts
+			
+		end
+	end
+	
+	if #t_boostRPS == 0 and Rule_Exists(BoostRPS_Manager) then	-- if that was the last boost removed, feel free to kill the manager rule 
+		Rule_Remove(BoostRPS_Manager)
+	end
+	
+end
+
+function BoostRPS_RemoveAll()
+	
+	for index = #t_boostRPS, 1, -1 do 							-- go through the table of all the boosts and remove them one by one
+		BoostRPS_Remove(t_boostRPS[index])						-- (the final one will also remove the manager)
+	end
+	
+end
+
+
+
+function BoostRPS_Manager()
+	
+	for index, boost in pairs(t_boostRPS) do 					-- check each boost in turn
+		BoostRPS_Apply(boost)
+	end	
+	
+end
+
+function BoostRPS_Apply(boost)
+	
+	Player_GetAll(boost.player)
+	SGroup_RemoveGroup(sg_allsquads, boost.sgroup)				-- remove units we have already assigned modifiers to
+	SGroup_Filter(sg_allsquads, boost.unitType, FILTER_KEEP)	-- remove anything that isn't the desired unit type
+	
+	if SGroup_CountSpawned(sg_allsquads) >= 1 then 
+		
+		if boost.weaponDamage ~= nil then 
+			local modid = Modify_WeaponDamage(sg_allsquads, "hardpoint_01", boost.weaponDamage)
+			table.insert(boost.modifierIDs, modid)
+		end
+		
+		if boost.receivedDamage ~= nil then 
+			local modid = Modify_ReceivedDamage(sg_allsquads, boost.receivedDamage)
+			table.insert(boost.modifierIDs, modid)
+		end
+		
+		SGroup_AddGroup(boost.sgroup, sg_allsquads)				-- add these units to the sgroup, so they get removed from consideration on subsequent checks
+		
+	end
+	
+end
+
+

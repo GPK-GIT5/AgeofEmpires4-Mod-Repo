@@ -1,0 +1,196 @@
+import("cardinal.scar")
+
+function Rogue_SetupPlayers_A()
+	factions = {}
+end
+
+function Rogue_AddHumanPlayer(player_index, color)
+	ROGUE_HUMAN_FACTIONS = ROGUE_HUMAN_FACTIONS or {}
+	ROGUE_HUMAN_PLAYERS = ROGUE_HUMAN_PLAYERS or {}
+	
+	human_faction_index = human_faction_index or 0
+	human_faction_index = human_faction_index + 1
+	
+	local faction = {}
+	faction.player_index = player_index
+	faction.player = World_GetPlayerAt(player_index)
+	faction.color = color
+	faction.type = "human"
+	faction.is_enemy = false
+	faction.is_human = true
+	faction.unit_upgrade_level = 1
+	faction.gets_combat_upgrades_from_events = false
+	faction.has_tech_tree = false
+	table.insert(factions, faction)
+	
+	table.insert(ROGUE_HUMAN_FACTIONS, faction)
+	table.insert(ROGUE_HUMAN_PLAYERS, faction.player)
+end
+
+function Rogue_AddEnemyWavePlayer(player_index, name, color)
+	local faction = {}
+	faction.player_index = player_index
+	faction.player = World_GetPlayerAt(player_index)
+	faction.color = color
+	faction.type = "enemy_wave"
+	faction.name = name
+	faction.is_enemy = true
+	faction.is_human = false
+	faction.unit_upgrade_level = 1
+	faction.gets_combat_upgrades_from_events = true
+	faction.has_tech_tree = true
+	table.insert(factions, faction)
+	
+	ROGUE_ENEMY_WAVE_FACTION = faction
+	ROGUE_ENEMY_WAVE_PLAYER = faction.player
+end
+
+function Rogue_AddAllyPlayer(player_index, name, color)
+	local faction = {}
+	faction.player_index = player_index
+	faction.player = World_GetPlayerAt(player_index)
+	faction.color = color
+	faction.type = "ally"
+	faction.name = name
+	faction.is_enemy = false
+	faction.is_human = false
+	faction.unit_upgrade_level = 3
+	faction.gets_combat_upgrades_from_events = false
+	faction.has_tech_tree = false
+	table.insert(factions, faction)
+	
+	ROGUE_ALLY_FACTION = faction
+	ROGUE_ALLY_PLAYER = faction.player
+end
+
+function Rogue_AddEnemyAllyPlayer(player_index, name, color)
+	local faction = {}
+	faction.player_index = player_index
+	faction.player = World_GetPlayerAt(player_index)
+	faction.color = color
+	faction.type = "enemy_ally"
+	faction.name = name
+	faction.is_enemy = true
+	faction.is_human = false
+	faction.unit_upgrade_level = 2
+	faction.gets_combat_upgrades_from_events = false
+	faction.has_tech_tree = true
+	table.insert(factions, faction)
+	
+	ROGUE_ENEMY_ALLY_FACTION = faction
+	ROGUE_ENEMY_ALLY_PLAYER = faction.player
+end
+
+function Rogue_AddEnemyRaiderPlayer(player_index, name, color)
+	local faction = {}
+	faction.player_index = player_index
+	faction.player = World_GetPlayerAt(player_index)
+	faction.color = color
+	faction.type = "enemy_raider"
+	faction.name = name
+	faction.is_enemy = true
+	faction.is_human = false
+	faction.unit_upgrade_level = 2
+	faction.gets_combat_upgrades_from_events = false
+	faction.has_tech_tree = true
+	table.insert(factions, faction)
+	
+	ROGUE_ENEMY_RAIDER_FACTION = faction
+	ROGUE_ENEMY_RAIDER_PLAYER = faction.player
+end
+
+function Rogue_AddNeutralPlayer(player_index, name, color)
+	local faction = {}
+	faction.player_index = player_index
+	faction.player = World_GetPlayerAt(player_index)
+	faction.color = color
+	faction.type = "neutral"
+	faction.name = name
+	faction.is_enemy = false
+	faction.is_human = false
+	faction.unit_upgrade_level = 2
+	faction.gets_combat_upgrades_from_events = false
+	faction.has_tech_tree = true
+	table.insert(factions, faction)
+	
+	ROGUE_NEUTRAL_FACTION = faction
+	ROGUE_NEUTRAL_PLAYER = faction.player
+end
+
+function Rogue_SetupPlayers_B(player_index)
+	--PlayerColour_Enable()
+	for _, faction in ipairs(factions) do
+		--Setup_SetPlayerName(faction.player, faction.type)
+		if faction.name then
+			Setup_SetPlayerName(faction.player, faction.name)
+		end
+		Game_SetPlayerColour(faction.player, faction.color)	
+	end
+	
+	for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+		Player_SetRelationship(player, ROGUE_NEUTRAL_PLAYER, R_ALLY)
+		Player_SetRelationship(ROGUE_NEUTRAL_PLAYER, player, R_NEUTRAL)
+		World_EnableSharedLineOfSight(player, ROGUE_NEUTRAL_PLAYER, false)
+		
+		Player_SetRelationship(player, ROGUE_ALLY_PLAYER, R_ALLY)
+		Player_SetRelationship(ROGUE_ALLY_PLAYER, player, R_ALLY)	
+		World_EnableSharedLineOfSight(player, ROGUE_ALLY_PLAYER, true)
+	end
+	
+	Player_SetRelationship(ROGUE_ENEMY_WAVE_PLAYER, ROGUE_NEUTRAL_PLAYER, R_NEUTRAL)
+	Player_SetRelationship(ROGUE_NEUTRAL_PLAYER, ROGUE_ENEMY_WAVE_PLAYER, R_NEUTRAL)
+	
+	Player_SetRelationship(ROGUE_ENEMY_RAIDER_PLAYER, ROGUE_NEUTRAL_PLAYER, R_NEUTRAL)
+	Player_SetRelationship(ROGUE_NEUTRAL_PLAYER, ROGUE_ENEMY_RAIDER_PLAYER, R_NEUTRAL)
+end
+
+function Rogue_SetupPlayers_C(player_index)
+	PlayerColour_Enable()
+	for _, faction in ipairs(factions) do
+		Game_SetPlayerColour(faction.player, faction.color)	
+	end
+end
+
+
+function Factions_Init()
+	ally_blacksmith_upgrade_level = 2
+	player_id_to_faction = {}
+	for _, faction in ipairs(factions) do
+		faction.combat_upgrades_per_age = { {}, {}, {}, {} }
+		player_id_to_faction[Player_GetID(faction.player)] = faction
+		if faction.is_human == false then
+			Player_SetStateModelBool(faction.player, "disable_landmark_rebuild", true)
+		end
+	end
+	
+	local removed_types = {
+		"stone_wall",
+		"stone_wall_tower",
+		"stone_gate",
+		"palisade_wall",
+		"palisade_gate",
+	}
+	for _, player in ipairs(ROGUE_HUMAN_PLAYERS) do
+		Player_SetEntityProductionAvailability(player, BP_GetEntityBlueprintsWithType(removed_types), ITEM_REMOVED)
+		Player_SetAbilityAvailability(player, BP_GetAbilityBlueprint("monk_conversion"), ITEM_REMOVED)
+		Player_SetAbilityAvailability(player, BP_GetAbilityBlueprint("nehan_conversion"), ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, BP_GetUpgradeBlueprint("upgrade_temple_nehan_jpn"), ITEM_REMOVED)
+		Player_SetUpgradeAvailability(player, BP_GetUpgradeBlueprint("upgrade_cul_conversion_invuln_abb"), ITEM_REMOVED)
+		Player_SetAbilityAvailability(player, BP_GetAbilityBlueprint("buddhist_conversion"), ITEM_REMOVED)
+		Player_SetAbilityAvailability(player, BP_GetAbilityBlueprint("monk_conversion_faith_abb"), ITEM_REMOVED)
+	end
+	
+	EGroup_Clear(eg_temp)
+	World_GetAllEntitiesOfType(eg_temp, "settlement")
+	FOW_RevealEGroup(eg_temp, 20, 0.25)
+	
+	EGroup_Clear(eg_temp)
+	Player_GetAll(ROGUE_ENEMY_WAVE_PLAYER, eg_temp)
+	EGroup_Filter(eg_temp, { "wall", "stone_wall_tower" }, FILTER_KEEP)
+	EGroup_SetTargetingType(eg_temp, Targeting_None)
+	EGroup_SetInvulnerable(eg_temp, true, -1)
+end
+
+function Faction_FromPlayer(player)
+	return player_id_to_faction[Player_GetID(player)]
+end

@@ -1,0 +1,161 @@
+
+--import("training.scar")
+--import("training/coretraininggoals.scar")
+--import("training/coretrainingconditions.scar")
+import("training/campaigntraininggoals.scar")
+
+local goal_sequence_scout_select = "scout_select"
+local goal_sequence_move_stealth = "move_stealth"
+local goal_allies = "allies"
+
+local training_goals_campaign_stealth =
+{
+	goal_sequence_scout_select,
+	goal_sequence_move_stealth
+}
+
+function TrainingGoal_EnableCampaignStealthGoals()
+	for i, goalSequenceID in ipairs(training_goals_campaign_stealth) do
+		Training_EnableGoalSequenceByID(goalSequenceID, true)
+	end
+end
+
+function Lincoln_InitTraining()
+	
+	local selectScoutGoal = Training_Goal("Squad", 
+		{Message = UI_PickIDForInputMode (11191740, 1000602), DataTemplate="LeftClickTrainingDataTemplate"},
+		UserHasSelectedAScout)
+	local scoutSelectionGoalSequence = Training_GoalSequence(goal_sequence_scout_select, 
+		3, 1,                                      -- repeatMax, remindMax (if both set to -1, it will keep repeating the training)
+		HasScoutInSight,  						   -- trigger
+		TimerORIgnore_UserCannotSeeSquadKey,       -- ignore
+		nil, 									   -- remind
+		UserIsMovingAnySelectedUnit, 		   	   -- bypass
+		false, 									   -- canRegress
+		{selectScoutGoal})
+	Training_AddGoalSequence(scoutSelectionGoalSequence)
+	
+	-- for cursor/reticle the key is defined differently based on in the input type
+	local interfaceTag = "Cursor"
+	if UI_IsXboxControllerUI() then
+		interfaceTag = "LooseReticle"
+	end
+	
+	local moveStealthGoal = Training_Goal(interfaceTag, 
+		{Message = UI_PickIDForInputMode (11191741, 1000603), DataTemplate="RightClickTrainingDataTemplate"}, 
+		UserIsMovingSpecifiedSelectedUnit)
+	local moveStealthGoalSequence = Training_GoalSequence(goal_sequence_move_stealth,
+		1, 0, 
+		UserHasNotMovedASelectedVisibleUnitRecently, 
+		TimerORIgnore_UserHasNoUnitSelected,
+		nil, 
+		UserIsMovingAnySelectedUnit,
+		false, 
+		{moveStealthGoal})
+	Training_AddGoalSequence(moveStealthGoalSequence)
+	
+	
+	local alliesGoal = Training_Goal("Squad", 
+		{Message = "$11191742", DataTemplate="GenericTrainingDataTemplate"},
+		UserHasViewedAlliesTraining)
+	local alliesGoalSequence = Training_GoalSequence(goal_allies, 
+		1, 0, --If these are both set to -1, it will keep repeating the training
+		AlliesHaveArrived, 
+		CampaignTraining_TimeoutIgnorePredicate, 
+		nil, 
+		nil, 
+		false, 
+		{alliesGoal})
+	Training_AddGoalSequence(alliesGoalSequence)
+end
+
+function AlliesHaveArrived(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingHoverInterval then
+
+		local squads = Player_GetSquads(World_GetPlayerAt(5))
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			
+			if squad ~= nil then
+				
+				if Misc_IsSquadOnScreen(squad, 100) then
+					goalSequence.goals[1].key = Squad_GetID(squad)
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+function TimerORIgnore_UserCannotSeeSquadKey(goalSequence)
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		return UserCannotSeeSquadKey(goalSequence)
+	end
+end
+
+function TimerORIgnore_UserHasNoUnitSelected(goalSequence)
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		return UserHasNoUnitSelected(goalSequence)
+	end
+end
+
+-- after a timer, remove hint about allies
+function UserHasViewedAlliesTraining(goal)
+	if _g_AlliesTimer == nil then
+		_g_AlliesTimer = Training_GetNewTimerID()
+		Timer_Start(_g_AlliesTimer, 12)
+	else
+		local currentTime = Timer_GetRemaining(_g_AlliesTimer)
+		if currentTime <= 0 then
+			Timer_End(_g_AlliesTimer)
+			_g_AlliesTimer = nil
+			return true	
+		end
+	end
+end
+
+function HasScoutInSight(goalSequence)
+	local currentTime = Timer_GetElapsed(goalSequence.timerID)
+	if currentTime > __t_trainingShortInterval then
+		local localPlayer = Game_GetLocalPlayer()
+		local squads = Player_GetSquads(localPlayer)
+		
+		for i = 1, SGroup_Count(squads) do
+			local squad = SGroup_GetSquadAt(squads, i)
+			
+			if squad ~= nil then
+				if Player_CanSeeSquad(localPlayer, squad, ANY) and Squad_IsOfType(squad, "scar_scout") then
+					if Squad_IsIdle(squad) then
+						
+						goalSequence.goals[1].key = Squad_GetID(squad)
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+function UserHasAScoutSelectedPredicate(goalSequence)
+	
+	if SGroup_Count(sg_currentSelection) > 0 then
+		local scoutBP = Cardinal_ConvertTypeToSquadBlueprint("scar_scout", Game_GetLocalPlayer())
+		Misc_GetSelectedSquads(sg_currentSelection, false)
+		for i = 1, SGroup_Count(sg_currentSelection) do
+			local squad = SGroup_GetSquadAt(sg_currentSelection, i)
+			if Squad_GetBlueprint(squad) == scoutBP then
+				return true
+			end
+		end
+	end
+	return false
+end
+

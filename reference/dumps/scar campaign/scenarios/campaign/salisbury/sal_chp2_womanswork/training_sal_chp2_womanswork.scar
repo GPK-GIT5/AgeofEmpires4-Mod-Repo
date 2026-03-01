@@ -1,0 +1,1351 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("training.scar")
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+
+
+-- list of lessons
+-- ///// SelectVillager //////////////////////////////////////////////
+-- ///// GatherFood //////////////////////////////////////////////
+-- ///// VillagerCommand //////////////////////////////////////////////
+-- ///// BuildMill //////////////////////////////////////////////
+-- ///// BuildLumber //////////////////////////////////////////////
+-- ///// Make5Villagers //////////////////////////////////////////////
+-- ///// BuildHouses //////////////////////////////////////////////
+
+-- ///// Scouting //////////////////////////////////////////////
+
+-- ///// BuildMine //////////////////////////////////////////////
+-- ///// BuildFarms //////////////////////////////////////////////
+
+-- ///// SetVPS //////////////////////////////////////////////
+-- ///// Research //////////////////////////////////////////////
+
+-- ///// BuildLandmark //////////////////////////////////////////////
+
+
+
+-- ///// SelectVillager //////////////////////////////////////////////
+function Goals_SelectVillager()
+
+	local goal_sequence_SelectVillager_id = "goal_sequence_SelectVillager"
+
+	local goal_SelectVillager = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_start_intro_villager_01, 1),
+		{
+			ID = "goal_SelectVillager",
+			Message = "$999527", --Select an idle villager by Pressing Up on the D-pad
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+
+	local goal_sequence_SelectVillager = Training_GoalSequence(
+		goal_sequence_SelectVillager_id,
+		-1,
+		1,
+		SelectVillager_Trigger,
+		SelectVillager_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_SelectVillager}
+	)
+	
+	Training_AddGoalSequence(goal_sequence_SelectVillager)
+	Training_EnableGoalSequenceByID(goal_sequence_SelectVillager, true)
+end
+
+
+function SelectVillager_Trigger(goalSequence)
+
+	return true
+end
+
+function SelectVillager_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_SelectVillager) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// GatherFood //////////////////////////////////////////////
+function Goals_GatherFood()
+
+	local goal_sequence_GatherFood_id = "goal_sequence_GatherFood"
+
+	local goal_GatherFood = Training_Goal(
+		Marker_GetPosition(mkr_food_source),
+		{
+			ID = "goal_GatherFood",
+			Message = "$999529", -- Move the Camera to the Food Source and Press A
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		GatherFood_CompletePredicate
+	)
+	
+	local goal_ResourceDisplay = Training_Goal(
+		"AgeIconResources",
+		{
+			ID = "goal_GatherFood",
+			Message = "$999539", -- You can see the how many resources you have and how many villagers are gathering them in the top bar.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ResourceDisplay_CompletePredicate
+	)
+
+	local goal_sequence_GatherFood = Training_GoalSequence(
+		goal_sequence_GatherFood_id,
+		-1,
+		1,
+		GatherFood_Trigger,
+		GatherFood_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_GatherFood, goal_ResourceDisplay}
+	)
+
+	Training_AddGoalSequence(goal_sequence_GatherFood)
+	Training_EnableGoalSequenceByID(goal_sequence_GatherFood, true)
+end
+
+function GatherFood_CompletePredicate(goal)
+
+	return Player_GetNumGatheringSquads(player1, RT_Food) > 0 
+end
+
+function ResourceDisplay_CompletePredicate(goal)
+	
+	return false
+end
+
+function GatherFood_Trigger(goalSequence)
+
+	return true
+end
+
+function GatherFood_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_GatherFood) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// BuildMill //////////////////////////////////////////////
+function Goals_BuildMill()
+
+	local goal_sequence_BuildMill_id = "goal_sequence_BuildMill"
+
+	local goal_SelectVillagerMill = Training_Goal(
+		"DPadTop",
+		{
+			ID = "goal_SelectVillagerMill",
+			Message = "$999531", -- Select an idle villager by Pressing Up on the D-pad
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		IsSelectionOnlyVillagers
+	)
+	
+	local goal_OpenRadialBuildMill = Training_Goal(
+		"OpenContextualRadial",
+		{
+			ID = "goal_OpenRadialBuildMill",
+			Message = "$999532", -- Press RT to show the Villager Radial Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenRadial_CompletePredicate
+	)
+	
+	local goal_HighlightMill = Training_Goal(
+		EBP.FRENCH.BUILDING_ECON_FOOD_CONTROL_FRE,
+		{
+			ID = "goal_HighlightMill",
+			Message = "$999534", -- Push the LS towards the Mill, then Press A
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		HighlightMill_CompletePredicate
+	)
+	
+	
+	local goal_BuildMill = Training_Goal(
+		Marker_GetPosition(mkr_place_mill),
+		{
+			ID = "goal_BuildMill",
+			Message = "$999535", -- Use LS to position the Mill,  then Press A to place it
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+
+	local goal_sequence_BuildMill = Training_GoalSequence(
+		goal_sequence_BuildMill_id,
+		-1,
+		1,
+		BuildMill_Trigger,
+		BuildMill_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectVillagerMill, goal_OpenRadialBuildMill, goal_HighlightMill, goal_BuildMill}
+	)
+
+	Training_AddGoalSequence(goal_sequence_BuildMill)
+	Training_EnableGoalSequenceByID(goal_sequence_BuildMill, true)
+end
+
+
+
+function HighlightMill_CompletePredicate(goal)
+	-- use the construction log we are maintaining to see if we are in the right phase with the right building
+	return (g_training_log.phase == "position phase") and (g_training_log.BP == EBP.FRENCH.BUILDING_ECON_FOOD_CONTROL_FRE)
+end
+
+function BuildMill_Trigger(goalSequence)
+
+	return true
+end
+
+function BuildMill_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_BuildMill) or training_mill_placed == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// BuildLumber //////////////////////////////////////////////
+function Goals_BuildLumber()
+
+	local goal_sequence_BuildLumber_id = "goal_sequence_BuildLumber"
+
+	local goal_SelectVillagerLumber = Training_Goal(
+		"DPadTop",
+		{
+			ID = "goal_SelectVillagerLumber",
+			Message = "$999531", -- Select an idle villager by Pressing Up on the D-pad
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		IsSelectionOnlyVillagers
+	)
+	
+	local goal_OpenRadialBuildLumber = Training_Goal(
+		"OpenContextualRadial",
+		{
+			ID = "goal_OpenRadialBuildLumber",
+			Message = "$999532", -- Press RT to show the Villager Radial Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenRadial_CompletePredicate
+	)
+	
+	local goal_HighlightLumber = Training_Goal(
+		EBP.FRENCH.BUILDING_ECON_WOOD_CONTROL_FRE,
+		{
+			ID = "goal_HighlightLumber",
+			Message = "$999540", -- Push the LS towards the Mill, then Press A
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		HighlightLumber_CompletePredicate
+	)
+	
+	
+	local goal_BuildLumber = Training_Goal(
+		Marker_GetPosition(mkr_place_lumber_camp),
+		{
+			ID = "goal_BuildLumber",
+			Message = "$999541", -- Use LS to position the Mill,  then Press A to place it
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+
+	local goal_sequence_BuildLumber = Training_GoalSequence(
+		goal_sequence_BuildLumber_id,
+		-1,
+		1,
+		BuildLumber_Trigger,
+		BuildLumber_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectVillagerLumber, goal_OpenRadialBuildLumber, goal_HighlightLumber, goal_BuildLumber}
+	)
+
+	Training_AddGoalSequence(goal_sequence_BuildLumber)
+	Training_EnableGoalSequenceByID(goal_sequence_BuildMill, true)
+end
+
+
+function HighlightLumber_CompletePredicate(goal)
+	-- use the construction log we are maintaining to see if we are in the right phase with the right building
+	return (g_training_log.phase == "position phase") and (g_training_log.BP == EBP.FRENCH.BUILDING_ECON_WOOD_CONTROL_FRE)
+end
+
+function BuildLumber_Trigger(goalSequence)
+
+	return true
+end
+
+function BuildLumber_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_BuildLumber) or training_lumber_placed == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// BuildMine //////////////////////////////////////////////
+function Goals_BuildMine()
+
+	local goal_sequence_BuildMineSMS_id = "goal_sequence_BuildMineSMS"
+	
+	local goal_deselect_for_SMS = Training_Goal (
+		"LooseReticle", 
+		{ID = "goal_deselect_for_SMS",	Message = "$11254492",DataTemplate = "GenericTrainingDataTemplate",}, 
+		IsSelectionEmpty	)
+	
+	local goal_hover_gold_vein = Training_Goal (
+		Marker_GetPosition(mkr_gold_source),
+		{ID = "goal_hover_gold_vein", Message = "$11254493", DataTemplate = "GenericTrainingDataTemplate",}, 
+		BuildMine_IsHoveringOverGold	)
+	
+	local goal_open_SMS = Training_Goal (
+		"OpenContextualRadial", 
+		{ID = "goal_open_SMS", Message = "$11254494", DataTemplate = "GenericTrainingDataTemplate",}, 
+		IsSMSOpen 	)
+	
+	local goal_choose_mine = Training_Goal (
+		EBP.FRENCH.BUILDING_ECON_MINING_CAMP_CONTROL_FRE,
+		{ID = "goal_choose_mine", Message = "$11254495", DataTemplate = "RadialTrainingDataTemplate",}, 
+		BuildMine_IsPlacingMine	)
+	
+	local goal_place_mine = Training_Goal (
+		Marker_GetPosition(mkr_place_mine), 
+		{ID = "goal_place_mine", Message = "$11254496", DataTemplate = "GenericTrainingDataTemplate", }, 
+		ReturnFalse 	)
+	
+	local goal_sequence_BuildMineSMS = Training_GoalSequence(
+		goal_sequence_BuildMineSMS_id, 
+		-1, 
+		1, 
+		ReturnTrue, 
+		BuildMine_IgnorePredicate, 
+		nil, 
+		nil, 
+		true, 
+		{goal_deselect_for_SMS, goal_hover_gold_vein, goal_open_SMS, goal_choose_mine, goal_place_mine}
+	)
+	
+	Training_AddGoalSequence(goal_sequence_BuildMineSMS)
+	Training_EnableGoalSequenceByID(goal_sequence_BuildMineSMS, true)
+	
+end
+
+function BuildMine_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_BuildMine) or training_mine_placed == true then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+function BuildMine_IsHoveringOverGold(goal)
+	return Prox_AreEntitiesNearMarker (eg_gold_vein, Camera_GetPivot(), ANY, 5)
+end
+
+
+function BuildMine_IsPlacingMine (goal)
+	-- use the construction log we are maintaining to see if we are in the right phase with the right building
+	return (g_training_log.phase == "position phase") and (g_training_log.BP == EBP.FRENCH.BUILDING_ECON_MINING_CAMP_CONTROL_FRE)
+end
+
+
+-- ///// VillagerCommand //////////////////////////////////////////////
+function Goals_VillagerCommand()
+
+	local goal_sequence_VillagerCommand_id = "goal_sequence_VillagerCommand"
+
+	local goal_SelectTC = Training_Goal(
+		"DPadBottom",
+		{
+			ID = "goal_SelectTC",
+			Message = "$999546", -- Select the Town Centre by Pressing Down on the D-pad
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectTC_CompletePredicate
+	)
+	
+	local goal_OpenRadial = Training_Goal(
+		"OpenContextualRadial",
+		{
+			ID = "goal_OpenRadial",
+			Message = "$999549", -- Press RT to open the Town Centre Radial Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenRadial_CompletePredicate
+	)
+	
+	local goal_CreateVillagers = Training_Goal(
+		 Cardinal_ConvertTypeToSquadBlueprint("villager", player1),
+		{
+			ID = "goal_CreateVillagers",
+			Message = "$999550", -- Push the LS to highlight the Villagers, then Press A twice
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+
+	local goal_sequence_VillagerCommand = Training_GoalSequence(
+		goal_sequence_VillagerCommand_id,
+		-1,
+		1,
+		VillagerCommand_Trigger,
+		VillagerCommand_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectTC, goal_OpenRadial, goal_CreateVillagers}
+	)
+
+	Training_AddGoalSequence(goal_sequence_VillagerCommand)
+	Training_EnableGoalSequenceByID(goal_sequence_VillagerCommand, true)
+end
+
+function SelectTC_CompletePredicate(goal)
+
+	return Misc_IsEGroupSelected(eg_player_tc, true) or Make2Villagers_CheckTrainingUI()
+end
+
+function VillagerCommand_Trigger(goalSequence)
+
+	return true
+end
+
+function VillagerCommand_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_VillagerCommand) or Make2Villagers_CheckTrainingUI() then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// Make5Villagers //////////////////////////////////////////////
+function Goals_Make5Villagers()
+
+	local goal_sequence_Make5Villagers_id = "goal_sequence_Make5Villagers"
+
+	local goal_SelectTC5Villagers = Training_Goal(
+		"DPadBottom",
+		{
+			ID = "goal_SelectTC5Villagers",
+			Message = "$999546", -- Select the Town Centre by Pressing Down on the D-pad
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectTC5Villagers_CompletePredicate
+	)
+	
+	local goal_OpenRadial5Villagers = Training_Goal(
+		EGroup_GetEntityAt(eg_player_tc, 1),
+		--"OpenContextualRadial",
+		{
+			ID = "goal_OpenRadial5Villagers",
+			Message = "$999549", -- Press RT to open the Town Centre Radial Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenRadial5Villagers_CompletePredicate
+	)
+	
+	local goal_QueueModifier = Training_Goal(
+		SBP.FRENCH.UNIT_VILLAGER_1_FRE,
+		{
+			ID = "goal_QueueModifier",
+			Message = "$999553", --With the Town Centre Selected, press LT + Y to queue 5 villagers.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		QueueModifier_CompletePredicate
+	)
+
+	local goal_Make5Villagers = Training_Goal(
+		Cardinal_ConvertTypeToSquadBlueprint("villager", player1),
+		{
+			ID = "goal_Make5Villagers",
+			Message = "$1000765", --Push the LS to highlight the Villagers, then Press A to queue 5 Villagers.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		Make5Villagers_CompletePredicate
+	)
+	
+	local goal_BToClose = Training_Goal(
+		"CloseContextualRadialMenu",
+		{
+			ID = "goal_BToClose",
+			Message = "$999551", --Press B to close the Menu.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+
+	goal_sequence_Make5Villagers = Training_GoalSequence(
+		goal_sequence_Make5Villagers_id,
+		-1,
+		1,
+		Make5Villagers_Trigger,
+		Make5Villagers_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_SelectTC5Villagers, goal_OpenRadial5Villagers, goal_QueueModifier, goal_Make5Villagers, goal_BToClose}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Make5Villagers)
+	Training_EnableGoalSequenceByID(goal_sequence_Make5Villagers, true)
+end
+
+function SelectTC5Villagers_CompletePredicate(goal)
+
+	return Misc_IsEGroupSelected(eg_player_tc, true) or Make5Villagers_CheckTrainingUI()
+end
+
+function OpenRadial5Villagers_CompletePredicate(goal)
+
+	return (Misc_IsEGroupSelected(eg_player_tc, true) and UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu) or Make5Villagers_CheckTrainingUI()
+end
+
+function QueueModifier_CompletePredicate(goal)
+
+	return UI_IsQueueModifierDown() or Make5Villagers_CheckTrainingUI()
+end
+
+function Make5Villagers_CompletePredicate(goal)
+
+	return Make5Villagers_CheckTrainingUI()
+end
+
+function Make5Villagers_Trigger(goalSequence)
+
+	return true
+end
+
+function Make5Villagers_IgnorePredicate(goalSequence)
+
+	if Make5Villagers_CheckTrainingUI() and UI_GetActiveRadialMenuType() ~= RMT_ContextualRadialMenu then
+		Training_EnableGoalSequenceByID(goalSequence, false)
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// BuildHouses //////////////////////////////////////////////
+function Goals_BuildHouses()
+
+	local goal_sequence_BuildHouses_id = "goal_sequence_BuildHouses"
+
+	local goal_HousingLimit = Training_Goal(
+		"PopulationInfo",
+		{
+			ID = "goal_HousingLimit",
+			Message = "$999555", --The red feedback shows that you have reached your Housing Limit. Select a villager and open the Radial Menu with RT
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		HousingLimit_CompletePredicate
+	)
+
+	local goal_HighlightHouses = Training_Goal(
+		EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE,
+		{
+			ID = "goal_HighlightHouses",
+			Message = "$999558", -- Push the LS Up to select the House and Press A
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		HighlightHouses_CompletePredicate
+	)
+
+	
+	local goal_HoldLT = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_HoldLT",
+			Message = "$11254845", -- Hold LT to place multiple structures and have your Villager build each in turn.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		BuildHouses_IsHoldingLT
+		)
+	
+	local goal_BuildHouses = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_BuildHouses",
+			Message = "$999559", -- While holding LT, you can place more than one of the same building. Hold LT and press A twice.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+
+	local goal_sequence_BuildHouses = Training_GoalSequence(
+		goal_sequence_BuildHouses_id,
+		-1,
+		1,
+		BuildHouses_Trigger,
+		BuildHouses_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_HousingLimit, goal_HighlightHouses, goal_HoldLT, goal_BuildHouses}
+	)
+
+	Training_AddGoalSequence(goal_sequence_BuildHouses)
+	Training_EnableGoalSequenceByID(goal_sequence_BuildHouses, true)
+end
+
+function HousingLimit_CompletePredicate(goal)
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu and IsSelectionOnlyVillagers()
+end
+
+function HighlightHouses_CompletePredicate(goal)
+	-- use the construction log we are maintaining to see if we are in the right phase wiht the right building
+	return (g_training_log.phase == "position phase") and (g_training_log.BP == EBP.FRENCH.BUILDING_HOUSE_CONTROL_FRE)
+end
+
+
+function BuildHouses_IsHoldingLT(goal)
+	return UI_IsQueueModifierDown()
+end
+
+function BuildHouses_Trigger(goalSequence)
+
+	return true
+end
+
+function BuildHouses_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_BuildHouses) or training_houses_started == 2 then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// Scouting //////////////////////////////////////////////
+function Goals_Scouting()
+
+	local goal_sequence_Scouting_id = "goal_sequence_Scouting"
+
+	local goal_SelectScout = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_intro_scout,1),
+		{
+			ID = "goal_SelectScout",
+			Message = "$1000955", -- Your Scout can be used to search the area and find hidden resources. Select your Scout.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		SelectScout_CompletePredicate
+	)
+
+	local goal_SearchArea = Training_Goal(
+		"LooseReticle",
+		{
+			ID = "goal_SearchArea",
+			Message = "$1000954", -- Sheep are a valuable food resource that need to be gathered by your Scout. Search the area for Sheep using your Scout.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+
+	local goal_sequence_Scouting = Training_GoalSequence(
+		goal_sequence_Scouting_id,
+		-1,
+		1,
+		Scouting_Trigger,
+		Scouting_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_SelectScout, goal_SearchArea}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Scouting)
+	Training_EnableGoalSequenceByID(goal_sequence_Scouting, true)
+end
+
+function Goals_ScoutingHerd()
+	
+	local goal_sequence_Scouting_Herd_id = "goal_sequence_Scouting_Herd"
+	
+	local goal_ReturnToTC = Training_Goal(
+		EGroup_GetEntityAt(eg_player_tc, 1),
+		{
+			ID = "goal_ReturnToTC",
+			Message = "$1000952", -- To herd the Sheep back, Press A on the Town Center with the Scout selected. 
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+		)
+	
+	local goal_sequence_Scouting_Herd = Training_GoalSequence(
+		goal_sequence_Scouting_Herd_id,
+		-1,
+		1,
+		ScoutingHerd_Trigger,
+		ScoutingHerd_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_ReturnToTC}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Scouting_Herd)
+	Training_EnableGoalSequenceByID(goal_sequence_Scouting_Herd, true)
+end
+
+function Goals_ScoutingSecond()
+
+	local goal_sequence_Scouting_Second_id = "goal_sequence_Scouting_Second"
+
+	local goal_HarvestSheep = Training_Goal(
+		SGroup_GetSpawnedSquadAt(sg_herded, 1),
+		{
+			ID = "goal_HarvestSheep",
+			Message = "$1000950", -- Once Herded, Sheep will stay around the Town Center. Assign a Villager to a Sheep and Harvest it for Food
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		 HarvestSheep_CompletePredicate
+	)
+
+	local goal_MoreVillagers = Training_Goal(
+		EGroup_GetEntityAt(eg_player_tc, 1),
+		{
+			ID = "goal_MoreVillagers",
+			Message = "$1000949", -- It is wise to keep producing Villagers from the Town Center. They will help your Settlement grow!
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+
+	local goal_sequence_Scouting_Second = Training_GoalSequence(
+		goal_sequence_Scouting_Second_id,
+		-1,
+		1,
+		ScoutingSecond_Trigger,
+		ScoutingSecond_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_HarvestSheep, goal_MoreVillagers}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Scouting_Second)
+	Training_EnableGoalSequenceByID(goal_sequence_Scouting_Second, true)
+end
+
+function SelectScout_CompletePredicate(goal)
+
+	return Misc_IsSGroupSelected(sg_intro_scout, false)
+end
+
+function Scouting_Trigger(goalSequence)
+
+	return true
+end
+
+function Scouting_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_FindSheep) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+
+function ScoutingHerd_Trigger(goalSequence)
+
+	return true
+end
+
+function ScoutingHerd_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_HerdSheep) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+function  HarvestSheep_CompletePredicate(goal)
+
+	return Objective_IsComplete(SOBJ_HarvestSheep)
+end
+
+
+function ScoutingSecond_Trigger(goalSequence)
+
+	return true
+end
+
+function ScoutingSecond_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(OBJ_Scout) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+
+-- ///// BuildFarms //////////////////////////////////////////////
+function Goals_BuildFarms()
+
+	local goal_sequence_BuildFarmsSMS_id = "goal_sequence_BuildFarmsSMS_id"
+
+	local goal_deselect_for_SMS = Training_Goal (
+		"LooseReticle", 
+		{ID = "goal_deselect_for_SMS",	Message = "$11254576",DataTemplate = "GenericTrainingDataTemplate",}, 
+		IsSelectionEmpty	)
+
+	local goal_hover_mill = Training_Goal (
+		EGroup_GetPosition(eg_mill),
+		{ID = "goal_hover_mill", Message = "$11254577", DataTemplate = "GenericTrainingDataTemplate",}, 
+		BuildFarms_IsHoveringOverMill	)
+
+	local goal_open_SMS = Training_Goal (
+		"OpenContextualRadial", 
+		{ID = "goal_open_SMS", Message = "$11254578", DataTemplate = "GenericTrainingDataTemplate",}, 
+		IsSMSOpen 	)
+
+	local goal_choose_farm = Training_Goal(
+		EBP.FRENCH.BUILDING_RESOURCE_FARM_FRE,
+		{ID = "goal_choose_farm", Message = "$11254579", DataTemplate = "RadialTrainingDataTemplate",},--Select a Villager and Queue 3 Farms around the Mill.
+		BuildFarm_IsPlacingFarm) 
+
+	local goal_place_farm = Training_Goal (
+		EGroup_GetPosition(eg_mill),
+		{ID = "goal_place_farm", Message = "$11254580", DataTemplate = "GenericTrainingDataTemplate", }, 
+		ReturnFalse 	) -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	
+
+	local goal_sequence_BuildFarmsSMS = Training_GoalSequence(
+		goal_sequence_BuildFarmsSMS_id,
+		-1,
+		1,
+		ReturnTrue,
+		BuildFarms_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_deselect_for_SMS, goal_hover_mill, goal_open_SMS, goal_choose_farm, goal_place_farm}
+	)
+
+	Training_AddGoalSequence(goal_sequence_BuildFarmsSMS)
+	Training_EnableGoalSequenceByID(goal_sequence_BuildFarmsSMS, true)
+end
+
+function BuildFarms_IsHoveringOverMill(goal)
+	return Prox_AreEntitiesNearMarker (eg_mill, Camera_GetPivot(), ANY, 5)
+end
+
+
+function BuildFarm_IsPlacingFarm (goal)
+	-- use the construction log we are maintaining to see if we are in the right phase with the right building
+	return (g_training_log.phase == "position phase") and (g_training_log.BP == EBP.FRENCH.BUILDING_RESOURCE_FARM_FRE)
+end
+
+function BuildFarms_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_BuildFarms) or training_farms_placed >= 1 then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+
+
+-- ///// SetVPS //////////////////////////////////////////////
+-- NOTE: All these lessons refer to setting to "Balanced" but we updated to guiding the player to set the "Economic" preset
+-- Don't want to make changes to function names.
+function Goals_SetBalanced()
+
+	local goal_sequence_SetBalanced_id = "goal_sequence_SetBalanced"
+
+	local goal_OpenMenu = Training_Goal(
+		"VillagerPrioritiesHUDElement",
+		{
+			ID = "goal_OpenMenu",
+			Message = "$999566", --You can automatically assign Jobs to your Villagers
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenMenu_CompletePredicate
+	)
+
+	local goal_SetBalanced = Training_Goal(
+		UI_GetUICommandPBG("relic_radials_preset5_economic"), -- see above as to why this points to economic and not balanced preset
+		{
+			ID = "goal_SetBalanced",
+			Message = "$1000945", -- Highlight the Economy Preset and Press A. This is a good preset for early parts of the game
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		SetBalanced_CompletePredicate
+	)
+	
+	local goal_CloseVPS = Training_Goal(
+		"VillagerPrioritiesHUDElement",
+		{
+			ID = "goal_CloseVPS",
+			Message = "$1000944", -- Your Villagers will now be given jobs automatically, based on the set Priorities. Press B to close the Radial Menu
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+	
+	local goal_sequence_SetBalanced = Training_GoalSequence(
+		goal_sequence_SetBalanced_id,
+		-1,
+		1,
+		SetBalanced_Trigger,
+		SetBalanced_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_OpenMenu, goal_SetBalanced, goal_CloseVPS}
+	)
+
+	Training_AddGoalSequence(goal_sequence_SetBalanced)
+	Training_EnableGoalSequenceByID(goal_sequence_SetBalanced, true)
+end
+
+function OpenMenu_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_VillagerPrioritiesMenu
+end
+
+function SetBalanced_CompletePredicate(goal)
+
+	return Objective_IsComplete(SOBJ_SetBalanced)
+end
+
+function SetBalanced_Trigger(goalSequence)
+
+	return true
+end
+
+function SetBalanced_IgnorePredicate(goalSequence)
+
+	-- We wrap up if the objective has completed and the player has left the VPS menu
+	 if (UI_GetActiveRadialMenuType() ~= RMT_VillagerPrioritiesMenu) and (Objective_IsComplete(SOBJ_SetBalanced) == true) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+-- ///// Research //////////////////////////////////////////////
+function Goals_Research()
+
+	local goal_sequence_Research_id = "goal_sequence_Research"
+
+	local goal_OpenFind = Training_Goal(
+		"FindMenuHUDElement",
+		{
+			ID = "goal_OpenFind",
+			Message = "$1000925", -- You can help your settlement by completing Research at buildings. Find the Mill using the Find Menu LB
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenFind_CompletePredicate
+	)
+	
+	local goal_FindBuildingsPage = Training_Goal(
+		"RadialDPadRight",
+		{
+			ID = "goal_FindBuildingsPage",
+			Message = "$1000930", -- Press Right on the D-Pad to open the Find Buildings Page
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		FindBuildingsPage_CompletePredicate
+	)
+
+	local goal_SelectMill = Training_Goal(
+		UI_GetUICommandPBG("find_all_food"),
+		{
+			ID = "goal_SelectMill",
+			Message = "$1000923", -- This menu will help you find units and buildings on the map. Use Left Stick to highlight the Mill, then confirm with A
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		SelectMill_CompletePredicate
+	)
+
+	local goal_CloseFindPage = Training_Goal(
+		"FindMenuHUDElement",
+		{
+			ID = "goal_CloseFindPage",
+			Message = "$999481", -- PRESS B to close the menu.
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		CloseFindPage_CompletePredicate
+	)
+
+	local goal_OpenMillRadial = Training_Goal(
+		"OpenContextualRadial",
+		{
+			ID = "goal_OpenMillRadial",
+			Message = "$999589", -- Open the Mill Radial Menu with RT
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		OpenMillRadial_CompletePredicate
+	)
+
+	local goal_ResearchWheelbarrow = Training_Goal(
+		UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1,
+		{
+			ID = "goal_ResearchWheelbarrow",
+			Message = "$999591", -- Use Left Stick to highlight Wheelbarrow, then confirm with A.
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		ResearchWheelbarrow_CompletePredicate
+	)
+
+	local goal_FurtherResearchInfo = Training_Goal(
+		EGroup_GetEntityAt(eg_mill, 1),
+		{
+			ID = "goal_FurtherResearchInfo",
+			Message = "$1000924", -- Research can be used to improve units, make buildings more efficient and provide other bonuses to your civilization
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		ReturnFalse -- we want this to return false to prevent it from saving; we use the ignore function in the sequence to resolve
+	)
+	
+	local goal_sequence_Research = Training_GoalSequence(
+		goal_sequence_Research_id,
+		-1,
+		1,
+		Research_Trigger,
+		Research_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_OpenFind, goal_FindBuildingsPage, goal_SelectMill, goal_CloseFindPage, goal_OpenMillRadial, goal_ResearchWheelbarrow, goal_FurtherResearchInfo}
+	)
+
+	Training_AddGoalSequence(goal_sequence_Research)
+	Training_EnableGoalSequenceByID(goal_sequence_Research, true)
+end
+
+function OpenFind_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_FindMenu or Misc_IsEGroupSelected(eg_mill, false) or training_research_started == true or training_mill_selected == true
+end
+
+function FindBuildingsPage_CompletePredicate(goal)
+
+	return (UI_GetActiveRadialMenuType() == RMT_FindMenu and UI_GetActiveRelicRadialMenuDirection() == RMD_Right) or training_research_started == true or training_mill_selected == true or Misc_IsEGroupSelected(eg_mill, ANY)
+end
+
+function SelectMill_CompletePredicate(goal)
+
+	if Misc_IsEGroupSelected(eg_mill, false) then
+		training_mill_selected = true
+	end
+	
+	return training_mill_selected == true or training_research_started == true
+end
+
+function CloseFindPage_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() ~= RMT_FindMenu or training_research_started == true 
+end
+
+function OpenMillRadial_CompletePredicate(goal)
+
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu or training_research_started == true
+end
+
+function ResearchWheelbarrow_CompletePredicate(goal)
+
+	local mill = EGroup_GetEntityAt(eg_mill, 1)
+	
+	if Entity_GetProductionQueueSize(mill) > 0 then
+		if Entity_GetProductionQueueItem(mill, 0) == UPG.COMMON.UPGRADE_UNIT_TOWN_CENTER_WHEELBARROW_1 then
+			-- Used to prevent hint regression once research has commenced
+			training_research_started = true
+			return true
+		end
+	end
+	
+	return Objective_IsComplete(SOBJ_Research) or training_research_started == true
+end
+
+function Research_Trigger(goalSequence)
+
+	return true
+end
+
+function Research_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_Research) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+
+
+-- ///// BuildLandmark //////////////////////////////////////////////
+function Goals_BuildLandmark()
+
+	local goal_sequence_BuildLandmark_id = "goal_sequence_BuildLandmark"
+
+	local goal_IdleVillager = Training_Goal(
+		PickConvenientVillager(),
+		{
+			ID = "goal_IdleVillager",
+			Message = "$999579", --Select a Villager and Hold Y to open the Landmark Menu
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		IdleVillager_CompletePredicate
+	)
+
+	local goal_LandmarkMenuOpen = Training_Goal(
+		"RadialDPadTop",
+		{
+			ID = "goal_LandmarkMenuOpen",
+			Message = "$1000686",  -- Press D-Pad Up to open the Landmark menu
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		LandmarkMenuOpen_CompletePredicate
+	)
+	
+	local goal_SelectLandmark = Training_Goal(
+		EBP.FRENCH.BUILDING_LANDMARK_AGE1_CASERNES_CENTRALES_FRE,
+		{
+			ID = "goal_SelectLandmark",
+			Message = "$999580",   -- Different Landmarks convey different bonuses to your Civilisation 
+			DataTemplate = "RadialTrainingDataTemplate",
+		},
+		SelectLandmark_CompletePredicate
+	)
+
+	local goal_sequence_BuildLandmark = Training_GoalSequence(
+		goal_sequence_BuildLandmark_id,
+		-1,
+		1,
+		BuildLandmark_Trigger,
+		BuildLandmark_IgnorePredicate,
+		nil,
+		nil,
+		true,
+		{goal_IdleVillager, goal_LandmarkMenuOpen, goal_SelectLandmark}
+	)
+
+	Training_AddGoalSequence(goal_sequence_BuildLandmark)
+	Training_EnableGoalSequenceByID(goal_sequence_BuildLandmark, true)
+end
+
+function IdleVillager_CompletePredicate(goal)
+
+	return IsSelectionOnlyVillagers() and (UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu or UI_XboxIsLandmarkRadialOpen())
+end
+
+function LandmarkMenuOpen_CompletePredicate(goal)
+
+	return UI_XboxIsLandmarkRadialOpen()
+end
+
+function SelectLandmark_CompletePredicate(goal)
+
+	return false
+end
+
+function BuildLandmark_Trigger(goalSequence)
+
+	return true
+end
+
+function BuildLandmark_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_PlaceLandmark) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	
+	if training_placing_landmark then
+		return true
+	end
+	return false
+end
+
+-- ///// WaitFinish //////////////////////////////////////////////
+function Goals_WaitFinish()
+
+	local goal_sequence_WaitFinish_id = "goal_sequence_WaitFinish"
+
+	local goal_MoreVillagersLandmark = Training_Goal(
+		EGroup_GetEntityAt(eg_landmark, 1),
+		{
+			ID = "goal_MoreVillagersLandmark",
+			Message = "$999581", -- It will take some time for the Landmark to be built, but we can help with more Villagers 
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		MoreVillagersLandmark_CompletePredicate
+	)
+
+	local goal_NextAge = Training_Goal(
+		EGroup_GetEntityAt(eg_landmark, 1),
+		{
+			ID = "goal_NextAge",
+			Message = "$999585", -- When a Landmark has finished construction, your civilisation advances to the next Age
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		NextAge_CompletePredicate
+	)
+
+	local goal_sequence_WaitFinish = Training_GoalSequence(
+		goal_sequence_WaitFinish_id,
+		-1,
+		1,
+		WaitFinish_Trigger,
+		WaitFinish_IgnorePredicate,
+		nil,
+		nil,
+		false,
+		{goal_MoreVillagersLandmark, goal_NextAge}
+	)
+
+	Training_AddGoalSequence(goal_sequence_WaitFinish)
+	Training_EnableGoalSequenceByID(goal_sequence_WaitFinish, true)
+end
+
+function MoreVillagersLandmark_CompletePredicate(goal)
+
+	return Entity_GetBuildingProgress(EGroup_GetEntityAt(eg_landmark, 1)) >= 0.7
+end
+
+function NextAge_CompletePredicate(goal)
+
+	return false
+end
+
+function WaitFinish_Trigger(goalSequence)
+
+	return true
+end
+
+function WaitFinish_IgnorePredicate(goalSequence)
+
+	if Objective_IsComplete(SOBJ_WaitFinish) then
+		Training_RemoveGoalSequence(goalSequence)
+		return true
+	end
+	return false
+end
+
+
+-- Helper functions
+
+-- simple function for use in complete checks where we want it never to be true
+function ReturnFalse(goal)
+
+	return false
+end
+
+-- simple function for use in trigger checks where we want it to always be true
+function ReturnTrue(goalSequence)
+
+	return true
+end
+
+-- simple check to see if the contextual radial is open
+function OpenRadial_CompletePredicate(goal)
+	
+	return UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu
+end
+
+-- simple check to see if the player has nothing selected
+function IsSelectionEmpty(goal)
+	Misc_GetSelectedEntities(eg_temp, false)
+	Misc_GetSelectedSquads (sg_temp, false)
+	
+	return EGroup_IsEmpty(eg_temp) and SGroup_IsEmpty(sg_temp)
+end
+
+-- simple check to see if the Site menu is open
+function IsSMSOpen (goal)
+	return UI_GetActiveRadialMenuType() == RMT_SiteMenu
+end
+
+
+-- simple check to see if the player has only villagers selected 
+function IsSelectionOnlyVillagers(goal)
+	
+	Misc_GetSelectedSquads(sg_temp, false)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		return SGroup_ContainsBlueprints(sg_temp, SBP.FRENCH.UNIT_VILLAGER_1_FRE, ALL)
+	end
+	
+	return false
+	
+end
+
+-- function borrowed from PC Mission Zero that finds a villager, prioritizing ones that are on screen and idle 
+function PickConvenientVillager()
+	
+
+	local bestSquad = nil
+	
+	Player_GetAll(player1)
+	SGroup_Filter (sg_allsquads, "scar_villager", FILTER_KEEP)
+	
+	for i = 1, SGroup_Count(sg_allsquads) do
+		local squad = SGroup_GetSquadAt(sg_allsquads, i)
+		local isIdle =  Squad_IsIdle(squad)
+		local isOnScreen = Misc_IsSquadOnScreen(squad, 1)
+		if isIdle and isOnScreen then
+			return squad
+		elseif isIdle then
+			bestSquad = squad
+		elseif isOnScreen then
+			bestSquad = bestSquad or squad
+		end
+	end
+	
+	return bestSquad	
+	
+end
+
+-- logic that runs as construction states shift and log the current situation 
+-- this gets used when checking if the player is in the process of placing an building
+function Salisbury3_TrainingContructionCallback(blueprint, phase, queueCount)
+	
+		
+	if phase == TP_Position then
+		g_training_log.phase = "position phase"
+		g_training_log.BP = blueprint
+		g_training_log.blueprint_name = BP_GetName(blueprint)
+	elseif phase == TP_Facing then
+		g_training_log.phase = "facing phase"
+		g_training_log.BP = blueprint
+		g_training_log.blueprint_name = BP_GetName(blueprint)
+	elseif phase == TP_Issued then
+		g_training_log.phase = "issued phase"
+		g_training_log.BP = blueprint
+		g_training_log.blueprint_name = BP_GetName(blueprint)
+	elseif phase == TP_Cancelled then
+		g_training_log.phase = "cancelled phase"
+		g_training_log.BP = "none"
+		g_training_log.blueprint_name = "none"
+	else
+		g_training_log.phase = "unknown phase"
+		g_training_log.BP = blueprint
+		g_training_log.blueprint_name = BP_GetName(blueprint)
+	end
+	
+end

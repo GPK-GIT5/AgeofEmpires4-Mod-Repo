@@ -1,0 +1,336 @@
+-- Copyright 2022 SEGA Corporation, Developed by Relic Entertainment
+import("cardinal.scar")
+import("MissionOMatic/MissionOMatic.scar")
+import("obj_horsemen.scar")
+import("sal_chp1_valesdun.scar")  
+
+function MusterForces_InitObjectives()
+
+	OBJ_MusterForces = {
+		Title = "$999483", --Command the Spearmen
+		Type = ObjectiveType_Primary,
+		Intel_Start = EVENTS.SelectAllStart,
+		OnComplete = function()
+			--clean up various FOW reveals
+			FOW_UnRevealMarker(mkr_enemy_horse_move)
+			--start the next objective
+			Objective_Start(OBJ_CommandHorsemen, true, true)
+		end,		
+	}
+
+	SOBJ_SelectAll = {
+		Title = "$999484", --Select Guillaume and all Spearmen
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_MusterForces,
+		StartAlongsideParent = true,
+		SetupUI = SelectAll_UI,
+		PreStart = function ()
+			Rule_Add(SelectAll_Monitor)
+		end,
+		OnStart = SelectAll_Start,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+			Sound_Play2D("mus_shared_mute_combat_threat_in_forced_tension")
+			Objective_Start(SOBJ_Search, false, true)
+		end,
+	}
+
+	SOBJ_Search = {
+		Title = "$999487", --Continue searching
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_MusterForces,
+		StartAlongsideParent = false,
+		SetupUI = Search_UI,
+		OnStart = Search_Start,
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_Start(SOBJ_DestroyPalisade, false, true)
+		end,
+	}
+
+	SOBJ_DestroyPalisade = {
+		Title = "$999490", --Destroy the Enemy Palisade
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_MusterForces,
+		StartAlongsideParent = false,
+		SetupUI = DestroyPalisade_UI,
+		PreStart = DestroyPalisade_PreStart,
+		OnStart = DestroyPalisade_Start,
+		Intel_Start = EVENTS.DestroyPalisadeStart,
+
+		OnComplete = function()
+			Objective_Start(SOBJ_DefeatHorseman, false, true)
+		end,
+	}
+
+	SOBJ_DefeatHorseman = {
+		Title = "$999493", --Defeat the Enemy Horseman using Attack Move
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_MusterForces,
+		StartAlongsideParent = false,
+		SetupUI = DefeatHorseman_UI,
+		PreStart = DefeatHorseman_PreStart,
+		OnStart = DefeatHorseman_Start,
+		Intel_Start = EVENTS.DefeatHorsemanStart,
+
+		OnComplete = function()
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			Objective_RemoveUIElements(SOBJ_DefeatHorseman,hpid_AttackScout)
+			World_SetInteractionStage(2)
+			Objective_Start(SOBJ_FollowMarkers, false, true)
+		end,
+	}
+
+	SOBJ_FollowMarkers = {
+		Title = "$999497", --Follow the Markers
+		Type = ObjectiveType_Primary,
+		Parent = OBJ_MusterForces,
+		StartAlongsideParent = false,
+		SetupUI = FollowMarkers_UI,
+		OnStart = FollowMarkers_Start,
+		Intel_Start = EVENTS.FollowMarkersStart,
+
+		OnComplete = function()
+			Objective_Complete(OBJ_MusterForces, false)
+		end,
+	}
+
+	-- Register all objectives
+	Objective_Register(OBJ_MusterForces)
+	Objective_Register(SOBJ_SelectAll)
+	Objective_Register(SOBJ_Search)
+	Objective_Register(SOBJ_DestroyPalisade)
+	Objective_Register(SOBJ_DefeatHorseman)
+	Objective_Register(SOBJ_FollowMarkers)
+	
+end
+
+-- ///// SelectAll //////////////////////////////////////////////
+function SelectAll_UI()
+	
+end
+
+function SelectAll_Start()
+	Goals_UseMarquee()
+end
+
+function SelectAll_Monitor()
+	if Misc_IsSGroupSelected(sg_starting_spearmen, true) and Misc_IsSGroupSelected(sg_william, true) then
+		Misc_GetSelectedSquads(sg_player_units, false) -- put all the squads in this sgroup we can use for waypoint checks
+		Objective_Complete(SOBJ_SelectAll, false, true)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// Search //////////////////////////////////////////////
+function Search_UI()
+	
+end
+
+function Search_Start()
+
+	World_SetInteractionStage(1)
+	Goals_SnapTo() 
+	first_marker_ui = Objective_AddUIElements(SOBJ_Search, mkr_obj_2b2, true, "$999487", true, 5)
+	first_marker_aura = Objective_AddGroundReticule(SOBJ_Search, mkr_obj_2b2, Marker_GetProximityRadiusOrDefault(mkr_obj_2b2, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+	Rule_Add(Search1_Monitor)
+end
+
+function Search1_Monitor()
+
+	if Prox_AreSquadsNearMarker(sg_player_units, mkr_obj_2b2, ANY, 5) then
+		
+		Objective_RemoveUIElements(SOBJ_Search, first_marker_ui)
+		Objective_RemoveGroundReticule(SOBJ_Search, first_marker_aura)
+		second_marker_ui = Objective_AddUIElements(SOBJ_Search, mkr_obj_2b3, true, "$999487", true, 5)
+		second_marker_aura = Objective_AddGroundReticule(SOBJ_Search, mkr_obj_2b3, Marker_GetProximityRadiusOrDefault(mkr_obj_2b3, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+		Rule_Add(Search2_Monitor)
+		Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		Rule_RemoveMe()
+	end
+end
+
+function Search2_Monitor()
+
+	if Prox_AreSquadsNearMarker(sg_player_units, mkr_obj_2b3, ANY, 5) then
+		
+		Objective_Complete(SOBJ_Search, false)
+		Rule_RemoveMe()
+	end
+end
+
+-- ///// DestroyPalisade //////////////////////////////////////////////
+function DestroyPalisade_PreStart()
+	-- allow player to attack the palisade as soon as we get near
+	EGroup_Filter(eg_palisade, EBP.FRENCH.BUILDING_DEFENSE_PALISADE_BASTION_FRE, FILTER_REMOVE) -- keep the bastions unselectable to limit edge case of targetting just the end of the wall
+	EGroup_SetInvulnerable(eg_palisade, false)
+	EGroup_SetSelectable(eg_palisade, true)
+	Rule_AddGlobalEvent(DestroyPalisade_Monitor, GE_EntityKilled)	
+end
+
+function DestroyPalisade_Start()
+	Goals_AttackStructure()
+end
+
+function DestroyPalisade_Monitor(context)
+
+	if context.victimOwner == player2 then
+		
+		if Entity_IsOfType(context.victim, "wall") then
+			SpearmenCelebrate()
+			Objective_Complete(SOBJ_DestroyPalisade, false, true)
+		Rule_RemoveMe()
+		end
+	end
+end
+
+-- ///// DefeatHorseman //////////////////////////////////////////////
+function DefeatHorseman_UI()
+	
+end
+
+function DefeatHorseman_PreStart()
+	Game_SetVisibility(VF_XboxUIQuickCommands, true)
+	World_SetInteractionStage(9)
+	sg_attackMove_scout = SGroup_CreateIfNotFound("sg_attackMove_scout") 
+	SpawnAnotherLonelyUnit(false)
+end
+
+function DefeatHorseman_Start()
+	
+	
+	FOW_RevealMarker(mkr_enemy_horse_move,-1)
+	
+	
+
+	Rule_Add(FirstHorsePositioned)
+	Rule_Add(AttackMove_Monitor)
+	
+	Rule_AddInterval(DefeatHorseman_Monitor,1)
+end
+
+function FirstHorsePositioned() 
+	
+	if Prox_AreSquadsNearMarker(sg_attackMove_scout, mkr_enemy_horse_move, false, 5) then
+		Goals_AttackMove()
+		Rule_RemoveMe()
+	end	
+end
+
+function AttackMove_Monitor()
+	
+	local sg_currentSelection = SGroup_CreateIfNotFound("sg_currentSelection")
+	SGroup_Clear(sg_currentSelection)
+	
+	Misc_GetSelectedSquads(sg_currentSelection, false)
+	
+	local count = SGroup_CountSpawned(sg_currentSelection)
+	for i = 1, count do
+		local squad = SGroup_GetSpawnedSquadAt(sg_currentSelection, i)
+		if Squad_IsAttackMoving(squad) and Squad_IsOfType(squad, "scar_spearman") then
+			b_attackMoving = true
+		end
+	end
+end
+
+function DefeatHorseman_Monitor()
+	
+	if b_attackMoving == true and SGroup_CountSpawned(sg_attackMove_scout) == 0 then
+		
+		Objective_Complete(SOBJ_DefeatHorseman, false, true)
+		Rule_RemoveMe()
+		Rule_Remove(AttackMove_Monitor)
+	else 
+		if SGroup_CountSpawned(sg_attackMove_scout) == 0 then
+			SpawnAnotherLonelyUnit(true)
+
+		end
+	end
+end
+
+function SpawnAnotherLonelyUnit(shouldMoveUnits)
+	
+	if(shouldMoveUnits) then
+		Cmd_Move(sg_starting_spearmen, mkr_palisade)
+		Cmd_Move(sg_starting_spearmen, mkr_palisade)
+		Cmd_Move(sg_william, mkr_palisade)
+	end
+	
+	UnitEntry_DeploySquads(player2, sg_attackMove_scout, {{type = "scar_horseman", numSquads = 1 }}, mkr_enemy_horse_spawn)
+
+	SGroup_SetSelectable(sg_attackMove_scout, false)	
+	Rule_AddOneShot(MoveUnitAttackMove,1)
+end
+
+function MoveUnitAttackMove()
+	
+	Cmd_Move(sg_attackMove_scout,mkr_enemy_horse_move)
+
+	LocalCommand_SquadExt(player2, sg_attackMove_scout, SCMD_HoldPosition, 1, true)
+end
+
+-- ///// FollowMarkers //////////////////////////////////////////////
+function FollowMarkers_UI()
+	
+end
+
+function FollowMarkers_Start()
+
+	-- Spawn Archers for encounter
+	sg_enemy_archers = SGroup_CreateIfNotFound("sg_enemy_archers") 
+	UnitEntry_DeploySquads(player2, sg_enemy_archers, {{type = "scar_archer", numSquads = num_archers_encounter }}, mkr_obj2e_enemy_archers_spawn_01)
+	
+	-- Spawn Horsemen for player 
+		sg_horsemen = SGroup_CreateIfNotFound("sg_horsemen") 
+		UnitEntry_DeploySquads(player4, sg_horsemen, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_01)
+		UnitEntry_DeploySquads(player4, sg_horsemen, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_02)
+		UnitEntry_DeploySquads(player4, sg_horsemen, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_03)
+		UnitEntry_DeploySquads(player4, sg_horsemen, {{type = "scar_horseman", numSquads = num_allied_horsemen_per_marker }}, mkr_obj2e_cavalry_spawn_04)
+	
+	--Goals_FollowMarkers()
+	first_marker_ui = Objective_AddUIElements(SOBJ_FollowMarkers, mkr_obj2e_trigger, true, "$999497", true, 5)
+	first_marker_aura = Objective_AddGroundReticule(SOBJ_FollowMarkers, mkr_obj2e_trigger, Marker_GetProximityRadiusOrDefault(mkr_obj2e_trigger, marker_aura_size), BP_GetReticuleBlueprint("aura_ring"), false)
+	Rule_Add(FollowMarkers1_Monitor)
+end
+
+function FollowMarkers1_Monitor()
+
+	if Prox_AreSquadsNearMarker(sg_player_units, mkr_obj2e_trigger, false, 5) then
+		Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+		
+		Objective_RemoveUIElements(SOBJ_FollowMarkers, first_marker_ui)
+		Objective_RemoveGroundReticule(SOBJ_FollowMarkers, first_marker_aura)
+		
+		--Spawn in the horsemen
+		
+		--Show the archers
+		FOW_RevealMarker(mkr_fow_reveal_obj2e,-1)
+		Util_StartIntel(EVENTS.DefeatArchersStart)
+		
+		Rule_AddOneShot(MoveToHorsemenAfterAudio, 5.5)
+		
+		Rule_RemoveMe()
+	end
+end
+
+
+function MoveToHorsemenAfterAudio()
+	
+		World_SetInteractionStage(3)
+		SGroup_SetPlayerOwner(sg_horsemen, player1)
+	
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_horsemen)
+		
+		Objective_Complete(SOBJ_FollowMarkers, false, true)
+	
+		RecordControlGroups()
+		
+		-- Grey out the other units
+		World_EnableSharedLineOfSight(player1, player4, true)
+		SGroup_SetPlayerOwner(sg_player_units, player4)
+		SGroup_SetSelectable(sg_player_units, false)
+	
+		Rule_RemoveMe()
+end

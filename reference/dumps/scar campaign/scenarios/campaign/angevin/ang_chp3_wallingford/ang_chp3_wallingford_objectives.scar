@@ -1,0 +1,211 @@
+
+function Wallingford_InitObjectives()
+	OBJ_Defend = {
+		Title = "$11182631", --Defend Wallingford
+		Type = ObjectiveType_Battle,	
+		IsFailed = function()
+			eg_landmarks = Player_GetEntitiesFromType(player1, "landmark")
+			local r = EGroup_CountSpawned(eg_landmarks) == 0
+			EGroup_Destroy(eg_landmarks)
+			return r
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	OBJ_DestroyOutposts = {
+		Title = "$11184555", -- Destroy the English outposts
+		Type = ObjectiveType_Battle,	
+		Intel_Complete = EVENTS.SIEGE_DEFENDERS3_ASSAULT,
+		SetupUI = function()
+			for i = #camp_data, 1, -1 do
+				camp_data[i].ui_element = Objective_AddUIElements(OBJ_DestroyOutposts, EGroup_GetPosition(camp_data[i].egroup), true, nil, false)
+			end
+			UpdateCampsRemaining()
+		end,
+		IsComplete = function()
+			UpdateCampsRemaining()
+			return camps_destroyed == 4
+		end,
+		OnComplete = function()
+			for i, wave in ipairs({wave_ne, wave_n, wave_nw}) do
+				Wave_Pause(wave)
+			end	
+			RovingArmy_SetTargets(final_wave, { mkr_player_base })
+				
+			Objective_Start(OBJ_Eliminate_Units)
+		end,
+	}
+	OBJ_Eliminate_Units = {
+		Title = "$11184554", --Defeat the final attack wave
+		Type = ObjectiveType_Battle,
+		SetupUI = function()
+			Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE, 90)
+			Obj_SetProgressVisible(OBJ_Eliminate_Units.ID, true)
+			UpdateUnitsRemaining(true)
+			unit_count_max = unit_count
+			Obj_SetProgress(OBJ_Eliminate_Units.ID, 0)
+		end,
+		IsComplete = function()
+			UpdateUnitsRemaining(false)
+			Obj_SetProgress(OBJ_Eliminate_Units.ID, (unit_count_max - unit_count) / unit_count_max)
+			return unit_count == 0
+		end,
+		OnComplete = function()
+			if startingWallDestroyed == false then
+				Game_SendCustomChallengeEvent(player1, CE_ACHIEVPROTECTWALLSWALLINGFORD, 1)
+			end 
+			Util_StartIntel(EVENTS.ANG_ECAM1153WALLINGFORD_Outro)
+		end,
+	}
+	OBJ_Survive = {
+		Title = "$11179775", --Reinforcements arriving soon
+		Type = ObjectiveType_Information,	
+		showTitle = false,
+		OnStart = function()
+			OBJ_Survive.showTitle = false
+			Objective_StartTimer(OBJ_Survive, COUNT_DOWN, REINFORCEMENTS_DELAY, 0)
+		end,
+		OnComplete = function()
+			EventCues_CallToAction ("$11180392", CTA_CELEBRATE, EVENTS.HENRYARRIVES, HenryOnLook, mkr_player_reinforcements_1, 20) -- Henry's Forces Are Here!
+			finished_waiting = true
+			playerInteractedWithHenry = false
+			Rule_Add(MonitorHenry)
+			Rule_AddInterval(HenryReminder, 90)
+		end,
+		PreComplete = function()
+			Music_PlayStinger(MUS_STING_TRIUMPHANT)
+			SpawnReinforcements()
+			Sound_SetMinimumMusicCombatIntensity(0, 0)
+			Music_PostCombat_End()			
+		end,
+	}
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = ObjectiveType_Primary,
+        showTitle = false,
+        Cheat = function()
+			Mission_Complete()
+		end,
+    }
+	
+	Objective_Register(OBJ_Defend)
+	Objective_Register(OBJ_DestroyOutposts)
+	Objective_Register(OBJ_Eliminate_Units)
+	Objective_Register(OBJ_Survive)
+	Objective_Register(OBJ_DebugComplete)	
+end
+
+function HenryOnLook()
+	if playerInteractedWithHenry == false then
+		playerInteractedWithHenry = true	
+		Sound_PlayOnSquad(WALLA_CAMP_SPEARWALL_MEDIUM, sg_player_reinforcements)	
+	end
+	
+end
+
+function MonitorHenry(context, data)	
+	if SGroup_IsOnScreen(player1, sg_player_reinforcements, ANY) or Misc_IsSGroupSelected(sg_player_reinforcements, ANY) then
+		playerInteractedWithHenry = true
+	end
+	if playerInteractedWithHenry then
+		Rule_RemoveMe()
+	end
+end
+
+function HenryReminder(context, data)
+	if playerInteractedWithHenry == true then
+		Rule_RemoveMe()
+	else 
+		EventCues_CallToAction("$11180392", CTA_CELEBRATE, EVENTS.HENRYARRIVES, HenryOnLook, mkr_player_reinforcements_1, 30) -- Henry's Forces Are Here!
+	end
+end
+
+function GetSpawnCount()
+	local remaining_pop = 200 - Player_GetCurrentPopulation(player1, CT_Personnel)
+	return math.min(remaining_pop, 9)
+end
+
+function SpawnReinforcements()
+	Modify_PlayerMaxPopCap(player1, 50, MUT_Addition)
+	local manatarms = { {type = "scar_manatarms", numSquads = 9} }
+	local archers = { {type = "scar_archer", numSquads = 9} }
+	local knights = { {type = "scar_knight", numSquads = 9} }
+	
+	--SGroup_Clear(sg_temp)
+
+	UnitEntry_DeploySquads(player1, sg_player_reinforcements, { {type = "scar_knight", numSquads = GetSpawnCount()} }, mkr_player_reinforcements_5)
+	UnitEntry_DeploySquads(player1, sg_player_reinforcements, { {type = "scar_knight", numSquads = GetSpawnCount()} }, mkr_player_reinforcements_6)
+	UnitEntry_DeploySquads(player1, sg_player_reinforcements, { {type = "scar_knight", numSquads = GetSpawnCount()} }, mkr_player_reinforcements_7)
+	UnitEntry_DeploySquads(player1, sg_player_reinforcements, { {type = "scar_manatarms", numSquads = GetSpawnCount()} }, mkr_player_reinforcements_1)
+	UnitEntry_DeploySquads(player1, sg_player_reinforcements, { {type = "scar_manatarms", numSquads = GetSpawnCount()} }, mkr_player_reinforcements_2)
+	UnitEntry_DeploySquads(player1, sg_player_reinforcements, { {type = "scar_archer", numSquads = GetSpawnCount()} }, mkr_player_reinforcements_3)
+	UnitEntry_DeploySquads(player1, sg_player_reinforcements, { {type = "scar_archer", numSquads = GetSpawnCount()} }, mkr_player_reinforcements_4)
+	Sound_PlayWallaCelebrateOnSGroup(sg_player_reinforcements)
+end
+
+function UpdateCampsRemaining()
+	for i = #camp_data, 1, -1 do
+		local egroup = camp_data[i].egroup
+		if EGroup_CountSpawned(egroup) == 0 then
+			camps_destroyed = camps_destroyed + 1
+			
+			Objective_RemoveUIElements(OBJ_DestroyOutposts, camp_data[i].ui_element)
+			Player_GetAllSquadsNearMarker(player1, sg_temp, camp_data[i].position, 30)
+			Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+			
+			Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			
+			if camps_destroyed == 1 then
+				Util_StartIntel(EVENTS.SIEGE_DEFENDERS1)
+			end
+			if camps_destroyed == 2 then
+				Util_StartIntel(EVENTS.SIEGE_DEFENDERS2)
+			end
+			
+			table.remove(camp_data, i)
+		end
+	end
+	Objective_SetCounter(OBJ_DestroyOutposts, camps_destroyed, 4)
+end
+
+
+
+function UpdateUnitsRemaining(trigger_final_attack)
+	unit_count_assault = 0
+	unit_count_patrol = 0
+	unit_count_defend = 0
+	unit_count_reinforce = 0
+	unit_count_final_wave = 0
+	
+	for i, module in ipairs(arrived_assault_modules) do
+		unit_count_assault = unit_count_assault + SGroup_CountSpawned(module.sgroup)
+		if trigger_final_attack then RovingArmy_SetTarget(module, mkr_player_base) end
+	end
+	
+	for i, module in ipairs({ siege_patrol_1, siege_patrol_2, siege_patrol_3, siege_patrol_4, siege_patrol_5 }) do
+		if module.status ~= ARMY_STATUS_DISSOLVED then
+			unit_count_patrol = unit_count_patrol + SGroup_CountSpawned(module.sgroup)
+			if trigger_final_attack then RovingArmy_SetTarget(module, mkr_player_base) end
+		end
+	end
+	
+	for i, module in ipairs({ enemy_defend_1, enemy_defend_2, enemy_defend_3, enemy_defend_4 }) do
+		if module.status ~= ARMY_STATUS_DISSOLVED then
+			unit_count_defend = unit_count_defend + SGroup_CountSpawned(module.sgroup)
+			if trigger_final_attack then RovingArmy_SetTarget(module, mkr_player_base) end
+		end
+	end
+	
+	for i, module in ipairs({ reinforcements_first_1, reinforcements_first_2, reinforcements_first_3, reinforcements_second_1, reinforcements_second_2 }) do
+		if module.status ~= ARMY_STATUS_DISSOLVED then
+			unit_count_reinforce = unit_count_reinforce + SGroup_CountSpawned(module.sgroup)
+			if trigger_final_attack then RovingArmy_SetTarget(module, mkr_player_base) end
+		end
+	end
+	
+	unit_count_final_wave = SGroup_CountSpawned(final_wave.sgroup)
+	unit_count = unit_count_assault + unit_count_patrol + unit_count_defend + unit_count_reinforce + unit_count_final_wave
+	print("assault:"..unit_count_assault.."  patrol:"..unit_count_patrol.."  defend:"..unit_count_defend.."  reinforce:"..unit_count_reinforce.."  final_wave:"..unit_count_final_wave.."  total:"..unit_count)
+end

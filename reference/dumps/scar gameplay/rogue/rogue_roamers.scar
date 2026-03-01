@@ -1,0 +1,287 @@
+import("cardinal.scar")
+import("ai/army.scar")
+import("missionomatic/missionomatic_utility.scar")
+
+---------------------------------------------------------
+-----------------------  Roamers  -----------------------
+---------------------------------------------------------
+
+function Roamers_Init()
+	roamers = {}
+	if Marker_Exists("mkr_roamer", "") == false then
+		return
+	end
+	ROAMER_ARRIVAL_THRESHOLD_SQUARED = 12 ^ 2
+	ROAMER_WAIT_TIME = 5
+	eg_roamer_targets = EGroup_CreateUniqueWithPrefix("eg_roamer_targets")
+	sg_roamer_targets = SGroup_CreateUniqueWithPrefix("sg_roamer_targets")
+	mkr_roamer_exclude = Marker_FromName("mkr_roamer_exclude", "")
+	local node_markers = AllMarkers_FromName("mkr_roamer", "")
+	local spawner_markers = AllMarkers_FromName("mkr_roamer_spawn", "")
+	if mission_name == "Watch Your Steppe" then
+		if Game_GetSPDifficulty() > 4 then
+			Roamers_AddAdditionalNodes(node_markers, "mkr_road_close")
+		end
+		if Game_GetSPDifficulty() > 5 then
+			Roamers_AddAdditionalNodes(node_markers, "mkr_road_medium")
+		end
+		if Game_GetSPDifficulty() > 6 then
+			Roamers_AddAdditionalNodes(node_markers, "mkr_road_far")
+		end
+	end
+	roamer_network = Network_Init(node_markers, spawner_markers)
+	Rule_AddInterval(Roamers_Monitor, 0.5)
+end
+
+function Roamers_AddAdditionalNodes(node_markers, marker_name)
+	for _, marker in ipairs(AllMarkers_FromName(marker_name, "")) do
+		local node_marker = Marker_Create("mkr_roamer", "Camera", Marker_GetPosition(marker), Marker_GetDirection(marker), Marker_GetProximityRadius(marker))
+		table.insert(node_markers, node_marker)
+	end	
+end
+
+function Roamers_Monitor(context, data)
+	if #roamers == 0 then
+		return
+	end
+	roamer_monitor_index = roamer_monitor_index or 0
+	roamer_monitor_index = roamer_monitor_index + 1
+	if roamer_monitor_index > #roamers then
+		roamer_monitor_index = 1
+	end
+	
+	Roamers_RefreshTargets()
+	local roamer = roamers[roamer_monitor_index]
+	Roamer_Monitor(roamer)
+end
+
+function Roamers_RefreshTargets()
+	SGroup_Clear(sg_roamer_targets)
+	Players_GetAllSquads(ROGUE_HUMAN_PLAYERS, sg_roamer_targets)
+	SGroup_FilterByProximity(sg_roamer_targets, mkr_roamer_exclude, FILTER_REMOVE, nil)
+	SGroup_Filter(sg_roamer_targets, { "military", "naval_unit" }, FILTER_REMOVE)
+	
+	EGroup_Clear(eg_roamer_targets)
+	Players_GetAllEntities(ROGUE_HUMAN_PLAYERS, eg_roamer_targets)
+	EGroup_FilterByProximity(eg_roamer_targets, mkr_roamer_exclude, nil, FILTER_REMOVE)
+	EGroup_FilterByType(eg_roamer_targets, "defensive_structure", FILTER_REMOVE)
+end
+
+function Roamer_Spawn(state, value)
+	local roamer
+	if state == states.sim then
+		roamer = Roamer_Init(value)
+	else
+		roamer = roamers[state.roamer_index]
+		state.roamer_index = state.roamer_index + 1
+		CreateUnits(ROGUE_ENEMY_ALLY_PLAYER, roamer.unit_table, roamer.spawner_node.position, roamer.sgroup)
+		--FOW_RevealSGroup(roamer.sgroup, 10, -1)
+		Roamer_AttackNextNode(roamer)
+		if debug_roamers then
+			print(time_string.." "..roamer.name.." spawned - "..roamer.unit_string)
+		end
+	end
+end
+
+function Roamer_Init(value)
+	roamer_index = roamer_index or 0
+	roamer_index = roamer_index + 1
+	local roamer = {}
+	roamer.id = roamer_index
+	roamer.name = "Roamer_"..roamer.id
+	roamer.sgroup = SGroup_CreateUniqueWithPrefix("sg_"..roamer.name)
+	roamer.has_detoured_this_node = false
+	roamer.has_completed_detour = false
+	roamer.attack_complete_at = nil
+	table.insert(roamers, roamer)
+	roamer.spawner_node = Network_GetLeastUsedSpawn()
+	roamer.spawner_node.uses = roamer.spawner_node.uses + 1
+	roamer.spawn_at = states.sim.second
+	roamer.time_string = time_string
+	roamer.last_node = roamer.spawner_node
+	roamer.unit_table = TechTree_GetRoamerUnits(value)
+	roamer.unit_string = roamer.unit_table[1].unit_name.."("..roamer.unit_table[1].numSquads..")"
+	return roamer
+end
+
+function Roamer_Monitor(roamer)
+	if SGroup_CountSpawned(roamer.sgroup) > 0 then
+		roamer.position = SGroup_GetPosition(roamer.sgroup)
+		if roamer.has_detoured_this_node == false then
+			local enemy_position = Roamer_GetEnemyPosition(roamer)
+			if enemy_position ~= nil then
+				Roamer_AttackEnemyPosition(roamer, enemy_position)
+			end
+		end
+		if roamer.has_detoured_this_node == true and roamer.has_completed_detour == false then
+			local distance_squared = World_DistanceSquaredPointToPoint(roamer.position, roamer.target_node.position)
+			if distance_squared <= ROAMER_ARRIVAL_THRESHOLD_SQUARED then
+				roamer.has_completed_detour = true
+			end
+		end
+		if roamer.has_detoured_this_node == false or roamer.has_completed_detour == true then
+			if roamer.attack_complete_at == nil then
+				local distance_squared = World_DistanceSquaredPointToPoint(roamer.position, roamer.target_node.position)
+				if distance_squared <= ROAMER_ARRIVAL_THRESHOLD_SQUARED then
+					roamer.attack_complete_at = World_GetGameTime() + ROAMER_WAIT_TIME
+				end
+			else
+				if World_GetGameTime() >= roamer.attack_complete_at then
+					Roamer_AttackNextNode(roamer)
+				end
+			end
+		end
+		if Player_CanSeeSGroup(ROGUE_HUMAN_PLAYERS[1], roamer.sgroup, ANY) then
+			if roamer.ui_marker == nil then
+				roamer.ui_marker = Objective_AddUIElements(OBJ_DUMMY, roamer.sgroup, true, "test", false)
+			end
+		else
+			if roamer.ui_marker ~= nil then
+				Objective_RemoveUIElements(OBJ_DUMMY, roamer.ui_marker)	
+				roamer.ui_marker = nil
+			end
+		end
+	end
+end
+
+function Roamer_AttackNextNode(roamer)
+	roamer.has_detoured_this_node = false
+	roamer.has_completed_detour = false
+	roamer.attack_complete_at = nil
+	roamer.last_node = roamer.target_node or roamer.last_node
+	local neighbor_target = Node_GetLeastVisitedNeighbor(roamer.last_node)
+	neighbor_target.node.visits = neighbor_target.node.visits + 1
+	roamer.target_node = neighbor_target.node
+	roamer.aggro_distance = roamer.target_node.threshold
+	roamer.aggro_distance_squared = roamer.aggro_distance ^ 2  
+	SGroup_AttackMove(roamer.sgroup, roamer.target_node.position)
+end
+
+function Roamer_AttackEnemyPosition(roamer, enemy_position)
+	roamer.has_detoured_this_node = true
+	roamer.has_completed_detour = false
+	roamer.enemy_position = enemy_position
+	print(roamer.name.." attacking enemy position")
+	SGroup_AttackMove(roamer.sgroup, enemy_position)
+	SGroup_AttackMove(roamer.sgroup, roamer.target_node.position, true)
+end
+
+function Roamer_GetEnemyPosition(roamer)
+	local position = SGroup_GetPosition(roamer.sgroup)
+	local closest_positions = {}
+	if EGroup_CountSpawned(eg_roamer_targets) > 0 then
+		local closest_entity = EGroup_GetClosestEntityInternal(eg_roamer_targets, position)
+		table.insert(closest_positions, Entity_GetPosition(closest_entity))
+	end
+	if SGroup_CountSpawned(sg_roamer_targets) > 0 then
+		local closest_squad = SGroup_GetClosestSquad(sg_roamer_targets, position)
+		table.insert(closest_positions, Squad_GetPosition(closest_squad))
+	end
+	if #closest_positions > 0 then
+		local closest_position = World_GetClosest(position, closest_positions)
+		local distance_squared = World_DistanceSquaredPointToPoint(position, closest_position)
+		if distance_squared <= roamer.aggro_distance_squared then
+			return closest_position
+		end
+	end
+	return nil
+end
+
+function Roamers_PrintDebug()
+	print("Roamers: "..#roamers)
+	for _, roamer in ipairs(roamers) do
+		print("    "..roamer.time_string.." "..roamer.name.." - "..roamer.unit_string)
+	end
+end
+
+---------------------------------------------------------
+-----------------------  Network  -----------------------
+---------------------------------------------------------
+
+function Network_Init(node_markers, spawner_markers)
+	local network = {}
+	network.nodes = {}
+	network.spawner_nodes = {}
+	for _, marker in ipairs(node_markers) do
+		local node = Node_Init(marker, false)
+		table.insert(network.nodes, node)
+	end
+	for _, marker in ipairs(spawner_markers) do
+		local spawner_node = Node_Init(marker, true)
+		table.insert(network.nodes, spawner_node)
+		table.insert(network.spawner_nodes, spawner_node)
+	end
+	for index_a, node_a in ipairs(network.nodes) do
+		for index_b, node_b in ipairs(network.nodes) do
+			if index_b > index_a then
+				local distance = World_DistancePointToPoint(node_a.position, node_b.position)
+				if distance <= node_a.threshold and node_b.is_spawner == false then
+					Node_AddNeighbor(node_a, node_b, distance)
+				end
+				if distance <= node_b.threshold and node_a.is_spawner == false then
+					Node_AddNeighbor(node_b, node_a, distance)
+				end
+			end
+		end
+		if node_a.is_spawner then
+			assert(#node_a.neighbors > 0, "mkr_roamer_spawn has no other nodes within range")	
+		else
+			assert(#node_a.neighbors > 0, "mkr_roamer has no other nodes within range")	
+		end
+	end
+	return network
+end
+
+function Node_Init(marker, is_spawner)
+	node_index = node_index or 0
+	node_index = node_index + 1
+	local node = {}
+	node.id = node_index
+	node.name = "node_"..node.id
+	node.position = Marker_GetPosition(marker)
+	node.threshold = Marker_GetProximityRadius(marker)
+	node.is_spawner = is_spawner
+	node.neighbors = {}
+	node.visits = 0
+	node.uses = 0
+	return node
+end
+	
+function Node_AddNeighbor(node, neighboring_node, distance)
+	local neighbor = {}
+	neighbor.node = neighboring_node
+	neighbor.distance = distance
+	table.insert(node.neighbors, neighbor)
+end
+
+function Node_GetLeastVisitedNeighbor(node)
+	local least_visits = 1000
+	local eligible_neighbor = {}
+	for _, neighbor in ipairs(node.neighbors) do
+		if neighbor.node.visits < least_visits then
+			least_visits = neighbor.node.visits 
+		end
+	end
+	for _, neighbor in ipairs(node.neighbors) do
+		if neighbor.node.visits == least_visits then
+			table.insert(eligible_neighbor, neighbor)	
+		end
+	end
+	return Table_GetRandomItem(eligible_neighbor)
+end
+
+function Network_GetLeastUsedSpawn()
+	local least_uses = 1000
+	for _, spawner_node in ipairs(roamer_network.spawner_nodes) do
+		if spawner_node.uses < least_uses then
+			least_uses = spawner_node.uses	
+		end
+	end
+	local eligible_spawners = {}
+	for _, spawner_node in ipairs(roamer_network.spawner_nodes) do
+		if spawner_node.uses == least_uses then
+			table.insert(eligible_spawners, spawner_node)	
+		end
+	end
+	return Table_GetRandomItem(eligible_spawners)
+end

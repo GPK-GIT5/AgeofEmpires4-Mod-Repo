@@ -1,0 +1,938 @@
+import("Cardinal.scar")
+import("ai/ai_encounter_util.scar")
+
+function notify(contextDataTable)
+	print("Encounter ended. Reason: " .. AIFormationPhaseEncounter_EndReason_ToString(contextDataTable.encounterStage))
+	assert(contextDataTable.notificationType == AIEncounterNotification_StateTreeExit)
+end
+
+function LaunchEncounter(player, squads, position)
+	currentEncounterID = AI_GetAndReserveNextTaskID(player);
+	currentCallbackID = EventRule_GetNextUniqueRuleID();
+
+	local sgroup_list_tunings = {
+		ai_best_available_squads = squads
+	} 
+	
+	local position_list_tunings = {
+		ai_best_military_targets = { position }
+	}
+	
+	local formupPosition = SGroup_GetPosition(squads)
+	marker_list_tunings = { ai_best_formup_targets = {formupPosition}}
+	
+	
+	local entitytype_list_tunings = {}
+	
+	local combat_coordinator_pbg_tunings = {
+		ai_phase_encounter_coordinator_bag = BP_GetAIFormationCoordinatorBlueprint("ai\\ai_formation_coordinator\\campaign\\ai_formation_coordinator_campaign_default_attarget"),
+		ai_phase_encounter_coordinator_bag_enroute = BP_GetAIFormationCoordinatorBlueprint("ai\\ai_formation_coordinator\\campaign\\ai_formation_coordinator_campaign_default_attarget"),
+		ai_phase_encounter_path_bag = nil
+	}
+	
+	local bool_tunings = {
+		ai_phase_encounter_clear_enemy_squads = true,
+		ai_phase_encounter_clear_enemy_squads_enroute = true,
+		ai_phase_encounter_clear_enemy_buildings = true,
+		ai_phase_encounter_clear_enemy_buildings_enroute = true,
+		ai_phase_encounter_exit_on_partial_path = false,
+		ai_phase_encounter_disable_cavalry_build_rams = false,
+		ai_phase_encounter_should_hold_position = false
+	}
+
+	local float_tunings = {
+		ai_phase_encounter_combat_area = 50,
+		ai_phase_encounter_combat_area_enroute = 50,
+		ai_phase_encounter_combat_leash = 50,
+		ai_phase_encounter_combat_leash_enroute = 50,
+		ai_phase_encounter_destination_area = 10,
+		ai_phase_encounter_destination_combat_area = 45, --35
+		ai_phase_encounter_enemy_scan_range_enroute = 50,
+		ai_phase_encounter_enemy_scan_range = ai_phase_encounter_destination_combat_area, -- for best result, make this match the combat area
+		ai_phase_encounter_destination_required_squads_percent_enroute = 1.0,
+		ai_phase_encounter_destination_required_squads_percent = 1.0,
+		ai_phase_encounter_archer_reposition_time_interval = 20.0,
+		ai_phase_encounter_cached_path_update_interval_secs = 0.0,
+		ai_phase_encounter_combat_fitness_threshold = 0,
+		ai_phase_encounter_fallback_combat_rating = -1,
+		ai_phase_encounter_fallback_squad_health_threshold =-1,
+		ai_phase_encounter_idle_at_end_seconds = 30.0
+	}
+	
+	local int_tunings = {
+		ai_phase_encounter_override_encounter_id = currentEncounterID,
+		ai_phase_encounter_notify_rule_id = currentCallbackID,
+	}
+	
+	local phaseEncounterTuningsPBG = BP_GetAIStateModelTuningsBlueprint("ai\\ai_statemodel_tunings\\campaign_attack_default")
+	
+	
+	AIStateTree_SpawnRootControllerWithStateModelTunings(
+		player, 
+		"campaign_encounters\\scar_encounters\\AttackDefault",
+		false,
+		phaseEncounterTuningsPBG, 
+		sgroup_list_tunings, 
+		nil,
+		position_list_tunings, 
+		{}, 
+		entitytype_list_tunings,
+		combat_coordinator_pbg_tunings,
+		bool_tunings, 
+		float_tunings,
+		int_tunings)
+	
+	UnsavedEventRule_AddRuleIDEvent(notify, currentCallbackID, GE_AIPlayer_EncounterNotification)
+end
+
+function LaunchSimpleAttackMove(player, squads, position)
+	Cmd_AttackMove(squads, position)
+end
+
+function LaunchSimpleAbility(squads, ability, target)
+	Cmd_Ability(squads, ability, target)
+end
+
+function LaunchFireShipAbility(squads, target)
+	local UseAbility = function(gid, idx, sid)
+		local squadBP = Squad_GetBlueprint(sid)
+		local bpName = BP_GetName(squadBP)
+		
+		local abilityName = "fireship_target"
+		local ability = BP_GetAbilityBlueprint(abilityName)
+		Cmd_Ability(sid, ability, target)
+	end
+	
+	SGroup_ForEach(squads, UseAbility)
+end
+
+--? @shortdesc Returns the total health of all units in a entity group, excluding entities that currently cannot be damaged.
+--? @extdesc This uses the "proper" measure of health for panel buildings, so should accurately reflect what the user sees.
+--? @args EGroupID egroup
+--? @result Real
+function EGroup_GetTotalHealthFromCanBeDamagedOnly( egroupid )
+
+	local tally = 0.0
+	
+	local GetItemHealth = function( groupid, itemindex, itemid )
+		if Entity_CanCurrentlyBeDamaged(itemid) then
+			tally = tally + Entity_GetHealth(itemid)
+		end
+	end
+	EGroup_ForEach( egroupid, GetItemHealth )
+	
+	return tally
+	
+end
+
+function TotalHealthOfPlayer(player)
+	local entity1ID = "combat_fitness_util_e1"
+	local entityG1 = EGroup_CreateIfNotFound(entity1ID)
+	Player_GetAll(player, entityG1)
+	
+	local squad1ID = "combat_fitness_util_s1"
+	local squad1 =  SGroup_CreateIfNotFound(squad1ID)
+	Player_GetAll(player, squad1)
+	
+	local currentHealth = SGroup_GetTotalHealth(squad1) + EGroup_GetTotalHealthFromCanBeDamagedOnly(entityG1)
+	
+	return currentHealth
+end
+
+-- Param healthHistory {'player1':{time: health},'player1':{time: health}}
+function FightIsFinished(player1, player2, healthHistory, damageTimeout)
+	local health1 = TotalHealthOfPlayer(player1)
+	local health2 = TotalHealthOfPlayer(player2)
+	
+	if health1 == 0 or health2 == 0 then
+		return {true, health1, health2}
+	end
+	
+	if HistoryLength(healthHistory['player1']) >= damageTimeout then --assume both histories are same len
+		local player1TookDamage = DamagedInLastPeriod(damageTimeout, healthHistory['player1'], health1)
+		local player2TookDamage = DamagedInLastPeriod(damageTimeout, healthHistory['player2'], health2)
+		
+		if not player1TookDamage and player2TookDamage then
+			return {true, health1, 0}
+		end
+		if  player1TookDamage and not player2TookDamage then
+			return {true, 0, health2}
+		end
+	end
+	
+	return {false, health1, health2}
+end
+
+function AppendHealthHistory(player, history) 
+	local currentTime = World_GetGameTime()
+	history[currentTime] = TotalHealthOfPlayer(player)
+end
+
+function HistoryLength(healthHistory)
+	local historyDuration = 0
+	local currentTime = World_GetGameTime()
+	
+	for time, health in pairs(healthHistory) do
+		local timeSince = (currentTime - time)
+		historyDuration = math.max(historyDuration, timeSince)
+	end
+	
+	return historyDuration
+end
+
+-- returns true if damage has occured within the supplied period
+function DamagedInLastPeriod(period, healthHistory, currentHealth)
+	
+	local currentTime = World_GetGameTime()
+	
+	for time, health in pairs(healthHistory) do
+		local timeSince = (currentTime - time)
+		local entryWithinPeriod = timeSince <= period
+		if entryWithinPeriod  then
+			if health ~= currentHealth then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+	
+function SGroup_CanTargetSGroup(attackGroup, targetGroup)
+
+	local canTarget = false
+	
+	local _CanTarget = function(sgroup, index, squad)
+		if canTarget then
+			return
+		end
+			
+		for j = 1, SGroup_Count(targetGroup) do
+			local targetSquad = SGroup_GetSquadAt(targetGroup, j)
+			if Squad_CanTargetSquad(squad, targetSquad, false --[[checkFOW]]) then
+				canTarget = true
+				break;
+			end
+		end
+	end
+	SGroup_ForEach(attackGroup, _CanTarget)
+	
+	return canTarget
+end
+	
+function SGroup_CanTargetEGroup(attackGroup, targetGroup)
+
+	local canTarget = false
+	
+	local _CanTarget = function(sgroup, index, squad)
+		if canTarget then
+			return
+		end
+			
+		for j = 1, EGroup_Count(targetGroup) do
+			local targetEntity = EGroup_GetEntityAt(targetGroup, j)
+			if Squad_CanTargetEntity(squad, targetEntity, false --[[checkFOW]]) then
+				canTarget = true
+				break;
+			end
+		end
+	end
+	SGroup_ForEach(attackGroup, _CanTarget)
+	
+	return canTarget
+end
+
+function ComputeScore(initialA, initialB, finalA, finalB)
+	if finalA == 0.0 and finalB == 0.0 then
+		return 0.5
+	end
+	
+	-- Handle rare cases of divide by zero.
+	if initialA == 0.0 and initialB == 0.0 then
+		return 0.5
+	elseif initialA == 0.0 then
+		return 0.0 -- initialB ~= 0.0. Assume B wins.
+	elseif initialB == 0.0 then
+		return 1.0 -- initialA ~= 0.0. Assume A wins.
+	end
+	
+	local score = 0.5 - ((initialA - finalA)/(2*initialA)) + ((initialB - finalB)/(2*initialB))
+	return score
+end
+
+function ContainsAnyFilterWord(word, filterList)
+	for i, fil in pairs(filterList) do
+		if string.find(word, fil) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function ContainsAllFilterWord(word, filterList)
+	for i, fil in pairs(filterList) do
+		if not string.find(word, fil) then
+			return false
+		end
+	end
+	
+	return true
+end
+
+function CreateSpawnCombination(spawnPossibilities, onlyOneAllowedWords, spawnSize, chunkLimit, onlyOneUnitType, distribution)
+	local result = {}
+	local selectedList = {}
+	local loopNum = 0
+
+	-- Are we given a distribution?
+	local distributionKeys = nil
+	if distribution ~= nil then
+		-- iterate over whole table to get all keys
+		distributionKeys = {}
+		for key in pairs(distribution) do
+			table.insert(distributionKeys, key)
+		end
+	end
+	
+	while spawnSize > 0 do
+		local possibility = nil
+		
+		if distributionKeys == nil then
+			possibility = Table_GetRandomItem(spawnPossibilities)
+		else
+			indices = distribution[distributionKeys[World_GetRand(1, #distributionKeys)]]
+			index = Table_GetRandomItem(indices)
+			possibility = spawnPossibilities[index]
+		end
+		
+		-- There might be units that are in the archetype mapping but can't be spawned. 
+		-- for those, the entry in spawnPossibilities is set to false.
+		if not (possibility == false) then 
+			local unitType = possibility[1]
+			local squadBP = possibility[2]
+			
+			local onlyOneAllowed = ContainsAnyFilterWord(unitType, onlyOneAllowedWords)
+			local oneAlreadySpawned = ContainsAnyFilterWord(unitType, selectedList)
+			local canSpawnMoreOfThisUnit = not onlyOneAllowed or not oneAlreadySpawned
+			
+			if canSpawnMoreOfThisUnit then
+				local chunk = 1 
+				if onlyOneUnitType then
+					chunk = spawnSize
+				elseif not onlyOneAllowed then 
+					chunk = math.min(World_GetRand(1, spawnSize), chunkLimit)
+				end
+				spawnSize = spawnSize - chunk
+				table.insert(result, { chunk, unitType, squadBP })
+				table.insert(selectedList, unitType)
+			end
+		end
+			
+		assert(loopNum < 1000, "Inf loop detected")
+		loopNum = loopNum + 1
+	end
+	
+	return result
+end
+
+function PrintSpawnCombination(label, combination, printFunc)
+	local func = printFunc or print
+	func(label)
+	for i, info in pairs(combination) do
+		local chunk = info[1]
+		local unitType = info[2]
+		func("  " .. chunk .. " x " .. unitType)
+	end
+end
+
+-- TODO make structure combo automatic and not rely on hard coded BP references
+local tcAbbPBG = BP_GetEntityBlueprint("ebps\\races\\abbasid\\buildings\\building_town_center_capital_abb")
+local tcChiPBG = BP_GetEntityBlueprint("ebps\\races\\chinese\\buildings\\building_town_center_chi\\building_town_center_capital_chi")
+local tcEngPBG = BP_GetEntityBlueprint("ebps\\races\\english\\buildings\\building_town_center_burh_eng\\building_town_center_capital_eng")
+local tcFrePBG = BP_GetEntityBlueprint("ebps\\races\\french\\buildings\\building_town_center_fre\\building_town_center_capital_fre")
+local tcHrePBG = BP_GetEntityBlueprint("ebps\\races\\hre\\buildings\\building_town_center_hre\\building_town_center_capital_hre")
+local tcMalPBG = BP_GetEntityBlueprint("ebps\\races\\malian\\buildings\\building_town_center_mal\\building_town_center_capital_mal")
+local tcMonPBG = BP_GetEntityBlueprint("ebps\\races\\mongol\\buildings\\building_town_center_capital_mon")
+local tcOttPBG = BP_GetEntityBlueprint("ebps\\races\\ottoman\\buildings\\building_town_center_ott\\building_town_center_capital_ott")
+local tcRusPBG = BP_GetEntityBlueprint("ebps\\races\\rus\\buildings\\building_town_center_rus\\building_town_center_capital_rus")
+local tcSulPBG = BP_GetEntityBlueprint("ebps\\races\\sultanate\\buildings\\building_town_center_sul\\building_town_center_capital_sul")
+
+local keepPBG = BP_GetEntityBlueprint("ebps\\races\\english\\buildings\\building_defense_keep_eng\\building_defense_keep_eng")
+local keepSulPBG =  BP_GetEntityBlueprint("ebps\\races\\sultanate\\buildings\\building_defense_keep_sul\\building_defense_keep_control_sul")
+
+local keepSpringaldPBG = BP_GetUpgradeBlueprint('upgrade\\races\\common\\research\\upgrade_keep_springald')
+local keepCannonPBG = BP_GetUpgradeBlueprint('upgrade\\races\\common\\research\\upgrade_keep_cannon')
+local keepDefenseSulPBG = BP_GetUpgradeBlueprint('upgrade\\races\\sultanate\\research\\upgrade_landmark_keep_defense_sul')
+
+local outpostPBG = BP_GetEntityBlueprint("ebps\\races\\english\\buildings\\building_defense_outpost_eng\\building_defense_outpost_eng")
+local outpostArrowPBG = BP_GetUpgradeBlueprint('upgrade\\races\\common\\research\\upgrade_outpost_arrowslits')
+local outpostSpringPBG = BP_GetUpgradeBlueprint('upgrade\\races\\common\\research\\upgrade_outpost_springald')
+local outpostCannonPBG = BP_GetUpgradeBlueprint('upgrade\\races\\common\\research\\upgrade_outpost_cannon')
+local outpostStonePBG = BP_GetUpgradeBlueprint('upgrade\\races\\common\\research\\upgrade_outpost_stone')
+
+local towerEngPBG = BP_GetEntityBlueprint("ebps\\races\\english\\buildings\\building_defense_wall_eng\\building_defense_tower_eng")
+local towerHrePBG = BP_GetEntityBlueprint("ebps\\races\\hre\\buildings\\building_defense_wall_hre\\building_defense_tower_hre")
+local towerSpringPBG = BP_GetUpgradeBlueprint('upgrade\\races\\common\\research\\upgrade_tower_springald')
+local towerCannonPBG = BP_GetUpgradeBlueprint('upgrade\\races\\common\\research\\upgrade_tower_cannon')
+
+local townCenterCombo =
+{
+	-- town centers 
+	{tcAbbPBG, {}},
+	{tcChiPBG, {}},
+	{tcEngPBG, {}},
+	{tcFrePBG, {}},
+	{tcHrePBG, {}},
+	{tcMalPBG, {}},
+	{tcMonPBG, {}},
+	{tcOttPBG, {}},
+	{tcRusPBG, {}},
+	{tcSulPBG, {}},
+}
+
+local combatBuildingCombo =
+{
+	-- keeps
+	{keepPBG, {}},
+	{keepPBG, {keepSpringaldPBG}},
+	{keepPBG, {keepCannonPBG}},
+	{keepPBG, {keepSpringaldPBG, keepCannonPBG}},
+	{keepSulPBG, {}},
+	{keepSulPBG, {keepSpringaldPBG}},
+	{keepSulPBG, {keepCannonPBG}},
+	{keepSulPBG, {keepSpringaldPBG, keepCannonPBG}},
+	{keepSulPBG, {keepDefenseSulPBG, keepSpringaldPBG}},
+	{keepSulPBG, {keepDefenseSulPBG, keepCannonPBG}},
+	{keepSulPBG, {keepDefenseSulPBG, keepSpringaldPBG, keepCannonPBG}},
+	
+	-- outposts
+	{outpostPBG, {outpostArrowPBG}},
+	{outpostPBG, {outpostSpringPBG}},
+	{outpostPBG, {outpostCannonPBG}},
+	{outpostPBG, {outpostStonePBG, outpostArrowPBG}},
+	{outpostPBG, {outpostStonePBG, outpostSpringPBG}},
+	{outpostPBG, {outpostStonePBG, outpostCannonPBG}},
+	
+	-- towers
+	{towerEngPBG, {towerSpringPBG}},
+	{towerEngPBG, {towerCannonPBG}},
+	{towerHrePBG, {towerSpringPBG}},
+	{towerHrePBG, {towerCannonPBG}},
+}
+
+function CreateBuildingCombination(player, maxNumBuildings)
+	local result = {}
+	local numBuildings = World_GetRand(1, maxNumBuildings)
+	
+	for j = 1, numBuildings do
+		-- 50/50 chance to spawn a town center or combat building
+		if (World_GetRand(1, 99) < 50) then
+			table.insert(result, townCenterCombo[World_GetRand(1, #townCenterCombo)])
+		else
+			table.insert(result, combatBuildingCombo[World_GetRand(1, #combatBuildingCombo)])
+		end
+	end
+	
+	return result
+end
+
+function PrintBuildingCombination(combination, printFunc)
+	local func = printFunc or print
+	for i, building in pairs(combination) do
+		func("  1 x " .. BP_GetName(building[1]))
+		for j, upgrade in pairs(building[2]) do
+			func("    with " .. BP_GetName(upgrade))
+		end
+	end
+end
+
+function SpawnBuildings(player, buildingCombination, buildingPositions, damagedChance1In, optionalTowardsPosition)
+	local entity1ID = "combat_fitness_util_e1"
+	local entityG1 = EGroup_CreateIfNotFound(entity1ID)
+	
+	for i, combination in pairs(buildingCombination) do
+		EGroup_Clear(entityG1)
+		Util_CreateEntities(player, entityG1, combination[1], buildingPositions[i], 1, optionalTowardsPosition, true, false)
+		
+		-- print(EGroup_Count(entityG1))
+		for j, upgrade in pairs(combination[2]) do
+			Cmd_InstantUpgrade(entityG1, upgrade) 
+		end
+		
+		for j = 1, EGroup_Count(entityG1), 1 do
+			local healthPercentage = 1
+			
+			if damagedChance1In > 0 then
+				local isDamaged =  World_GetRand(1,damagedChance1In) == 1
+				if isDamaged then 
+					healthPercentage = World_GetRand(1,10) * 0.1
+				end
+			end
+			
+			Entity_SetHealth(EGroup_GetEntityAt(entityG1, j), healthPercentage)
+		end
+	end
+end
+
+-- This helper checks if a PBG is already loaded to avoid a force reload
+function CreateAndSpawnSquad(pbg, player, pos, posToward, loadedPBGNames)
+	local spawnedSquad
+	
+	local pbgName = BP_GetName(pbg)
+	if (loadedPBGNames[pbgName] ~= nil) then
+		spawnedSquad = Squad_CreateAndSpawnToward(pbg, player, 0, pos, posToward)
+	else
+		spawnedSquad = Squad_CreateAndSpawnTowardCheat(pbg, player, 0, pos, posToward)
+		loadedPBGNames[pbgName] = true
+	end
+	
+	return spawnedSquad
+end
+
+function SpawnCombination(player, pos, combination, damagedChance1In, loadedPBGNames)
+	
+	if #combination == 0 then
+		return
+	end
+	
+	for i = 1, #combination do
+		local chunk = combination[i][1]
+		local squadBP = combination[i][3]
+		
+		while chunk > 0 do
+			local spawnedSquad = CreateAndSpawnSquad(squadBP, player, pos, pos, loadedPBGNames)
+			chunk = chunk - 1
+			
+			local healthPercentage = 1 
+		
+			if damagedChance1In > 0 then
+				local isDamaged = World_GetRand(1,damagedChance1In) == 1
+				if isDamaged then 
+					healthPercentage = World_GetRand(1,10) * 0.1
+				end
+			end
+			
+			Squad_SetHealth(spawnedSquad, healthPercentage)
+		end 
+	end
+end
+
+function GenUpgradeCombination(potentialUpgrades, numUpgrades, unitCombination, buildingCombination)
+	if numUpgrades == 1 then  
+		result = { Table_GetRandomItem(potentialUpgrades) }
+	elseif numUpgrades > 1 then
+		result = Table_GetRandomItem(potentialUpgrades, numUpgrades)
+	end
+	
+	-- Check if we have unit specific upgrades we should include
+	local hasMonk = false
+	local hasMonkAbb = false
+	local hasMonkHre = false
+	local hasMonkMon = false
+	local hasMonkSul = false
+	local hasWarship = false
+	local hasBombardChi = false
+	local hasManAtArmsChi = false
+	local hasGunpowderChi = false
+	local hasTrebuchetEng = false
+	local hasCavalryFre = false
+	local hasKeepOrTower = false
+	local hasKeepOrTowerSul = false
+	local hasDefensesHre = false
+	local hasDefensesSul = false
+	local hasTowerElephantSul = false
+	local hasAnyBuildingsSul = false
+	
+	for i = 1, #unitCombination do
+		local unitType = unitCombination[i][2]
+		local unitBP = unitCombination[i][3]
+		
+		-- Check for monk upgrades
+		local isCurrentBPMonk = Squad_IsSBPOfType(unitBP, "monk")
+		hasMonk = hasMonk or isCurrentBPMonk
+		if isCurrentBPMonk then
+			-- Check for civ specific monk upgrades
+			hasMonkAbb = hasMonkAbb or string.find(unitType, "_abb") ~= nil
+			hasMonkHre = hasMonkHre or string.find(unitType, "_hre") ~= nil
+			hasMonkMon = hasMonkMon or string.find(unitType, "_mon") ~= nil
+			hasMonkSul = hasMonkSul or string.find(unitType, "_sul") ~= nil
+		end
+		
+		-- Check for warship upgrades
+		hasWarship = hasWarship or Squad_IsSBPOfType(unitBP, "naval_warship")
+			
+		-- Check for civ specific upgrades
+		if string.find(unitType, "_chi") ~= nil then
+			hasBombardChi = hasBombardChi or Squad_IsSBPOfType(unitBP, "bombard")
+			hasManAtArmsChi = hasManAtArmsChi or Squad_IsSBPOfType(unitBP, "manatarms")
+			hasGunpowderChi = hasGunpowderChi or Squad_IsSBPOfType(unitBP, "gunpowder")
+		elseif string.find(unitType, "_eng") ~= nil then
+			hasTrebuchetEng = hasTrebuchetEng or string.find(unitType, "unit_trebuchet") ~= nil
+		elseif string.find(unitType, "_fre") ~= nil then
+			hasCavalryFre = hasCavalryFre or Squad_IsSBPOfType(unitBP, "cavalry")
+		elseif string.find(unitType, "_sul") ~= nil then
+			hasTowerElephantSul = hasTowerElephantSul or Squad_IsSBPOfType(unitBP, "cavalry_tower_elephant")
+		end
+	end
+	
+	for i = 1, #buildingCombination do
+		local buildingBP = buildingCombination[i][1]
+		local buildingName = BP_GetName(buildingBP)
+		
+		-- Murder holes (Boiling Oil) only affect Keeps and Towers
+		local isCurrentBPKeepOrTower = Entity_IsEBPOfType(buildingBP, "castle") or Entity_IsEBPOfType(buildingBP, "tower")
+		hasKeepOrTower = hasKeepOrTower or isCurrentBPKeepOrTower
+			
+		-- Check for civ specific upgrades
+		if string.find(buildingName, "_hre") then
+			hasDefensesHre = hasDefensesHre or string.find(buildingName, "defense_tower") ~= nil
+		elseif string.find(buildingName, "_sul") then
+			hasDefensesSul = hasDefensesSul or
+				Entity_IsEBPOfType(buildingBP, "castle") or
+				Entity_IsEBPOfType(buildingBP, "outpost") or
+				Entity_IsEBPOfType(buildingBP, "tower")
+			hasKeepOrTowerSul = hasKeepOrTowerSul or isCurrentBPKeepOrTower
+			hasAnyBuildingsSul = true
+		end
+	end
+	
+	local upgrades = {}
+	if hasMonkAbb then
+		table.insert(upgrades, "upgrade_unit_religious_piety_4_abb")
+		table.insert(upgrades, "upgrade_unit_religious_herbal_medicine_4_abb")
+	elseif hasMonkHre then
+		table.insert(upgrades, "upgrade_unit_religious_piety_4_hre")
+		table.insert(upgrades, "upgrade_unit_religious_herbal_medicine_4_hre")
+	elseif hasMonkMon then
+		table.insert(upgrades, "upgrade_unit_religious_piety_4_mon")
+		table.insert(upgrades, "upgrade_unit_religious_herbal_medicine_4")
+		table.insert(upgrades, "upgrade_unit_religious_herbal_medicine_4_improved_mon")
+	elseif hasMonkSul then
+		table.insert(upgrades, "upgrade_unit_religious_piety_4_sul")
+		table.insert(upgrades, "upgrade_unit_religious_zealous_4_sul")
+		table.insert(upgrades, "upgrade_unit_religious_herbal_medicine_4_sul")
+	elseif hasMonk then
+		table.insert(upgrades, "upgrade_unit_religious_piety_4")
+		table.insert(upgrades, "upgrade_unit_religious_herbal_medicine_4")
+	end
+	
+	if hasWarship then
+		table.insert(upgrades, "upgrade_naval_galley_cannon")
+	end
+	if hasBombardChi then
+		table.insert(upgrades, "upgrade_reload_drills_chi")
+	end
+	if hasManAtArmsChi then
+		table.insert(upgrades, "upgrade_manatarms_battle_hardened_chi")
+	end
+	if hasGunpowderChi then
+		table.insert(upgrades, "upgrade_gunpowder_damage_chi")
+	end
+	if hasTrebuchetEng then
+		table.insert(upgrades, "upgrade_trebuchet_aoe_eng")
+	end
+	if hasCavalryFre then
+		table.insert(upgrades, "upgrade_cavalry_bloodline_fre")
+		table.insert(upgrades, "upgrade_landmark_cavalry_bloodline_fre")
+	end
+
+	if hasAnyBuildingsSul then
+		table.insert(upgrades, "upgrade_tech_university_architecture_4_sul")
+	elseif #buildingCombination > 0 then
+		table.insert(upgrades, "upgrade_tech_university_architecture_4")
+	end
+	
+	if hasKeepOrTowerSul then
+		table.insert(upgrades, "upgrade_tech_university_murder_holes_4_sul")
+	elseif hasKeepOrTower then
+		table.insert(upgrades, "upgrade_tech_university_murder_holes_4") 
+	end
+	
+	if hasDefensesHre then
+		table.insert(upgrades, "upgrade_reinforced_defenses_hre")
+	end
+	if hasDefensesSul then
+		table.insert(upgrades, "upgrade_landmark_keep_defense_sul")
+	end
+	if hasTowerElephantSul then
+		table.insert(upgrades, "upgrade_landmark_siege_elephant_sul")
+	end
+	
+	-- Get upgrade blueprints
+	local result = {} 
+	for i, v in ipairs(upgrades) do
+		table.insert(result, BP_GetUpgradeBlueprint(v))
+	end
+	
+	return result
+end
+
+function ApplyPlayerUpgrades(player, upgrades)
+	for i, upgrade in pairs(upgrades) do
+		Player_CompleteUpgrade(player, upgrade)
+	end
+end
+
+function GetAllBPs(BPType, filter)
+	local result = {}
+	local count = BP_GetPropertyBagGroupCount(BPType)
+	local id = 0
+	local index = 1
+	
+
+	for id = 0, count-1 do
+		local name = BP_GetPropertyBagGroupPathName(BPType, id )
+		
+		name = string.lower(name)
+		
+		local a,b = string.find( name, filter )
+		
+		if ( b ~= nil ) then
+			result[index] = name;
+			index = index + 1
+		end
+	end
+	
+	return result
+end
+
+function GenerateBPOptions(BPType, allowedRaces, filterWords, chosenWords)
+	local sbps = {}
+	-- Determine a list of units we can spawn
+	for i, raceName in pairs(allowedRaces) do
+		local sbpsTmp = GetAllBPs(BPType, "races\\" .. raceName)
+		
+		for k,v in ipairs(sbpsTmp) do
+			table.insert(sbps, v)
+		end 
+	end
+
+	-- filter the list
+	local filteredList = {}
+	local tempSbpsCopy = {}
+	for i, unitType in pairs(sbps) do
+		
+		local filtered = false
+		
+		for k, filter in pairs(filterWords) do
+			if string.find(unitType, filter) then
+				filtered = true
+				break
+			end	
+		end
+		
+		local chosen = true
+		if #chosenWords > 0 then
+			chosen = false
+			
+			for k, choice in pairs(chosenWords) do
+				if string.find(unitType, choice) then
+					chosen = true
+					break
+				end	
+			end
+		end
+
+		if not filtered and chosen then
+			local squadBP = BP_GetSquadBlueprint(unitType)
+			table.insert(tempSbpsCopy, { unitType, squadBP })
+		else
+			table.insert(filteredList, unitType)
+		end
+	end
+	
+	if #filteredList > 0 then
+		print("Blueprints excluded during GenerateBPOptions: ")
+		for i, v in ipairs(filteredList) do
+			print("  " .. v)
+		end
+	end
+
+	return tempSbpsCopy
+end
+
+function FilterBPOptions(spawnPossibilities, requiredWords)
+	local result = {}
+	
+	for i, possibility in pairs(spawnPossibilities) do
+		if possibility ~= false then 
+			local unitType = possibility[1]
+			local hasRequired = (#requiredWords == 0) or ContainsAllFilterWord(unitType, requiredWords)
+			
+			if hasRequired then
+				table.insert(result, possibility)
+			end
+		end
+	end
+	
+	return result
+end
+
+function GenerateArchetypeMapping(spawnPossibilities)
+
+	-- Build archetype + member name lookup table
+	local archetypeMemberNames = {}
+	
+	local AddArchetype = function(name, pbgs)
+		archetypeMemberNames[name] = {}
+		for j, archetypeMember in pairs(pbgs) do
+			local archetypeMemberName = BP_GetName(archetypeMember)
+			table.insert(archetypeMemberNames[name], archetypeMemberName) 
+		end
+	end
+
+	-- Add squad archetypes	
+	local archetypeNames = AI_CombatFitnessGetSquadArchetypeNames()
+	for i, archetypeName in pairs(archetypeNames) do
+		local archetypePBGs = AI_CombatFitnessGetSquadArchetypePBGs(archetypeName)
+		AddArchetype(archetypeName, archetypePBGs)
+	end
+	
+	-- Add healers
+	local healerPBGs = AI_CombatFitnessGetHealerPBGs()
+	AddArchetype("monk", healerPBGs)
+
+	-- Build archetype mapping (archetypeName + indices to spawnPossibilities)
+	local archetypeMap = {}
+
+	local badIndices = {}
+	
+	for i, possibility in pairs(spawnPossibilities) do
+		local unitType = possibility[1]
+		
+		-- Add index under the corresponding archetype
+		local matched = false
+		for archetypeName, memberNames in pairs(archetypeMemberNames) do
+			for k, memberName in pairs(memberNames) do
+				if string.find(unitType, memberName) then
+					if archetypeMap[archetypeName] ~= nil then
+						table.insert(archetypeMap[archetypeName], i)
+					else
+						archetypeMap[archetypeName] = { i }
+					end
+					print("[" .. archetypeName .. "] <- " .. unitType.." index "..i)
+					matched = true
+					break
+				end
+			end	
+		end
+		
+		-- There are some unused units that haven't been removed from the blueprints list, we'll print those in the log 
+		-- and then remove them from the set of things we can spawn so it doesn't break our training data set.
+		if not matched then
+			table.insert(badIndices,  #badIndices+1, i)
+			print("No match found for index " .. i .. " " ..unitType)
+		end
+	end
+	 
+	for i = #badIndices, 1, -1 do 
+		print ("removing index " .. badIndices[i])
+		spawnPossibilities[badIndices[i]] = false
+	end
+	
+	-- Make sure we have entries for all the archetypes
+	for archetypeName, memberNames in pairs(archetypeMemberNames) do
+		if archetypeMap[archetypeName] == nil then
+			print("No entries found for " .. archetypeName .. "!")
+		end
+	end
+	
+	return archetypeMap
+end
+
+function SelectArchetypeMapping(archetypeMap, archetypeFilterWords)
+	local result = {}
+	for archetype, pbgIndices in pairs(archetypeMap) do
+		for i, word in ipairs(archetypeFilterWords) do
+			if string.find(archetype, word) then
+				result[archetype] = pbgIndices
+				break
+			end
+		end
+	end
+	return result
+end
+
+function CleanupPlayer(player)
+	local entityID = "combat_fitness_util_e"
+	local entityG = EGroup_CreateIfNotFound(entityID)
+	Player_GetAll(player, entityG)
+	EGroup_DestroyAllEntities(entityG)
+	
+	local squadID = "combat_fitness_util_s"
+	local squadG =  SGroup_CreateIfNotFound(squadID)
+	Player_GetAll(player, squadG) 
+	SGroup_DestroyAllSquads(squadG)
+	
+	Player_RemoveAllUpgrades(player)
+end
+
+function Cleanup(player1, player2)
+	CleanupPlayer(player1)
+	CleanupPlayer(player2)
+end
+
+-- Testing methods
+
+function CalcOneVOneSquadFitness(teamAPlayer, teamBPlayer, teamAPBGName, teamBPBGName)
+	local sg_dummy = SGroup_CreateIfNotFound("dummy")
+	local eg_dummy = EGroup_CreateIfNotFound("dummy")
+	local teamA = {BP_GetSquadBlueprint(teamAPBGName)}
+	local teamB = {BP_GetSquadBlueprint(teamBPBGName)}
+	return AI_CalculateCombatFitnessEstimate(sg_dummy,eg_dummy, teamA, sg_dummy,eg_dummy, teamB, teamAPlayer, teamBPlayer, true)
+end
+
+function CalcNVNSquadFitness(teamAPlayer, teamBPlayer, teamAPBGName, teamANum, teamBPBGName, teamBNum)
+	local createTable = function (element, dim)
+		result = {}
+		for i = 1,dim,1 do table.insert(result, element) end
+		return result
+	end
+	
+	local sg_dummy = SGroup_CreateIfNotFound("dummy")
+	local eg_dummy = EGroup_CreateIfNotFound("dummy")
+	local teamA = createTable(BP_GetSquadBlueprint(teamAPBGName), teamANum)
+	local teamB = createTable(BP_GetSquadBlueprint(teamBPBGName), teamBNum)
+	return AI_CalculateCombatFitnessEstimate(sg_dummy,eg_dummy, teamA, sg_dummy,eg_dummy, teamB, teamAPlayer, teamBPlayer, true)
+end
+
+function TestCharacterization(player1, player2, filterList, stdPrint, failurePrint)
+	local numCharacterized = 0
+	local numCharacterizedPoorly = 0
+	local numUnCharacterized = 0
+	local numIgnored = 0
+	
+	for id = 0, BP_GetPropertyBagGroupCount( PBG_SquadProperties ) -1 do
+		local name = BP_GetPropertyBagGroupPathName( PBG_SquadProperties, id )
+		
+		local filtered =  ContainsAnyFilterWord(name, filterList)
+		
+		if filtered then
+			numIgnored = numIgnored + 1
+		else
+			local characterized =  AI_CombatFitnessCharacterizesSquad(player1, BP_GetSquadBlueprint(name))
+			
+			if characterized then 
+				numCharacterized = numCharacterized + 1
+				local oneVoneScore = CalcOneVOneSquadFitness(player1, player2, name, name)
+				
+				-- Poor characterized is not a failure
+				if math.abs(oneVoneScore - 0.5) > 0.1 then
+					stdPrint('Poorly characterized:' .. name .. ' Score:' .. oneVoneScore)
+					numCharacterizedPoorly = numCharacterizedPoorly + 1
+				end
+			else
+				failurePrint('Uncharacterized:' .. name)
+				numUnCharacterized = numUnCharacterized + 1
+			end
+		end
+	end
+	
+	stdPrint("numCharacterized: " .. numCharacterized)
+	stdPrint("numCharacterizedPoorly: " .. numCharacterizedPoorly)
+	stdPrint("numUnCharacterized: " .. numUnCharacterized)
+	stdPrint("numIgnored: " .. numIgnored)
+
+	return numUnCharacterized == 0
+end

@@ -1,0 +1,1093 @@
+--
+-- Tinchebray 1106
+--
+-- Norman campaign, mission 4
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+
+import("obj_defeat.scar")
+import("obj_reinforce.scar")
+import("ang_chp2_tinchebray_data.scar")
+import("ang_chp2_tinchebray_training.scar")
+import("diplomacy_chp2_tinchebray.scar")
+
+function Mission_SetupPlayers()
+
+	playerHuman = World_GetPlayerAt(1)				-- Henry I
+	playerRobert = World_GetPlayerAt(2)				-- Robert Curthose
+	playerNeutral = World_GetPlayerAt(3)			-- Neutrals, King Henry I placeholder
+	playerRobertPrisoner = World_GetPlayerAt(4)		-- Robert Curthose Prisoner
+		
+	Setup_SetPlayerName(playerHuman, Loc_GetString("$11180364"))
+	Player_SetCurrentAge(playerHuman, AGE_FEUDAL)
+	Player_SetMaximumAge(playerHuman, AGE_FEUDAL)
+	
+	Setup_SetPlayerName(playerRobert, Loc_GetString("$11180363"))
+	Player_SetCurrentAge(playerRobert, AGE_FEUDAL)
+	Player_SetMaximumAge(playerRobert, AGE_FEUDAL)
+	
+	Setup_SetPlayerName(playerNeutral, Loc_GetString("$11180365"))
+	Player_SetCurrentAge(playerNeutral, AGE_FEUDAL)
+	AI_Enable(playerNeutral, false)
+	
+	Setup_SetPlayerName(playerRobertPrisoner, Loc_GetString("$11180363")) 
+	
+	Player_RemoveUpgrade(playerHuman, UPG.COMMON.UPGRADE_SIEGE_ENGINEERS)
+	
+	Player_SetPopCapOverride(playerHuman, 200)
+	
+	World_EnableSharedLineOfSight(playerHuman, playerNeutral, true)
+	
+	Player_SetRelationship(playerHuman, playerNeutral, R_ALLY)
+	Player_SetRelationship(playerNeutral, playerHuman, R_ALLY)
+	
+	Player_SetRelationship(playerRobert, playerNeutral, R_NEUTRAL)
+	Player_SetRelationship(playerNeutral, playerRobert, R_NEUTRAL)
+	
+	PlayerColour_Enable()
+	
+	-- 1 - Blue, 2 - Red, 3 - Yellow
+	Game_SetPlayerSlotColour(playerHuman, 1)
+	Game_SetPlayerUISlotColour(playerHuman, 1)
+	
+	Game_SetPlayerSlotColour(playerRobert, 2)
+	Game_SetPlayerUISlotColour(playerRobert, 2)
+	
+	Game_SetPlayerSlotColour(playerNeutral, 1)
+	Game_SetPlayerUISlotColour(playerNeutral, 1)
+
+	Game_SetPlayerSlotColour(playerRobertPrisoner, 3)
+	Game_SetPlayerUISlotColour(playerRobertPrisoner, 3)
+	
+end
+
+function Mission_SetupVariables()
+	
+	Tinchebray_Data_Init()
+	
+	Tinchebray_InitCastle()
+	Tinchebray_InitStartingUnits()
+
+	Tinchebray_InitDebugObjective()
+	
+	-- achievement variable
+	knight_reinforcements = 0
+	
+end
+
+function Mission_SetRestrictions()
+	Tinchebray_SetPopulationCapVisibility(false)
+end
+
+function Mission_SetDifficulty()
+	
+	t_difficulty = {
+		upgradeLevel = Util_DifVar({0, 0, 1, 2}),
+		enemy_reinforcements_horseman = Util_DifVar({20, 30, 15, 5}),
+		enemy_reinforcements_knight = Util_DifVar({0, 0, 15, 25}),
+		enemy_reinforcements_infantry = Util_DifVar({12, 15, 20, 25}),
+		enemy_mainarmy_maa = Util_DifVar({10, 15, 15, 15}),
+		enemy_mainarmy_knight = Util_DifVar({0, 0, 10, 18}),
+		enemy_scout_limit = Util_DifVar({3, 4, 5, 6}),
+	}
+	
+ end
+
+function Mission_PreInit()
+	Tinchebray_HideTributeMenu()
+end
+
+function Mission_Preset()
+	
+	-- Audio considerations
+	Sound_SetMusicRaceCode("french")
+		
+	Sound_ResetMusicIntensityMapping();
+	Sound_AddMusicIntensityMappingPoint(50, 200) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(150, 1250) -- point 2 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(200, 2250) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(300, 3000) -- point 2 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(400, 4000) -- point 2 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(600, 6000) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(750, 9999) -- raw value max to scaled value max 
+	
+	Defeat_InitObjectives()
+	
+	Cmd_InstantUpgrade(eg_outpost_stone1, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	Cmd_InstantUpgrade(eg_outpost_stone2, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	Cmd_InstantUpgrade(eg_outpost_stone3, UPG.COMMON.UPGRADE_OUTPOST_STONE)
+	Cmd_InstantUpgrade(eg_outpost_stone1, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	Cmd_InstantUpgrade(eg_outpost_stone2, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	Cmd_InstantUpgrade(eg_outpost_stone3, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	
+	Cmd_InstantUpgrade(eg_keep, UPG.COMMON.UPGRADE_KEEP_ARROWSLITS)
+	
+	PlayerUpgrades_Auto(playerHuman, false)
+	PlayerUpgrades_Auto(playerRobert, true)
+		
+	enemy_reinforcements = {
+		{type = "scar_horseman", numSquads = t_difficulty.enemy_reinforcements_horseman },
+		{type = "scar_knight", numSquads = t_difficulty.enemy_reinforcements_knight },
+		{type = "scar_spearman", numSquads = t_difficulty.enemy_reinforcements_infantry },
+		{type = "scar_archer", numSquads = t_difficulty.enemy_reinforcements_infantry },
+	}
+	
+	local units_robert = {{sbp = BP_GetSquadBlueprint("unit_robert_curthose_cmp_eng"), numSquads = 1}}
+	UnitEntry_DeploySquads(playerRobert, sg_robert, units_robert, mkr_duke_robert)
+	Prefab_DoAction(MissionOMatic_FindModule("DukeRobert"), "AddSGroup", sg_robert)
+	
+	if Music_UnlockIntensity then
+	   Sound_SetForceMusic(false)
+	else
+	   Sound_SetForceMusic(true)
+	end
+	
+end
+
+function Mission_Start()
+	
+	-- on console don't restore VPS since we have no villagers this mission
+	Cardinal_EnablePartialXboxUI(true, {VF_XboxUIVillagerPriorities})
+
+	Rule_AddInterval(Tinchebray_CheckMissionFail, 1)
+	
+	Objective_Start(OBJ_DefeatArmy, false)
+	
+	-- Reset resources
+	Player_SetResource(playerHuman, RT_Wood, 0)
+	Player_SetResource(playerHuman, RT_Gold, 0)
+	Player_SetResource(playerHuman, RT_Food, 0)
+	
+	Rule_AddOneShot(Mission_Start_Delayed, 2)
+	
+end
+
+function Mission_Start_Delayed()
+	
+	Objective_Start(OBJ_DestroyVillages)
+	World_SetInteractionStage(2)
+	Tinchebray_InitVillages()
+	
+end
+
+function Mission_OnTributeSent(tribute)
+	
+	for index, tributeData in pairs(tribute) do 
+		
+		if tributeData.receiver.id == playerDanes and tributeData.gold > 0 then
+			
+			local objective = OBJ_PayTribute
+			
+			if Objective_IsCounterSet(objective) then
+				Objective_IncreaseCounter(objective, tributeData.gold)
+				
+				local progress = Obj_GetCounterCount(objective.ID) / Obj_GetCounterMax(objective.ID)
+				Obj_SetProgress(objective.ID, progress)
+				
+				if progress >= 1 then 
+					Objective_Complete(objective)
+					Rule_RemoveMe()
+				end
+				
+			end
+		end
+	end
+end
+
+function Tinchebray_IntroduceDiplomacyUI()
+	
+	Tinchebray_ShowTributeMenu()
+	Tribute_Intel()
+	
+	Rule_AddInterval(Tinchebray_CheckDiplomacyReminder, 1)
+end
+
+function Tinchebray_CheckDiplomacyReminder()
+	
+	current_gold_total = Player_GetResource(playerHuman, RT_Gold)
+	
+	if current_gold_total >= 500 and current_gold_total > prev_gold_total and Diplomacy_IsExpanded() == false and UI_IsXboxUI() == false then
+		Diplomacy_ShowDiplomacyUI(true)
+	end
+	
+	prev_gold_total = current_gold_total
+end
+
+function Tinchebray_ShowTributeMenu()
+	Diplomacy_ShowUI(true)
+	
+	UI_ReinforcePanel_UpdateData()
+	Rule_AddInterval(UI_ReinforcePanel_UpdateData, 1)
+	
+	Rule_AddOneShot(Tinchebray_AddSendGoldDelayed, 10)
+end
+
+function Tinchebray_AddSendGoldDelayed()
+	TrainingGoal_AddSendGold()
+	Rule_AddOneShot(TrainingGoal_EnableSendGold, 3)
+end
+
+function Tinchebray_HideTributeMenu()
+
+	Core_CallDelegateFunctions("DiplomacyEnabled", false)
+	Diplomacy_ShowUI(false)
+end
+
+
+
+
+
+
+
+function Tinchebray_SetPopulationCapVisibility(visibility)
+	
+	for index, player in pairs(PLAYERS) do
+		if player.isLocal == true then
+			player.scarModel.PopulationCapOn  = visibility
+			UI_SetPlayerDataContext(playerHuman, player.scarModel)
+		end
+    end
+end
+
+function Tinchebray_InitDebugObjective()
+	
+	OBJ_DebugComplete = {
+        Title = LOC("Debug Complete"),
+        Type = OT_Primary,
+        showTitle = false,
+        Cheat = function()
+			Rule_RemoveAll()
+			Util_StartIntel(EVENTS.Tinchebray_Outro)
+	    end,
+	    }
+
+    Objective_Register(OBJ_DebugComplete)
+end
+
+
+--? @shortdesc Checks for mission fail
+function Tinchebray_CheckMissionFail()
+	
+	Player_GetAll(playerHuman)
+	SGroup_Filter(sg_allsquads, "scar_villager", FILTER_REMOVE)
+	SGroup_Filter(sg_allsquads, "gaia", FILTER_REMOVE)
+	
+	if SGroup_CountSpawned(sg_allsquads) <= 0 then
+		Mission_Fail()
+	end
+end
+
+function Tinchebray_InitCastle()
+	
+	Player_GetAll(playerRobert)
+	EGroup_Clear(eg_temp)
+	EGroup_Filter(eg_allentities, "stone_gate", FILTER_REMOVE, eg_gate)
+	EGroup_Filter(eg_allentities, "tower", FILTER_REMOVE, eg_temp)
+	
+	if EGroup_Count(eg_gate) > 0 then
+		Modify_ReceivedDamage(eg_gate, 0.5)
+		EGroup_SetInvulnerable(eg_gate, 0.05)
+	end
+	
+	if EGroup_Count(eg_temp) > 0 then
+		Cmd_InstantUpgrade(eg_temp, UPG.COMMON.UPGRADE_TOWER_ARROWSLITS)
+	end
+	
+end
+
+
+function Tinchebray_TestOutro()
+	
+	Rule_RemoveAll()
+	Util_StartIntel(EVENTS.Tinchebray_Outro)
+end
+
+
+function Tinchebray_TriggerOutro()
+	
+	Music_LockIntensity(MUSIC_COMBAT_RARE)
+	
+	Rule_Remove(Tinchebray_ProcessArmyTargets)
+	Rule_Remove(Tinchebray_CheckMissionFail)
+	
+	eg_gates = EGroup_CreateIfNotFound("eg_gates")
+
+	Player_GetAll(playerHuman)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	Player_GetAll(playerRobert)
+	SGroup_DestroyAllSquads(sg_allsquads)
+	
+	EGroup_SetPlayerOwner(eg_allentities, playerHuman)
+	
+	local gates = {
+		EBP.FRENCH.BUILDING_DEFENSE_PALISADE_GATE_FRE,
+		EBP.FRENCH.BUILDING_DEFENSE_WALL_GATE_FRE,
+		EBP.ENGLISH.BUILDING_DEFENSE_PALISADE_GATE_ENG,
+		EBP.ENGLISH.BUILDING_DEFENSE_WALL_GATE_ENG
+	}
+	
+	EGroup_Filter(eg_allentities, gates, FILTER_REMOVE, eg_gates)
+
+	UnitEntry_DeploySquads(playerHuman, sg_outro_henry, {{sbp = BP_GetSquadBlueprint("unit_king_henry_cmp_eng"), numSquads = 1}}, mkr_outro_henry)
+	
+	local robertEscort = {
+		{type = "scar_horseman", numSquads = 2, spawn = mkr_outro_escort1},
+	}
+	
+	local robertEscort02 = {
+		{type = "scar_horseman", numSquads = 2, spawn = mkr_outro_escort2}
+	}
+	
+	local robertPrisoner = {
+		{sbp = SBP.ENGLISH.UNIT_ROBERT_CURTHOSE_CMP_ENG_DISARMED, numSquads = 1}
+	}
+
+	UnitEntry_DeploySquads(playerRobertPrisoner, sg_outro_robert, robertPrisoner, mkr_outro_robert)
+	UnitEntry_DeploySquads(playerHuman, sg_outro_escort, robertEscort, nil)
+	UnitEntry_DeploySquads(playerHuman, sg_outro_escort02, robertEscort02, nil)
+
+	UnitEntry_DeploySquads(playerHuman, sg_player_infantry2, {{type = "scar_spearman", numSquads = 2 }}, mkr_outro_army2)
+	UnitEntry_DeploySquads(playerHuman, sg_player_infantry3, {{type = "scar_archer", numSquads = 2 }}, mkr_outro_army3)
+	
+	Cmd_FormationMove(sg_player_infantry2, mkr_outro_mid01, false)
+	Cmd_FormationMove(sg_player_infantry3, mkr_outro_mid01, false)
+	Cmd_FormationMove(sg_player_infantry2, mkr_outro_mid02, true)
+	Cmd_FormationMove(sg_player_infantry3, mkr_outro_mid02, true)
+	Cmd_FormationMove(sg_player_infantry2, mkr_outro_army2_dest, true)
+	Cmd_FormationMove(sg_player_infantry3, mkr_outro_army3_dest, true)
+	
+	Cmd_FormationMove(sg_outro_henry, mkr_outro_mid01, false)
+	Cmd_FormationMove(sg_outro_henry, mkr_outro_mid02, true)
+	Cmd_FormationMove(sg_outro_henry, mkr_outro_army2_dest, true)
+	Cmd_FormationMove(sg_outro_henry, mkr_outro_henry_dest, true)
+	
+	Cmd_FormationMove(sg_outro_escort, mkr_outro_mid01, false)
+	Cmd_FormationMove(sg_outro_escort, mkr_outro_mid02, true)
+	Cmd_FormationMove(sg_outro_escort, mkr_outro_army2_dest, true)
+	Cmd_FormationMove(sg_outro_escort, mkr_outro_escort1_dest, true)
+	
+	Cmd_FormationMove(sg_outro_escort02, mkr_outro_mid01, false)
+	Cmd_FormationMove(sg_outro_escort02, mkr_outro_mid02, true)
+	Cmd_FormationMove(sg_outro_escort02, mkr_outro_army3_dest, true)
+	Cmd_FormationMove(sg_outro_escort02, mkr_outro_escort2_dest, true)
+	
+	Cmd_FormationMove(sg_outro_robert, mkr_outro_mid01, false)
+	Cmd_FormationMove(sg_outro_robert, mkr_outro_mid02, true)
+	Cmd_FormationMove(sg_outro_robert, mkr_outro_army3_dest, true)
+	Cmd_FormationMove(sg_outro_robert, mkr_outro_robert_dest, true)
+	
+	
+	SGroup_Clear(sg_castle_villagers)
+	
+	local villagers = {
+		{type = "scar_villager", numSquads = 4, spawn = mkr_outro_villagers_1, facing = Marker_GetPosition(mkr_outro_henry_dest)},
+		{type = "scar_villager", numSquads = 4, spawn = mkr_outro_villagers_2, facing = Marker_GetPosition(mkr_outro_robert_dest)},
+		{type = "scar_villager", numSquads = 4, spawn = mkr_outro_villagers_3, facing = Marker_GetPosition(mkr_outro_mid02)},
+		{type = "scar_villager", numSquads = 4, spawn = mkr_outro_villagers_4, facing = Marker_GetPosition(mkr_outro_mid02)},
+		{type = "scar_villager", numSquads = 4, spawn = mkr_outro_villagers_5, facing = Marker_GetPosition(mkr_outro_mid02)},
+		--NEW ENTRIES BELOW
+		{type = "scar_villager", numSquads = 3, spawn = mkr_outro_villagers_6, facing = Marker_GetPosition(mkr_outro_mid02)},
+		{type = "scar_villager", numSquads = 3, spawn = mkr_outro_villagers_7, facing = Marker_GetPosition(mkr_outro_mid02)},
+		{type = "scar_villager", numSquads = 3, spawn = mkr_outro_villagers_8, facing = Marker_GetPosition(mkr_outro_army2_dest)},
+		{type = "scar_villager", numSquads = 3, spawn = mkr_outro_villagers_1_left, facing = Marker_GetPosition(mkr_outro_army2_dest)},
+		{type = "scar_villager", numSquads = 4, spawn = mkr_outro_villagers_2_left, facing = Marker_GetPosition(mkr_outro_army2_dest)},
+		{type = "scar_villager", numSquads = 5, spawn = mkr_outro_villagers_3_left, facing = Marker_GetPosition(mkr_outro_army2_dest)},
+		{type = "scar_villager", numSquads = 3, spawn = mkr_outro_villagers_4_left, facing = Marker_GetPosition(mkr_outro_army2_dest)},
+		{type = "scar_villager", numSquads = 4, spawn = mkr_outro_villagers_5_left, facing = Marker_GetPosition(mkr_outro_army2_dest)},
+		{type = "scar_villager", numSquads = 4, spawn = mkr_outro_villagers_6_left, facing = Marker_GetPosition(mkr_outro_army2_dest)},
+		{type = "scar_villager", numSquads = 2, spawn = mkr_outro_villagers_7_left, facing = Marker_GetPosition(mkr_outro_army2_dest)},
+		{type = "scar_villager", numSquads = 4, spawn = mkr_outro_villagers_8_left, facing = Marker_GetPosition(mkr_outro_army2_dest)},
+	}
+	UnitEntry_DeploySquads(playerHuman, sg_castle_villagers, villagers, mkr_outro_villagers_1)
+	
+	local guards = {
+		{type = "scar_spearman", spawn = mkr_outro_guard01},
+		{type = "scar_spearman", spawn = mkr_outro_guard02},
+	}
+	
+	UnitEntry_DeploySquads(playerHuman, sg_temp, guards, mkr_outro_mid01)
+	-- slow everyone down
+	
+	local cav = {
+		sg_outro_escort,
+		sg_outro_escort02,
+	}
+	
+	local leaders = {
+		sg_outro_henry,
+		sg_outro_robert,
+	}
+	
+	local inf = {
+		sg_player_infantry2,
+		sg_player_infantry3,
+	}
+	
+	for index, group in pairs (cav) do
+		Modify_UnitSpeed(group, 0.5)
+	end
+	for index, group in pairs (inf) do
+		Modify_UnitSpeed(group, 0.65)
+	end
+	
+	for index, group in pairs (leaders) do
+		Modify_UnitSpeed(group, 0.57)
+	end
+	
+end
+
+
+function Tinchebray_UpdateArmyCount()
+	robertInitCount = SGroup_CountSpawned(sg_enemy_army)
+end
+
+function Tinchebray_SallyOut()
+	
+	if robert_army_state == "defend" then
+		
+		robert_army_state = "out"
+		
+		SGroup_AddGroup(sg_enemy_army, sg_enemy_army_a)
+		SGroup_AddGroup(sg_enemy_army, sg_enemy_army_b)
+		SGroup_AddGroup(sg_enemy_army, sg_enemy_army_c)
+		SGroup_AddGroup(sg_enemy_army, sg_enemy_army_robert)
+		
+		robertInitCount = SGroup_CountSpawned(sg_enemy_army)
+		
+		DissolveModuleIntoModule("RobertArmyA1", "RobertArmyA2")
+		DissolveModuleIntoModule("RobertArmyB1", "RobertArmyB2")
+		DissolveModuleIntoModule("RobertArmyC1", "RobertArmyC2")
+		
+		MissionOMatic_FindModule("DukeRobert").targetingType = ARMY_TARGETING_DISCARD
+		RovingArmy_SetTarget(MissionOMatic_FindModule("DukeRobert"), mkr_dest_robert1)
+				
+		Rule_AddInterval(Tinchebray_CheckArmyState, 1)
+		Rule_AddOneShot(Tinchebray_SetArmyToAttack, 45)
+	end
+	
+end
+
+function Tinchebray_RobertCallToAction()
+	if SGroup_CountSpawned(sg_robert) == 0 then
+		Player_GetAll(playerRobert)
+		SGroup_Filter (sg_allsquads, BP_GetSquadBlueprint("unit_robert_curthose_cmp_eng"), FILTER_REMOVE, sg_robert)
+	end
+	
+	Sound_Play2D(MUS_STINGER_WARNING)
+	FOW_RevealSGroup(sg_robert, 20, 45)
+	EventCues_CallToAction ("$11180390", CTA_UNIQUE_STAKES, EVENTS.SallyOut, nil, sg_robert, 20, "icons/cta/illustrations/04_lord_roberts_b") -- Robert on the Field!
+	
+end
+
+function Tinchebray_CheckArmyState()
+	
+	if not Objective_IsComplete(SOBJ_EliminateArmy) then
+		
+		local squadCount = SGroup_CountSpawned(sg_enemy_army)
+		
+		if squadCount < 5 then
+			Obj_SetProgress(SOBJ_EliminateArmy.ID, 1)
+			
+			Tinchebray_PlayCelebrateUnitsOnScreen()
+			
+			-- get army to retreat
+			RovingArmy_SetWithdrawThreshold(MissionOMatic_FindModule("RobertArmyA2"), 1)
+			RovingArmy_SetWithdrawThreshold(MissionOMatic_FindModule("RobertArmyB2"), 1)
+			RovingArmy_SetWithdrawThreshold(MissionOMatic_FindModule("RobertArmyC2"), 1)
+			
+			--get any left over scouts to retreat
+			for i = 1, #scout_modules do
+				RovingArmy_SetWithdrawThreshold(scout_modules[i], 1)
+			end
+			
+			if Objective_IsComplete(SOBJ_CaptureRobert) then
+				Objective_Complete(SOBJ_EliminateArmy, false)
+			else
+				Objective_Complete(SOBJ_EliminateArmy)
+			end
+		else
+			local killedCount = robertInitCount - squadCount
+			local progress = killedCount / robertInitCount
+			Obj_SetProgress(SOBJ_EliminateArmy.ID, progress)
+		end
+	end
+	
+	if not Objective_IsComplete(SOBJ_CaptureRobert) then
+		
+		if SGroup_CountSpawned(sg_robert) == 0 then
+			
+			Tinchebray_PlayCelebrateUnitsOnScreen()
+			
+			if Objective_IsComplete(SOBJ_EliminateArmy) then
+				Objective_Complete(SOBJ_CaptureRobert, false)
+			else
+				Objective_Complete(SOBJ_CaptureRobert)
+			end
+		end
+	end
+	
+	if Objective_IsComplete(SOBJ_EliminateArmy) and Objective_IsComplete(SOBJ_CaptureRobert) then
+		Objective_Complete(OBJ_DefeatArmy)
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Tinchebray_ProcessArmyTargets()
+	
+	Player_GetAll(playerHuman)
+	SGroup_Filter(sg_allsquads, "scar_scout", FILTER_REMOVE)
+	player_visible = Player_CanSeeSGroup(playerRobert, sg_allsquads, ANY)
+	
+	if player_visible then
+		
+		SGroup_Clear(sg_player_visible)
+		
+		local _CheckVisibility = function(gid, idx, sid)
+			if Squad_IsAlive(sid) then
+				if Player_CanSeeSquad(playerRobert, sid, ANY) then
+					SGroup_Add(sg_player_visible, sid)
+				end
+			end
+		end
+		SGroup_ForEach(sg_allsquads, _CheckVisibility)
+	end
+	
+	if SGroup_CountSpawned(sg_enemy_army_scouts) < t_difficulty.enemy_scout_limit then
+		Tinchebray_SpawnScout()
+	end
+	
+	for i = 1, 4 do
+		Tinchebray_ProcessArmyTarget(i)
+	end
+	
+end
+
+function Tinchebray_ProcessArmyTarget(index)
+	
+	local army = t_mainArmies[index]
+	local module = MissionOMatic_FindModule(army.module)
+	
+	if SGroup_CountSpawned(army.sgroup) > 0 then
+		
+		if player_visible == true then
+			
+			-- go attack the closest player squad
+			army.player_pos = Squad_GetPosition(World_GetClosest(SGroup_GetPosition(army.sgroup), sg_player_visible))
+			RovingArmy_SetTarget(module, army.player_pos)
+			army.state = "track"
+			
+		else
+			
+			if army.state == "track" then
+				-- i was just tracking the player but now I've lost sight
+				if Prox_AreSquadsNearMarker(army.sgroup, army.player_pos, ANY, 30) then
+					-- i've reached the last seen position of the player
+					army.state = "arrive"
+				end
+				
+			elseif army.state == "arrive" then
+				-- i just arrived at the last seen position of the player
+				RovingArmy_SetTargets(module, army.targets)
+				army.state = "default"
+			end
+			
+		end
+	end
+end
+
+function Tinchebray_CheckReinforcementState()
+	
+	if Objective_IsComplete(SOBJ_EliminateReinforcements) then
+		Rule_RemoveMe()
+	end
+	
+	local squadCount = SGroup_CountSpawned(sg_enemy_relief_army)
+
+	local killedCount = initReinforcementCount - squadCount
+	local progress = killedCount / initReinforcementCount
+	progress = progress * 1.2
+	
+	if progress >= 1 then
+		Rule_RemoveMe()
+	else
+		Obj_SetProgress(SOBJ_EliminateReinforcements.ID, progress)
+	end
+	
+end
+
+function Tinchebray_PlayCelebrateAtPosition(pos)
+
+	Player_GetAllSquadsNearMarker(playerHuman, sg_temp, pos, 30) 
+	Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+end
+
+function Tinchebray_PlayCelebrateUnitsOnScreen()
+	
+	Player_GetAll(playerHuman)
+	SGroup_Clear(sg_temp)
+	
+	local _CheckVisibility = function(gid, idx, sid)
+		if Squad_IsAlive(sid) then
+			if Misc_IsSquadOnScreen(sid, 100) then
+				SGroup_Add(sg_temp, sid)
+			end
+		end
+	end
+	SGroup_ForEach(sg_allsquads, _CheckVisibility)
+	
+	if SGroup_CountSpawned(sg_temp) > 0 then
+		Sound_PlayWallaCelebrateOnSGroup(sg_temp)
+	end
+end
+
+function Tinchebray_ReinforcementAWalla()
+	Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sg_reinforce_a1)
+end
+
+function Tinchebray_SpawnUnitLine(markerName, lineLength, numPerMarker, unitType, masterSgroup)
+	
+	for i = 1, lineLength do
+		local marker_name = markerName..tostring(i)
+		local marker = Marker_FromName(marker_name, "")
+		local sgroup = SGroup_CreateUnique("")
+		UnitEntry_DeploySquads(playerRobert, sgroup, {{type = unitType, numSquads = numPerMarker }}, marker)
+		SGroup_AddGroup(masterSgroup, sgroup)
+	end
+end
+
+function Tinchebray_InitStartingUnits()
+	
+	Tinchebray_SpawnUnitLine("mkr_wall_archer", 10, 2, "scar_archer", sg_wall_archers)
+	
+	UnitEntry_DeploySquads(playerRobert, sg_outer_guard1, {{type = "scar_archer", numSquads = 6 }}, mkr_outer_guard1)
+	UnitEntry_DeploySquads(playerRobert, sg_outer_guard2, {{type = "scar_archer", numSquads = 3 }}, mkr_outer_guard2)
+	UnitEntry_DeploySquads(playerRobert, sg_outer_guard3, {{type = "scar_archer", numSquads = 6 }}, mkr_outer_guard3)
+	
+	UnitEntry_DeploySquads(playerRobert, sg_palisade_vanguard1, {{type = "scar_spearman", numSquads = 4 }}, mkr_palisade_area1)
+	UnitEntry_DeploySquads(playerRobert, sg_palisade_vanguard2, {{type = "scar_archer", numSquads = 4 }}, mkr_palisade_area2)
+	UnitEntry_DeploySquads(playerRobert, sg_palisade_vanguard3, {{type = "scar_archer", numSquads = 4 }}, mkr_palisade_area3)
+	
+	Rule_AddOneShot(Tinchebray_Spawn_Henry_Army, 1)
+	Rule_AddOneShot(Tinchebray_MoveMainArmy, 11)
+	
+end
+
+function Tinchebray_Spawn_Henry_Army()
+	
+	UnitEntry_DeploySquads(playerHuman, sg_reinforce_a1, t_henry_infantry, mkr_main_army1)
+	UnitEntry_DeploySquads(playerHuman, sg_reinforce_a2, t_henry_infantry, mkr_main_army2)
+	UnitEntry_DeploySquads(playerHuman, sg_reinforce_a3, t_henry_infantry, mkr_main_army3)
+	
+	UnitEntry_DeploySquads(playerHuman, g_leaderKingHenry.sgroup, {{sbp = BP_GetSquadBlueprint("unit_king_henry_cmp_eng"), numSquads = 1, tag = "General" }}, mkr_henry)
+	UnitEntry_DeploySquads(playerHuman, sg_reinforce_scout, {type = "scar_scout", numSquads = 1}, mkr_main_army_scout)
+	
+end
+
+function Tinchebray_SpawnIntroRam()
+	if intro_skipped == false then
+		SGroup_Clear(sg_temp)
+		UnitEntry_DeploySquads(playerHuman, sg_temp, {{ type = "scar_ram", numSquads = 1 }}, mkr_intro_siege)
+		SGroup_AddGroup(sg_intro_units, sg_temp)
+		Cmd_Attack(sg_temp, eg_gate)
+	end
+end
+
+function Tinchebray_SpawnIntroGroupsA()
+	if intro_skipped == false then
+		for i = 1, 6 do
+			Tinchebray_SpawnIntroGroup("a", i)
+		end
+	end
+end
+
+function Tinchebray_SpawnIntroGroupsB()
+	if intro_skipped == false then
+		for i = 1, 6 do
+			Tinchebray_SpawnIntroGroup("b", i)
+		end
+	end
+end
+
+function Tinchebray_SpawnIntroGroupsC()
+	if intro_skipped == false then
+		for i = 1, 6 do
+			Tinchebray_SpawnIntroGroup("c", i)
+		end
+	end
+end
+
+function Tinchebray_MoveMainArmy()
+	if intro_skipped == false then
+		Cmd_FormationMove(sg_reinforce_a1, mkr_main_dest1, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_main_dest1), Marker_GetDirection(mkr_main_dest1)))
+		Cmd_FormationMove(sg_reinforce_a2, mkr_main_dest2, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_main_dest2), Marker_GetDirection(mkr_main_dest2)))
+		Cmd_FormationMove(sg_reinforce_a3, mkr_main_dest3, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_main_dest3), Marker_GetDirection(mkr_main_dest3)))
+		Cmd_Move(sg_reinforce_scout, mkr_main_scout_dest)
+		
+		local sgroup_gen = MissionOMatic_GetSGroupForTaggedUnit("General")
+		
+		Cmd_HoldPosition(sgroup_gen, mkr_henry_dest, false, false, Util_GetFacingFromDirection(Marker_GetPosition(mkr_henry_dest), Marker_GetDirection(mkr_henry_dest)))
+		Tinchebray_PlayCelebrateAtPosition(Util_GetPosition(sgroup_gen))
+	end
+end
+
+function Tinchebray_SpawnIntroGroup(wave, index)
+	
+	local marker_origin = Marker_FromName("mkr_intro_army"..tostring(index), "")
+	local marker_dest = Marker_FromName("mkr_intro_dest_"..wave..tostring(index), "")
+	
+	local units = {
+		{ type = "scar_spearman", numSquads = 1 }, { type = "scar_spearman", numSquads = 1 }
+	}
+	
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(playerHuman, sg_temp, units, marker_origin)
+	Modify_ReceivedDamage(sg_temp, 8)
+	SGroup_AddGroup(sg_intro_units, sg_temp)
+	SGroup_SetSelectable(sg_temp, false)
+	Cmd_FormationMove(sg_temp, marker_dest)
+end
+
+
+
+function Tinchebray_InitVillages()
+	
+	UnitEntry_DeploySquads(playerRobert, sg_martigny_archers1, {{type = "scar_archer", numSquads = 2 }}, mkr_martigny_archer1)
+	UnitEntry_DeploySquads(playerRobert, sg_martigny_archers2, {{type = "scar_archer", numSquads = 3 }}, mkr_martigny_archer2)
+	
+	UnitEntry_DeploySquads(playerRobert, sg_frenes_archers1, {{type = "scar_archer", numSquads = 3 }}, mkr_frenes_archer1)
+	UnitEntry_DeploySquads(playerRobert, sg_frenes_archers2, {{type = "scar_archer", numSquads = 2 }}, mkr_frenes_archer2)
+	
+	
+	local units_martigny1 = {
+		{type = "scar_spearman", numSquads = 5 },
+		{type = "scar_archer", numSquads = 5 }
+	}
+	
+	local units_martigny2 = {
+		{type = "scar_spearman", numSquads = 15 }
+	}
+	
+	SpawnUnitsToModule(units_martigny1, "MartignyGuards1", mkr_martigny_guards1)
+	SpawnUnitsToModule(units_martigny2, "MartignyGuards2", mkr_martigny_guards2)
+	SpawnUnitsToModule(units_martigny1, "MartignyGuards3", mkr_martigny_guards3)
+	
+	local units_frenes1 = {
+		{type = "scar_spearman", numSquads = 15 },
+		{type = "scar_archer", numSquads = 8 }
+	}
+	
+	local units_frenes2 = {
+		{type = "scar_spearman", numSquads = 5 },
+		{type = "scar_archer", numSquads = 5 },
+		{type = "scar_horseman", numSquads = 5 }
+	}
+	
+	SpawnUnitsToModule(units_frenes1, "FrenesGuards1", mkr_frenes_guards1)
+	SpawnUnitsToModule(units_frenes2, "FrenesGuards2", mkr_frenes_guards2)
+	
+	AssignVillagersToWood(sg_martigny_villagers)
+	AssignVillagersToWood(sg_frenes_villagers)
+	
+end
+
+
+function Tinchebray_OnReliefWithdraw()
+	
+	Sound_Play2D(MUS_STING_POSITIVE)
+	
+	if SGroup_CountSpawned(sg_enemy_relief_army) > 0 then
+		Tinchebray_PlayCelebrateAtPosition(Util_GetPosition(sg_enemy_relief_army))
+	end
+	
+	Objective_Complete(SOBJ_EliminateReinforcements)
+	Rule_AddInterval(Tinchebray_CheckReliefRemove, 5)
+end
+
+function Tinchebray_CheckReliefRemove()
+	
+	if SGroup_CountSpawned(sg_enemy_relief_army) == 0 then
+		Rule_RemoveMe()
+	elseif Prox_AreSquadsNearMarker(sg_enemy_relief_army, mkr_relief_army_flee, ANY, 10) then
+		if not Player_CanSeeSGroup(playerHuman, sg_enemy_relief_army, ANY) then
+			SGroup_DestroyAllSquads(sg_enemy_relief_army)
+			Rule_RemoveMe()
+		end
+	end
+end
+
+function Tinchebray_SetArmyToAttack()
+	robert_army_state = "attack"
+	Tinchebray_SetDefaultArmyTargets()
+	Rule_AddInterval(Tinchebray_ProcessArmyTargets, 5)
+end
+
+function Tinchebray_SetDefaultArmyTargets()
+	MissionOMatic_FindModule("RobertArmyA2").targetingType = ARMY_TARGETING_CYCLE
+	RovingArmy_SetTargets(MissionOMatic_FindModule("RobertArmyA2"), army_targets_a)
+	
+	MissionOMatic_FindModule("RobertArmyB2").targetingType = ARMY_TARGETING_CYCLE
+	RovingArmy_SetTargets(MissionOMatic_FindModule("RobertArmyB2"), army_targets_b)
+	
+	MissionOMatic_FindModule("RobertArmyC2").targetingType = ARMY_TARGETING_CYCLE
+	RovingArmy_SetTargets(MissionOMatic_FindModule("RobertArmyC2"), army_targets_c)
+	
+	MissionOMatic_FindModule("DukeRobert").targetingType = ARMY_TARGETING_CYCLE
+	RovingArmy_SetTargets(MissionOMatic_FindModule("DukeRobert"), robert_targets)
+end
+
+function Tinchebray_CheckReliefArmyProx()
+	
+	if Objective_IsComplete(SOBJ_EliminateReinforcements) then
+		Rule_RemoveMe()
+	end
+	
+	if Prox_AreSquadsNearMarker(sg_enemy_relief_army, mkr_relief_dest_final, ALL, 40) then
+		
+		Rule_Remove(Tinchebray_CheckReinforcementState)
+		Objective_Fail(SOBJ_EliminateReinforcements)
+		Objective_Show(SOBJ_EliminateReinforcements, false)
+		
+		local sg_enemy_relief_horsemen = SGroup_CreateIfNotFound("sg_enemy_relief_horsemen")
+		local sg_enemy_relief_knights = SGroup_CreateIfNotFound("sg_enemy_relief_knights")
+		local sg_enemy_relief_archers = SGroup_CreateIfNotFound("sg_enemy_relief_archers")
+		local sg_enemy_relief_spearmen = SGroup_CreateIfNotFound("sg_enemy_relief_spearmen")
+		
+		SGroup_Filter(sg_enemy_relief_army, "horseman", FILTER_REMOVE, sg_enemy_relief_horsemen)
+		SGroup_Filter(sg_enemy_relief_army, "knight", FILTER_REMOVE, sg_enemy_relief_knights)
+		SGroup_Filter(sg_enemy_relief_army, "archer", FILTER_REMOVE, sg_enemy_relief_archers)
+		SGroup_Filter(sg_enemy_relief_army, "spearman", FILTER_REMOVE, sg_enemy_relief_spearmen)
+		
+		Prefab_DoAction(MissionOMatic_FindModule("ReliefArmy"), "Disband")
+		Prefab_DoAction(MissionOMatic_FindModule("DukeRobert"), "AddSGroup", sg_enemy_relief_horsemen)
+		Prefab_DoAction(MissionOMatic_FindModule("DukeRobert"), "AddSGroup", sg_enemy_relief_knights)
+		
+		if robert_army_state == "defend" then
+			
+			Prefab_DoAction(MissionOMatic_FindModule("RobertArmyB1"), "AddSGroup", sg_enemy_relief_archers)
+			Prefab_DoAction(MissionOMatic_FindModule("RobertArmyB1"), "AddSGroup", sg_enemy_relief_spearmen)
+		else
+			
+			Prefab_DoAction(MissionOMatic_FindModule("RobertArmyB2"), "AddSGroup", sg_enemy_relief_archers)
+			Prefab_DoAction(MissionOMatic_FindModule("RobertArmyB2"), "AddSGroup", sg_enemy_relief_spearmen)
+			Tinchebray_UpdateArmyCount()
+		end
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Tinchebray_CheckReinforceTrigger()
+	
+	Player_GetAll(playerHuman)
+	SGroup_Filter(sg_allsquads, "scout", FILTER_REMOVE)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_reinforce_trigger1, ANY, 50) or 
+	   Prox_AreSquadsNearMarker(sg_allsquads, mkr_reinforce_trigger2, ANY, 50) then
+		
+		Rule_AddOneShot(Tinchebray_SpawnEnemyReinforcements, 3)
+		Rule_RemoveMe()
+	end
+end
+
+
+function Tinchebray_CheckMartignyProx()
+	
+	Player_GetAll(playerHuman)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_martigny, ANY, 35) then
+		
+		if first_village_revealed == false then
+			first_village_revealed = true
+			Util_StartIntel(EVENTS.Near_FirstVillage)
+		end
+		
+		FOW_PlayerRevealArea(playerHuman, Util_GetPosition(mkr_martigny), 35, 30)
+		Rule_AddOneShot(Tinchebray_MergeMartignyArchers, 5)
+		Rule_RemoveMe()
+	end
+end
+
+function Tinchebray_CheckFrenesProx()
+	
+	Player_GetAll(playerHuman)
+	if Prox_AreSquadsNearMarker(sg_allsquads, mkr_frenes, ANY, 32) then
+		
+		if first_village_revealed == false then
+			first_village_revealed = true
+			Util_StartIntel(EVENTS.Near_FirstVillage)
+		end
+		
+		FOW_PlayerRevealArea(playerHuman, Util_GetPosition(mkr_frenes), 32, 30)
+		Rule_AddOneShot(Tinchebray_MergeFrenesArchers, 5)
+		Rule_RemoveMe()
+	end
+end
+
+function Tinchebray_MergeMartignyArchers()
+	Prefab_DoAction(MissionOMatic_FindModule("MartignyGuards2"), "AddSGroup", sg_martigny_archers1)
+	Prefab_DoAction(MissionOMatic_FindModule("MartignyGuards2"), "AddSGroup", sg_martigny_archers2)
+end
+
+function Tinchebray_MergeFrenesArchers()
+	Prefab_DoAction(MissionOMatic_FindModule("FrenesGuards2"), "AddSGroup", sg_frenes_archers1)
+	Prefab_DoAction(MissionOMatic_FindModule("FrenesGuards2"), "AddSGroup", sg_frenes_archers2)
+end
+
+function Tinchebray_CheckVillages()
+	
+	if martigny_destroyed == false then
+		if EGroup_CountSpawned(eg_martigny) == 0 then
+			martigny_destroyed = true
+			Tinchebray_PlayCelebrateAtPosition(mkr_martigny)
+			
+			if frenes_destroyed then
+				Objective_Complete(SOBJ_DestroyMartigny, false)
+				Objective_Complete(OBJ_DestroyVillages)
+				Util_StartIntel(EVENTS.Destroy_Martigny_Last)
+				
+				Rule_AddOneShot(Tinchebray_SallyOut, 5)
+				Rule_RemoveMe()
+			else
+				Objective_Complete(SOBJ_DestroyMartigny)
+				Util_StartIntel(EVENTS.Destroy_Martigny)
+			end
+			
+			if tribute_shown == false then
+				tribute_shown = true
+				TrainingGoal_AddPickupGold()
+				Rule_AddOneShot(Tinchebray_IntroduceDiplomacyUI, 21) --delay changed from 3 to 8
+			end
+			
+			if relief_army_state == "unspawned" then
+				relief_army_state = "spawned"
+				Rule_AddInterval(Tinchebray_CheckReinforceTrigger, 1)
+			end
+		else
+			destroy_martigny_count = init_martigny_count - EGroup_CountSpawned(eg_martigny)
+			
+			if destroy_martigny_count > prev_martigny_count then
+				prev_martigny_count = destroy_martigny_count
+				Objective_SetCounter(SOBJ_DestroyMartigny, destroy_martigny_count, init_martigny_count)
+				Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			end
+		end
+	end
+	
+	if frenes_destroyed == false then
+		if EGroup_CountSpawned(eg_frenes) == 0 then
+			frenes_destroyed = true
+			Tinchebray_PlayCelebrateAtPosition(mkr_frenes)
+			
+			if martigny_destroyed then
+				
+				Sound_Play2D(MUS_STING_POSITIVE)
+				
+				Objective_Complete(SOBJ_DestroyFrenes, false)
+				Objective_Complete(OBJ_DestroyVillages)
+				Util_StartIntel(EVENTS.Destroy_Frenes)
+				
+				Rule_AddOneShot(Tinchebray_SallyOut, 5)
+				Rule_RemoveMe()
+			else
+				Objective_Complete(SOBJ_DestroyFrenes)
+				Util_StartIntel(EVENTS.Destroy_Frenes_First)
+			end
+			
+			if tribute_shown == false then
+				tribute_shown = true
+				TrainingGoal_AddPickupGold()
+				Rule_AddOneShot(Tinchebray_IntroduceDiplomacyUI, 21)--delay changed from 3 to 8
+			end
+			
+			if relief_army_state == "unspawned" then
+				relief_army_state = "spawned"
+				Rule_AddInterval(Tinchebray_CheckReinforceTrigger, 1)
+			end
+		else
+			destroy_frenes_count = init_frenes_count - EGroup_CountSpawned(eg_frenes)
+			
+			if destroy_frenes_count > prev_frenes_count then
+				prev_frenes_count = destroy_frenes_count
+				Objective_SetCounter(SOBJ_DestroyFrenes, destroy_frenes_count, init_frenes_count)
+				Music_PlayStinger("sfx_campaign_scripted_ui_objective_counter_update")
+			end
+			
+		end
+	end
+	
+end
+
+function Tinchebray_SpawnEnemyReinforcements()
+	
+	SpawnUnitsToModule(enemy_reinforcements, "ReliefArmy", mkr_relief_army1)
+	
+	initReinforcementCount = SGroup_CountSpawned(sg_enemy_relief_army)
+	
+	Sound_Play2D(MUS_STINGER_WARNING)
+	EventCues_CallToAction("$11183964", CTA_ALARM, EVENTS.ReliefArmyArrives, Tinchebray_RevealEnemyReinforcements, sg_enemy_relief_army, 20)
+	
+	Rule_AddInterval(Tinchebray_CheckReinforcementState, 1)
+	Rule_AddInterval(Tinchebray_CheckReliefArmyProx, 1)
+
+end
+
+function Tinchebray_RevealEnemyReinforcements()
+	FOW_RevealSGroup(sg_enemy_relief_army, 20, 30)
+	Sound_PlayWallaEngageOnSGroup(sg_enemy_relief_army)
+end
+
+function Tinchebray_NewScoutDescriptor()
+	return "ArmyScout_"..army_scout_index
+end
+
+function Tinchebray_SpawnScout()
+	
+	army_scout_index = army_scout_index + 1
+	local descriptor_string = Tinchebray_NewScoutDescriptor()
+	
+	local moduleData = {
+		descriptor = descriptor_string,	
+		type = "RovingArmy",
+		player = playerRobert,
+		targetingType = ARMY_TARGETING_RANDOM,
+		targets = {
+			mkr_dest_army_scout1,
+			mkr_dest_army_scout2,
+			mkr_dest_army_scout3,
+			mkr_dest_army_scout4,
+			mkr_dest_army_scout5,
+			mkr_dest_army_scout6,
+			mkr_dest_army_scout7,
+			mkr_dest_army_scout8,
+			mkr_dest_army_scout9,
+			mkr_dest_army_scout10,
+			mkr_dest_army_scout11,
+		},
+		fallbacks = {{ marker = mkr_army_scouts }},
+	}
+	
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(playerRobert, sg_temp, {{type = "scar_scout", numSquads = 1}}, mkr_army_scouts)
+	SGroup_AddGroup(sg_enemy_army_scouts, sg_temp)
+	
+	local module = RovingArmy_Init(moduleData)
+	Prefab_DoAction(module, "AddSGroup", sg_temp)
+	table.insert(scout_modules, module)
+	
+end
+
+function Tribute_Intel()
+	if b_tributeIntelPlayed == false then
+		b_tributeIntelPlayed = true
+		Util_StartIntel(EVENTS.TributePanel)
+	end
+end
+
+--function Reinforcement_Intel(reserve)
+	
+	--if reserve.intel_played == false then
+		--reserve.intel_played = true
+		--Util_StartIntel(EVENTS[reserve.intel_event])
+	--end
+--end
+

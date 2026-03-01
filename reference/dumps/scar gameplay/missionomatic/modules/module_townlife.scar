@@ -1,0 +1,502 @@
+-- 
+-- Mission-O-Matic Module - Town Life (driven by Skirmish)
+--
+-- Covers the economic, production, and general "life" portion of a town. 
+--
+--
+-- See: Behaviour Module - Town Life (Economic)
+--      http://relicwiki/pages/viewpage.action?pageId=514949292  	(in the EE, you can Control-click on this link to go there)
+--
+
+local debug_test_production_request = true
+
+function TownLife_Init(data)
+	local newTownLifeModule = Prefab_GetInstance(data)
+	newTownLifeModule.prefabName = "TownLife"
+	
+	table.insert(t_townLifeModules, newTownLifeModule)
+	table.insert(t_allModules, newTownLifeModule)
+	
+	if newTownLifeModule.sgroup == nil then
+		newTownLifeModule.sgroup = SGroup_CreateUnique("TownLife")
+	end
+	
+	newTownLifeModule.location = LOCATION(newTownLifeModule.location)
+	Location_AddModule(newTownLifeModule.location, newTownLifeModule) 
+	
+	if newTownLifeModule.canBuild == nil then
+		newTownLifeModule.canBuild = false
+	end
+	
+	-- spawn location
+	if newTownLifeModule.spawnLocation == nil then
+		newTownLifeModule.spawnLocation = newTownLifeModule.location.descriptor
+	end
+	
+	if scartype(newTownLifeModule.spawnLocation) == ST_STRING then 
+		newTownLifeModule.spawnLocation = ResolveSpawnLocation(newTownLifeModule.spawnLocation)
+	end
+	
+	-- spawn starter units
+	if scartype(newTownLifeModule.units) == ST_TABLE then
+ 		local spawnLocation = newTownLifeModule.spawnLocation
+		if spawnLocation == nil and scartype(newTownLifeModule.location) ~= ST_NIL then
+			spawnLocation = Prefab_DoAction(newTownLifeModule.location, "GetPosition")
+		end
+		
+ 		UnitEntry_DeploySquads(newTownLifeModule.player, newTownLifeModule.sgroup, newTownLifeModule.units, spawnLocation)
+	end
+	
+	newTownLifeModule.data = {
+		isUnderAttack = false,
+		unitRequest = {				-- holds details of any unit requests it's processing
+			currentRequests = {},
+			poolSGroup = SGroup_CreateUnique("UnitRequest pool for module "..newTownLifeModule.descriptor)
+		},
+	}
+	
+	newTownLifeModule.idealComposition = {}
+	Reinforcement_UpdateIdealComposition(newTownLifeModule)
+	
+	
+	local goalData = {
+		plan = "TownLife",
+		target = newTownLifeModule.location.position,
+		range = math.max(10, newTownLifeModule.location.range),
+		canBuild = newTownLifeModule.canBuild,
+		pbgCountLimits = newTownLifeModule.pbgCountLimits,
+	}
+	
+	local aiPlayer = AIPlayer_GetLocalFromPlayer(newTownLifeModule.player)
+	newTownLifeModule.data.homeBaseID = AIPlayer_GetOrCreateHomebase(aiPlayer, goalData.target)
+	
+	if newTownLifeModule.sgroup ~= nil then
+		AIPlayer_SetSquadHomebase(aiPlayer, newTownLifeModule.sgroup, newTownLifeModule.data.homeBaseID)
+	end
+
+	if newTownLifeModule.location.egroup~= nil then
+		AIPlayer_SetEntityHomebase(aiPlayer, newTownLifeModule.location.egroup, newTownLifeModule.data.homeBaseID)
+	end
+	
+	
+	if newTownLifeModule.allowGatheringOutsideLeash == true then
+		AIPlayer_SetAllowResourceGatheringOutsideLeash(aiPlayer, newTownLifeModule.data.homeBaseID, true)
+	end
+	
+	-- Make sure the monitor function gets added
+	newTownLifeModule.data.monitorRuleID = Rule_AddInterval(TownLife_Monitor, 5, newTownLifeModule)
+	
+	return newTownLifeModule
+end
+
+
+function TownLife_GetPosition(data)
+
+	local townLifeModule = Prefab_GetInstance(data)
+
+	return townLifeModule.location.position
+
+end
+
+
+function TownLife_RequestUnits(moduleData, units, unitSources, priority)
+	
+	local module = Prefab_GetInstance(moduleData)
+	
+	-- make the request
+	local requestData = {
+		units = units,
+		priority = priority,
+	}
+	
+	if unitSources == nil and module.reinforcements ~= nil then
+		unitSources = module.reinforcements.unitSources
+	end
+	
+	local result = MissionOMatic_RequestUnits(module, requestData, unitSources)
+	
+	-- check to see if something replied that it would build the units
+	if result ~= nil then 
+		Reinforcement_RequestHasBeenTriggered(module, result)		-- this updates tracking in the module, adjusts thresholds, etc
+	end
+end
+
+
+function TownLife_Monitor(context, moduleData)
+	local module = Prefab_GetInstance(moduleData)
+	--
+	-- REINFORCING
+	--
+	-- check to see if we need units
+	if Reinforcement_AreReinforcementsNeeded(module) then 
+		
+		-- make the request
+		local requestData = {
+			units = Reinforcement_GenerateReplacementUnitList(module, module.idealComposition),
+			where = module.location.position,
+		}
+		
+		if SGroup_IsUnderAttack(module.sgroup, ANY, 5) or module.reinforcements.alwaysMakeHighPriorityRequests then 	-- mark this request as high priority if the attack is still happening
+			requestData.priority = "high"
+		end
+		
+		local result = MissionOMatic_RequestUnits(module, requestData, module.reinforcements.unitSources)
+		
+		-- check to see if something replied that it would build the units
+		if result ~= nil then 
+			Reinforcement_RequestHasBeenTriggered(module, result)		-- this updates tracking in the module, adjusts thresholds, etc
+		end
+		
+	end		
+
+end
+
+
+
+function TownLife_Stop(moduleData)
+
+	local townLifeModule = Prefab_GetInstance(moduleData)
+	
+	if townLifeModule.data.monitorRuleID ~= nil then
+		Rule_RemoveWithID(townLifeModule.data.monitorRuleID)
+		townLifeModule.data.monitorRuleID = nil 
+	end
+
+	local aiPlayer = AIPlayer_GetLocalFromPlayer(townLifeModule.player)
+	
+	if townLifeModule.location.egroup ~= nil then
+		local _RemoveEntity = function(gid, idx, eid) 
+			if World_OwnsEntity(eid) == false and Entity_GetPlayerOwner(eid) == townLifeModule.player then 
+				EGroup_Single(eg_single, eid)
+				AIPlayer_RemoveEntityHomebase(aiPlayer, eg_single)
+			end
+		end
+		EGroup_ForEach(townLifeModule.location.egroup, _RemoveEntity)
+	end
+	
+	if townLifeModule.sgroup ~= nil then
+		local _RemoveSquad = function(gid, idx, sid) 
+			if World_OwnsSquad(sid) == false and Squad_GetPlayerOwner(sid) == townLifeModule.player then 
+				SGroup_Single(sg_single, sid)
+				AIPlayer_RemoveSquadHomebase(aiPlayer, sg_single)
+			end
+		end
+		SGroup_ForEach(townLifeModule.sgroup, _RemoveSquad)
+	end
+	
+	townLifeModule.prefabIsStopped = true 
+	
+end
+
+--? @shortdesc Stops the TownLife module entirely and returns the units it contained
+--? @args Table moduleData[, SGroup returned_sgroup]
+function TownLife_Disband(moduleData, return_sgroup)
+
+	local townLifeModule = Prefab_GetInstance(moduleData)
+
+	if return_sgroup ~= nil then
+		SGroup_AddGroup(return_sgroup, townLifeModule.sgroup)	
+	end
+
+	
+	-- Stop all activity
+	TownLife_Stop(townLifeModule)
+	
+--	SGroup_Clear(townLifeModule)
+	SGroup_Clear(townLifeModule.sgroup)
+	
+	-- Remove it from the master list
+	for index,module in pairs(t_townLifeModules) do
+		if module == townLifeModule then
+			table.remove(t_townLifeModules, index)
+			break
+		end
+	end
+	for i, module in pairs(t_allModules) do
+		if module == townLifeModule then
+			table.remove(t_allModules, i)
+		end
+	end
+	
+end
+
+function TownLife_GetSGroup(moduleData)
+
+	local townLifeModule = Prefab_GetInstance(moduleData)	
+
+	return townLifeModule.sgroup
+	
+end
+
+
+function TownLife_AddSGroup(moduleData, sgroup)		-- take an sgroup and extract any useful units from it and add them to the prefab
+
+	local townLifeModule = Prefab_GetInstance(moduleData)	
+
+	Cmd_Move(sgroup, townLifeModule.location.position)
+	SGroup_AddGroup(townLifeModule.sgroup, sgroup)
+	
+	local aiPlayer = AIPlayer_GetLocalFromPlayer(townLifeModule.player)
+	AIPlayer_SetSquadHomebase(aiPlayer, sgroup, townLifeModule.data.homeBaseID)
+	
+end
+
+
+function TownLife_GetEGroup(moduleData)
+
+	local townLifeModule = Prefab_GetInstance(moduleData)	
+	
+
+	return townLifeModule.location.egroup
+	
+end
+
+--
+-- Under attack behaviour
+--
+
+function TownLife_UnderAttackTest(data)
+
+	local instance = Prefab_GetInstance(data)	
+	
+	local result = SGroup_IsUnderAttack(instance.sgroup, ANY, 5)
+	
+	return result
+	
+end
+
+function TownLife_TriggerUnderAttack(data)
+
+	local instance = Prefab_GetInstance(data)	
+	
+	if instance.data.isUnderAttack == false then 
+	
+		print(instance.descriptor.." under attack")		
+		
+		---- sound town bell 
+		--if EGroup_Count(instance.townCenter) >= 1 then
+			--Cmd_Ability(instance.townCenter, BP_GetAbilityBlueprint("militarization_tc_equip_villagers"))
+		--end
+				
+		instance.data.isUnderAttack = true
+		Rule_AddInterval(TownLife_UnderAttackManager, 1, {instance = instance})		
+		
+	end
+
+end
+
+function TownLife_UnderAttackManager(context, data)
+	
+	local instance = Prefab_GetInstance(data)	
+	
+	if instance.prefabIsStopped == true then
+		Rule_RemoveMe()
+	elseif instance.data.isUnderAttack == false then 
+		Rule_RemoveMe()
+	else
+
+		local player = instance.player
+		
+		Player_GetAllSquadsNearMarker(player, sg_temp, instance.location.position, instance.location.range) 
+		SGroup_Filter(sg_temp, "scar_armed_villager", FILTER_KEEP)
+		
+		if instance.data.encounterID ~= nil then
+			SGroup_RemoveGroup(sg_temp, instance.data.encounterID:GetSGroup())
+		end
+
+		if SGroup_CountSpawned(sg_temp) >= 1 then
+		
+			if instance.data.encounterID == nil then
+			
+				instance.data.encounterID = Encounter:ConvertSGroup(sg_temp)
+				
+				local goalData = {
+					name = GOAL_FORMATION_DEFEND,
+					target = instance.location.position,
+					range = math.max(10, instance.location.range - 15),
+					leashRange = math.max(10, instance.location.range - 15),
+				}
+				instance.data.encounterID:SetGoal(goalData)
+				
+			else
+				
+				instance.data.encounterID:AddSGroup(sg_temp)
+				
+			end
+			
+		end
+		
+	end
+	
+end
+
+function TownLife_TriggerAttackOver(data)
+
+	local instance = Prefab_GetInstance(data)	
+	
+	if instance.data.isUnderAttack == true then 	
+	
+		print(instance.descriptor.." attack over")	
+	
+		-- delete encounter 
+		if instance.data.encounterID ~= nil then		
+			instance.data.encounterID:Disable()
+			instance.data.encounterID = nil
+		end
+		
+		---- return villagers to normal duties
+		--if EGroup_Count(instance.townCenter) >= 1 then
+			--Cmd_Ability(instance.townCenter, BP_GetAbilityBlueprint("militarization_tc_return_villagers"))	
+		--end
+	
+		instance.data.isUnderAttack = false
+	
+	end	
+	
+end
+
+function TownLife_IsUnderAttack(data)
+
+	local instance = Prefab_GetInstance(data)
+	
+	return instance.data.isUnderAttack
+	
+end
+
+--? @shortdesc Returns true if all the TownLife module's units are dead
+function TownLife_IsDefeated(moduleData)
+
+	local townLifeModule = Prefab_GetInstance(moduleData)
+	
+	return SGroup_CountSpawned(townLifeModule.sgroup) <= 0
+	
+end
+
+--? @shortdesc Changes the player owner
+function TownLife_SetPlayerOwner(data, newPlayer)
+	
+	local instance = Prefab_GetInstance(data)
+	if instance.sgroup ~= nil then
+		local aiPlayer = AIPlayer_GetLocalFromPlayer(instance.player)
+		AIPlayer_RemoveSquadHomebase(aiPlayer, instance.sgroup)
+	end
+	
+	SGroup_SetPlayerOwner(instance.sgroup, newPlayer)
+	
+end
+
+-- get a time estimate for how long the units will take to produce
+function TownLife_UnitRequest_ProvideEstimate(module, requestData)
+	
+	local townLifeModule = Prefab_GetInstance(module)
+
+	local unitProvider = townLifeModule.unitProvider	
+	
+	if unitProvider == nil then 
+		unitProvider = {} 
+		townLifeModule.unitProvider	= {}
+	end
+	
+	if unitProvider.onlyRespondToTargetedRequests == true and requestData.explicitlySpecifiedSources ~= true then
+		return nil			-- module only responds when the request explicitly listed it as a unit source, rather than a general request 
+	end
+	
+	if unitProvider.enabled == false then 
+		return nil	 		-- unitProvider functionality is disabled
+	end
+
+
+
+	
+	local existingQueueTimeEstimate = 0
+	local requestTimeEstimate = 0
+	
+	for index, request in ipairs(townLifeModule.data.unitRequest.currentRequests) do 
+		for i, unit in pairs(request.requestData.units) do 
+			
+			local numRemaining = unit.numSquads - unit.numAssigned
+			existingQueueTimeEstimate = existingQueueTimeEstimate + (numRemaining * 30)
+			
+		end
+	end
+	
+	for i, unit in pairs(requestData.units) do 
+			
+		requestTimeEstimate = requestTimeEstimate + ((unit.numSquads or 1) * 30)
+			
+	end
+	
+	return existingQueueTimeEstimate + requestTimeEstimate
+	
+end
+
+-- start processing a unit request
+function TownLife_UnitRequest_Start(module, requestData)
+	
+	local townLifeModule = Prefab_GetInstance(module)
+	
+	local unitProvider = townLifeModule.unitProvider or {}	
+		
+	local totalUnits = 0
+			
+	for index, unit in pairs(requestData.units) do 
+		totalUnits = totalUnits + unit.numSquads	-- add this to the overall count of units
+	end
+			
+	requestData.numSquads = totalUnits 		-- how many units in total this request asks for
+	requestData.numAssigned = 0				-- this is how many units that have been assigned to it		
+	
+	if townLifeModule.data.unitRequest.waveManager == nil then
+		
+		-- need to initialize a wave manager 
+		
+		if unitProvider.stagingModule == nil then 
+			townLifeModule.data.unitRequest.stagingModule = {
+				type = "Defend",
+				descriptor = townLifeModule.descriptor.."StagingModule",
+				player = townLifeModule.player,
+				position = townLifeModule.location.position,
+				combatRange = townLifeModule.location.range,
+			}
+			Defend_Init(townLifeModule.data.unitRequest.stagingModule)
+		elseif scartype(unitProvider.stagingModule) == ST_STRING then 
+			townLifeModule.data.unitRequest.stagingModule = MissionOMatic_FindModule(unitProvider.stagingModule)
+		end
+			
+		local waveManager = {
+			descriptor = "Wave Spawner for TownLife "..townLifeModule.descriptor,
+			player = townLifeModule.player,
+			spawn = townLifeModule.location.egroup,
+			use_separate_spawns = true,
+			units = {},
+			staging_module = townLifeModule.data.unitRequest.stagingModule,
+			assault_module = false,
+			auto_launch = true,
+			callbacks = {
+				onLaunch = TownLife_UnitRequest_WaveComplete,
+			},
+		}
+		townLifeModule.data.unitRequest.waveManager = Wave_New(waveManager)
+		
+	end
+	
+	-- set the units for the wave, and start the "prepare" process
+	Wave_SetUnits(townLifeModule.data.unitRequest.waveManager, requestData.units)
+	Wave_Prepare(townLifeModule.data.unitRequest.waveManager, nil, {requestData = requestData})
+	
+end
+
+
+-- wait for the units to build, then send them onwards
+function TownLife_UnitRequest_WaveComplete(wave)
+
+	--
+	-- Wave Manager path (default)
+	-- 
+
+	local requestData = wave.data.requestData
+	local sgroup = wave.sg_staging
+	
+	MissionOMatic_RequestComplete(requestData, sgroup)	
+	
+end

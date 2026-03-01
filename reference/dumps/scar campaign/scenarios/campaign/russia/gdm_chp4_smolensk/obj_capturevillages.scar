@@ -1,0 +1,741 @@
+--
+-- Moscow vs Lithuania 1514 - Capture Villages
+--
+
+function CaptureVillages_Init()
+	OBJ_CaptureVillages = {
+		Title = "$11172361", --Capture the villages surrounding Smolensk
+		Type = ObjectiveType_Capture,
+		
+		Intel_Start = EVENTS.Outlying_Villages,
+		
+		PreStart = function()
+			roslavl_wall_count = EGroup_CountSpawned(eg_roslavl_wall)
+			yelnya_wall_count = EGroup_CountSpawned(eg_yelnya_wall)
+			vyazma_wall_count = EGroup_CountSpawned(eg_vyazma_wall)
+			west_outpost_wall_count = EGroup_CountSpawned(eg_west_outpost_wall)
+			east_outpost_wall_count = EGroup_CountSpawned(eg_east_outpost_wall)
+			Rule_AddEGroupEvent(CaptureVillages_Breach, eg_village_walls, GE_EntityKilled)
+			Rule_AddEGroupEvent(CaptureVillages_OutpostBreach, eg_outpost_walls, GE_EntityKilled)
+		end,
+		
+		OnStart = function()
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_roslavl), Marker_GetProximityRadiusOrDefault(mkr_roslavl, 0), -1)
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_yelnya), Marker_GetProximityRadiusOrDefault(mkr_yelnya, 0), -1)
+			FOW_PlayerRevealArea(player2, Marker_GetPosition(mkr_vyazma), Marker_GetProximityRadiusOrDefault(mkr_vyazma, 0), -1)
+			
+			-- Setting minimum combat intensity now that the first objective has been started
+			Sound_SetMinimumMusicCombatIntensity(801,0)
+			
+			Rule_AddInterval(BesiegeSmolensk_CheckNearbyKrasny, 1) --Krasny nearby proximity trigger
+		end,
+		
+		IsFailed = function()
+			
+			if not Objective_AreSubObjectivesComplete(OBJ_CaptureVillages, ANY) then
+				Player_GetAll(player1, sg_temp)
+				SGroup_Filter(sg_temp, "gaia", FILTER_REMOVE)
+				return SGroup_IsEmpty(sg_temp)
+			end
+			
+			--Player hasn't captured a village yet, check if the player has no resources or units
+			return Smolensk_IsPlayerEconomyTrapped()
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+		
+		IsComplete = function()
+			return Objective_AreSubObjectivesComplete(OBJ_CaptureVillages, ALL)
+		end,
+		PreComplete = function()
+			--Music_StopAfterObjective()
+			Music_StopMedium()
+		end,
+		OnComplete = function()
+			Util_StartIntel(EVENTS.Third_Village)
+			if last_village_vo == "Roslavl" then 
+				Util_StartIntel(EVENTS.Roslavl)
+			elseif last_village_vo == "Yelnya" then
+				Util_StartIntel(EVENTS.Yelnya)
+			elseif last_village_vo == "Vyazma" then
+				Util_StartIntel(EVENTS.Vyazma)
+			end
+			
+			Objective_Start(OBJ_BesiegeSmolensk)
+			--Sound_SetMinimumMusicCombatIntensity(0, 0)
+		end,
+	}
+	
+	Objective_Register(OBJ_CaptureVillages)
+end
+
+function CaptureVillages_InitRoslavl()
+
+	local location = LOCATION("roslavl")
+	
+	SOBJ_CaptureRoslavl = {
+		Title = "$11172362", --Capture Roslavl - (Cavalry)
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureVillages,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			Location_SetCapturable(LOCATION("roslavl"), true)
+			AudioTrigger_InitAreaTrigger({
+				marker = mkr_roslavl,
+				audioCue = MUSIC_COMBAT,
+				triggeringPlayer = player1,
+				startAboveUnitCount = 5,
+				duration = 30
+			})
+		end,
+		
+		PreComplete = function()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_UNIT_CAVALRY_CONTROL_RUS, ITEM_UNLOCKED)
+			CaptureVillages_OnComplete(mkr_roslavl, mkr_roslavl_s2, sg_roslavl_villagers)
+			
+			EGroup_AddEGroup(eg_player_landmarks, eg_landmark_left)
+			Entity_SetInvulnerableMinCap(EGroup_GetEntityAt(eg_landmark_left, 1), 0, 0)
+		end,
+		
+		OnComplete = function()
+			CaptureVillages_ContinueObjectiveFlow(mkr_roslavl)
+			
+			if villages_captured == 3 then
+				last_village_vo = "Roslavl"
+			else			
+				CaptureVillages_PlayIntel()
+				Util_StartIntel(EVENTS.Roslavl)
+			end
+			
+			Util_AutoSave()
+		end,
+	}
+	
+	SOBJ_DefeatRoslavlResistance = {
+		Title = "$11172366", --Defeat Roslavl resistance
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_CaptureVillages,
+		
+		PreStart = function()
+			Music_LockIntensity(MUSIC_COMBAT, 15)
+		end,
+	}
+	
+	SOBJ_LocationRoslavl = {
+		Title = "$11172368", --Roslavl
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureVillages,
+	}
+	
+	Objective_Register(SOBJ_CaptureRoslavl)
+	Objective_Register(SOBJ_DefeatRoslavlResistance)
+	Objective_Register(SOBJ_LocationRoslavl)
+	
+	location.objectiveMaster = OBJ_CaptureVillages
+	location.objectivePrimary = SOBJ_CaptureRoslavl
+	location.objectiveSecondary = SOBJ_DefeatRoslavlResistance
+	location.objectiveCapture = SOBJ_LocationRoslavl
+	
+end
+
+function CaptureVillages_InitYelnya()
+	
+	local location = LOCATION("yelnya")
+	
+	SOBJ_CaptureYelnya = {
+		Title = "$11172371", --Capture Yelnya - (Archery)
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureVillages,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			Location_SetCapturable(LOCATION("yelnya"), true)
+			AudioTrigger_InitAreaTrigger({
+				marker = mkr_yelnya,
+				audioCue = MUSIC_COMBAT,
+				triggeringPlayer = player1,
+				startAboveUnitCount = 5,
+				duration = 30
+			})
+		end,
+		
+		PreComplete = function()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_UNIT_RANGED_CONTROL_RUS, ITEM_UNLOCKED)
+			CaptureVillages_OnComplete(mkr_yelnya, mkr_yelnya_s2, sg_yelnya_villagers)
+			
+			EGroup_AddEGroup(eg_player_landmarks, eg_landmark_center)
+			Entity_SetInvulnerableMinCap(EGroup_GetEntityAt(eg_landmark_center, 1), 0, 0)
+		end,
+		
+		OnComplete = function()
+			CaptureVillages_ContinueObjectiveFlow(mkr_yelnya)
+			
+			
+			if villages_captured == 3 then
+				last_village_vo = "Yelnya"
+			else			
+				CaptureVillages_PlayIntel()
+				Util_StartIntel(EVENTS.Yelnya)
+			end
+			
+			Util_AutoSave()
+		end,
+	}
+	
+	SOBJ_DefeatYelnyaResistance = {
+		Title = "$11172372", --Defeat Yelnya resistance
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_CaptureVillages,
+		
+		PreStart = function()
+			Music_LockIntensity(MUSIC_COMBAT, 15)
+		end,
+	}
+	
+	SOBJ_LocationYelnya = {
+		Title = "$11172373", --Yelnya
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureVillages,
+		Icon = "icons/objectives/capture_objective",
+	}
+	
+	Objective_Register(SOBJ_CaptureYelnya)
+	Objective_Register(SOBJ_DefeatYelnyaResistance)
+	Objective_Register(SOBJ_LocationYelnya)
+	
+	location.objectiveMaster = OBJ_CaptureVillages
+	location.objectivePrimary = SOBJ_CaptureYelnya
+	location.objectiveSecondary = SOBJ_DefeatYelnyaResistance
+	location.objectiveCapture = SOBJ_LocationYelnya
+	
+end
+
+function CaptureVillages_InitVyazma()
+	
+	local location = LOCATION("vyazma")
+	
+	SOBJ_CaptureVyazma = {
+		Title = "$11172374", --Capture Vyazma - (Infantry)
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureVillages,
+		StartAlongsideParent = true,
+		
+		SetupUI = function()
+			Location_SetCapturable(LOCATION("vyazma"), true)
+			AudioTrigger_InitAreaTrigger({
+				marker = mkr_vyazma,
+				audioCue = MUSIC_COMBAT,
+				triggeringPlayer = player1,
+				startAboveUnitCount = 5,
+				duration = 30
+			})
+		end,
+		
+		PreComplete = function()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			Player_SetEntityProductionAvailability(player1, EBP.RUS.BUILDING_UNIT_INFANTRY_CONTROL_RUS, ITEM_UNLOCKED)
+			CaptureVillages_OnComplete(mkr_vyazma, mkr_vyazma_s1, sg_vyazma_villagers)
+			
+			EGroup_AddEGroup(eg_player_landmarks, eg_landmark_right)
+			Entity_SetInvulnerableMinCap(EGroup_GetEntityAt(eg_landmark_right, 1), 0, 0)
+		end,
+		
+		OnComplete = function()
+			CaptureVillages_ContinueObjectiveFlow(mkr_vyazma)
+			
+			if villages_captured == 3 then
+				last_village_vo = "Vyazma"
+			else
+				CaptureVillages_PlayIntel()
+				Util_StartIntel(EVENTS.Vyazma)
+			end
+			
+			Util_AutoSave()
+		end,
+	}
+	
+	SOBJ_DefeatVyazmaResistance = {
+		Title = "$11172375", --Defeat Vyazma resistance
+		Type = ObjectiveType_Battle,
+		Parent = OBJ_CaptureVillages,
+		
+		PreStart = function()
+			Music_LockIntensity(MUSIC_COMBAT, 15)
+		end,
+	}
+	
+	SOBJ_LocationVyazma = {
+		Title = "$11172376", --Vyazma
+		Type = ObjectiveType_Capture,
+		Parent = OBJ_CaptureVillages,
+		Icon = "icons/objectives/capture_objective",
+	}
+	
+	Objective_Register(SOBJ_CaptureVyazma)
+	Objective_Register(SOBJ_DefeatVyazmaResistance)
+	Objective_Register(SOBJ_LocationVyazma)
+	
+	location.objectiveMaster = OBJ_CaptureVillages
+	location.objectivePrimary = SOBJ_CaptureVyazma
+	location.objectiveSecondary = SOBJ_DefeatVyazmaResistance
+	location.objectiveCapture = SOBJ_LocationVyazma
+	
+end
+
+function CaptureVillages_InitLandmarks()
+	OBJ_ProtectLandmarks = {
+		Title = "$11191835",
+		Type = ObjectiveType_Information,
+		
+		IsFailed = function()
+			
+			if Objective_IsComplete(SOBJ_CaptureRoslavl) or Objective_IsComplete(SOBJ_CaptureYelnya) or Objective_IsComplete(SOBJ_CaptureVyazma) then
+				if EGroup_IsEmpty(eg_player_landmarks) then
+					print("Player has no landmarks. Failing out.")
+					return true
+				end
+			end
+
+			return false
+		end,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	
+	Objective_Register(OBJ_ProtectLandmarks)
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--															MISCELLANEOUS
+------------------------------------------------------------------------------------------------------------------------------------------
+
+--This function has been commented out in an attempt to speed up the beginning half of the mission (Spawns extra villagers
+function CaptureVillages_ReinforceVillages()
+	
+	local units = {
+		{type = "scar_manatarms", numSquads = 4},
+		{type = "scar_archer", numSquads = 4},
+		--{sbp = SBP.HRE.UNIT_CROSSBOWMAN_4_HRE, numSquads = 4},
+	}
+	
+	--local unitCount = UnitTable_CountUnits(units)
+	
+	if not Objective_IsComplete(SOBJ_CaptureRoslavl) then
+		SpawnUnitsToModule(units, "roslavl_defend", mkr_roslavl_s3)
+		--Location_IncreaseDefenderCount(LOCATION("roslavl"), unitCount)
+	end
+	
+	if not Objective_IsComplete(SOBJ_CaptureYelnya) then
+		SpawnUnitsToModule(units, "yelnya_defend", mkr_yelnya_s3)
+		--Location_IncreaseDefenderCount(LOCATION("yelnya"), unitCount)
+	end
+	
+	if not Objective_IsComplete(SOBJ_CaptureVyazma) then
+		SpawnUnitsToModule(units, "vyazma_defend", mkr_vyazma_s3)
+		--Location_IncreaseDefenderCount(LOCATION("vyazma"), unitCount)
+	end
+	
+end 
+
+--Spawns villagers for the player
+function CaptureVillages_OnComplete(village_marker, villager_destination, sgroup)
+	
+	--CaptureVillages_ReinforceVillages() --Temporarily disabling this to see if I can speed up the beginning parts
+	villages_captured = villages_captured + 1
+	local villagerLifeName = nil
+	
+	if village_marker == mkr_roslavl then
+		hpid_roslavl = HintPoint_Add(eg_roslavl_tc, true, "$11172368", LOCATION_LABEL_HEIGHT)
+		villagerLifeName = villagerlife_roslavl
+	elseif village_marker == mkr_yelnya then
+		hpid_yelnya = HintPoint_Add(eg_yelnya_tc, true, "$11172373", LOCATION_LABEL_HEIGHT)
+		villagerLifeName = villagerlife_yelnya
+	elseif village_marker == mkr_vyazma then
+		hpid_vyazma = HintPoint_Add(eg_vyazma_tc, true, "$11172376", LOCATION_LABEL_HEIGHT)
+		villagerLifeName = villagerlife_vyazma
+	end
+	
+	--Spawning villagers
+	local squadSpawnCount = 3
+	if villages_captured == 1 then
+		--Bump up villagers to 14 (9+5) and re-enable popcap
+		squadSpawnCount = 9 
+		UI_SetPlayerDataContext(player1, {PopulationCapOn = true})
+		Modify_PlayerMaxPopCap(player1, 20, MUT_Addition)
+		-- on console, restore the VPS at this point
+		if UI_IsXboxControllerUI() then
+			Game_SetVisibility (VF_XboxUIVillagerPriorities, true)
+		end				
+		
+	elseif villages_captured == 2 then
+		Modify_PlayerMaxPopCap(player1, 20, MUT_Addition)
+		
+	elseif villages_captured == 3 then
+		Modify_PlayerMaxPopCap(player1, 20, MUT_Addition)
+	end
+	
+	--Takes the villagers that were in the villager life and respawns them as player villagers.
+	ConvertVillagers_OnCapture(villagerLifeName, squadSpawnCount)
+	
+	--Spawn remaining villagers after subtracting any converted villagers that survived the capture
+	--SGroup_Clear(sg_player_villager_farmers)
+	--SGroup_Clear(sg_player_villagers)
+	--UnitEntry_DeploySquads(player1, sg_player_villager_farmers, {{type = "scar_villager", numSquads = 5, squadSpawnCount, spawn = village_marker}})
+	--UnitEntry_DeploySquads(player1, sg_player_villagers, {{type = "scar_villager", numSquads = squadSpawnCount, spawn = village_marker}})
+	
+	--AssignVillagersToFarms(sg_player_villager_farmers)
+	--AssignVillagersToWood(sg_player_villagers)
+	
+	--Adding bonus resources for capturing
+	Smolensk_AddResources()
+	
+	--If this is the first village captured, spool up self-spawning raids from the other villages to attack on a RANDOM timer
+	if not villagesAttacking then
+		villagesAttacking = true
+		
+		local time_1 = World_GetRand(village_attack_timings.cavalry_min, village_attack_timings.cavalry_max)
+		local time_2 = World_GetRand(village_attack_timings.ranged_min, village_attack_timings.ranged_max)
+		local time_3 = World_GetRand(village_attack_timings.melee_min, village_attack_timings.melee_max)
+		Rule_AddOneShot(CaptureVillages_Roslavl, time_1, {time = time_1})
+		Rule_AddOneShot(CaptureVillages_Yelnya, time_2, {time = time_2})
+		Rule_AddOneShot(CaptureVillages_Vyazma, time_3, {time = time_3})
+	end
+	
+end
+
+--Tells villagers of the captured village to flee to Smolensk (Doesn't really do anything anymore since the villagers are converted to the player. Probably worth removing.)
+function CaptureVillages_ContinueObjectiveFlow(marker)
+	
+	Player_GetAllSquadsNearMarker(player2, sg_temp, marker)
+	SGroup_Filter(sg_temp, SBP.HRE.UNIT_VILLAGER_1_HRE, FILTER_KEEP)
+	Cmd_Move(sg_temp, mkr_smolensk)
+	
+end
+
+--Plays village capture VO in the correct order, regardless of which village has been captured
+function CaptureVillages_PlayIntel()
+	
+	if villages_captured == 1 then
+		Util_StartIntel(EVENTS.First_Village)
+		--Objective_Start(OBJ_ProtectLandmarks)
+	elseif villages_captured == 2 then
+		Util_StartIntel(EVENTS.Second_Village)
+	end
+	
+end
+
+--Checks player-owned landmarks 
+function CaptureVillages_TrackLandmarks(context, data)
+	local isLandmarkDamaged = false
+	local _checkHP = function(gid, idx, eid)
+		if Entity_GetHealthPercentage(eid) <= 0.6 then
+			if not isLandmarkDamaged then
+				isLandmarkDamaged = true
+				return true
+			end
+		end
+	end
+	
+
+	EGroup_ForEach(eg_player_landmarks, _checkHP)
+	EGroup_ForEach(eg_landmarks, _checkHP)
+
+	if isLandmarkDamaged then
+		Objective_Start(OBJ_ProtectLandmarks)
+		Rule_RemoveMe()
+	end
+end
+
+function CaptureVillages_WatchForPlayerLandmarks(context, data)
+	Player_GetAll(player1, sg_temp, eg_temp)
+	EGroup_Filter(eg_temp, {EBP.RUS.BUILDING_LANDMARK_AGE3_KREMLIN_ARMOURY_RUS, EBP.RUS.BUILDING_LANDMARK_AGE3_SPASSAKAYA_TOWER_CONTROL_RUS}, FILTER_KEEP)
+	EGroup_FilterUnderConstruction(eg_temp, FILTER_REMOVE)
+	if EGroup_Count(eg_temp) > 0 then
+		EGroup_AddEGroup(eg_player_landmarks, eg_temp)
+		EGroup_AddEGroup(eg_player_built_landmark, eg_temp)
+		Rule_RemoveMe()
+	end
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--															ATTACKS FROM VILLAGES
+------------------------------------------------------------------------------------------------------------------------------------------
+
+--? @shortdesc Spawns attacks from Roslavl (Cavalry village)
+function CaptureVillages_Roslavl(context, data)
+	
+	--print("Attempting a spawn from Roslavl after being delayed for: "..data.time)
+	
+	--ATTACKS FROM ROSLAVL
+	if not Objective_IsComplete(SOBJ_CaptureRoslavl) then
+		Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_attack_src_roslavl, 60)
+		if SGroup_CountSpawned(sg_temp) == 0 then
+			local targets = {}
+			local _units = {
+				{
+					{ type = "scar_horseman", numSquads = Util_DifVar({8, 8, 8, 8}) },
+				},
+				{
+					{ type = "scar_knight", numSquads = Util_DifVar({6, 6, 6, 8}) },
+				},
+			}
+			
+			local units = _units[World_GetRand(1, 2)]
+			
+			--Check whether the other villages have been captured, and use it to send an attack there and any others that have been captured
+			local first_obj = Objective_IsComplete(SOBJ_CaptureYelnya)
+			local second_obj = Objective_IsComplete(SOBJ_CaptureVyazma)
+			
+			targets = {}
+			if first_obj then 
+				table.insert(targets, mkr_village_attack_routing)
+				table.insert(targets, mkr_yelnya)
+				if second_obj then
+					table.insert(targets, mkr_village_attack_routing)
+					table.insert(targets, mkr_vyazma) 
+				end
+				table.insert(targets, mkr_roslavl)
+				Smolensk_SendAttack(units, mkr_attack_src_roslavl, targets, mkr_roslavl, "gather_left")
+			end
+			
+			targets = {}
+			if second_obj then 
+				table.insert(targets, mkr_village_attack_routing)
+				table.insert(targets, mkr_vyazma) 
+				if first_obj then 
+					table.insert(targets, mkr_village_attack_routing)
+					table.insert(targets, mkr_yelnya) 
+				end
+				table.insert(targets, mkr_roslavl)
+				Smolensk_SendAttack(units, mkr_attack_src_roslavl, targets, mkr_roslavl, "gather_left")
+			end
+			
+			print("Sending attacks from Roslavl")
+			
+		else
+			print("Spawning is blocked by players being too close to Roslavl")
+		end
+		
+		--Since the objective is still active, queue up an attempt to spawn another wave later
+		local time_delay = World_GetRand(village_attack_timings.cavalry_min, village_attack_timings.cavalry_max)
+		Rule_AddOneShot(CaptureVillages_Roslavl, time_delay, {time = time_delay})
+	else
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Spawns attacks from Yelnya (Ranged village)
+function CaptureVillages_Yelnya(context, data)
+	
+	--print("Attempting a spawn from Yelnya after being delayed for: "..data.time)
+	
+	--ATTACKS FROM YELNYA
+	if not Objective_IsComplete(SOBJ_CaptureYelnya) then
+		Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_attack_src_yelnya, 60)
+		if SGroup_CountSpawned(sg_temp) == 0 then
+			local targets = {}
+			local _units = {
+				{
+					{ type = "scar_scout",		numSquads = Util_DifVar({1, 2, 2, 2}) },
+					{ type = "scar_archer", 	numSquads = Util_DifVar({6, 6, 6, 8}) },
+				},
+				{
+					{ type = "scar_crossbowman", numSquads = Util_DifVar({4, 4, 4, 6}) },
+					{ type = "scar_handcannon",	numSquads = Util_DifVar({4, 4, 4, 6}) },
+				},
+			}
+			
+			local units = _units[World_GetRand(1, 2)]
+			
+			--Check whether the other villages have been captured, and use it to send an attack there and any others that have been captured
+			local first_obj = Objective_IsComplete(SOBJ_CaptureRoslavl)
+			local second_obj = Objective_IsComplete(SOBJ_CaptureVyazma)
+			
+			targets = {}
+			if first_obj then 
+				table.insert(targets, mkr_village_attack_routing)
+				table.insert(targets, mkr_roslavl)
+				if second_obj then 
+					table.insert(targets, mkr_village_attack_routing)
+					table.insert(targets, mkr_vyazma) 
+				end
+				table.insert(targets, mkr_yelnya)
+				Smolensk_SendAttack(units, mkr_attack_src_yelnya, targets, mkr_yelnya, "gather_center")
+			end
+			
+			targets = {}
+			if second_obj then 
+				table.insert(targets, mkr_village_attack_routing)
+				table.insert(targets, mkr_vyazma) 
+				if first_obj then 
+					table.insert(targets, mkr_village_attack_routing)
+					table.insert(targets, mkr_roslavl) 
+				end
+				table.insert(targets, mkr_yelnya)
+				Smolensk_SendAttack(units, mkr_attack_src_yelnya, targets, mkr_yelnya, "gather_center")
+			end
+			
+			print("Sending attacks from Yelnya")
+			
+		else
+			print("Spawning is blocked by players being too close to Yelnya")
+		end
+		
+		--Since the objective is still active, queue up an attempt to spawn another wave later
+		local time_delay = World_GetRand(village_attack_timings.ranged_min, village_attack_timings.ranged_max)
+		Rule_AddOneShot(CaptureVillages_Yelnya, time_delay, {time = time_delay})
+	else
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @shortdesc Spawns attacks from Vyazma (Melee village)
+function CaptureVillages_Vyazma(context, data)
+	
+	--print("Attempting a spawn from Vyazma after being delayed for: "..data.time)
+	
+	--ATTACKS FROM VYAZMA
+	if not Objective_IsComplete(SOBJ_CaptureVyazma) then
+		Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_attack_src_vyazma, 60)
+		if SGroup_CountSpawned(sg_temp) == 0 then
+			local targets = {}
+			local _units = {
+				{
+					{type = "scar_spearman", 	numSquads = Util_DifVar({4, 4, 4, 6}) },
+					{type = "scar_landsknecht", numSquads = Util_DifVar({2, 2, 2, 4}) },
+				},
+				{
+					{type = "scar_manatarms", 	numSquads = Util_DifVar({4, 4, 4, 6}) },
+					{type = "scar_landsknecht", numSquads = Util_DifVar({2, 2, 2, 4}) },
+				},
+			}
+			
+			local units = _units[World_GetRand(1, 2)]
+			
+			--Check whether the other villages have been captured, and use it to send an attack there and any others that have been captured
+			local first_obj = Objective_IsComplete(SOBJ_CaptureRoslavl)
+			local second_obj = Objective_IsComplete(SOBJ_CaptureYelnya)
+			
+			targets = {}
+			if first_obj then 
+				table.insert(targets, mkr_village_attack_routing)
+				table.insert(targets, mkr_roslavl)
+				if second_obj then 
+					table.insert(targets, mkr_village_attack_routing)
+					table.insert(targets, mkr_yelnya) 
+				end
+				table.insert(targets, mkr_vyazma)
+				Smolensk_SendAttack(units, mkr_attack_src_vyazma, targets, mkr_vyazma, "gather_right")
+			end
+			
+			targets = {}
+			if second_obj then 
+				table.insert(targets, mkr_village_attack_routing)
+				table.insert(targets, mkr_yelnya) 
+				if first_obj then 
+					table.insert(targets, mkr_village_attack_routing)
+					table.insert(targets, mkr_roslavl) 
+				end
+				table.insert(targets, mkr_vyazma)
+				Smolensk_SendAttack(units, mkr_attack_src_vyazma, targets, mkr_vyazma, "gather_right")
+			end
+			
+			print("Sending attacks from Vyazma")
+			
+		else
+			print("Spawning is blocked by players being too close to Vyazma")
+		end
+		
+		--Since the objective is still active, queue up an attempt to spawn another wave later
+		local time_delay = World_GetRand(village_attack_timings.melee_min, village_attack_timings.melee_max)
+		Rule_AddOneShot(CaptureVillages_Vyazma, time_delay, {time = time_delay})
+	else
+		Rule_RemoveMe()
+	end
+	
+end
+
+--Breach audio stinger and wallas for locations. 
+--The Smolensk wall breach is in obj_besiegesmolensk.scar
+function CaptureVillages_Breach(context)
+	
+	if context.victim ~= nil then
+		
+		if not b_roslavl_breached and roslavl_wall_count > EGroup_CountSpawned(eg_roslavl_wall) then
+			b_roslavl_breached = true
+			Rule_AddOneShot(Smolensk_DelayedAudioStinger, 1, {position = Util_GetPosition(context.victim)})
+		elseif not b_yelnya_breached and yelnya_wall_count > EGroup_CountSpawned(eg_yelnya_wall) then
+			b_yelnya_breached = true
+			Rule_AddOneShot(Smolensk_DelayedAudioStinger, 1, {position = Util_GetPosition(context.victim)})
+		elseif not b_vyazma_breached and vyazma_wall_count > EGroup_CountSpawned(eg_vyazma_wall) then
+			b_vyazma_breached = true
+			Rule_AddOneShot(Smolensk_DelayedAudioStinger, 1, {position = Util_GetPosition(context.victim)})
+		end
+		
+		if (b_roslavl_breached) and (b_vyazma_breached) and (b_yelnya_breached) then
+			Rule_RemoveEGroupEvent(CaptureVillages_Breach, eg_village_walls)
+		end
+		
+	end
+	
+end
+
+function CaptureVillages_OutpostBreach(context)
+	
+	if context.victim ~= nil then
+	
+		if not b_west_outpost_breached and west_outpost_wall_count > EGroup_CountSpawned(eg_west_outpost_wall) then
+			b_west_outpost_breached = true
+			Rule_AddOneShot(Smolensk_DelayedAudioStinger, 1, {position = Util_GetPosition(context.victim)})
+		elseif not b_east_outpost_breached and east_outpost_wall_count > EGroup_CountSpawned(eg_east_outpost_wall) then
+			b_east_outpost_breached = true
+			Rule_AddOneShot(Smolensk_DelayedAudioStinger, 1, {position = Util_GetPosition(context.victim)})
+		end
+		
+		if b_west_outpost_breached and b_east_outpost_breached then
+			Rule_RemoveEGroupEvent(CaptureVillages_OutpostBreach, eg_outpost_walls)
+		end
+		
+	end
+	
+end
+
+function ConvertVillagers_OnCapture(villagerLife, maxBonusVillagers)
+	
+	villager_RespawnLocation = villagerLife.mkr_flee
+	local transfer_WanderToTrees = 0
+	local newWanderCount = 0
+	
+	SGroup_Clear(sg_temp)
+	
+	if maxBonusVillagers > 2 then
+		transfer_WanderToTrees = maxBonusVillagers-2
+		newWanderCount = 2
+	else
+		newWanderCount = 2
+	end
+	
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = newWanderCount},villager_RespawnLocation)
+	Cmd_Move(sg_temp, villagerLife.location_mkr)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerLife.food_count}, villager_RespawnLocation)
+	AssignVillagersToFarms(sg_temp)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerLife.wood_count+transfer_WanderToTrees}, villager_RespawnLocation)
+	AssignVillagersToWood(sg_temp)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerLife.stone_count}, villager_RespawnLocation)
+	AssignVillagersToStone(sg_temp)
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(player1, sg_temp, {type = "scar_villager", numSquads = villagerLife.gold_count}, villager_RespawnLocation)
+	AssignVillagersToGold(sg_temp)
+	
+end

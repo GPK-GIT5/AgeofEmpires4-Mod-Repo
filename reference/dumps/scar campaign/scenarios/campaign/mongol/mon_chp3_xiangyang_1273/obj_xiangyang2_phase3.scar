@@ -1,0 +1,341 @@
+--
+-- Xiangyang 1273 - Primary Objectives Phase 3
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function Xiangyang1273_InitObjectives_Phase3()
+
+	OBJ_SackXiangyang = { Title = "$11179246", Type = ObjectiveType_Primary,
+		
+		-- This is Objective: 12
+		Cheat = function()
+			
+			-- Destroy everything in Fancheng
+			Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_city_exclusion_1)
+			SGroup_Kill(sg_temp)
+			Player_GetAllEntitiesNearMarker(g_playerSong, eg_temp, mkr_city_exclusion_1)
+			EGroup_Kill(eg_temp)
+			-- Build all the bridges
+			EGroup_SetAvgHealth(eg_moat_bridges, 1.0)
+			local _ConvertBridges = function(gid, idx, eid)
+				Entity_ConvertBlueprint(eid, BP_GetEntityBlueprint("bridge_dirt_long"))
+				-- Set them invulnerable because their destruction isn't handled
+				Entity_SetInvulnerable(eid, true, -1)
+			end
+			EGroup_ForEach(eg_moat_bridges, _ConvertBridges)
+			-- Burn the bridge so player's can't cross it prematurely
+			Xiangyang1273_BurnCentralBridge()
+			--Spawn the guards
+			Xiangyang1273_SpawnXiangyangGuards()
+			
+			-- Kick off sheeping
+			AssignVillagersToSheep(sg_villagers_sheep)
+			-- Warp units
+			SGroup_FormationWarpToMarker(sg_mongol_starting_army_1, mkr_cheat_fancheng_1)
+			SGroup_FormationWarpToMarker(sg_mongol_starting_army_2, mkr_cheat_fancheng_3)
+			
+			-- Create a bunch of Huihui Pao
+			UnitEntry_DeploySquads(g_playerMongol, sg_temp, {
+					{ sbp = SBP.MONGOL.UNIT_GREAT_TREBUCHET_CMP_MON, numSquads = 4, spawn = mkr_cheat_fancheng_2, },
+				})
+			-- Move the camera over
+			Camera_MoveTo(mkr_cheat_fancheng_2)
+			
+		end,
+		
+		Intel_Start = EVENTS.Xiangyang_Start,
+		
+		PreStart = function()
+			Util_AutoSave()
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+			sg_keep_attackers = SGroup_CreateIfNotFound("sg_keep_attackers")
+			sg_keep_avengers = SGroup_CreateIfNotFound("sg_keep_avengers")
+			g_keepDefenseCooldown = 0
+			Rule_AddInterval(Xiangyang1273_TrackCooldown, 1)
+			Rule_AddEGroupEvent(Xiangyang1273_WatchForKeepAttack, eg_xiangyang_keep, GE_DamageReceived)
+		end,
+		
+		OnStart = function()
+			Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE, 60)
+			Game_TransitionToState("subtropical_morning_smoky", 60)
+			if EGroup_Count(eg_xiangyang_keep) > 0 then
+				Objective_Start(SOBJ_BombKeep, false)
+			else
+				Objective_Start (SOBJ_RepairBridge, false)
+			end
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_StormPalace)
+		end,
+		
+		PreComplete = function()
+			-- Achievement tracking for Achievement #20 - Boom Boom Pao - Don't lose any HuiHui Pao
+			if huihuiPaoDestroyed == false then
+				Game_SendCustomChallengeEvent(g_playerMongol, CE_ACHIEVHUIHUIPAOSURVIVES, 1)
+			end
+		end,
+		
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		
+		IsFailed = Xiangyang1273_IsFailed,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_BombKeep = { Title = "$11179247", Type = ObjectiveType_Battle, Parent = OBJ_SackXiangyang, StartAlongsideParent = false,
+		
+		Intel_Start = EVENTS.Keep_Start,
+		Intel_Complete = EVENTS.KeepDown,
+		
+		PreStart = function()
+			Objective_AddUIElements(SOBJ_BombKeep, eg_xiangyang_keep, true, "$11179247", true)
+		end,
+		
+		IsComplete = function()
+			return EGroup_Count(eg_xiangyang_keep) <= 0
+		end,
+		
+		OnComplete = function()
+			Objective_Start(SOBJ_RepairBridge)
+		end,
+	}
+	SOBJ_RepairBridge = { Title = "$11179248", Type = ObjectiveType_Build, Parent = OBJ_SackXiangyang,
+		
+		Intel_Start = EVENTS.Xiangyang_Bridge_Start,
+		
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(Xiangyang1273_CheckInCity, 1)
+		end,
+		
+		IsComplete = function()
+			return EGroup_GetAvgHealth(eg_twin_city_bridge) >= 1.0
+		end,
+		
+		OnComplete = function()
+			Objective_Start(SOBJ_StormPalace)
+			if Game_GetSPDifficulty() >= GD_NORMAL then
+				Rule_AddInterval(Xiangyang1273_Retaliation, { delay = 90, interval = 1, })
+			end
+		end,
+	}
+	SOBJ_StormPalace = { Title = "$11179249", Type = ObjectiveType_Battle, Parent = OBJ_SackXiangyang,
+		
+		Intel_Start = EVENTS.Palace_Start,
+		
+		PreStart = function()
+			Modify_OnFireThreshold(eg_xiangyang_palace, MUT_Multiplication, 2.0)
+			Objective_AddUIElements(SOBJ_StormPalace, eg_xiangyang_palace, true, "$11179249", true)
+		end,
+		
+		OnStart = function()
+			Rule_AddInterval(Xiangyang1273_WatchForStorm, 1)
+			Music_LockIntensity(MUSIC_TENSE_COMBAT_RARE, 30)
+		end,
+		
+		IsComplete = function()
+			local burningAtLowHealth = (EGroup_IsBurning(eg_xiangyang_palace, ALL) == true) and (EGroup_GetAvgHealth(eg_xiangyang_palace) < 0.5)
+			if burningAtLowHealth then
+				EGroup_SetInvulnerable(eg_xiangyang_palace, 0.05)
+			end
+			return burningAtLowHealth
+		end,
+		
+		OnComplete = function()
+			
+		end,
+	}
+	OBJ_DebugComplete = { Title = LOC("Debug Complete"), Type = ObjectiveType_Primary, showTitle = false,
+		Cheat = function()
+    	 	local function _Burn (gid, index, iid)
+				Entity_SetHealth(iid, 0.25)
+				Entity_SetOnFire(iid)
+    	 	end
+    		EGroup_ForEach(eg_xiangyang_palace, _Burn)
+			Mission_Complete()
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_SackXiangyang)
+	
+	Objective_Register(SOBJ_BombKeep)
+	Objective_Register(SOBJ_RepairBridge)
+	Objective_Register(SOBJ_StormPalace)
+	
+	Objective_Register(OBJ_DebugComplete)
+	
+end
+
+--? @shortdesc Monitors for the Keep in Xiangyang taking damage
+function Xiangyang1273_WatchForKeepAttack(context, data)
+	
+	if context.attacker ~= nil and World_OwnsEntity(context.attacker) == false and Entity_GetPlayerOwner(context.attacker) == g_playerMongol then
+		-- Add, if it isn't in already
+		local squadAttacker = Entity_GetSquad(context.attacker)
+		if (squadAttacker ~= nil and SGroup_ContainsSquad(sg_keep_attackers, squadAttacker.SquadID, false) == false) then
+			SGroup_Add(sg_keep_attackers, squadAttacker)
+		end
+		
+		--Renewed attack order - assuming there's a bridge to attack!
+		if (g_keepDefenseCooldown <= 0) then
+			g_keepDefenseCooldown = 10
+			local sgroupRushers = SGroup_CreateUnique("rushers")
+			local unitTable = {
+				{ type = "scar_spearman", numSquads = 3, },
+				{ type = "scar_manatarms", numSquads = 3, },
+				{ type = "scar_archer", numSquads = 6, },
+			}
+			UnitEntry_DeploySquads(g_playerSong, sgroupRushers, unitTable, mkr_xiangyang_guard_6)
+			
+			SGroup_AddGroup(sg_keep_avengers, sgroupRushers)
+			MissionOMatic_SGroupCommandDelayed(sgroupRushers, sg_keep_attackers, true, 0.5)
+			
+			if Rule_Exists(Xiangyang1273_KeepAvengers) == false then
+				Rule_AddInterval(Xiangyang1273_KeepAvengers, 1)
+			end
+			
+		end
+	end
+	
+end
+
+--? @shortdesc Sends units across the bridge, once it's complete, to attack whoever destroyed the keep!
+function Xiangyang1273_KeepAvengers(context, data)
+	
+	if SGroup_CountSpawned(sg_keep_avengers) > 0 and EGroup_GetAvgHealth(eg_twin_city_bridge) >= 1.0 then
+		if SGroup_CountSpawned(sg_keep_attackers) > 0 then
+			Cmd_FormationAttackMove(sg_keep_avengers, sg_keep_attackers)
+		else
+			Cmd_FormationAttackMove(sg_keep_avengers, mkr_last_stand_bridge)
+		end
+	end
+	
+	if SGroup_Count(sg_keep_avengers) <= 0 and EGroup_Count(eg_xiangyang_keep) <= 0 then
+		Rule_RemoveMe()
+	end
+	
+end
+
+function Xiangyang1273_TrackCooldown(context, data)
+	
+	if (g_keepDefenseCooldown > 0) then
+		g_keepDefenseCooldown = g_keepDefenseCooldown - 1
+	end
+	
+end
+
+function Xiangyang1273_WatchForStorm(context, data)
+	
+	sg_xiangyang_attackers = SGroup_CreateIfNotFound("sg_xiangyang_attackers")
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_xiangyang_attackers, mkr_city_inclusion_2)
+	
+	-- Play a sound the first time the player breaks into the city
+	if g_firstXiangyangBreachSounded ~= true and SGroup_Count(sg_xiangyang_attackers) > 5 then
+		g_firstXiangyangBreachSounded = true
+		Sound_Play2D(MUS_STING_POSITIVE)
+		Sound_PlayWallaCelebrateOnSGroup(sg_xiangyang_attackers)
+	end
+	
+	
+	g_finalRushWave = g_finalRushWave or 1
+	local waveTrigger = g_finalRushWave * 12
+	
+	-- Only do this every 20 seconds at most
+	g_lastRushTime = g_lastRushTime or 0
+	local currentGameTime = World_GetGameTime()
+	if (currentGameTime - g_lastRushTime) > 15 and SGroup_Count(sg_xiangyang_attackers) > waveTrigger then
+		Xiangyang1273_SpawnFinalRush(sg_xiangyang_attackers, g_finalRushWave)
+		g_finalRushWave = g_finalRushWave + 1
+		g_lastRushTime = currentGameTime
+		if g_finalRushWave > 4 then
+			Rule_RemoveMe()
+		end
+	end
+	
+end
+
+function Xiangyang1273_SpawnFinalRush(targetSGroup, waveIdx)
+	
+	print(string.format("XIANGYANG: Final Rush #%s triggered!", waveIdx))
+	local sgroupLastStand = SGroup_CreateUnique("finalRush")
+	local militiaCount = 30 + (waveIdx * 4)
+	local unitTable = {
+		{ sbp = BP_GetSquadBlueprint("unit_militia_cmp_chi"), numSquads = militiaCount, },
+	}
+	UnitEntry_DeploySquads(g_playerSong, sgroupLastStand, unitTable, Marker_FromName("mkr_final_rush_"..tostring(waveIdx), ""))
+	Cmd_FormationAttackMove(sgroupLastStand, targetSGroup)
+	
+end
+
+--? @shortdesc Ensures some moderate pushback from the enemy if the player assaults Xiangyang and pulls back
+function Xiangyang1273_Retaliation(context, data)
+	
+	g_lastRetaliation = g_lastRetaliation or 0
+	local currentGameTime = World_GetGameTime()
+	local retalationTimer = Util_DifVar({180, 180, 135, 90})
+	-- Make sure we're not doing this too often
+	if (currentGameTime - g_lastRetaliation) > retalationTimer then
+		-- Only launch if there are no Mongol units in the city, and if the bridge is intact
+		Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_city_exclusion_3)
+		Player_GetAll(g_playerSong)
+		if SGroup_Count(sg_temp) <= 0 and SGroup_Count(sg_allsquads) < 170 then
+			SGroup_Clear(sg_temp)
+			-- If the bridge can be crossed, launch an attack
+			if EGroup_GetAvgHealth(eg_twin_city_bridge) >= 1.0 then
+				g_lastRetaliation = currentGameTime
+				
+				local countMilitia = Util_DifVar({18, 24, 0, 0})
+				local countMelee = Util_DifVar({0, 0, 10, 12})
+				local countRanged = Util_DifVar({0, 0, 12, 16})
+				
+				UnitEntry_DeploySquads(g_playerSong, sg_temp,
+					{
+						{ sbp = BP_GetSquadBlueprint("unit_militia_cmp_chi"), numSquads = countMilitia, },
+						{ type = "scar_spearman", numSquads = countMelee, },
+						{ type = "scar_crossbowman", numSquads = countRanged, },
+					}, mkr_xiangyang_guard_5)
+				Cmd_FormationAttackMove(sg_temp, mkr_yuan_camp_2)
+				
+			-- Otherwise, let's try to repair that bridge
+			else
+				-- Find any idle villagers
+				Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_city_exclusion_3)
+				SGroup_Filter(sg_temp, "scar_villager", FILTER_KEEP)
+				if SGroup_Count(sg_temp) <= 0 then
+					UnitEntry_DeploySquads(g_playerSong, sg_temp, { { type = "scar_villager", numSquads = 4, }, }, mkr_xiangyang_guard_5)
+				end
+				if SGroup_IsIdle(sg_temp, ANY) == true then
+					Cmd_Ability(sg_temp, BP_GetAbilityBlueprint("villager_repair"), eg_twin_city_bridge)
+				end
+			end
+		end
+	end
+	
+end
+
+function Xiangyang1273_CheckInCity()
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_in_xiangyang, Marker_GetProximityRadiusOrDefault(mkr_in_xiangyang, 0))
+	
+	if SGroup_Count(sg_temp) > 6 then
+		Util_StartIntel(EVENTS.In_Xiangyang)
+		Rule_RemoveMe()
+	end
+end

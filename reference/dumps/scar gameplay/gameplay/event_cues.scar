@@ -1,0 +1,601 @@
+-----------------------------------------------------------------------
+--
+-- Event Cues
+--
+-- Custom/situational event cues.
+--
+-- (c) Relic Entertainment 2017
+--
+-----------------------------------------------------------------------
+
+
+-----------------------------------------------------------------------
+-- Data
+-----------------------------------------------------------------------
+
+
+_events = {
+
+	enabled = false,
+	
+	popCapCustomEventType = 200,
+	
+	notify = {
+		none = 0,
+		self = 1,
+		ally = 2,
+		enemy = 4,
+		all = 7,
+	},
+	
+	age = {
+		feudal = BP_GetUpgradeBlueprint("feudal_age"),
+		castle = BP_GetUpgradeBlueprint("castle_age"),
+		imperial = BP_GetUpgradeBlueprint("imperial_age"),
+		
+		textSelf = 11161395,		-- "A new age begins"
+		textAge2 = 11161396,		-- "%1PLAYER_NAME% reached Feudal Age"
+		textAge3 = 11161397,		-- "%1PLAYER_NAME% reached Castle Age"
+		textAge4 = 11161398,		-- "%1PLAYER_NAME% reached Imperial Age"
+		
+		cue = {
+			lifetime = 10.0,		-- should match the defaults set in AE under tuning.ui.event_cues
+			repeatTime = 0.0,		-- should match the defaults set in AE under tuning.ui.event_cues
+			title = Loc_Empty(),
+			desc = Loc_Empty(),
+			sfx = "sfx_ui_event_queue_high_priority_play",
+			icon = "",
+			color = {r = 255, g = 255, b = 255, a = 255},
+			template = "high_priority",
+			style = ECV_Queue | ECV_Title,
+			canQueue = ECQ_Yes,
+		},
+	},
+	
+	popcap = {
+		cue = {
+			lifetime = 10.0,		-- should match the defaults set in AE under tuning.ui.event_cues
+			repeatTime = 20.0,		-- should match the defaults set in AE under tuning.ui.event_cues
+			title = 11172068, -- Population capacity reached
+			desc = Loc_Empty(),
+			sfx = "sfx_ui_popCap_reached_play",
+			icon = "",
+			color = {r = 255, g = 255, b = 255, a = 255},
+			template = "high_priority",
+			style = ECV_Queue | ECV_Title,
+		},
+	},
+	
+	auto_resolve = {
+		cue = {
+			lifetime = 4.5,
+			repeatTime = 0.0,
+			title = Loc_Empty(),
+			desc = Loc_Empty(),
+			sfx = "sfx_ui_event_queue_high_priority_play",
+			icon = "icons/dev/dev_placeholder_conquest",
+			color = {r = 255, g = 255, b = 255, a = 255},
+			template = "high_priority",
+			style = ECV_Title,
+		},
+	},
+	
+	call_to_action = {
+		cue = {
+			lifetime = 65000.0,
+			repeatTime = 0.0,
+			title = Loc_Empty(),
+			desc = Loc_Empty(),
+			sfx = "sfx_ui_event_queue_high_priority_play",
+			icon = "icons/event_queue_high_priority_large",
+			color = {r = 255, g = 255, b = 255, a = 255},
+			template = "cta_alarm",
+			style = ECV_Queue,
+		},
+	},
+	
+	goldenAge_abb = {				
+		textSelf	= 11183559,		-- "A Golden Age is upon us."
+		textOthers 	= 11183560,		-- "%1PLAYER_NAME% has declared a Golden Age!"
+		
+		cue = {
+			lifetime = 10.0,		-- should match the defaults set in AE under tuning.ui.event_cues
+			repeatTime = 0.0,		-- should match the defaults set in AE under tuning.ui.event_cues
+			title = Loc_Empty(),
+			desc = Loc_Empty(),
+			sfx = "sfx_ui_event_queue_high_priority_play",
+			icon = "",
+			color = {r = 255, g = 215, b = 0, a = 255},
+			template = "high_priority",
+			style = ECV_Queue | ECV_Title,
+		},
+	},
+	
+}
+
+--- Call to Action types
+
+CTA_ALARM = "cta_alarm"
+CTA_CELEBRATE = "cta_celebration"
+CTA_UNIQUE_STAKES = "cta_raised_stakes"
+CTA_UNIQUE_CHANGE = "cta_focus_change"
+
+----------------------------------------------------------------------
+-- Scripting framework 
+-----------------------------------------------------------------------
+
+Core_RegisterModule("EventCues")
+
+
+-----------------------------------------------------------------------
+-- Callbacks
+-----------------------------------------------------------------------
+
+
+-- Called by _StartMission() in core.scar
+function EventCues_Start()
+
+	for _, player in pairs(PLAYERS) do
+		if Player_HasUpgrade(player.id, _events.age.imperial) then
+			player.age = AGE_IMPERIAL
+		elseif Player_HasUpgrade(player.id, _events.age.castle) then
+			player.age = AGE_CASTLE
+		elseif Player_HasUpgrade(player.id, _events.age.feudal) then
+			player.age = AGE_FEUDAL
+		else
+			player.age = AGE_DARK
+		end
+	end
+
+	-- Slight delay to avoid flooding event queue at match start.
+	Rule_AddOneShot(EventCues_Register, 1.0)
+	
+end
+
+
+-- Called by Core_OnGameOver() in core.scar
+function EventCues_OnGameOver()
+	
+	EventCues_Enable(false)
+	
+	Rule_RemoveGlobalEvent(EventCues_OnUpgradeComplete)
+	Rule_RemoveGlobalEvent(EventCues_OnItemComplete)
+	
+end
+
+
+-- Callback invoked by Core_SetPlayerDefeated() when a player is eliminated.
+function EventCues_OnPlayerDefeated(player, reason)	
+	if player.isLocal then 
+		EventCues_Enable(false)
+	end
+end
+
+
+
+-- Global event callback
+function EventCues_OnUpgradeComplete(context)
+
+	if _events.enabled then	
+		if scartype(context.executer) == ST_ENTITY then
+			
+			if World_OwnsEntity(context.executer) == false then 
+				
+				local player = Core_GetPlayersTableEntry(Entity_GetPlayerOwner(context.executer))
+				-- if player is abbasid or Habbasid, and wing upgrade is detected.
+				if ((player.raceName == "abbasid" or player.raceName == "abbasid_ha_01") and BP_IsUpgradeOfType(context.upgrade, "abbasid_wing_upgrade")) 
+					-- or if player is ayyubid and wing upgrade is detected.
+					or (player.raceName == "ayyubid_cmp" and BP_IsUpgradeOfType(context.upgrade, "ayyubid_cmp_upgrade"))
+					-- or if player is templar and age up upgrade is detected.
+					or (player.raceName == "templar" and BP_IsUpgradeOfType(context.upgrade, "age_up_upgrade"))
+					-- or if player is golden horde and age up upgrade is detected.
+					or (player.raceName == "mongol_ha_gol" and BP_IsUpgradeOfType(context.upgrade, "age_up_upgrade")) then
+					if player.age == AGE_CASTLE then
+						EventCues_NotifyAgeUp(player, Loc_GetString(_events.age.textSelf), Loc_FormatText(_events.age.textAge4, player.playerName))
+						player.age = AGE_IMPERIAL
+					elseif player.age == AGE_FEUDAL then
+						EventCues_NotifyAgeUp(player, Loc_GetString(_events.age.textSelf), Loc_FormatText(_events.age.textAge3, player.playerName))
+						player.age = AGE_CASTLE
+					elseif player.age == AGE_DARK then
+						EventCues_NotifyAgeUp(player, Loc_GetString(_events.age.textSelf), Loc_FormatText(_events.age.textAge2, player.playerName))
+						player.age = AGE_FEUDAL
+					end
+				else
+					if context.upgrade == _events.age.imperial and player.age < AGE_IMPERIAL then
+						EventCues_NotifyAgeUp(player, Loc_GetString(_events.age.textSelf), Loc_FormatText(_events.age.textAge4, player.playerName))
+						player.age = AGE_IMPERIAL
+					elseif context.upgrade == _events.age.castle and player.age < AGE_CASTLE then
+						EventCues_NotifyAgeUp(player, Loc_GetString(_events.age.textSelf), Loc_FormatText(_events.age.textAge3, player.playerName))
+						player.age = AGE_CASTLE
+					elseif context.upgrade == _events.age.feudal and player.age < AGE_FEUDAL then
+						EventCues_NotifyAgeUp(player, Loc_GetString(_events.age.textSelf), Loc_FormatText(_events.age.textAge2, player.playerName))
+						player.age = AGE_FEUDAL
+					end
+				end
+			end
+			
+		end
+	end
+	
+end
+
+-- Global event callback
+function EventCues_OnAbilityExecuted(context)
+	
+	if _events.enabled then
+		if scartype(context.executer) == ST_ENTITY and World_OwnsEntity(context.executer) == false then
+			
+			local player = Core_GetPlayersTableEntry(Entity_GetPlayerOwner(context.executer))
+			
+			-- Abbasid Golden Age
+			if context.ability == _events.goldenAge_abb.ability then
+				
+				EventCues_NotifyAgeUp(player, Loc_GetString(_events.goldenAge_abb.textSelf), Loc_FormatText(_events.goldenAge_abb.textOthers, player.playerName))
+				
+			end
+			
+		end
+	end
+end
+
+
+-- Global event callback
+function EventCues_OnItemComplete(context)
+
+	local player = Core_GetPlayersTableEntry(context.player)
+	local isMongolSheep = context.pbg == BP_GetSquadBlueprint("herdable_sheep_mon")
+	if _events.enabled and player.isLocal and not player.isEliminated and not isMongolSheep then
+		
+		if Player_GetCurrentPopulation(Game_GetLocalPlayer(), CT_Personnel) == Player_GetCurrentPopulationCap(Game_GetLocalPlayer(), CT_Personnel) then
+			local cue = _events.popcap.cue
+				if UI_IsXboxUI() then
+					UI_CreateEventCueClickableCanQueue(_events.popCapCustomEventType, cue.lifetime, 1, cue.repeatTime, cue.title, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, __DoNothing)
+				else
+					UI_CreateEventCueClickable(_events.popCapCustomEventType, cue.lifetime, 1, cue.repeatTime, cue.title, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, __DoNothing)
+				end
+		end			
+	end
+end
+
+
+-----------------------------------------------------------------------
+-- Private/internal functions
+-----------------------------------------------------------------------
+
+function EventCues_Register()		
+	Rule_AddGlobalEvent(EventCues_OnUpgradeComplete, GE_UpgradeComplete)
+	Rule_AddGlobalEvent(EventCues_OnItemComplete, GE_BuildItemComplete)
+	
+	EventCues_Enable(true) 
+end
+
+
+-- Enables/disables event cue messages (only those triggered via this script obviously).
+function EventCues_Enable(enable)
+	_events.enabled = enable
+end
+
+
+function EventCues_NotifyAgeUp (player, selfTitle, otherTitle)
+	local localPlayer = Core_GetPlayersTableEntry(Game_GetLocalPlayer())
+	if not localPlayer.isEliminated then 
+		local cue = _events.age.cue
+		if player == localPlayer then
+			cue.title = selfTitle
+		else
+			cue.title = otherTitle
+		end
+		UI_CreateEventCueClickableCanQueue(-1, cue.lifetime, 0, cue.repeatTime, cue.title, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, __DoNothing)
+	end
+end
+
+
+
+function _ReturnLocVersion (item)
+	
+	local itemType = scartype (item)
+	
+	if itemType == ST_LOCSTRING then
+		return item
+	elseif itemType == ST_STRING then
+		return LOC(item)
+	elseif itemType == ST_NUMBER then
+		return item
+	end
+end
+
+-- Iterates through the EVENTS table, so we know if a function is an Intel Event or not
+function _IsIntelEvent (func)
+	-- return false if this isn't a function
+	if scartype (func) ~= ST_FUNCTION then
+		return false
+	end
+	-- return false if there's no EVENTS table
+	if EVENTS == nil then
+		return false
+	end
+	-- iterate through EVENTS and see if the function matches anything
+	for k,v in pairs (EVENTS) do
+		if v == func then
+			return true
+		end
+	end
+	-- if nothing matches, return false
+	return false
+	
+end
+
+--? @shortdesc Creates a center screen high priority player cue
+--? @args STRING text, STRING description
+function EventCues_HighPriority (text, description)
+	UI_CreateEventCueClickable(-1, 10, 0, 0, text, description, "high_priority", "icons/event_queue_high_priority_large", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Title, __DoNothing)
+end
+
+
+--CTA_ALARM = "cta_alarm"
+--CTA_CELEBRATE = "cta_celebration"
+--CTA_UNIQUE_STAKES = "cta_raised_stakes"
+--CTA_UNIQUE_CHANGE = "cta_focus_change"
+
+--? @shortdesc Creates a Call to Action UI event. cta_type can be CTA_ALARM, CTA_CELEBRATE, CTA_UNIQUE_STAKES, or CTA_UNIQUE_CHANGE. onTriggerIntel plays when the Call appears and must be an Intel Event; onClickFunction plays when the Call is clicked and can be a standard function or an Intel Event. Pass in a postition, marker, or group to move the camera when user clicks on CTA 
+--? @args STRING text, STRING cta_type[, LuaFunction onTriggerIntel, LuaFunction onClickFunction, POS/MARKER/GROUP pos, REAL duration, STRING customImage, STRING customStinger]
+function EventCues_CallToAction(text, cta_type, onTriggerIntel, onClickFunction, pos, duration, customImage, customStinger)
+	
+	local on_look_clear_delay = 5 -- delay before the CTA starts auto-clearing if you move the camera to the interest point
+	
+	duration = duration or 45 -- default to 45 seconds
+	
+	-- check if there's already an active CtA and if so clear it
+	if _events.call_to_action.id ~= nil then
+		UI_ClearEventCueFromID(_events.call_to_action.id)
+		_events.call_to_action.id = nil
+	end
+	
+	if _events.call_to_action.blip ~=nil then
+		UI_DeleteMinimapBlip(_events.call_to_action.blip)
+		_events.call_to_action.blip = nil
+	end
+	
+	-- clear the variables we might set so any data from a previous CtA is gone
+	_events.call_to_action.intelEvent = nil
+	_events.call_to_action.func = nil
+	_events.call_to_action.pos = nil
+	
+	-- add any passed in function to the data table
+	if onClickFunction ~= nil then
+		if scartype (onClickFunction) == ST_FUNCTION then
+			if _IsIntelEvent (onClickFunction) then
+				_events.call_to_action.intelEvent = onClickFunction
+			else
+				_events.call_to_action.func = onClickFunction
+			end
+		end
+	end
+	
+	-- make sure we got a proper type
+	if cta_type == CTA_ALARM or CTA_CELEBRATE or CTA_UNIQUE_CHANGE or CTA_UNIQUE_STAKES then
+		--print ("EventCues_CallToAction received cta_type:"..cta_type)
+	else
+		--print ("EventCues_CallToAction received an incorrect cta_type:")
+		--print (cta_type)
+		cta_type = CTA_UNIQUE_CHANGE
+	end
+	
+	-- if we got a position, record it and create a blip
+	if pos ~= nil then
+		_events.call_to_action.pos = pos
+		_events.call_to_action.blip = UI_CreateMinimapBlip(pos, -1, cta_type)
+	end	
+
+	-- set up table of audio stingers
+	local audioStingers = {}
+	audioStingers[CTA_ALARM] = "sfx_ui_shared_call_to_action_alert"
+	audioStingers[CTA_CELEBRATE] = "sfx_ui_shared_call_to_action_celebrate"
+	audioStingers[CTA_UNIQUE_STAKES] = "sfx_ui_shared_call_to_action_raised_stakes"
+	audioStingers[CTA_UNIQUE_CHANGE] = "sfx_ui_shared_call_to_action_focus_change"
+
+	-- create the CtA proper
+	local cue = _events.call_to_action.cue	
+	cue.title = text
+	cue.template = cta_type
+	cue.sfx = customStinger or audioStingers[cta_type] or "sfx_ui_event_queue_high_priority_play"
+
+	-- set images to use	
+	if customImage ~= nil then 
+		cue.icon = customImage
+	elseif cta_type == CTA_ALARM then
+		cue.icon = "icons/cta/illustrations/alarm"
+	elseif cta_type == CTA_CELEBRATE then
+		cue.icon = "icons/cta/illustrations/02_celebration"
+	elseif cta_type == CTA_UNIQUE_CHANGE then
+		cue.icon = "icons/cta/illustrations/03_focus_longbowmen"
+	elseif cta_type == CTA_UNIQUE_STAKES then
+		cue.icon = "icons/cta/illustrations/07_raised_stakes_two_knights"
+	end
+	
+	_events.call_to_action.id = UI_CreateEventCueClickableByType(UIE_CallToAction, cue.lifetime, cue.title, cue.desc, cue.template, cue.icon, cue.sfx, cue.color.r, cue.color.g, cue.color.b, cue.color.a, cue.style, CallToAction_OnEventCueClicked)
+	
+		
+	__speech_delay = 2.75 -- this needs to be either global or else in the wrapper function or wrapper won't run when saveloaded
+	if onTriggerIntel ~= nil then
+		
+		local wrapper = function()
+			CTRL.Event_Delay(__speech_delay)
+			CTRL.WAIT()
+		end
+		
+		Util_StartIntel (wrapper)
+		
+		-- onTriggerIntel cannot be called from the wrapper because it would be an upvalue which won't load properly, 
+		-- so saveload will break the flow if you do that. 
+		-- Instead, use Util_StartIntel to start it as a new event which will be queued to run after wrapper.
+		Util_StartIntel(onTriggerIntel)
+	end
+	
+	
+	if duration ~= nil then
+		Rule_AddOneShot(CallToAction_FadeOut, duration, {id = _events.call_to_action.id, blip = _events.call_to_action.blip})
+	end
+	
+	if pos ~= nil then
+		Rule_AddInterval(CallToAction_ClearOnLook, {delay = on_look_clear_delay, interval = 1}, {pos = _events.call_to_action.pos, id = _events.call_to_action.id, blip = _events.call_to_action.blip})
+	end
+
+end
+
+
+--? @shortdesc Clear any Call To Action that is currently displayed 
+function EventCues_ClearCallToAction()
+	
+	--kill the rule checking for you to look at the position
+	if Rule_Exists (CallToAction_ClearOnLook) then
+		Rule_Remove (CallToAction_ClearOnLook)
+	end
+	-- kill the rule that times out the CTA
+	if Rule_Exists (CallToAction_FadeOut) then
+		Rule_Remove (CallToAction_FadeOut)
+	end
+	
+	-- clear the CtA
+	if _events.call_to_action.id ~= nil then
+		UI_ClearEventCueFromID(_events.call_to_action.id)
+		_events.call_to_action.id = nil
+	end
+	
+	--if we created a blip, clear it
+	if _events.call_to_action.blip ~= nil then
+		--print ("Blip:")
+		--print (_events.call_to_action.blip)
+		UI_DeleteMinimapBlip(_events.call_to_action.blip)
+		_events.call_to_action.blip = nil
+	end
+	
+end
+
+
+function CallToAction_OnEventCueClicked(id)
+	--print("CallToAction_OnEventCueClicked:")
+	--print(id)
+	
+	--kill the rule checking for you to look at the position
+	if Rule_Exists (CallToAction_ClearOnLook) then
+		Rule_Remove (CallToAction_ClearOnLook)
+	end
+	-- kill the rule that times out the CTA
+	if Rule_Exists (CallToAction_FadeOut) then
+		Rule_Remove (CallToAction_FadeOut)
+	end
+	
+	-- if we have a position, move the camera
+	if _events.call_to_action.pos ~= nil then
+		local pos = _events.call_to_action.pos
+		
+		if scartype(pos) == ST_SGROUP then
+			if SGroup_CountSpawned(pos) > 0 then
+				Camera_MoveTo(pos)
+			end
+		elseif scartype(pos) == ST_EGROUP then
+			if EGroup_CountSpawned(pos) > 0 then
+				Camera_MoveTo(pos)
+			end
+		else
+			Camera_MoveTo(pos)
+		end
+	end
+	
+	-- if we have a function, execute it
+	if _events.call_to_action.func ~= nil then
+		_events.call_to_action.func()
+	end
+	
+	-- if we have an Intel event, play it
+	if _events.call_to_action.intelEvent ~= nil then
+		Util_StartIntel (_events.call_to_action.intelEvent)
+	end
+	
+	-- start to fadeout
+	UI_FadeOutEventCueFromID(id)
+	
+	Rule_AddOneShot(CallToAction_Clear, 4.0, {id = _events.call_to_action.id, blip = _events.call_to_action.blip})
+	
+	-- clear the CtA
+	_events.call_to_action.id = nil
+	
+	--if we created a blip, clear it
+	if _events.call_to_action.blip ~= nil then
+		--print ("Blip:")
+		--print (_events.call_to_action.blip)
+		_events.call_to_action.blip = nil
+	end
+end
+
+function CallToAction_FadeOut(context, data)
+	--kill the rule checking for you to look at the position
+	if Rule_Exists (CallToAction_ClearOnLook) then
+		Rule_Remove (CallToAction_ClearOnLook)
+	end
+
+	UI_FadeOutEventCueFromID(data.id)
+	Rule_AddOneShot(CallToAction_Clear, 4.0, data)
+end
+
+function CallToAction_Clear(context, data)
+	
+	if data.id ~= nil then
+		UI_ClearEventCueFromID(data.id)
+	end
+	
+	if data.blip ~= nil then
+		UI_DeleteMinimapBlip(data.blip)
+	end
+	
+end
+
+function CallToAction_ClearOnLook (context, data)
+	
+	-- if we somehow didn't get a position, kill the Rule and exit
+	if data.pos == nil then
+		Rule_RemoveMe()
+		return
+	end
+	
+	local lookat = nil
+	local pos_type = scartype (data.pos)
+	
+	-- depending on what the type of the pos is, we convert it into a postion
+	-- also if we got an empty group as pos, we also kill the Rule and exit
+	if pos_type == ST_SGROUP then
+		if SGroup_CountSpawned(data.pos) < 1 then
+			Rule_RemoveMe()
+			return
+		else
+			lookat = SGroup_GetPosition(data.pos)
+		end
+	elseif pos_type == ST_EGROUP then
+		if EGroup_CountSpawned(data.pos) < 1 then
+			Rule_RemoveMe()
+			return
+		else
+			lookat = EGroup_GetPosition(data.pos)
+		end
+	elseif pos_type == ST_MARKER then
+		lookat = Marker_GetPosition(data.pos)
+	elseif pos_type == ST_SCARPOS then
+		lookat = data.pos
+	else
+		print ("CallToAction_ClearOnLook received an unexpected type.")
+	end
+	
+	
+	-- now check if the position is in the main part of the screen and if so kill the rule, kill any duration rule, and clear the CTA
+	if Misc_IsPosOnScreen(lookat, 0.80) then
+		
+		Rule_RemoveMe()
+		if Rule_Exists(CallToAction_FadeOut) then
+			Rule_Remove(CallToAction_FadeOut)
+		end
+		Rule_AddOneShot(CallToAction_FadeOut, nil, {id = _events.call_to_action.id, blip = _events.call_to_action.blip})
+		
+	end
+	
+end

@@ -1,0 +1,730 @@
+--
+-- Xiangyang 1273 - Primary Objectives Phase 2
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_xiangyang2_phase3.scar")
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function Xiangyang1273_InitObjectives_Phase2()
+
+	OBJ_BreachCity = { Title = "$11179241", Type = ObjectiveType_Primary,
+		
+		Intel_Complete = EVENTS.Fancheng_Complete,
+		
+		-- This is OBJECTIVE 5
+		Cheat = function()
+			print("FALL OF XIANGYANG: Cheating into Phase 2")
+			
+			-- Move Ismail over there
+			Cmd_Stop(g_leaderIsmail.sgroup)
+			SGroup_FormationWarpToMarker(g_leaderIsmail.sgroup, mkr_cheat_ismail)
+			
+			-- Move some soldiers over
+			local introToMove = SGroup_Split(sg_intro_troops, 2)
+			SGroup_FormationWarpToMarker(introToMove[1], mkr_cheat_soldiers_1)
+			SGroup_FormationWarpToMarker(introToMove[2], mkr_cheat_soldiers_2)
+			
+			-- Create a bunch of Huihui Pao
+			UnitEntry_DeploySquads(g_playerMongol, sg_temp, {
+					{ sbp = SBP.MONGOL.UNIT_GREAT_TREBUCHET_CMP_MON, numSquads = 1, spawn = mkr_cheat_trebs_1, },
+					{ sbp = SBP.MONGOL.UNIT_GREAT_TREBUCHET_CMP_MON, numSquads = 1, spawn = mkr_cheat_trebs_2, },
+					{ sbp = SBP.MONGOL.UNIT_GREAT_TREBUCHET_CMP_MON, numSquads = 1, spawn = mkr_cheat_trebs_3, },
+					{ sbp = SBP.MONGOL.UNIT_GREAT_TREBUCHET_CMP_MON, numSquads = 1, spawn = mkr_cheat_trebs_4, },
+					{ sbp = SBP.MONGOL.UNIT_GREAT_TREBUCHET_CMP_MON, numSquads = 1, spawn = mkr_cheat_trebs_5, },
+					{ sbp = SBP.MONGOL.UNIT_GREAT_TREBUCHET_CMP_MON, numSquads = 1, spawn = mkr_cheat_trebs_6, },
+				})
+			
+			-- Move the camera over, so it's clear where the action should be
+			Camera_MoveTo(mkr_cheat_ismail)
+			
+		end,
+		
+		PreStart = function()
+			Rule_AddInterval(Xiangyang1273_ShiftFanchengGarrison, 1)
+			Rule_AddInterval(Xiangyang1273_WatchForBarbicanBypass, 1)
+			Rule_AddGlobalEvent(Xiangyang1273_WatchForHuihuipaoAttack, GE_DamageReceived)
+			Rule_AddEventFilter_EntityPlayerOwner(Xiangyang1273_WatchForHuihuipaoAttack, FC_Attacker, FO_AND, { g_playerMongol }, { })
+			Rule_AddEventFilter_EntityPlayerOwner(Xiangyang1273_WatchForHuihuipaoAttack, FC_Victim, FO_AND, { g_playerSong }, { })
+			Rule_AddEventFilter_EntityBlueprint(Xiangyang1273_WatchForHuihuipaoAttack, FC_Victim, FO_AND, { EBP.CHINESE.BUILDING_DEFENSE_WALL_CHI, EBP.CHINESE.BUILDING_DEFENSE_WALL_GATE_CHI, EBP.CHINESE.BUILDING_DEFENSE_WALL_BASTION_CHI, EBP.CHINESE.BUILDING_DEFENSE_TOWER_CHI }, { })
+		end,
+		
+		OnStart = function()
+			--OBJ_BreachCity.showTitle = false
+			if UI_IsXboxControllerUI() then
+				Xiangyang1273_SetupInfantryRepairHint_Xbox()
+			else
+				Xiangyang1273_SetupInfantryRepairHint()
+			end
+			
+			if UI_IsXboxControllerUI() then
+				Rule_AddOneShot(Xiangyang1273_DelayLiuZhengHint_Xbox, 30)
+			else
+				Rule_AddOneShot(Xiangyang1273_DelayLiuZhengHint, 30)
+			end
+		end,
+		
+		PreComplete = function()
+			
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_DefeatGarrison) and Objective_IsComplete(SOBJ_RazeLandmark)
+		end,
+		
+		OnComplete = function()
+			Rule_Remove(Xiangyang1273_WatchForHuihuipaoAttack)
+			Xiangyang1273_SpawnXiangyangGuards()
+			Objective_Start(OBJ_SackXiangyang)
+			Game_TransitionToState("subtropical_morning_hazy", 60)
+		end,
+		
+		IsFailed = Xiangyang1273_IsFailed,
+		
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	SOBJ_OptUseFalcon = { Title = "$11182261", Type = ObjectiveType_Optional, Parent = OBJ_BreachCity, StartAlongsideParent = true,
+
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			Objective_AddUIElements(SOBJ_OptUseFalcon, mkr_trigger_falcon_1, true, "$11182261", false)
+			Objective_AddUIElements(SOBJ_OptUseFalcon, mkr_trigger_falcon_2, true, "$11182261", false)
+		end,
+		
+		IsComplete = function()
+			
+		end,
+		
+		OnComplete = function()
+			Objective_Show(SOBJ_OptUseFalcon, false, false)
+		end,
+	}
+	SOBJ_CrossMoat = { Title = "$11179242", Type = ObjectiveType_Build, Parent = OBJ_BreachCity, StartAlongsideParent = true,
+
+		Intel_Complete = EVENTS.BridgeComplete,
+		
+		PreStart = function()
+			Obj_SetProgress(SOBJ_CrossMoat.ID, g_highestMoatHealth)
+			Obj_SetProgressVisible(SOBJ_CrossMoat.ID, true)
+		end,
+		
+		OnStart = function()
+			Misc_SetEGroupSelectable(eg_moat_bridges, true)
+			Rule_AddOneShot(Xiangyang1273_BridgeReminder, 150)
+		end,
+		
+		IsComplete = function()
+			-- This function just checks bridge health and updates the highest value
+			local _UpdateHighestBridgeHealth = function(gid, idx, eid)
+				if Entity_IsValid(Entity_GetID(eid)) then
+					if Entity_GetHealthPercentage(eid) > g_highestMoatHealth then
+						g_highestMoatHealth = Entity_GetHealthPercentage(eid)
+					end
+				end
+			end
+			-- Check all bridges and update progress accordingly
+			EGroup_ForEach(eg_moat_bridges, _UpdateHighestBridgeHealth)
+			Obj_SetProgress(SOBJ_CrossMoat.ID, g_highestMoatHealth)
+			if  g_highestMoatHealth >= 1.0 then
+				Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			end
+			return g_highestMoatHealth >= 1.0
+		end,
+		
+		OnComplete = function()
+			-- Remove old hintpoints
+			Objective_Complete(SOBJ_MoatHintpoints)
+			-- Start the next objectives
+			Objective_Start(SOBJ_EnterCity)
+		end,
+	}
+	SOBJ_MoatHintpoints = { Title = "DON'T SHOW THIS", Type = ObjectiveType_Build, Parent = OBJ_BreachCity, StartAlongsideParent = true,
+
+		IsSecret = true,
+		showTitle = false,
+		
+		PreStart = function()
+			
+		end,
+		
+		OnStart = function()
+			SOBJ_MoatHintpoints.hintPoints = {}
+			local _BlipBridges = function(gid, idx, eid)
+				table.insert(SOBJ_MoatHintpoints.hintPoints, Objective_AddUIElements(SOBJ_MoatHintpoints, eid, true, "$11179242", true, 6))
+			end
+			EGroup_ForEach(eg_moat_bridges, _BlipBridges)
+		end,
+		
+		IsComplete = function()
+			
+		end,
+		
+		OnComplete = function()
+			-- Remove old hintpoints
+			Objective_RemoveUIElements(SOBJ_MoatHintpoints, SOBJ_MoatHintpoints.hintPoints)
+		end,
+	}
+	SOBJ_EnterCity = { Title = "$11180002", Type = ObjectiveType_Primary, Parent = OBJ_BreachCity, StartAlongsideParent = false,
+
+		Intel_Complete = EVENTS.InFancheng,
+		
+		PreStart = function()
+			Music_LockIntensity(MUSIC_TENSE_RARE, 30)
+			
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			local sgroup_walla = SGroup_CreateUnique("c")
+			
+			SGroup_Clear(sg_temp)
+			Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_city_inclusion_1a, Marker_GetProximityRadiusOrDefault(mkr_city_inclusion_1a, 45))
+			SGroup_AddGroup(sgroup_walla, sg_temp)
+			
+			SGroup_Clear(sg_temp)
+			Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_city_inclusion_1b, Marker_GetProximityRadiusOrDefault(mkr_city_inclusion_1b, 45))
+			SGroup_AddGroup(sgroup_walla, sg_temp)
+			
+			SGroup_Clear(sg_temp)
+			Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_city_inclusion_1c, Marker_GetProximityRadiusOrDefault(mkr_city_inclusion_1c, 45))
+			SGroup_AddGroup(sgroup_walla, sg_temp)
+			
+			SGroup_Clear(sg_temp)
+			Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_city_inclusion_1d, Marker_GetProximityRadiusOrDefault(mkr_city_inclusion_1d, 45))
+			SGroup_AddGroup(sgroup_walla, sg_temp)
+			
+			SGroup_Clear(sg_temp)
+			Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_city_inclusion_1e, Marker_GetProximityRadiusOrDefault(mkr_city_inclusion_1e, 45))
+			SGroup_AddGroup(sgroup_walla, sg_temp)
+			
+			-- We want to save the first breach position so the enemy can move away from it
+			if SGroup_CountSpawned(sgroup_walla) > 6 then
+				g_firstBreachPos = Util_GetPosition(sgroup_walla)
+				Sound_Play2D("mus_stinger_campaign_positive")
+				Sound_PlayWallaCelebrateOnSGroup(sgroup_walla)
+				return true
+			end
+			return false
+		end,
+		
+		OnComplete = function()
+			-- Once the player is in the city, the defenders forget about the world outside the walls and focus on trying to push the player out
+			Rule_Remove(Xiangyang1273_ShiftFanchengGarrison)
+			-- Collapse those archers into a defend module
+			Xiangyang1273_CollapseDefense()
+			-- Burn the bridge so players can't cross it prematurely
+			Xiangyang1273_BurnCentralBridge()
+			-- Start the next objectives
+			Objective_UpdateText(OBJ_BreachCity, "$11199139", nil, true)
+			-- Hide the clutter
+			Objective_Show(SOBJ_CrossMoat, false, false)
+			Objective_Show(SOBJ_EnterCity, false, false)
+			-- New subobjectives
+			Objective_Start(SOBJ_DefeatGarrison, false)
+			Objective_Start(SOBJ_RazeLandmark, false)
+		end,
+	}
+	SOBJ_DefeatGarrison = { Title = "$11179244", Type = ObjectiveType_Battle, Parent = OBJ_BreachCity,
+		
+		maxCount = 0,
+		
+		PreStart = function()
+			-- Setup the progress bar
+			SOBJ_DefeatGarrison.maxCount = SGroup_Count(sg_fancheng_last_stand)
+			Objective_SetProgressBar(SOBJ_DefeatGarrison, 0.0)
+		end,
+		
+		OnStart = function()
+			
+		end,
+		
+		IsComplete = function()
+			local killed = SOBJ_DefeatGarrison.maxCount - SGroup_Count(sg_fancheng_last_stand)
+			Objective_SetProgressBar(SOBJ_DefeatGarrison, killed / SOBJ_DefeatGarrison.maxCount)
+			local allKilled = SGroup_Count(sg_fancheng_last_stand) <= 0
+			return allKilled
+		end,
+		
+		OnComplete = function()
+			-- Remove those mods
+			Xiangyang1273_RemoveHealthMods()
+		end,
+	}
+	SOBJ_RazeLandmark = { Title = "$11179245", Type = ObjectiveType_Battle, Parent = OBJ_BreachCity,
+		
+		PreStart = function()
+			Objective_AddUIElements(SOBJ_RazeLandmark, eg_fancheng_barbican, true, "$11179245", true)
+		end,
+		
+		IsComplete = function()
+			local isDestroyed = false
+			if EGroup_Count(eg_fancheng_barbican) > 0 then
+				local landmarkFancheng = EGroup_GetEntityAt(eg_fancheng_barbican, 1)
+				isDestroyed = Entity_IsValid(landmarkFancheng.EntityID) and (Entity_GetStateModelBool(landmarkFancheng, "landmark_active") == false)
+			else
+				isDestroyed = true
+			end
+			return isDestroyed
+		end,
+		
+		OnComplete = function()
+			Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+			-- Also remove those mods
+			Xiangyang1273_RemoveHealthMods()
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_BreachCity)
+	
+	Objective_Register(SOBJ_OptUseFalcon)
+	Objective_Register(SOBJ_CrossMoat)
+	Objective_Register(SOBJ_MoatHintpoints)
+	Objective_Register(SOBJ_EnterCity)
+	Objective_Register(SOBJ_DefeatGarrison)
+	Objective_Register(SOBJ_RazeLandmark)
+	
+end
+
+
+function Xiangyang1273_SetupInfantryRepairHint_Xbox()
+	
+	MissionOMatic_HintOnHover_Xbox(Xiangyang1273_TriggerInfantryRepairHint_Xbox,
+		"Use infantry to construct dirt bridges across the moat.",
+		"$11184820",
+		"mon_chp3_xiangyang_1273_dirtbridges")
+end
+
+function Xiangyang1273_SetupInfantryRepairHint()
+	
+	MissionOMatic_HintOnHover(Xiangyang1273_TriggerInfantryRepairHint,
+		"Use infantry to construct dirt bridges across the moat.",
+		"$11184820",
+		"mon_chp3_xiangyang_1273_dirtbridges")
+end
+
+--? @shortdesc Ensures Fancheng's defenders stay as close as they can get to Ismail
+function Xiangyang1273_ShiftFanchengGarrison(context)
+	
+	g_minAttentionThreshold = g_minAttentionThreshold or 0.0
+	
+	-- Update the Siege aggro thing
+	if g_siegeAttackAggro.timeLeft > 0 then
+		g_siegeAttackAggro.timeLeft = g_siegeAttackAggro.timeLeft - 1
+	else
+		g_siegeAttackAggro.lastPos = nil
+	end
+	
+	local bridgeHealth1 = EGroup_GetAvgHealth(eg_bridge_1)
+	local bridgeHealth2 = EGroup_GetAvgHealth(eg_bridge_2)
+	local bridgeHealth3 = EGroup_GetAvgHealth(eg_bridge_3)
+	
+	if bridgeHealth1 > 0.33 or bridgeHealth2 > 0.33 or bridgeHealth3 > 0.33 then
+		g_minAttentionThreshold = 0.33
+	elseif bridgeHealth1 > 0.66 or bridgeHealth2 > 0.66 or bridgeHealth3 > 0.66 then
+		g_minAttentionThreshold = 0.66
+	end
+	
+	-- If there have been no health changes AND no aggro changes, we shouldn't do anything
+	if (bridgeHealth1 <= g_lastBridgeHealth[1]) and (bridgeHealth2 <= g_lastBridgeHealth[2]) and (bridgeHealth3 <= g_lastBridgeHealth[3]) and g_siegeAttackAggro.lastPos == g_siegeAttackAggro.lastChecked then
+		--print(string.format("XIANGYANG: NO garrison shift: %s/%s, %s/%s, %s/%s", bridgeHealth1, g_lastBridgeHealth[1], bridgeHealth2, g_lastBridgeHealth[2], bridgeHealth3, g_lastBridgeHealth[3]))
+		return
+	else
+		g_siegeAttackAggro.lastChecked = g_siegeAttackAggro.lastPos
+		--print(string.format("XIANGYANG: YES garrison shift: %s/%s, %s/%s, %s/%s", bridgeHealth1, g_lastBridgeHealth[1], bridgeHealth2, g_lastBridgeHealth[2], bridgeHealth3, g_lastBridgeHealth[3]))
+	end
+	
+	g_lastBridgeHealth[1] = bridgeHealth1
+	g_lastBridgeHealth[2] = bridgeHealth2
+	g_lastBridgeHealth[3] = bridgeHealth3
+	
+	local numSplits = 0
+	
+	local activeMarkers = {}
+	
+	local toBridge1 = g_lastBridgeHealth[1] > g_minAttentionThreshold
+	local toBridge2 = g_lastBridgeHealth[2] > g_minAttentionThreshold
+	local toBridge3 = g_lastBridgeHealth[3] > g_minAttentionThreshold
+	
+	-- However, we might want to override this if the player is actively attacking the walls
+	if g_siegeAttackAggro.lastPos ~= nil then
+		local closestBridge = World_GetClosest(g_siegeAttackAggro.lastPos, {eg_bridge_1, eg_bridge_2, eg_bridge_3})
+		if closestBridge == eg_bridge_1 then
+			toBridge1 = true
+			toBridge2 = false
+			toBridge3 = false
+			print("XIANGYANG: Override to defend at Bridge 1")
+		elseif closestBridge == eg_bridge_2 then
+			toBridge1 = false
+			toBridge2 = true
+			toBridge3 = false
+			print("XIANGYANG: Override to defend at Bridge 2")
+		elseif closestBridge == eg_bridge_3 then
+			toBridge1 = false
+			toBridge2 = false
+			toBridge3 = true
+			print("XIANGYANG: Override to defend at Bridge 3")
+		else
+			assert(false, string.format("ClosestBridge is somehow %s (%s)", closestBridge, scartype_tostring(closestBridge)))
+		end
+	end
+	
+	if toBridge1 == true then
+		numSplits = numSplits + 2
+		table.insert(activeMarkers, Marker_FromName("mkr_city_countersiege_1", ""))
+		table.insert(activeMarkers, Marker_FromName("mkr_city_countersiege_2", ""))
+	end
+	
+	if toBridge2 == true then
+		numSplits = numSplits + 2
+		table.insert(activeMarkers, Marker_FromName("mkr_city_countersiege_3", ""))
+		table.insert(activeMarkers, Marker_FromName("mkr_city_countersiege_4", ""))
+	end
+	
+	if toBridge3 == true then
+		numSplits = numSplits + 2
+		table.insert(activeMarkers, Marker_FromName("mkr_city_countersiege_5", ""))
+		table.insert(activeMarkers, Marker_FromName("mkr_city_countersiege_6", ""))
+	end
+	
+	if g_lastBridgeAssignment[1] == toBridge1 and g_lastBridgeAssignment[2] == toBridge2 and g_lastBridgeAssignment[3] == toBridge3 then
+		--print(string.format("XIANGYANG: Not updating, config is same: %s, %s, %s", toBridge1, toBridge2, toBridge3))
+		return
+	else
+		print(string.format("XIANGYANG: Updating to new config: %s, %s, %s", toBridge1, toBridge2, toBridge3))
+	end
+	
+	g_lastBridgeAssignment[1] = toBridge1
+	g_lastBridgeAssignment[2] = toBridge2
+	g_lastBridgeAssignment[3] = toBridge3
+	
+	--print(string.format("XIANGYANG: Shifting Garrisons to: %s, %s, %s", toBridge1, toBridge2, toBridge3))
+	-- Only advance if we've got active bridges
+	if numSplits > 0 then
+		
+		SGroup_Clear(sg_temp)
+		-- Split up the countersiege appropriately
+		for index = 1, g_countersiegeCount, 1 do
+			local moduleName = "SongSiegeDefence"..tostring(index)
+			local module = MissionOMatic_FindModule(moduleName)
+			if module ~= nil then
+				SGroup_AddGroup(sg_temp, module.sgroup)
+			end
+		end
+
+		-- Split the SGroup to tackle the two active points
+		local splitSGroups = SGroup_Split(sg_temp, numSplits)
+		
+		-- Give all the necessary orders
+		for idx = 1, numSplits, 1 do
+			if scartype(splitSGroups[idx]) == ST_SGROUP then
+				Cmd_FormationAttackMove(splitSGroups[idx], activeMarkers[idx])
+			end
+		end
+	end
+	
+end
+
+--? @shortdesc Collapses Xiangyang's archer defense into an internal garrison
+function Xiangyang1273_CollapseDefense()
+	
+	-- Remove their modifiers
+	Modifier_Remove(g_archerMods)
+	
+	-- Disband all the archer modules
+	sg_fancheng_last_stand = SGroup_CreateUnique("sg_fancheng_last_stand")
+	for index = 1, g_countersiegeCount, 1 do
+		local moduleName = "SongSiegeDefence"..tostring(index)
+		local module = MissionOMatic_FindModule(moduleName)
+		if module ~= nil and SGroup_Count(module.sgroup) > 0 then
+			-- These modules are UnitSpawners, so no need to do anything complicated
+			SGroup_AddGroup(sg_fancheng_last_stand, module.sgroup)
+		end
+	end
+	Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_base_fancheng)
+	SGroup_AddGroup(sg_fancheng_last_stand, sg_temp)
+	Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_city_exclusion_2)
+	SGroup_AddGroup(sg_fancheng_last_stand, sg_temp)
+	
+	-- Make sure the actual unit count is being accounted for
+	g_sizeDefenderChunk = SGroup_Count(sg_fancheng_last_stand) / (#g_innerDefense - 1)
+	g_remainingDefenseGroups = SGroup_SplitUnderCap(sg_fancheng_last_stand, g_sizeDefenderChunk)
+	-- What are they moving away from? First breach?
+	if g_firstBreachPos == nil then
+		g_firstBreachPos = SGroup_GetPosition(g_leaderIsmail.sgroup)
+	end
+	-- We need to track this to determine when to rearrange
+	g_countInnerRanged = SGroup_Count(sg_fancheng_last_stand)
+	
+	-- Remove the first closest point to the breach point
+	local toDelete = World_GetClosest(g_firstBreachPos, g_innerDefense)
+	if toDelete ~= nil then
+		print("XIANGYANG: At first, deleted "..Marker_GetName(toDelete))
+		Table_RemoveFirstItem(g_innerDefense, toDelete)
+	end
+	
+	-- Assign them to be close to the breach point
+	local innerDefenseCopy = Table_Copy(g_innerDefense)
+	for index, sgroup in pairs(g_remainingDefenseGroups) do
+		-- Where are they moving? We want to move
+		local moveTo = World_GetClosest(g_firstBreachPos, innerDefenseCopy)
+		Cmd_FormationMove(sgroup, moveTo)
+		if #innerDefenseCopy > 1 then
+			Table_RemoveFirstItem(innerDefenseCopy, moveTo)
+		end
+	end
+	
+	-- Start a rule that will cause defeated units to fall back to other points
+	Rule_AddInterval(Xiangyang1273_MonitorInnerDefense, 1)
+	
+end
+
+--? @shortdesc Forces inner defenders to adjust position when they lose forces
+function Xiangyang1273_MonitorInnerDefense(context, data)
+	
+	if SGroup_Count(sg_fancheng_last_stand) <= 0 then
+		print("XIANGYANG: Inner defenders gone!")
+		Rule_RemoveMe()
+	elseif (g_countInnerRanged - SGroup_Count(sg_fancheng_last_stand)) >= g_sizeDefenderChunk then
+		print(string.format("FALL OF XIANGYANG: Adjusting defenders, previous inner defenders %s but now only %s, vs %s", g_countInnerRanged, SGroup_Count(sg_fancheng_last_stand), g_sizeDefenderChunk))
+		g_countInnerRanged = SGroup_Count(sg_fancheng_last_stand)
+		Xiangyang1273_ArrangeInnerDefense()
+	else
+		print(string.format("FALL OF XIANGYANG: No adjustement (%s, %s, %s)", g_countInnerRanged, SGroup_Count(sg_fancheng_last_stand), g_sizeDefenderChunk))
+	end
+	
+end
+
+--? @shortdesc Rearranges inner defenses
+function Xiangyang1273_ArrangeInnerDefense()
+	
+	print(string.format("XIANGYANG: Rearranging defenders! %s left!", SGroup_Count(sg_fancheng_last_stand)))
+	-- We're going to delete defense positions sequentially, in order of closeness to that point
+	if #g_innerDefense > 1 then
+		local toDelete = World_GetClosest(g_firstBreachPos, g_innerDefense)
+		if toDelete ~= nil then
+			print("XIANGYANG: Deleted "..Marker_GetName(toDelete))
+			Table_RemoveFirstItem(g_innerDefense, toDelete)
+			
+			-- If this happened, we need to redistribute the units according to the new count
+			-- This may result in units running around madly, so watch out
+			g_sizeDefenderChunk = SGroup_Count(sg_fancheng_last_stand) / (#g_innerDefense)
+		end
+		
+		-- Remove empty groups
+		for index, sgroup in pairs(g_remainingDefenseGroups) do
+			if SGroup_Count(sgroup) <= 0 then
+				table.remove(g_remainingDefenseGroups, index)
+			end
+		end
+		
+		-- Are they all gone? If so, early out
+		if #g_remainingDefenseGroups <= 0 then
+			return
+		end
+		
+		-- We'll want to reassign units to larger groups further from the action
+		local _ReassignDefenders = function(gid, idx, sid)
+			local closestSGroup = World_GetClosest(sid, g_remainingDefenseGroups)
+			if scartype(closestSGroup) ~= ST_SGROUP then
+				return
+			end
+			SGroup_Add(closestSGroup, sid)
+			SGroup_Single(sg_temp, sid)
+			Cmd_Move(sg_temp, closestSGroup)
+			Rule_AddInterval(Xiangyang1273_AddToSGroupOnArrival, 1,
+				{ 
+					position = Util_GetPosition(closestSGroup), 
+					squad = sid,
+					sgroup = closestSGroup,
+				})
+		end
+		
+		-- Find the smallest of remaining group
+		table.sort(g_remainingDefenseGroups, function(a,b) return SGroup_Count(a) < SGroup_Count(b) end)
+		local toReassign = {}
+		-- Make sure there aren't half-full groups standing around
+		for index, sgroup in pairs(g_remainingDefenseGroups) do
+			-- Split up its units among the others, effectively "falling back"
+			-- Always withdraw the smallest group
+			-- Also withdraw any larger groups that are also too small
+			if index == 1 or (SGroup_Count(sgroup) / g_sizeDefenderChunk) < 0.85 then
+				table.insert(toReassign, sgroup)
+				table.remove(g_remainingDefenseGroups, index)
+			end
+		end
+		
+		-- Do this in two stages, so that units aren't added from one group needing reassignment to another that's also being reassigned
+		for index, sgroup in pairs(toReassign) do
+			SGroup_ForEach(sgroup, _ReassignDefenders)
+		end
+	end
+end
+
+function Xiangyang1273_AddToSGroupOnArrival(context, data)
+	
+	if data.squad == nil or Squad_IsValid(data.squad.SquadID) == false then
+		Rule_RemoveMe()
+		
+	elseif Util_GetDistance(data.squad, data.position) <= 5 then
+		SGroup_Add(data.sgroup, data.squad)
+		Rule_RemoveMe()
+		
+	elseif Squad_IsIdle(data.squad) then
+		SGroup_Single(sg_temp, data.squad)
+		Cmd_Move(sg_temp, data.position)
+		
+	end
+	
+end
+
+--? @shortdesc Triggers VO when the HuihuiPao attacks a wall
+function Xiangyang1273_WatchForHuihuipaoAttack(context, data)
+	
+	local attacker = context.attacker
+	local victim = context.victim
+	if attacker ~= nil and victim ~= nil and World_OwnsEntity(attacker) == false and World_OwnsEntity(victim) == false then
+		if Entity_GetPlayerOwner(attacker) == g_playerMongol and Entity_GetPlayerOwner(victim) == g_playerSong then
+			-- Is the victim a wall or associated thing?
+			local onWall = Entity_GetBlueprint(victim) == EBP.CHINESE.BUILDING_DEFENSE_WALL_CHI or Entity_GetBlueprint(victim) == EBP.CHINESE.BUILDING_DEFENSE_WALL_GATE_CHI or Entity_GetBlueprint(victim) == EBP.CHINESE.BUILDING_DEFENSE_WALL_BASTION_CHI or Entity_GetBlueprint(victim) == EBP.CHINESE.BUILDING_DEFENSE_TOWER_CHI
+			-- Add, if it isn't in already
+			local squadAttacker = Entity_GetSquad(attacker)
+			if onWall == true and squadAttacker ~= nil and Squad_GetBlueprint(squadAttacker) == SBP.MONGOL.UNIT_GREAT_TREBUCHET_CMP_MON then
+				Util_StartIntel(EVENTS.Song_Distracted)
+				Rule_RemoveMe()
+			end
+		end
+	end
+	
+end
+
+--? @shortdesc Xiangyang starts without guards; this spawns them
+function Xiangyang1273_SpawnXiangyangGuards()
+	
+	-- Guards 1
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(g_playerSong, sg_temp, {
+					{ type = "scar_spearman", numSquads = Util_DifVar({4, 4, 5, 6}), },
+					{ type = "scar_manatarms", numSquads = Util_DifVar({0, 0, 3, 6}), },
+					{ type = "scar_archer", numSquads = Util_DifVar({4, 4, 6, 8}), },
+					{ type = "scar_repeater_crossbow", numSquads = Util_DifVar({0, 0, 2, 4}), },
+					{ type = "scar_grenadier", numSquads = Util_DifVar({0, 0, 0, 2}), },
+			}, mkr_xiangyang_guard_1)
+	Defend_AddSGroup(MissionOMatic_FindModule("XiangyangGuards1"), sg_temp)
+	
+	-- Guards 2
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(g_playerSong, sg_temp, {
+					{ type = "scar_spearman", numSquads = Util_DifVar({4, 4, 5, 6}), },
+					{ type = "scar_manatarms", numSquads = Util_DifVar({0, 0, 3, 6}), },
+					{ type = "scar_archer", numSquads = Util_DifVar({4, 4, 6, 8}), },
+					{ type = "scar_repeater_crossbow", numSquads = Util_DifVar({0, 0, 2, 4}), },
+					{ type = "scar_grenadier", numSquads = Util_DifVar({0, 0, 0, 2}), },
+			}, mkr_xiangyang_guard_2)
+	Defend_AddSGroup(MissionOMatic_FindModule("XiangyangGuards2"), sg_temp)
+	
+	-- Guards 3
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(g_playerSong, sg_temp, {
+					{ type = "scar_spearman", numSquads = Util_DifVar({32, 32, 24, 20}), },
+					{ type = "scar_manatarms", numSquads = Util_DifVar({8, 8, 16, 20}), },
+			}, mkr_xiangyang_guard_3)
+	Defend_AddSGroup(MissionOMatic_FindModule("XiangyangGuards3"), sg_temp)
+	
+	-- Guards 4
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(g_playerSong, sg_temp, {
+					{ type = "scar_manatarms", numSquads = Util_DifVar({12, 12, 14, 16}), },
+					{ type = "scar_springald", numSquads = Util_DifVar({1, 1, 2, 3}), },
+			}, mkr_xiangyang_guard_4)
+	Defend_AddSGroup(MissionOMatic_FindModule("XiangyangGuards4"), sg_temp)
+	
+	-- Guards 5
+	SGroup_Clear(sg_temp)
+	UnitEntry_DeploySquads(g_playerSong, sg_temp, {
+					{ type = "scar_knight", numSquads = Util_DifVar({36, 36, 24, 18}), },
+					{ type = "scar_firelancer", numSquads = Util_DifVar({0, 0, 12, 18}), },
+			}, mkr_xiangyang_guard_5)
+	Defend_AddSGroup(MissionOMatic_FindModule("XiangyangGuards5"), sg_temp)
+	
+end
+
+--? @shortdesc Sets up the bridge to be destroyed before the player can cross it
+function Xiangyang1273_BurnCentralBridge()
+	if g_bridgeBurnt ~= true then
+		EGroup_SetAvgHealth(eg_twin_city_bridge, 0.3)
+		EGroup_SetOnFire(eg_twin_city_bridge)
+		g_bridgeBurnt = true
+		print("FALL OF XIANGYANG: Destroying Central Bridge")
+		-- Start a function to handle the case where the player starts rebuilding the bridge before finishing the objective they're supposed to
+		g_bridgeBurnTime = World_GetGameTime()
+		Rule_AddInterval(Xiangyang1273_HandlePrematureBridgeConstruction, {delay = 20, interval = 0.5})
+	end
+end
+
+function Xiangyang1273_BridgeReminder()
+	if not Objective_IsComplete(SOBJ_CrossMoat) then
+		if Obj_GetProgress(SOBJ_CrossMoat.ID) < 0.33 then
+			
+			if g_wallDestructionStung ~= true then
+				-- if we haven't yet busted the Fancheng wall, we just show the bridge objective banner
+				Objective_Show(SOBJ_CrossMoat, true, true)
+				Sound_Play2D("sfx_ui_event_queue_campaign_objective_start")
+			else
+				-- if we have busted the wall, we play VO (event also plays the banner)
+				Util_StartIntel(EVENTS.BridgeContext)
+			end
+		end
+	end
+end
+
+function Xiangyang1273_DelayLiuZhengHint_Xbox(context, data)
+	MissionOMatic_HintOnHover_Xbox(Xiangyang1273_TriggerLiuZhengHint_Xbox,
+		"Liu Zheng's construction skill can help infantry bridge the moat faster.",
+		"$11199005",
+		"mon_chp3_xiangyang_1273_liuzheng_ability")
+end
+
+function Xiangyang1273_DelayLiuZhengHint(context, data)
+	MissionOMatic_HintOnHover(Xiangyang1273_TriggerLiuZhengHint,
+		"Liu Zheng's construction skill can help infantry bridge the moat faster.",
+		"$11199005",
+		"mon_chp3_xiangyang_1273_liuzheng_ability")
+end
+
+function Xiangyang1273_WatchForBarbicanBypass(context, data)
+	
+	SGroup_Clear(sg_temp)
+	Player_GetAllSquadsNearMarker(g_playerMongol, sg_temp, mkr_city_inclusion_2, Marker_GetProximityRadiusOrDefault(mkr_city_inclusion_2, 90))
+	-- If the keep is still up and the player doesn't have units in the city, don't bother forcing the objective to complete yet
+	if EGroup_Count(eg_xiangyang_keep) > 0 and SGroup_CountSpawned(sg_temp) <= 0 then
+		return
+	end
+	
+	-- If the player is doing those things, force that objective to end, to prevent soft-lock
+	if Objective_IsComplete(SOBJ_RazeLandmark) == false then
+		Objective_Complete(SOBJ_RazeLandmark, false, false)
+		Rule_RemoveMe()
+	end
+	
+	if Objective_IsComplete(SOBJ_DefeatGarrison) == false then
+		Objective_Complete(SOBJ_DefeatGarrison, false, false)
+		Rule_RemoveMe()
+	end
+	
+end

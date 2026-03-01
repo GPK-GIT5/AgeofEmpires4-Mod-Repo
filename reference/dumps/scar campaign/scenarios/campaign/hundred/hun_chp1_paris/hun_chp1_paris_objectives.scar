@@ -1,0 +1,81 @@
+--
+-- Defend Paris
+--
+function Paris_InitObjectives()
+	OBJ_Defend = {
+		Title = "$11180081",  --Defend Paris
+		Type = ObjectiveType_Battle,
+		OnStart = function()
+			--Sound_SetMinimumMusicCombatIntensity(801, 0)
+			--Music_LockIntensity(MUSIC_TENSE_RARE, 30)
+		end,
+		Intel_Start = EVENTS.ManTheWalls,
+		IsFailed = function()
+			return EGroup_CountSpawned(eg_landmarks) == 0
+		end,
+		OnFail = function()
+			Mission_Fail()
+		end,
+	}
+	OBJ_Defeat = {	
+		Title = "$11180083", --Defeat the English attack waves
+		Type = ObjectiveType_Battle,	
+		Parent = OBJ_Defend,
+		OnStart = function()
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+		end,
+		SetupUI = function()
+			Obj_SetProgressVisible(OBJ_Defeat.ID, true)
+			Paris_CalculateUnitsKilled()
+		end,
+		OnComplete = function()
+			Mission_Complete()
+		end,
+	}
+	OBJ_Prepare = {
+		Title = "$11180080", --Prepare for the English siege
+		Type = ObjectiveType_Information,	
+		PreComplete = function()
+			Util_AutoSave()
+		end,
+		Intel_Complete = EVENTS.DefendParis,
+		OnComplete = function()
+			Objective_Start(OBJ_Defeat, true, true)
+		end,
+	}
+	OBJ_Retreat = {
+		Title = "$11205300", 
+		Type = ObjectiveType_Optional,
+		SetupUI = function()
+			Objective_SetCounter(OBJ_Retreat, 0, retreat_count_max)
+			Rule_AddSGroupEvent(Wallingford_RetreatDeath, sg_retreat, GE_SquadKilled)
+		end,
+		IsComplete = function()
+			SGroup_Clear(sg_temp)
+			SGroup_FilterByProximity(sg_retreat, Marker_GetPosition(mkr_retreat), FILTER_REMOVE, 86, sg_temp)
+			retreat_count = retreat_count + SGroup_CountSpawned(sg_temp)
+			SGroup_RemoveGroup(sg_retreat, sg_temp)
+			Objective_SetCounter(OBJ_Retreat, retreat_count, retreat_count_max)
+			if retreat_count == retreat_count_max then
+				Rule_RemoveSGroupEvent(Wallingford_RetreatDeath, sg_retreat_original)
+				Game_SendCustomChallengeEvent(player1, CE_PARISVILLAGERRETREAT, 1)
+				return true
+			else
+				return false
+			end
+		end,
+	}
+	
+	Objective_Register(OBJ_Defend)
+	Objective_Register(OBJ_Defeat)
+	Objective_Register(OBJ_Prepare)
+	Objective_Register(OBJ_Retreat)
+end 
+
+function Wallingford_RetreatDeath()
+	Objective_Fail(OBJ_Retreat, true, true)
+	Rule_RemoveSGroupEvent(Wallingford_RetreatDeath, sg_retreat_original)
+end
+
+
+

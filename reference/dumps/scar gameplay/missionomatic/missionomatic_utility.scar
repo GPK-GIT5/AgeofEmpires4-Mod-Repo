@@ -1,0 +1,2368 @@
+
+--
+-- Common functions  - these were the necessary remnants of the MetaMap_Common.scar file
+--
+import("training.scar")
+import("training/coretrainingconditions.scar")
+import("scarutil.scar")
+import("gathering_utility.scar")
+
+FORMATION_LINE = { group_spot_generator = "land_line_spot_generator", ability = BP_GetAbilityBlueprint("core_formation_line"), name = "line" }
+FORMATION_BOX = { group_spot_generator = "land_box_fill_spot_generator", ability = nil, name = "box" }
+FORMATION_WEDGE = { group_spot_generator = "land_wedge_spot_generator", ability = BP_GetAbilityBlueprint("core_formation_wedge"), name = "wedge" }
+FORMATION_SPREAD = { group_spot_generator = "land_spread_spot_generator", ability = BP_GetAbilityBlueprint("core_formation_spread"), name = "spread" }
+
+function MissionOMatic_InitCommonData()
+	
+	t_allUnitTypes = {
+		{unitType = "scar_villager", 			displayName = "Villager",				value = 5},
+		{unitType = "scar_shield_villager",	 	displayName = "Rebel Villager",			value = 5},		
+		{unitType = "scar_militia",	 			displayName = "Militia",				value = 5},		
+		{unitType = "scar_armed_villager",	 	displayName = "Armed Villager",			value = 5},
+		{unitType = "scar_scout", 				displayName = "Scout",					value = 10},
+		{unitType = "scar_spearman", 			displayName = "Spearman",				value = 10},
+		{unitType = "scar_manatarms",		 	displayName = "Man-at-Arms",			value = 10},
+		{unitType = "scar_knight", 				displayName = "Knight",					value = 10},
+		{unitType = "scar_horseman", 			displayName = "Horseman",				value = 10},
+		{unitType = "scar_horsearcher", 		displayName = "Horse Archer",			value = 10},
+		{unitType = "scar_monk", 				displayName = "Monk",					value = 10},
+		{unitType = "scar_crossbowman", 		displayName = "Crossbowman",			value = 10},
+		{unitType = "scar_archer", 				displayName = "Archer",					value = 10},
+		{unitType = "scar_ram", 				displayName = "Ram",					value = 10},
+		{unitType = "scar_siege_tower", 		displayName = "Siege Tower",			value = 10},
+		{unitType = "scar_trebuchet_cw", 		displayName = "Trebuchet (CW)",			value = 10},
+		{unitType = "scar_trebuchet_traction",	displayName = "Trebuchet (Traction)",	value = 10},
+		{unitType = "scar_mangonel",			displayName = "Mangonel",				value = 10},
+		{unitType = "scar_springald",			displayName = "Springald",				value = 10},
+		{unitType = "scar_ribauldequin",		displayName = "Ribauldequin",			value = 10},
+		{unitType = "scar_culverin",			displayName = "Culverin",				value = 10},
+		{unitType = "scar_war_elephant",		displayName = "War Elephant",			value = 10},
+		{unitType = "scar_handcannon",			displayName = "Hand Cannon",			value = 10},
+		{unitType = "scar_bombard",				displayName = "Bombard",				value = 10},
+		{unitType = "scar_trade_cart",			displayName = "Trade Cart",				value = 10},
+		{unitType = "scar_repeater_crossbow",	displayName = "Repeater Crossbowman",	value = 10},
+		{unitType = "scar_combat_ship",			displayName = "Attack Ship",			value = 10},
+		{unitType = "scar_warship",				displayName = "Warship",				value = 10},
+		{unitType = "scar_trade_ship",			displayName = "Trade Ship",				value = 10},
+		{unitType = "scar_fishing_ship",		displayName = "Fishing Boat",			value = 10},
+		{unitType = "scar_war_galley",			displayName = "Battle Galley",			value = 10},
+		{unitType = "scar_fire_ship",			displayName = "Demolition Ship",		value = 10},
+		{unitType = "scar_transport_ship",		displayName = "Transport Ship",			value = 10},
+		{unitType = "scar_scout_ship",			displayName = "Scout Ship",				value = 10},
+		{unitType = "scar_mehter",				displayName = "Mehter",					value = 10},
+		{unitType = "scar_camel_archer",		displayName = "Camel Archer",			value = 10},
+		{unitType = "scar_camel_rider",			displayName = "Camel Rider",			value = 10},
+		{unitType = "scar_pirate",			    displayName = "Pirate",			        value = 10},
+		{unitType = "scar_pirate_archer",       displayName = "Pirate Archer",			value = 10},
+		{unitType = "scar_bandit_common",	    displayName = "Bandit",			        value = 10},
+		{unitType = "scar_bandit_axeman",	    displayName = "Bandit Axeman",			value = 10},
+		{unitType = "scar_bandit_swordsman",	displayName = "Bandit Swordsman",       value = 10},
+		{unitType = "scar_bandit_horseman",	    displayName = "Bandit Horseman",		value = 10},
+	}
+	
+	-- trigger precaching of all of the blueprints in this table
+	for index, unit in pairs(t_allUnitTypes) do 
+		Cardinal_ConvertTypeToSquadBlueprint(unit.unitType, Game_GetLocalPlayer())
+	end
+	
+	-- constants
+	LOCATION_LABEL_HEIGHT = 10
+	
+	t_pendingDissolveModules = {}
+	
+end
+Scar_AddInit(MissionOMatic_InitCommonData)
+
+function AddPendingDissolve(targetModule, sourceSGroup, updateIdealComposition, pause)
+	local pendingDissolve = {
+			targetModule = targetModule,
+			sourceSGroup = sourceSGroup,
+			updateIdealComposition = updateIdealComposition,
+			pause = pause,
+		}
+	table.insert(t_pendingDissolveModules, pendingDissolve)	
+end
+	
+function RemovePendingDissolve(targetModule, sourceSGroup)
+
+	for i, v in pairs(t_pendingDissolveModules) do
+		if v ~= nil and v.targetModule == targetModule and v.sourceSGroup == sourceSGroup then
+			t_pendingDissolveModules[i] = nil
+			break
+		end
+	end		
+end
+
+function PlayECAM(eventName)
+
+	local actions = {
+		action = "ExpositionCamera",
+		eventName = eventName,
+	}
+	
+	ActionList_PlayActions(actions)
+
+end
+
+function PlaySpeech(eventName)
+
+	local actions = {
+		action = "PlaySpeechEvent",
+		eventName = eventName,
+	}
+	
+	ActionList_PlayActions(actions)
+
+end
+
+
+
+
+--
+--
+-- Unit Tables
+--
+--
+
+
+--? @shortdesc Takes an SGroup and returns a UnitTable that reflects the SGroup's makeup 
+--? @args SGroupID sgroup
+--? @result UnitTable
+function UnitTable_GenerateFromSGroup(sgroup)
+
+	local unitTable = {}
+	
+	local _AddSquad = function(gid, idx, sid)
+		
+		local unitType = MissionOMatic_GetTypeForBlueprint(Squad_GetBlueprint(sid))
+		if unitType ~= nil then 
+			UnitTable_AddUnitsByType(unitTable, unitType, 1)
+		end
+		 
+	end
+	SGroup_ForEach(sgroup, _AddSquad)
+	
+	return unitTable
+
+end
+
+function UnitTable_GetSlowestUnitSpeed(unitTable, player)
+	local slowest_speed = 9999
+	for i, unitRow in ipairs(unitTable) do
+		if numSquads > 0 then
+			local sbp
+			if unitRow.sbp then
+				sbp = unitRow.sbp	
+			else
+				sbp = Cardinal_ConvertTypeToSquadBlueprint(unitRow.type, player)
+			end	
+			local ebp = EBP_GetFromSBP(sbp)
+			local speed = BP_GetEntityBPDefaultSpeed(ebp, true, player)
+			if speed < slowest_speed then
+				slowest_speed = speed
+			end
+		end
+	end
+	assert(slowest_speed < 9999, "unitTable has no units")
+	return slowest_speed
+end
+
+
+--? @shortdesc Returns the count of the units in a UnitTable 
+--? @args Table unitTable
+--? @result Integer 
+function UnitTable_CountUnits(unitTable)
+	if unitTable.sbp or unitTable.type then
+		return unitTable.numSquads or 1
+	end
+	
+	local count = 0 
+	for index, unitRow in pairs(unitTable) do 		
+		count = count + (unitRow.numSquads or 1)
+	end
+	return count 
+end
+
+--? @shortdesc Checks if 2 unit rows have the same unitType or sbp
+--? @args Table unitRowA, table unitRowB
+function UnitTable_RowsHaveSameType(unitRowA, unitRowB)
+	if unitRowA.type and unitRowA.type == unitRowB.type then
+		return true	
+	end
+	if unitRowA.sbp and unitRowA.sbp == unitRowB.sbp then
+		return true	
+	end
+	return false
+end
+
+--? @shortdesc Add units of a specific type to a UnitTable
+--? @args Table unitTable, String type[, Int amount]
+function UnitTable_AddUnitsByType(unitTable, unitType, number, tag)
+	number = number or 1
+	
+	for index, unitRow in pairs(unitTable) do 
+		if unitRow.type == unitType then
+			unitRow.numSquads = unitRow.numSquads + number
+			return		-- we adjusted the number for an existing entry, so we are done
+		end
+	end
+	table.insert(unitTable, { type = unitType, numSquads = number, tag = tag })
+end
+
+--? @shortdesc Add units of a specific sbp to a UnitTable
+--? @args Table unitTable, SBP sbp[, Int amount]
+function UnitTable_AddUnitsBySBP(unitTable, sbp, number, tag)
+	number = number or 1
+
+	for index, unitRow in pairs(unitTable) do 
+		if unitRow.sbp == sbp then
+			unitRow.numSquads = unitRow.numSquads + number
+			return		-- we adjusted the number for an existing entry, so we are done
+		end
+	end
+	table.insert(unitTable, { sbp = sbp, numSquads = number, tag = tag })
+end
+
+--? @shortdesc Removes units of a specific type from a UnitTable
+--? @args Table unitTable, String type[, Int amount]
+function UnitTable_RemoveUnitsByType(unitTable, unitType, number)
+	number = number or 1
+	
+	for index, unitRow in pairs(unitTable) do 
+		if unitRow.type == unitType then
+			unitRow.numSquads = unitRow.numSquads - number
+			if unitRow.numSquads <= 0 then 
+				table.remove(unitTable, index)
+			end
+			return		-- we adjusted the number for an existing entry, so we are done
+		end
+	end
+end
+
+
+--? @shortdesc Removes units of a specific type from a UnitTable
+--? @args Table unitTable, SBP sbp[, Int amount]
+function UnitTable_RemoveUnitsBySBP(unitTable, sbp, number)
+	number = number or 1
+	
+	for index, unitRow in pairs(unitTable) do 
+		if unitRow.sbp == sbp then
+			unitRow.numSquads = unitRow.numSquads - number
+			if unitRow.numSquads <= 0 then 
+				table.remove(unitTable, index)
+			end
+			return		-- we adjusted the number for an existing entry, so we are done
+		end
+	end
+end
+
+--? @shortdesc Add all of the units in a UnitTable to another UnitTable
+--? @args Table unitTable, Table unitsToAdd
+function UnitTable_AddUnits(unitTable, unitsToAdd)
+	for index, unitRow in pairs(unitsToAdd) do 
+		if unitRow.type then
+			UnitTable_AddUnitsByType(unitTable, unitRow.type, unitRow.numSquads, unitRow.tag)
+		elseif unitRow.sbp then
+			UnitTable_AddUnitsBySBP(unitTable, unitRow.sbp, unitRow.numSquads, unitRow.tag)
+		end
+	end
+	
+end
+
+--? @shortdesc Remove all of the units in a UnitTable from another UnitTable
+--? @args Table unitTable, Table unitsToRemove
+function UnitTable_RemoveUnits(unitTable, unitsToRemove)
+	for index, unitRow in pairs(unitsToRemove) do 
+		if unitRow.type then
+			UnitTable_RemoveUnitsByType(unitTable, unitRow.type, unitRow.numSquads)
+		elseif unitRow.sbp then
+			UnitTable_RemoveUnitsBySBP(unitTable, unitRow.sbp, unitRow.numSquads)
+		end
+	end
+end
+
+function UnitTable_GetSingleUnit(unitTable)
+	for i, unitRow in ipairs(unitTable) do
+		if unitRow.numSquads > 0 then
+			return {{ type = unitRow.type, sbp = unitRow.sbp, numSquads = 1 }}
+		end
+	end
+	return nil
+end
+
+function UnitTable_PopSingleUnit(unitTable)
+	local returnedUnitTable = nil
+	for i, unitRow in ipairs(unitTable) do
+		if unitRow.numSquads > 0 then
+			returnedUnitTable = {{ type = unitRow.type, sbp = unitRow.sbp, numSquads = 1 }}
+			unitRow.numSquads = unitRow.numSquads - 1
+		end
+		if unitRow.numSquads == 0 then
+			table.remove(unitTable, i)
+		end
+		if returnedUnitTable then
+			return returnedUnitTable
+		end
+	end
+	return nil
+end
+
+function UnitTable_GetSubsetByCount(unitTable, count, b_removeFromOriginal)
+	local unitTableSubset = {}
+	for i, unitRow in ipairs(unitTable) do
+		-- Sometimes this function is called multiple times on the same unit table,
+		-- particularly if there are multiple transport holds being distributed to
+		-- So if this row has numSquads=0, that's fine, just continue
+		if unitRow.numSquads > 0 then
+			local numSquadsDelta = math.min(unitRow.numSquads, count)
+			if b_removeFromOriginal then
+				unitRow.numSquads = unitRow.numSquads - numSquadsDelta
+			end
+			-- Don't add things if they would have zero squads!
+			if numSquadsDelta > 0 then
+				UnitTable_AddUnitRowWithCustomData(unitTableSubset, { type = unitRow.type, sbp = unitRow.sbp, numSquads = numSquadsDelta })
+			end
+			-- Stop if there's no more room for units
+			count = count - numSquadsDelta
+			if count == 0 then
+				break
+			end
+		end
+		--assert(unitRow.numSquads > 0, string.format("(%s, %s) unitRow's numSquads should be > 0, but is %s", unitRow.type, BP_GetName(unitRow.sbp), unitRow.numSquads))
+	end
+	return unitTableSubset
+end
+
+--? @shortdesc Count how many units of a given type there are in the UnitTable
+--? @args Table unitTable, String type
+function UnitTable_CountUnitsOfType(unitTable, unitType)
+	local count = 0
+	for i, unitRow in ipairs(unitTable) do
+		if unitRow.type == unitType then
+			count = count + unitRow.numSquads
+		end
+	end
+	return count
+end
+
+--? @shortdesc Count how many units of a given type there are in the UnitTable
+--? @args Table unitTable, SBP sbp
+function UnitTable_CountUnitsOfSBP(unitTable, sbp)
+	local count = 0
+	for i, unitRow in ipairs(unitTable) do
+		if unitRow.sbp == sbp then
+			count = count + unitRow.numSquads
+		end
+	end
+	return count
+end
+
+--? @shortdesc Similar to UnitTable_AddUnits, but preserves all custom data within each unit row
+function UnitTable_AddUnitsWithCustomData(unitTable, unitsToAdd)
+	for index, unitRow in ipairs(unitsToAdd) do 
+		UnitTable_AddUnitRowWithCustomData(unitTable, unitRow)
+	end
+end
+
+function UnitTable_AddUnitRowWithCustomData(unitTable, unitRowToAdd)
+	unitRowToAdd.numSquads = unitRowToAdd.numSquads or 1
+	
+	for i, unitRow in ipairs(unitTable) do 
+		unitRow.numSquads = unitRow.numSquads or 1
+		if UnitRows_AreMatching(unitRow, unitRowToAdd) then
+			unitRow.numSquads = unitRow.numSquads + unitRowToAdd.numSquads
+			return
+		end
+	end
+	table.insert(unitTable, unitRowToAdd)
+end
+
+function UnitRows_AreMatching(unitRowA, unitRowB)
+	for key, value in pairs(unitRowA) do
+		if key ~= "numSquads" and value ~= unitRowB[key] then
+			return false
+		end
+	end
+	return true
+end
+
+function UnitTable_GetResourceCost(units, player)
+	local total_cost = 0
+	for _, unitRow in ipairs(units) do
+		local sbp
+		if unitRow.sbp then
+			sbp = unitRow.sbp
+		elseif unitRow.type then
+			sbp = Cardinal_ConvertTypeToSquadBlueprint(unitRow.type, player)
+		else
+			fatal("invalid unitRow")
+		end
+		local squad_cost = Player_GetSquadBPCost(player, sbp)
+		local numSquads = unitRow.numSquads or 1
+		total_cost = total_cost + (squad_cost.wood + squad_cost.food + squad_cost.gold + squad_cost.stone) * numSquads
+	end
+	return total_cost
+end
+
+
+
+--
+--
+-- Miscellaneous utilities
+--
+--
+
+
+
+--? @shortdesc Converts an angle in degrees (0-360) to a short string representing a compass heading. 0 degrees is north; 90 degrees is east.
+--? @args NUMBER angle
+--? @result STRING ('n' for north, 'ne' for north-east, etc)
+function AngleToCardinalDirection(angle)	-- the use of "cardinal" here is the classic meaning, not our project codename! (nice coincidence, though)
+	
+	local cardinaldirections = {	-- start with the representation of "north" and work around the compass clockwise
+		"n",
+		"ne",
+		"e",
+		"se",
+		"s",
+		"sw",
+		"w",
+		"nw",
+	}
+	
+	local slice_angle = 360 / #cardinaldirections
+	
+	angle = angle + (slice_angle / 2)		-- add half a slice wedge to the angle, so instead of looking between -22.5 deg and 22.5 deg for slice one, we're now looking between 0 and 45 (assuming eight slices)
+	angle = math.fmod(angle, 360)			-- account for the case where that takes us up past 360
+	if angle < 0 then
+		angle = angle + 360
+	end
+	return cardinaldirections[math.ceil(angle / slice_angle)]
+	
+end
+
+--? @shortdesc Finds a marker with a given core name and a cardinal heading
+--? @args STRING markerName, NUMBER markerDir (angle in degrees)
+--? @result MARKER
+function GetMarkerWithDirection(markerName, markerDir)
+
+	local longSearchString = "mkr_"..markerName.."_"..AngleToCardinalDirection(markerDir)
+	local shortSearchString = "mkr_"..markerName	
+	
+	if Marker_Exists(longSearchString, "") then
+		return Marker_FromName(longSearchString, "")
+	end
+	
+	if Marker_Exists(shortSearchString, "") then
+		return Marker_FromName(shortSearchString, "")
+	end
+	
+	fatal("Could not find a marker with the name "..longSearchString.." or "..shortSearchString)
+
+end
+
+--? @shortdesc takes a marker or locationName, and returns a marker. If it's a scarPos, return it
+function ResolveSpawnLocation(where)
+	
+	if scartype(where) == ST_STRING then 
+		local location = LOCATION(where)
+		assert(location, "SpawnLocation string does not correspond to a valid location")
+		return location.marker
+		
+	elseif scartype(where) == ST_MARKER then
+		return where
+		
+	elseif scartype(where) == ST_SCARPOS then
+		return where
+		
+	elseif scartype(where) == ST_TABLE then
+		assert(false, "SpawnLocation no longer accepts tables, provide a marker or location instead")	
+		
+	else
+		assert(false, string.format("SpawnLocation %s must be a marker, position, or location name, but is instead %s", where, scartype_tostring(where)))
+	end
+end
+
+
+-- Take a table and turn it into a string, so we can write it out to a file and load it back in as Lua
+function Table_SerializeToString(data, indent_level)
+
+	indent_level = indent_level or 1
+	
+	-- opening brace
+	local string = "{\n"
+	
+	-- table contents, one line at a time
+	for index, value in pairs(data) do 
+		
+		if scartype(value) == ST_STRING or scartype(value) == ST_NUMBER or scartype(value) == ST_BOOLEAN or scartype(value) == ST_ENUM or scartype(value) == ST_TABLE then 
+		
+			for i = 1, indent_level do				-- start the line with an appropriate number of tabs
+				string = string.."\t"
+			end
+			
+			if scartype(index) == ST_STRING then	-- only use the key if it's a string from a dictionary-style array (this avoids using number indicies from array-style tables as keys)
+				string = string..index.." = "
+			end
+			
+			if scartype(value) == ST_STRING then	-- append the value itself (converted to a string)
+				string = string..[["]]..value..[["]]
+			elseif scartype(value) == ST_TABLE then
+				string = string..Table_SerializeToString(value, indent_level + 1)
+			elseif scartype(value) == ST_ENUM then
+				string = string..Enum_ToString(value)
+			else
+				string = string..tostring(value)
+			end
+			
+			string = string..",\n"					-- finally, append a comma and a newline
+			
+		end
+		
+	end
+
+	-- closing brace
+	for i = 1, indent_level - 1 do
+		string = string.."\t"
+	end
+	string = string.."}"
+	
+	
+	return string
+	
+end
+
+--? @shortdesc Returns a suitable SCAR squadType for a given blueprint 
+--? @extdesc Can also pass in a squadID and it will use that squad's blueprint
+--? @args SquadID/SBP blueprint
+--? @result String
+function MissionOMatic_GetTypeForBlueprint(bp)
+
+	if scartype(bp) == ST_SQUAD then 
+		bp = Squad_GetBlueprint(bp)
+	end
+
+	for index, unit in pairs(t_allUnitTypes) do 
+		if Squad_IsSBPOfType(bp, unit.unitType) then
+			return unit.unitType
+		end
+	end
+	
+end
+
+--? @shortdesc Dissolves a module and folds its units into another module
+function DissolveModuleIntoModule(sourceModuleName, targetModuleName, updateIdealComposition, pause)
+	-- Figure out what module to add to - often this won't be tied to a location at all
+	local targetModule = MissionOMatic_FindModule(targetModuleName)
+	local sourceModule = MissionOMatic_FindModule(sourceModuleName)
+	if targetModule ~= nil and sourceModule ~= nil then
+		local sg_source = SGroup_CreateUnique()
+		if targetModule.player == sourceModule.player then
+--			print("Disbanding "..tostring(sg_source))
+--			print("Stopping encounter "..tostring(sourceModuleName))
+			Prefab_DoAction(sourceModule, "Disband", sg_source)
+			Rule_AddOneShot(DissolveModuleIntoModule_B, 0.25, {targetModule = targetModule, sourceSGroup = sg_source, updateIdealComposition = updateIdealComposition, pause = pause})
+			AddPendingDissolve(targetModule, sg_source, updateIdealComposition, pause)				
+		end
+		
+	end
+end
+
+function DissolveModuleIntoModule_B(context, data)
+--	print("Dissolving unit count "..tostring(SGroup_CountSpawned(data.sourceSGroup)))
+	RemovePendingDissolve(data.targetModule, data.sourceSGroup)
+	Prefab_DoAction(data.targetModule, "AddSGroup", data.sourceSGroup, data.updateIdealComposition, data.pause)
+	SGroup_Destroy(data.sourceSGroup)
+end
+
+--? @shortdesc Ensures that all pending dissolves are processed 
+--? @args nil
+--? @result nil
+function VerifyAllDissolves()
+	if t_pendingDissolveModules ~= nil then
+		for i, v in pairs(t_pendingDissolveModules) do
+			if v ~= nil then
+				--	print("Adding sgroup "..tostring(v.sourceSGroup))
+				Prefab_DoAction(v.targetModule, "AddSGroup", v.sourceSGroup, v.updateIdealComposition, v.pause)
+				SGroup_Destroy(v.sourceSGroup)
+				t_pendingDissolveModules[i] = nil
+			end
+		end	
+	end
+	-- ensure that there are no leftover step Bs
+	Rule_Remove(DissolveModuleIntoModule_B)
+end
+
+--? @shortdesc Transfers all units from one module to another module, without destroying the source module 
+--? @args String sourceModule, String targetModule[, Boolean pause] 
+--? @result nil
+function TransferModuleIntoModule(sourceModuleName, targetModuleName, pause)
+	-- Figure out what module to add to - often this won't be tied to a location at all
+	local targetModule = MissionOMatic_FindModule(targetModuleName)
+	local sourceModule = MissionOMatic_FindModule(sourceModuleName)
+	if targetModule ~= nil and sourceModule ~= nil then
+	
+		if targetModule.player == sourceModule.player then
+			local sourceSGroup = Prefab_DoAction(sourceModule, "GetSGroup")
+			Prefab_DoAction(targetModule, "AddSGroup", sourceSGroup, pause)
+			Prefab_DoAction(sourceModule, "RemoveSGroup", sourceSGroup)
+		end
+	end
+end
+
+--? @shortdesc Transfers all units from one army to another 
+--? @args Army sourceArmy, Army targetArmy 
+function TransferArmyIntoArmy(sourceArmy, targetArmy)
+	assert(sourceArmy and targetArmy)
+	assert(sourceArmy.player == targetArmy.player)
+	local sg_transfer = SGroup_CreateUniqueWithPrefix("sg_transfer")
+	Army_GetSquads(sourceArmy, sg_transfer)
+	Army_RemoveSGroup(sourceArmy, sg_transfer)
+	Army_AddSGroup(targetArmy, sg_transfer)
+	SGroup_Destroy(sg_transfer)
+end
+
+--? @shortdesc Spawns groups of units at a numbered sequence of markers
+function SpawnUnitGroups(player, sgroupName, unitsTable, markerName, destroyFirst)
+	for i = 1, #unitsTable do
+		
+		local markerNameFull = markerName..tostring(i)
+		if not Marker_Exists(markerNameFull, "") then return end
+		local marker = Marker_FromName(markerNameFull, "")
+		
+		local sgroupNameFull = sgroupName..tostring(i)
+		if not SGroup_Exists(sgroupNameFull) then return end
+		local sgroup = SGroup_FromName(sgroupNameFull)
+		
+		local units = unitsTable[i]
+		
+		if destroyFirst == true then
+			SGroup_DestroyAllSquads(sgroup)
+		end
+		UnitEntry_DeploySquads(player, sgroup, units, marker)
+	end
+end
+
+--? @shortdesc Spawns units at the specified location, and adds them to the module.
+--? @args Table units, Module module, MarkerID/String spawnLocation[, Boolean pause] 
+--? @result sgroup of the module
+function SpawnUnitsToModule(units, module, spawnLocation, pause)
+	local module = module
+	if scartype(module) == ST_STRING then
+		module = MissionOMatic_FindModule(module)
+	end
+	local player = module.player
+	
+	local spawn
+	if spawnLocation then
+		spawn = ResolveSpawnLocation(spawnLocation)
+	else
+		spawn = ResolveSpawnLocation(module.spawnLocation)
+	end
+	
+	 
+	local sg_throw_away = SGroup_CreateUnique("sg_throw_away")
+	UnitEntry_DeploySquads(player, sg_throw_away, units, spawn)
+	Prefab_DoAction(module, "AddSGroup", sg_throw_away, pause)
+	SGroup_Destroy(sg_throw_away)
+	return module.sgroup
+end
+
+--? @shortdesc assigns each tradecart to trade
+function AssignTradecartsToTrade(sg_trade_carts, eg_building)
+	if sg_trade_carts ~= nil and eg_building ~= nil and EGroup_Count(eg_building) == 1 and SGroup_Count(sg_trade_carts) >= 1 then
+		local FuncTrade = function(gid, idx, sid)
+			SGroup_Single(sg_single, sid)
+			--local entity_settlement = EGroup_GetEntityAt(eg_settlement, 1)
+			LocalCommand_SquadEntity(Util_GetPlayerOwner(sid), sg_single, SCMD_Trade, eg_building, false)	
+		end
+		SGroup_ForEach(sg_trade_carts, FuncTrade)
+	else
+		assert(sg_trade_carts, "sg_trade_carts is not defined")
+		assert(eg_building, "eg_building is not defined")
+		assert(EGroup_Count(eg_building) == 1, "eg_building must have 1 building")
+		assert(SGroup_Count(sg_trade_carts) >= 1, "sg_trade_carts must have 1 or more trade carts")
+	end
+end
+
+--? @shortdesc assigns each villager to gather gold.
+--? @extdesc villagers will find closest resource to themselves, unless search_from_dropoff is true. In that case,
+--? villagers will identify the closest dropoff, and then find the closest resource to that.
+function AssignVillagersToGold(sg_villagers, search_from_dropoff, one_villager_per_mine)
+	if SGroup_CountSpawned(sg_villagers) > 0 then
+		search_from_dropoff = search_from_dropoff or false
+		one_villager_per_mine = one_villager_per_mine or false
+		Gathering_AssignVillagersToGold(sg_villagers, eg_allGoldResources, search_from_dropoff, one_villager_per_mine)
+	end
+end
+
+--? @shortdesc assigns each villager to gather stone.
+--? @extdesc villagers will find closest resource to themselves, unless search_from_dropoff is true. In that case,
+--? villagers will identify the closest dropoff, and then find the closest resource to that.
+function AssignVillagersToStone(sg_villagers, search_from_dropoff, one_villager_per_mine)
+	if SGroup_CountSpawned(sg_villagers) > 0 then
+		search_from_dropoff = search_from_dropoff or false
+		one_villager_per_mine = one_villager_per_mine or false
+		Gathering_AssignVillagersToStone(sg_villagers, eg_allStoneResources, search_from_dropoff, one_villager_per_mine)
+	end
+end
+
+--? @shortdesc assigns each villager to gather wood.
+--? @extdesc villagers will find closest resource to themselves, unless search_from_dropoff is true. In that case,
+--? villagers will identify the closest dropoff, and then find the closest resource to that.
+function AssignVillagersToWood(sg_villagers, search_from_dropoff, one_villager_per_tree)
+	if SGroup_CountSpawned(sg_villagers) > 0 then
+		search_from_dropoff = search_from_dropoff or false
+		one_villager_per_tree = one_villager_per_tree or false
+		Gathering_AssignVillagersToWood(sg_villagers, eg_allWoodResources, search_from_dropoff, one_villager_per_tree)
+	end
+end
+
+--? @shortdesc assigns each villager to gather berries.
+--? @extdesc villagers will find closest resource to themselves, unless search_from_dropoff is true. In that case,
+--? villagers will identify the closest dropoff, and then find the closest resource to that.
+function AssignVillagersToBerries(sg_villagers, search_from_dropoff, one_villager_per_bush)
+	if SGroup_CountSpawned(sg_villagers) > 0 then
+		search_from_dropoff = search_from_dropoff or false
+		one_villager_per_bush = one_villager_per_bush or false
+		Gathering_AssignVillagersToBerries(sg_villagers, eg_allBerriesAtStart, search_from_dropoff, one_villager_per_bush)
+	end
+end
+
+--? @shortdesc assigns each villager to gather fish.
+--? @extdesc villagers will find closest resource to themselves, unless search_from_dropoff is true. In that case,
+--? villagers will identify the closest dropoff, and then find the closest resource to that.
+function AssignVillagersToFish(sg_villagers, search_from_dropoff, one_villager_per_fish)
+	if SGroup_CountSpawned(sg_villagers) > 0 then
+		search_from_dropoff = search_from_dropoff or false
+		one_villager_per_fish = one_villager_per_fish or false
+		Gathering_AssignVillagersToFish(sg_villagers, eg_allShoreFishResources, search_from_dropoff, one_villager_per_fish)
+	end
+end
+
+--? @shortdesc assigns each villager to gather from farms.
+--? @extdesc villagers will find closest resource to themselves, unless search_from_dropoff is true. In that case,
+--? villagers will identify the closest dropoff, and then find the closest resource to that.
+function AssignVillagersToFarms(sg_villagers, search_from_dropoff, one_villager_per_farm)
+	if SGroup_CountSpawned(sg_villagers) > 0 then
+		search_from_dropoff = search_from_dropoff or false
+		one_villager_per_farm = one_villager_per_fish or false
+		local eg_farms = Gathering_FindAllFarms(Util_GetPlayerOwner(sg_villagers))
+		Gathering_AssignVillagersToFarms(sg_villagers, eg_farms, search_from_dropoff, one_villager_per_farm)
+		EGroup_Destroy(eg_farms)
+	end
+end
+
+--? @shortdesc assigns each villager to gather from sheep.
+--? @extdesc villagers will find closest resource to themselves, unless search_from_dropoff is true. In that case,
+--? villagers will identify the closest dropoff, and then find the closest resource to that.
+function AssignVillagersToSheep(sg_villagers, search_from_dropoff, one_villager_per_sheep)
+	if SGroup_CountSpawned(sg_villagers) > 0 then
+		search_from_dropoff = search_from_dropoff or false
+		one_villager_per_sheep = one_villager_per_sheep or false
+		local eg_all_sheep = EGroup_CreateIfNotFound("eg_all_sheep")
+		Gathering_FindAllSheep(eg_all_sheep)
+		Gathering_AssignVillagersToSheep(sg_villagers, eg_all_sheep, search_from_dropoff, one_villager_per_sheep)
+		EGroup_Destroy(eg_all_sheep)
+	end
+end
+
+--? @shortdesc assigns each villager to gather from deer.
+--? @extdesc villagers will find closest resource to themselves, unless search_from_dropoff is true. In that case,
+--? villagers will identify the closest dropoff, and then find the closest resource to that.
+function AssignVillagersToDeer(sg_villagers, search_from_dropoff, one_villager_per_deer)
+	if SGroup_CountSpawned(sg_villagers) > 0 then
+		search_from_dropoff = search_from_dropoff or false
+		one_villager_per_deer = one_villager_per_deer or false
+		local eg_all_deer = EGroup_CreateIfNotFound("eg_all_deer")
+		Gathering_FindAllDeer(eg_all_deer)
+		Gathering_AssignVillagersToDeer(sg_villagers, eg_all_deer, search_from_dropoff, one_villager_per_deer)
+		EGroup_Destroy(eg_all_deer)
+	end
+end
+
+--? @shortdesc assigns each fishing boat to gather from deep fish.
+--? @extdesc Fishing boats will find closest resource to themselves, unless search_from_dropoff is true. In that case,
+--? they will identify the closest dropoff, and then find the closest resource to that.
+function AssignFishingBoatsToDeepFish(sg_fishing_boats, search_from_dropoff, one_boat_per_fish)
+	if SGroup_CountSpawned(sg_fishing_boats) > 0 then
+		search_from_dropoff = search_from_dropoff or false
+		one_boat_per_fish = one_boat_per_fish or false
+		local eg_all_deep_fish = EGroup_CreateIfNotFound("eg_all_deep_fish")
+		Gathering_FindAllDeepFish(eg_all_deep_fish)
+		Gathering_AssignVillagersToFish(sg_fishing_boats, eg_all_deep_fish, search_from_dropoff, one_villager_per_deer)
+		EGroup_Destroy(eg_all_deep_fish)
+	end
+end
+
+--? @shortdesc Assigns a group of villagers to construct a building. This will only work if the player has enough resources. 
+--? @args SGroup sg_villagers, EBP ebp, Position/Marker pos
+function AssignVillagersToConstructBuilding(sg_villagers, ebp, pos)
+	local player = Util_GetPlayerOwner(sg_villagers)
+	local position = Util_GetPosition(pos)
+	local direction = World_Pos(-1, 0, -1)
+	local facing = World_Pos(position.x + direction.x * 100, 0, position.z + direction.z * 100)
+	LocalCommand_PlayerSquadConstructBuilding(player, sg_villagers, ebp, position, facing, false)
+end
+
+--? @shortdesc Grabs villagers and gets them moving around to look busy. Meant for non-player/AI villagers only. Should be run as an Interval Rule.
+--? @args In the interval data table provide playerID and a location marker, and optional sgroup, and optional egroup
+--? @extdesc Example: Rule_AddInterval(IdleVillagers_MakeBusy, 5, {marker = mkr_town, player = player2, sgroup = sg_spare_villagers})
+function IdleVillagers_MakeBusy(context, data) --marker, player, optional sgroup, optional egroup
+	
+	assert(data.marker ~= nil, "No Marker assigned for IdleVillagers_MakeBusy")
+	assert(data.player ~= nil, "No Player assigned for IdleVillagers_MakeBusy")
+	
+	--Get a list of valid buildings to move to (no defense buildings or walls)
+	if data.egroup == nil then
+		EGroup_Clear(eg_temp)
+		Player_GetAllEntitiesNearMarker(data.player, eg_temp, data.marker)
+		EGroup_Filter(eg_temp, "defensive_structure", FILTER_REMOVE)
+	else
+		EGroup_Clear(eg_temp)
+		EGroup_Duplicate(data.egroup, eg_temp)
+		EGroup_Filter(eg_temp, "defensive_structure", FILTER_REMOVE)
+	end
+	
+	local _Wander = function(gid, idx, sid)	
+		--Don't issue a command if the unit is under attack
+		if Squad_IsUnderAttack(sid, 1) == false then
+			--Don't issue a command if the unit is already moving
+			if Squad_IsMoving(sid) == false and Squad_IsConstructing(sid) == false then 
+				SGroup_Single(sg_single, sid)
+				local targetEntity = EGroup_GetRandomSpawnedEntity(eg_temp) --Stores a random build as target
+				Cmd_FormationMove(sg_single, targetEntity, false) --Move current squad (villager) to target
+			end
+		end
+	end
+	
+	--Prunes busy villagers from the idle list
+	local _IdleCheck = function(gid, idx, sid)
+		if Squad_IsIdle(sid) ~= true then SGroup_Remove(gid, sid) end
+	end
+
+	--Cancel if there are no valid move-tos
+	if EGroup_CountSpawned(eg_temp) > 1 then
+		--If no sgroup was assigned, grab all idle villagers
+		if data.sgroup ~= nil then
+			if SGroup_CountSpawned(data.sgroup) > 0 then
+				SGroup_Clear(sg_temp)
+				SGroup_Duplicate(data.sgroup, sg_temp)
+				SGroup_ForEach(sg_temp, _IdleCheck)
+				SGroup_ForEach(sg_temp, _Wander)
+			else
+				Rule_RemoveMe()
+			end
+		else
+			Player_GetAllSquadsNearMarker(data.player, sg_temp, data.marker)
+			SGroup_Filter(sg_temp, "scar_villager", FILTER_KEEP)
+			SGroup_ForEach(sg_temp, _IdleCheck)
+			SGroup_ForEach(sg_temp, _Wander)
+		end
+	else
+		Rule_RemoveMe()
+	end
+	
+end
+
+--? @returns the average position of all squads in an sgroup. Returns nil if there are no squads
+function SGroup_GetAvgPosition(sgroup)
+	local avgPosition = nil
+	local numSquads = SGroup_Count(sgroup)
+	
+	if numSquads > 0 then
+		local x_total = 0
+		local y_total = 0
+		local z_total = 0
+		
+		local ConsiderSquad = function(gid, idx, sid)
+			local position = Squad_GetPosition(sid)
+			x_total = x_total + position.x
+			y_total = y_total + position.y
+			z_total = z_total + position.z
+		end
+		
+		SGroup_ForEach(sgroup, ConsiderSquad)
+		avgPosition = World_Pos(x_total / numSquads, y_total / numSquads, z_total / numSquads)
+	end
+	return avgPosition
+end
+
+--? @disables the hold extension in the given sgroup
+function SGroup_DisableHold(sgroup)
+	local _DisableHold = function(gid, idx, sid)
+		if Squad_IsAlive(sid) then
+			Squad_SetExtEnabled(sid, "hold_ext", false)
+		end
+	end
+	SGroup_ForEach(sgroup, _DisableHold)
+end
+
+function SendReinforceNotification(where, text, intel)
+	
+	if text == nil then text = 11172066 end 		-- Reinforcements Have Arrived!
+	--UI_CreateMinimapBlip(where, 12, "objective_secondary")
+	EventCues_CallToAction(text, CTA_CELEBRATE, intel, nil, where, 20)
+end
+
+function PositionWithOffset(position, x_offset, z_offset)
+	if scartype(position) == ST_SCARPOS or scartype(position) == ST_MARKER then
+		local new_pos = Util_GetPosition(position)
+		new_pos.x = new_pos.x + x_offset
+		new_pos.z = new_pos.z + z_offset
+		return new_pos
+	else
+		print("INVALID POSITION")		
+		return nil
+	end
+end
+
+----? @shortdesc Wraps the input in a table and returns it. Does nothing if it was already a table.
+function NormalizeTable(input)
+	if input == nil then 
+		return {}
+	end
+
+	if scartype(input) == ST_TABLE then
+		return input
+	else
+		return { input }
+	end
+end
+
+--? @shortdesc Prepares a command to be issued in a second or so, once a sim frame has ticked; usually used when units were just spawned by a previous command
+--? @args SGroup sgroup, Marker/Position/SGroup/Table destination, Boolean attackMove, Number delay, Boolean destroyOnArrive, Function onDestroyCallback
+function MissionOMatic_SGroupCommandDelayed(sgroup, destination, attackMove, delay, destroyOnArrive, onDestroyCallback)
+	
+	-- Make sure we've got a numerical delay that's more than zero
+	if delay == nil then
+		delay = 1
+	end
+	assert(scartype(delay) == ST_NUMBER and delay > 0, "Delayed move requires non-zero, non-nil delay")
+	
+	-- Are we passing in one thing with a position, or a table?
+	if Util_HasPosition(destination) then
+		-- Make sure whatever we passed in is converted to a table
+		destination = { destination }
+	end
+	
+	if scartype(destination) == ST_TABLE then
+		Rule_AddOneShot(MissionOMatic_SGroupCommandDelayed_B, delay, {
+			sgroup = sgroup,
+			moveTable = destination,
+			attackMove = attackMove,
+			destroyOnArrive = destroyOnArrive,
+			onDestroyCallback = onDestroyCallback,
+		})
+	else
+		fatal("Invalid destination(s) passed to command function, must have position or be a table")
+	end
+	
+end
+
+--? @shortdesc Helper function that actually sends units somewhere once they're ready to go
+function MissionOMatic_SGroupCommandDelayed_B(context, data)
+
+	-- The delay could have been long enough for the SGroup to be totally killed off, so check for that before doing anything
+	if scartype(data.sgroup) ~= ST_SGROUP or SGroup_Count(data.sgroup) <= 0 or Util_GetPlayerOwner(data.sgroup) == nil then
+		if scartype(data.sgroup) ~= ST_SGROUP then
+			print(string.format("Delayed Formation Move failed; sgroup is %s", scartype_tostring(data.sgroup)))	
+		elseif SGroup_Count(data.sgroup) <= 0 then
+			print(string.format("Delayed Formation Move failed; sgroup %s is empty", SGroup_GetName(data.sgroup)))
+		elseif Util_GetPlayerOwner(data.sgroup) == nil then
+			print(string.format("Delayed Formation Move failed; sgroup %s has invalid NIL player owner", SGroup_GetName(data.sgroup)))	
+		end
+		-- Early out
+		return
+	end
+	
+	-- Now we can actually issue the orders
+	if scartype(data.moveTable) == ST_TABLE then
+		-- Go through the whole table
+		for idx = 1, #(data.moveTable), 1 do
+			local notLast = #(data.moveTable) > 1
+			local thisDestination = data.moveTable[idx]
+			-- Sometimes a group that had units when it was set as a destination no longer has units, because they died. That will cause an FSE, so check for that.
+			local isInvalidSGroup = scartype(thisDestination) == ST_SGROUP and SGroup_Count(thisDestination) <= 0
+			local isInvalidEGroup = scartype(thisDestination) == ST_EGROUP and EGroup_Count(thisDestination) <= 0
+			if isInvalidSGroup == false and isInvalidEGroup == false then
+				if (data.attackMove == true) then
+					if idx == #(data.moveTable) and data.destroyOnArrive == true then
+						Cmd_FormationAttackMove(data.sgroup, thisDestination, notLast, true, data.onDestroyCallback)
+					else
+						Cmd_FormationAttackMove(data.sgroup, thisDestination, notLast)
+					end
+				else
+					if idx == #(data.moveTable) and data.destroyOnArrive == true then
+						Cmd_FormationMoveToAndDestroy(data.sgroup, thisDestination, notLast, nil, data.onDestroyCallback)
+					else
+						Cmd_FormationMove(data.sgroup, thisDestination, notLast)
+					end
+				end
+			else
+				--print(string.format("Passed destination group %s now empty; skipping", thisDestination))
+			end
+		end
+	end
+	
+end
+
+--? @shortdesc Function that reveals FOW on units in an SGroup in a way that follows them
+function MissionOMatic_RevealMovingSGroup(sgroupToReveal)
+	
+	-- Add these to be watched, setting up the rule if necessary
+	if SGroup_Count(sgroupToReveal) > 0 then
+		
+		-- Make sure the tracking SGroup exists
+		if scartype(sg_tracking_revealed) ~= ST_SGROUP then
+			sg_tracking_revealed = SGroup_CreateIfNotFound("sg_tracking_revealed")
+		end
+		
+		-- Add to global group
+		SGroup_AddGroup(sg_tracking_revealed, sgroupToReveal)
+		
+		-- Add the rule if it doesn't already exist
+		if Rule_Exists(MissionOMatic_RevealMovingTarget_Rule) == false then
+			Rule_AddInterval(MissionOMatic_RevealMovingTarget_Rule, 0.125)
+		end
+		
+	end
+	
+end
+
+--? @shortdesc Finds any goal sequence that has a certain key, and toggles its state
+--? @args VALUE searchKey, BOOLEAN value
+function Missionomatic_DisableTrainingByGoalKey(searchKey)
+	
+	-- Don't explode if we put in something invalid
+	if _TrainingGoals == nil or #_TrainingGoals <= 0 or searchKey == nil then
+		return	
+	end
+	
+	if scartype(t_pausedTrainingSequences) ~= ST_TABLE then
+		t_pausedTrainingSequences = {}
+	end
+	
+	-- Search all goalSequences for goals that have this key
+	for iSeq, goalSequence in pairs(_TrainingGoals) do
+		for iGoal, goal in pairs (goalSequence.goals) do
+			if goal.key == searchKey then
+				-- Blast it
+				Training_EndGoalSequence(goalSequence, false)
+				-- Ideally we'd use EnableGoalSequence to set it to disabled, then re-enable it later if requested
+				-- Unfortunately the disabling didn't work, and there's no available bandwidth for anyone to explain how the training system works
+				-- A deep dive into the script is too much time for the work we have left to do and the C++ functions involved are opaque
+				-- TODO: Ideally this should allow us to turn things back on again after they've been turned off
+			end
+		end
+		-- We do want to go through every single goal sequence, since there may be multiple sequences with this key
+	end
+	
+end
+
+--? @shortdesc Adds a training hint to a certain kind of squad that is resolved by selecting a squad of that type
+function MissionOMatic_HintOnSquadSelect(stringEnglish, locID, goalSequenceString, squadFilter, extraCheckBool)
+
+	-- BYPASS FUNCTION
+	local function _Predicate_Selected(goal)
+		Player_GetAll(World_GetPlayerAt(1))
+		SGroup_Filter(sg_allsquads, squadFilter, FILTER_KEEP)
+		
+		-- We may want to pass in other, extra filters
+		if scartype(extraCheckBool) == ST_FUNCTION then
+			local _ExtraCheck = function(gid, idx, sid)
+				if extraCheckBool(sid) == false then
+					SGroup_Remove(sg_allsquads, sid)
+				end
+			end
+			SGroup_ForEach(sg_allsquads, _ExtraCheck)
+		end
+		
+		-- Ultimately, we want something to be selected!
+		return Misc_IsSGroupSelected(sg_allsquads, ANY)
+	end
+	
+	-- TRIGGER FUNCTION
+	local function _Trigger_NotSelectedRecently(goalSequence)
+		if ABriefPeriodOfTimeHasPassed(goalSequence) then
+			Player_GetAll(World_GetPlayerAt(1))
+			SGroup_Filter(sg_allsquads, squadFilter, FILTER_KEEP)
+			if SGroup_Count(sg_allsquads) > 0 then
+				local squad = SGroup_GetSpawnedSquadAt(sg_allsquads, 1)
+				goalSequence.goals[goalSequence.currentGoalIndex].key = squad
+				return true
+			end
+		end
+		return false
+	end
+	
+	-- OTHER STUFF
+	local GoalUI = {
+		ID = stringEnglish,
+		Message = locID, 
+		DataTemplate = "LeftClickTrainingDataTemplate",
+	}
+	local GoalDoThing = Training_Goal(
+		nil, 
+		GoalUI, 
+		_Predicate_Selected
+	)
+	local GoalSequenceUseAura = Training_GoalSequence(
+		goalSequenceString, 								-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		_Trigger_NotSelectedRecently, 						-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,										 		-- remind
+		_Predicate_Selected, 								-- bypass
+		true, 												-- canRegress
+		{GoalDoThing}										-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceUseAura)
+	
+	Training_EnableGoalSequenceByID(goalSequenceString, true)
+	
+end
+
+--? @shortdesc Adds a training hint to a certain kind of squad that is resolved by selecting a squad of that type
+function MissionOMatic_HintOnHover_Xbox(funcTrigger, stringEnglish, locID, goalSequenceString)
+
+	--
+	-- GOAL #1
+	--
+	-- Completion function
+	local function _Predicate_Selected(goal)
+		-- If it's there's a keyType, prioritize that
+		if scartype(goal.keyType) == ST_STRING then
+			Misc_GetSelectedSquads(sg_temp, false)
+			for idx = 1, SGroup_Count(sg_temp) do
+				if Squad_IsOfType(SGroup_GetSquadAt(sg_temp, idx), goal.keyType) then
+					return true
+				end
+			end
+		-- If there's a keyEntity, look for that!
+		elseif goal.keyIsEntity == true then
+			local keyEntity = Entity_FromID(goal.key)
+			if scartype(keyEntity) == ST_ENTITY then
+				Misc_GetSelectedEntities(eg_temp, false)
+				for idx = 1, EGroup_Count(eg_temp) do
+					if EGroup_GetEntityAt(eg_temp, idx) == keyEntity then
+						return true
+					end
+				end
+			end
+		-- Otherwise, look for a squad!
+		else
+			local keySquad = Squad_FromID(goal.key)
+			if scartype(keySquad) == ST_SQUAD then
+				Misc_GetSelectedSquads(sg_temp, false)
+				for idx = 1, SGroup_Count(sg_temp) do
+					if SGroup_GetSquadAt(sg_temp, idx) == keySquad then
+						return true
+					end
+				end
+			end
+		end
+		return false
+	end
+	
+	-- Structure
+	local GoalSelectSquad = Training_Goal("Squad", 
+		{
+			ID = stringEnglish,
+			Message = locID,
+			DataTemplate = "GenericTrainingDataTemplate",
+		},
+		_Predicate_Selected)
+	
+	
+	-- GOAL #2
+	--
+	-- Radial Menu
+	local GoalOpenRadial = Training_Goal("Squad",
+		{
+			ID = "Press RT to display the Radial Menu",
+			Message = "$999680", 
+			DataTemplate = "GenericTrainingDataTemplate",
+		}, 
+		UserHasOpenedContextualRadial)
+	
+	
+	-- GOAL #3
+	--
+	-- Item in structure
+	local GoalViewAbility = Training_Goal("PBG",
+		{
+			ID = stringEnglish,
+			Message = locID, 
+			DataTemplate = "RadialTrainingDataTemplate",
+		}, 
+		_Missionomatic_GoalPredicate_HoveredOverBP)
+	
+	--
+	-- GOAL SEQUENCE
+	--
+	local GoalSequence = Training_GoalSequence(
+		goalSequenceString, 								-- id
+		1, 													-- repeatMax
+		1, 													-- remindMax
+		funcTrigger, 										-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,												-- remind
+		_Missionomatic_SequencePredicate_HoveredOverBP,		-- bypass
+		true, 												-- canRegress
+		{GoalSelectSquad, GoalOpenRadial, GoalViewAbility}					-- goals
+	)
+	
+	Training_AddGoalSequence(GoalSequence)
+	
+	Training_EnableGoalSequenceByID(goalSequenceString, true)
+	
+end
+
+function MissionOMatic_HintOnHover(funcTrigger, stringEnglish, locID, goalSequenceString)
+
+	--
+	-- GOAL #1
+	--
+	-- Completion function
+	local function _Predicate_Selected(goal)
+		-- If it's there's a keyType, prioritize that
+		if scartype(goal.keyType) == ST_STRING then
+			Misc_GetSelectedSquads(sg_temp, false)
+			for idx = 1, SGroup_Count(sg_temp) do
+				if Squad_IsOfType(SGroup_GetSquadAt(sg_temp, idx), goal.keyType) then
+					return true
+				end
+			end
+		-- If there's a keyEntity, look for that!
+		elseif goal.keyIsEntity == true then
+			local keyEntity = Entity_FromID(goal.key)
+			if scartype(keyEntity) == ST_ENTITY then
+				Misc_GetSelectedEntities(eg_temp, false)
+				for idx = 1, EGroup_Count(eg_temp) do
+					if EGroup_GetEntityAt(eg_temp, idx) == keyEntity then
+						return true
+					end
+				end
+			end
+		-- Otherwise, look for a squad!
+		else
+			local keySquad = Squad_FromID(goal.key)
+			if scartype(keySquad) == ST_SQUAD then
+				Misc_GetSelectedSquads(sg_temp, false)
+				for idx = 1, SGroup_Count(sg_temp) do
+					if SGroup_GetSquadAt(sg_temp, idx) == keySquad then
+						return true
+					end
+				end
+			end
+		end
+		return false
+	end
+	
+	-- Structure
+	local GoalSelectSquad = Training_Goal("Squad", 
+		{
+			ID = stringEnglish,
+			Message = locID,
+			DataTemplate = "LeftClickTrainingDataTemplate",
+		},
+		_Predicate_Selected)
+	
+	--
+	-- GOAL #2
+	--
+	-- Item in structure
+	local GoalViewAbility = Training_Goal("PBG",
+		{
+			ID = stringEnglish,
+			Message = locID, 
+			DataTemplate = "GenericTrainingDataTemplate",
+		}, 
+		_Missionomatic_GoalPredicate_HoveredOverBP)
+	
+	--
+	-- GOAL SEQUENCE
+	--
+	local GoalSequence = Training_GoalSequence(
+		goalSequenceString, 								-- id
+		1, 													-- repeatMax
+		1, 													-- remindMax
+		funcTrigger, 										-- trigger
+		CampaignTraining_TimeoutIgnorePredicate, 			-- ignore
+		nil,												-- remind
+		_Missionomatic_SequencePredicate_HoveredOverBP,		-- bypass
+		true, 												-- canRegress
+		{GoalSelectSquad, GoalViewAbility}					-- goals
+	)
+	
+	Training_AddGoalSequence(GoalSequence)
+	
+	Training_EnableGoalSequenceByID(goalSequenceString, true)
+	
+end
+
+--? @shortdesc After a timer, OnHover hints should go away
+function _Missionomatic_Hint_UserHasTimedOut(goalSequence)
+
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	else
+		if goalSequence.goals[1].key ~= nil and Squad_IsValid(goalSequence.goals[1].key) == false then 
+			return true
+		end
+	end
+	
+end
+
+--? @shortdesc A predicate for detecting whether a BP has been hovered over
+function _Missionomatic_SequencePredicate_HoveredOverBP(goalSequence)
+	
+	-- there is a variable number of goals depending on if we are on xbox or pc, but the one we want is always the last
+	local index = #goalSequence.goals
+	
+	if UI_IsXboxControllerUI() then
+		-- if we are on Xbox we don't want to bypass unless the player has the right unit selected and the menu open
+		local target_unit = goalSequence.goals[1].key
+		if scartype(target_unit) == ST_SQUAD then
+			if (Misc_IsSquadSelected(target_unit) and (UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu)) == false then
+				return false
+			end
+		elseif scartype(target_unit) == ST_ENTITY then
+			if (Misc_IsEntitySelected(target_unit) and (UI_GetActiveRadialMenuType() == RMT_ContextualRadialMenu)) == false then
+				return false
+			end
+		end			
+	end
+	
+	return _Missionomatic_GoalPredicate_HoveredOverBP(goalSequence.goals[index])
+
+end
+
+--? @shortdesc A predicate for detecting whether a BP has been hovered over
+function _Missionomatic_GoalPredicate_HoveredOverBP(goal)
+	
+
+	local timerSpan = 20
+	local bp = goal.key
+	if training_previousAbilityBlueprint == bp or _MissionOMatic_IsUpgrading(bp) == true then
+		return true
+	end
+	
+	if goal.timerID == nil then
+		goal.timerID = Training_GetNewTimerID()
+		Timer_Start(goal.timerID, timerSpan)
+	elseif Timer_Exists(goal.timerID) == false then
+		Timer_Start(goal.timerID, timerSpan)
+	end
+	
+	-- on Xbox we want to dismiss the hint after a bit of time rather than worrying about actual hovering
+	if UI_IsXboxControllerUI() then
+		return Timer_GetElapsed(goal.timerID) > __t_trainingRadialInterval 
+	end
+
+	
+	local currentTime = Timer_GetElapsed(goal.timerID)
+	if goal.temp.lastTimeWithoutLooking == nil then 
+		goal.temp.lastTimeWithoutLooking = 0 
+	end
+	
+	if scartype(bp) ~= ST_TABLE then 
+		bp = {bp}
+	end
+	
+	if Table_Contains(bp, training_currentHoverBlueprint) then
+		if currentTime - goal.temp.lastTimeWithoutLooking > 1 then 
+			return true
+		end
+		
+		return false
+	end
+	
+	goal.temp.lastTimeWithoutLooking = currentTime
+	return false
+	
+end
+
+--? @shortdesc For checking whether a hinted BP is already being produced
+function _MissionOMatic_IsUpgrading(bp)
+	
+	local soughtBP = bp
+	if scartype(bp) == ST_TABLE then
+		soughtBP = bp[1]
+	end
+	
+	Player_GetAll(World_GetPlayerAt(1))
+	EGroup_Filter(eg_allentities, "wall", FILTER_REMOVE)
+	EGroup_FilterUnderConstruction(eg_allentities, FILTER_REMOVE)
+	
+	local _HasSoughtBP = function(gid, index, eid)
+		local queueSize = Entity_GetProductionQueueSize(eid)
+		if queueSize > 0 then
+			for i = 0, queueSize - 1 do
+				if Entity_GetProductionQueueItem(eid, i) == bp then
+					return true
+				end
+			end
+		end
+	end
+	
+	if EGroup_CountSpawned(eg_allentities) > 0 then
+		return EGroup_ForEachAllOrAny(eg_allentities, ANY, _HasSoughtBP)
+	end
+	
+end
+
+--? @shortdesc A predicate for detecting whether an ability has been hovered over
+function _Missionomatic_TrainingPredicate_IgnoreHover(goalSequence)
+
+	if CampaignTraining_TimeoutIgnorePredicate(goalSequence) then
+		return true
+	end
+	
+	local cannotSeeKey = UserCannotSeeSquadKey(goalSequence)
+	if cannotSeeKey then
+		-- For breakpointing
+		return true
+	end
+	return cannotSeeKey
+	
+end
+
+--? @shortdesc Monitors abilities that have been flagged for usage-based hint resolution
+function _MissionOMatic_WatchForAbility(context, data)
+	
+	for key, value in pairs(g_hintAbilityWatch) do
+		if g_hintAbilityWatch[key] == false and context.ability == BP_GetAbilityBlueprint(key) then
+			print(string.format("Hint-watched ability %s cast", key))
+			g_hintAbilityWatch[key] = true
+		end
+	end
+	
+end
+
+--? @shortdesc Adds a training hint to a certain kind of squad that is resolved by selecting a squad of that type
+function MissionOMatic_HintOnAbilityUsed(stringEnglish, locID, goalSequenceString, abilityString, leftClick)
+
+	-- We want to know if this ability was used, so let's set a flag
+	g_hintAbilityWatch = g_hintAbilityWatch or {}
+	g_hintAbilityWatch[abilityString] = false
+
+	-- Start the rule if it wasn't already running
+	if Rule_Exists(_MissionOMatic_WatchForAbility) == false then
+		Rule_AddGlobalEvent(_MissionOMatic_WatchForAbility, GE_AbilityExecuted)
+	end
+	
+	-- BYPASS FUNCTION
+	local function _Predicate_WasAbilityUsed(goal)
+		-- This should be true as soon as the ability gets used, false otherwise
+		if g_hintAbilityWatch[abilityString] == true then
+			print(string.format("Tracked ability %s use detected", abilityString))
+		end
+		-- Don't just return it - return whether it's true. Otherwise it could return nil sometimes.
+		return g_hintAbilityWatch[abilityString] == true
+	end
+	
+	-- TRIGGER FUNCTION
+	local function _Trigger_OnscreenCaster(goalSequence)
+		if ABriefPeriodOfTimeHasPassed(goalSequence) then
+			local squads = Player_GetSquads(g_playerMongol)
+			for idx = 1, SGroup_Count(squads) do
+				local squad = SGroup_GetSquadAt(squads, idx)
+				if squad ~= nil and Squad_HasAbility(squad, BP_GetAbilityBlueprint(abilityString)) == true and Misc_IsSquadOnScreen(squad, 100) then
+					goalSequence.goals[goalSequence.currentGoalIndex].key = squad
+					return true
+				end
+			end
+		end
+		return false
+	end
+	
+	-- OTHER STUFF
+	local templateString = "RightClickTrainingDataTemplate"
+	if leftClick == true then
+		templateString = "LeftClickTrainingDataTemplate"
+	end
+	
+	local GoalUseAbility = Training_Goal(
+		nil, 
+		{
+			ID = stringEnglish,
+			Message = locID, 
+			DataTemplate = templateString,
+		}, 
+		_Predicate_WasAbilityUsed
+	)
+	local GoalSequenceUseAura = Training_GoalSequence(
+		goalSequenceString, 								-- id
+		1, 													-- repeatMax
+		0, 													-- remindMax
+		_Trigger_OnscreenCaster, 							-- trigger
+		nil, 												-- ignore
+		nil,										 		-- remind
+		nil, 												-- bypass
+		false, 												-- canRegress
+		{GoalUseAbility}									-- goals
+	)
+	Training_AddGoalSequence(GoalSequenceUseAura)
+	
+	Training_EnableGoalSequenceByID(goalSequenceString, true)
+	
+end
+
+-- Called every sim tick
+function MissionOMatic_RevealMovingTarget_Rule()
+	-- Only do this if we have stuff to reveal
+	if scartype(sg_tracking_revealed) == ST_SGROUP and SGroup_Count(sg_tracking_revealed) > 0 then
+		
+		-- This is how we'll reveal squads
+		local _RevealSquad = function(gid, idx, sid)
+			FOW_RevealSquad(sid, 20, 0.125)
+			if Squad_IsAlive(sid) and Squad_Count(sid) > 0 then
+				FOW_RevealSquad(sid, 20, 0.125)
+			else
+				SGroup_Remove(sg_tracking_revealed, sid)
+			end
+		end
+		
+		-- Go through them all!
+		SGroup_ForEach(sg_tracking_revealed, _RevealSquad)
+		
+		-- If the SGroup is empty, remove this rule
+		if SGroup_Count(sg_tracking_revealed) <= 0 then
+			Rule_RemoveMe()
+		end
+		
+	end
+end
+
+function log(string)
+	print(World_GetGameTimeFormatted().."   "..string)
+end
+
+--? @shortdesc Returns the game time as a string. Formatted as mm:ss 
+--? @result String time
+function World_GetGameTimeFormatted()
+	local minutes = math.floor(World_GetGameTime()) // 60
+	local seconds = math.floor(World_GetGameTime()) % 60
+	local minutes_string = tostring(minutes)
+	if minutes < 10 then
+		minutes_string = "0"..minutes_string
+	end
+	if seconds < 10 then 
+		return minutes_string..":0"..seconds	
+	else 
+		return minutes_string..":"..seconds 
+	end
+end
+
+--? @shortdesc Returns the game time as a string. Formatted as mm:ss 
+--? @result String time
+function FormatSeconds(seconds)
+	local m = math.floor(seconds) // 60
+	local s = math.floor(seconds) % 60
+	local m_string = tostring(m)
+	if m < 10 then
+		m_string = "0"..m_string
+	end
+	if s < 10 then 
+		return m_string..":0"..s
+	else 
+		return m_string..":"..s 
+	end
+end
+
+--? @shortdesc Spawns a specific pickup at a specific location
+--? @args MARKER/POSITION position, STRING resource, NIL/NUMBER amount
+function Missionomatic_SpawnPickup(position, resource, value)
+	
+	-- Sanity checks
+	if scartype(position) ~= ST_MARKER and scartype(position) ~= ST_SCARPOS then
+		fatal(string.format("Trying to spawn a %s pickup worth %s at %s, but position is invalid!", resource, value, position))
+	end
+	
+	-- The pickup itself
+	local pickupEBP = BP_GetEntityBlueprint("resource_pickup_"..resource)
+		
+	-- For storing the pickup
+	eg_newPickup = EGroup_CreateIfNotFound("eg_newPickup")
+	EGroup_Clear(eg_newPickup)
+	
+	-- Do the things!
+	eg_newPickup = Util_CreateEntities(nil, eg_newPickup, pickupEBP, position, 1)
+	
+	-- For setting the resource - there's a default though
+	if scartype(value) == ST_NUMBER then
+		local _SetResource = function(gid, idx, eid)
+			Entity_SetStateModelFloat(eid, "resource_pickup_amount_"..resource, value)
+		end
+		EGroup_ForEach(eg_newPickup, _SetResource)
+	end
+	
+end
+
+--? @shortdesc Sets all gates in an EGroup to be either locked or unlocked
+--? @args EGROUP egroup, BOOLEAN locked
+function Missionomatic_SetGateLock(egroup, locked)
+
+	EGroup_Filter(egroup, "gate", FILTER_KEEP)
+	print(string.format("GATELOCK-A: Trying to set gates in %s to locked=%s", EGroup_GetName(egroup), locked))
+	local autoGroup = EGroup_CreateUnique("disable_auto")
+	
+	local _FilterCurrentState = function(gid, idx, eid)
+		local isAuto = Entity_GetStateModelBool(eid, "gate_auto_mode_enabled")
+		-- As of current implementation, auto=true means locked=false, auto=false means locked=true
+		-- So if auto and locked match, the gate isn't in the state we're requesting
+		-- Keep it and toggle it
+		if isAuto == locked then
+			EGroup_Add(autoGroup, eid)
+		end
+	end
+	EGroup_ForEach(egroup, _FilterCurrentState)
+	Cmd_Ability(autoGroup, BP_GetAbilityBlueprint("core_gate_auto_toggle"))
+	print(string.format("GATELOCK-A: Toggled auto lock on %s gates", EGroup_Count(autoGroup)))
+	
+	-- "core_gate_lock_toggle" appears to have been deprecated by recent gate changes, though it still exists
+	-- Leaving these commented out in case we need to restart doing this delayed behaviour
+	-- Originally done because it takes a frame for the autolock to actually take effect
+	--Rule_AddOneShot(Missionomatic_SetGateLock_B, 1, { egroup = lockGroup, locked = locked, })
+	
+end
+
+--? @shortdesc Follow-up gate locking function, because you can't call two commands on an Entity in the same frame
+function Missionomatic_SetGateLock_B(context, data)
+	
+	-- Do a second filter, in case things have changed in the meantime; if it's already at the target state, remove it so we don't flip it back
+	local _FilterCurrentState = function(gid, idx, eid)
+		local isLocked = Entity_GetStateModelBool(eid, "gate_locked")
+		if isLocked == data.locked then
+			EGroup_Remove(data.egroup, eid)
+		end
+	end
+	EGroup_ForEach(data.egroup, _FilterCurrentState)
+	
+	Cmd_Ability(data.egroup, BP_GetAbilityBlueprint("core_gate_lock_toggle"))
+	print(string.format("GATELOCK-B: Toggled gate lock on %s gates to %s", EGroup_Count(data.egroup), data.locked))
+	
+end
+
+--? @shortdesc Initialize a player for use in campaign missions. Sets defaults for Player Names, Ages, and Colors, if not defined. Returns a World_GetPlayerAt value.
+--? @args Int playerSlot, Table playerData
+function Missionomatic_InitPlayer(playerSlot, playerData)
+	
+	-- Load playerData or defaults
+	local playerID = World_GetPlayerAt(playerSlot)
+	local name = playerData.name or "$11168064"
+	local currentAge = playerData.currentAge or AGE_DARK
+	local maxAge = playerData.maxAge or currentAge
+	local playerColorSlot = playerData.playerColorSlot or playerData.color or playerSlot
+	local playerUIColorSlot =  playerData.playerUIColorSlot or playerData.color or playerColorSlot	
+	
+	Setup_SetPlayerName(playerID, name)
+	Player_SetCurrentAge(playerID, currentAge)
+	Player_SetMaximumAge(playerID, maxAge)
+	Game_SetPlayerColour(playerID, playerColorSlot)
+	
+	return playerID
+end
+
+--? @shortdesc Plays a walla charge sound on the sgroup, respecting the size of the sgroup 
+--? @args SGroup sgroup
+function Sound_PlayWallaChargeOnSGroup(sgroup)
+	local sgroup_size = SGroup_CountSpawned(sgroup)
+	if sgroup_size > 25 then
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_LARGE, sgroup)
+	elseif sgroup_size > 15 then
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_MEDIUM, sgroup)
+	elseif sgroup_size > 5 then
+		Sound_PlayOnSquad(WALLA_CAMP_CHARGE_SMALL, sgroup)
+	end
+	
+end
+
+--? @shortdesc Plays a walla celebrate sound on the sgroup, respecting the size of the sgroup 
+--? @args SGroup sgroup
+function Sound_PlayWallaCelebrateOnSGroup(sgroup)
+	local sgroup_size = SGroup_CountSpawned(sgroup)
+	if sgroup_size > 25 then
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_LARGE, sgroup)
+	elseif sgroup_size > 15 then
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_MEDIUM, sgroup)
+	elseif sgroup_size > 5 then
+		Sound_PlayOnSquad(WALLA_CAMP_CELEBRATE_SMALL, sgroup)
+	end
+end
+
+--? @shortdesc Plays a walla engage sound on the sgroup, respecting the size of the sgroup 
+--? @args SGroup sgroup
+function Sound_PlayWallaEngageOnSGroup(sgroup)
+	local sgroup_size = SGroup_CountSpawned(sgroup)
+	if sgroup_size > 25 then
+		Sound_PlayOnSquad(WALLA_CAMP_ENGAGE_LARGE, sgroup)
+	elseif sgroup_size > 15 then
+		Sound_PlayOnSquad(WALLA_CAMP_ENGAGE_MEDIUM, sgroup)
+	elseif sgroup_size > 5 then
+		Sound_PlayOnSquad(WALLA_CAMP_ENGAGE_SMALL, sgroup)
+	end
+	
+end
+
+--? @shortdesc Plays a walla fear sound on the sgroup, respecting the size of the sgroup 
+--? @args SGroup sgroup
+function Sound_PlayWallaFearOnSGroup(sgroup)
+	local sgroup_size = SGroup_CountSpawned(sgroup)
+	if sgroup_size > 25 then
+		Sound_PlayOnSquad(WALLA_CAMP_FEAR_LARGE, sgroup)
+	elseif sgroup_size > 15 then
+		Sound_PlayOnSquad(WALLA_CAMP_FEAR_MEDIUM, sgroup)
+	elseif sgroup_size > 5 then
+		Sound_PlayOnSquad(WALLA_CAMP_FEAR_SMALL, sgroup)
+	end
+	
+end
+
+--? @shortdesc Plays a walla spearwall sound on the sgroup, respecting the size of the sgroup 
+--? @args SGroup sgroup
+function Sound_PlayWallaSpearwallOnSGroup(sgroup)
+	local sgroup_size = SGroup_CountSpawned(sgroup)
+	if sgroup_size > 25 then
+		Sound_PlayOnSquad(WALLA_CAMP_SPEARWALL_LARGE, sgroup)
+	elseif sgroup_size > 15 then
+		Sound_PlayOnSquad(WALLA_CAMP_SPEARWALL_MEDIUM, sgroup)
+	elseif sgroup_size > 5 then
+		Sound_PlayOnSquad(WALLA_CAMP_SPEARWALL_SMALL, sgroup)
+	end
+	
+end
+
+--? @shortdesc Starts a rule which will monitor the mission for trade cart deaths belonging to the specified players, and has a 1/3 chance of dropping a random resource pickup. 
+--? @args Table players 
+function TrackTradeCartsForPlayers(players)
+	assert(scartype(players) == ST_TABLE, "players must be a table")
+	assert(scartype(players[1]) == ST_PLAYER, "players must be a table of players")
+	g_tracked_players = players
+	Rule_AddGlobalEvent(CheckIfTradeCart, GE_SquadKilled)
+end
+
+function CheckIfTradeCart(context)
+	local victim = context.victim
+	if Squad_IsOfType(victim, "scar_trade_cart") and Table_Contains(g_tracked_players, Squad_GetPlayerOwner(victim)) then
+		local position = Squad_GetPosition(victim)
+		local pickup = BP_GetEntityBlueprint(Table_GetRandomItem({"resource_pickup_gold", "resource_pickup_stone", "resource_pickup_food", "resource_pickup_wood"}))
+		Util_CreateEntities(nil, nil, pickup, position, 1, nil, true)
+	end
+end
+
+--? @shortdesc Will spawn and garrison (default: 3) units into every entity of the provided egroup. Useful for filling outposts.
+--? @args EGroup egroup, Player player, String opt_scarType, Int opt_count
+function SpawnGarrisonsIntoEGroup(egroup, player, opt_scarType, opt_count)
+	
+	local opt_scarType = opt_scarType or "scar_spearman"
+	local opt_count = opt_count or 3
+	
+	local _loadOutpost = function(gid, idx, eid)
+		SGroup_Clear(sg_temp)
+		EGroup_Clear(eg_temp)
+		
+		UnitEntry_DeploySquads(player, sg_temp, {type = opt_scarType, numSquads = opt_count}, Entity_GetPosition(eid))
+		Player_GetAllEntitiesNearMarker(player, eg_temp, Entity_GetPosition(eid), 1)
+		Cmd_Garrison(sg_temp, eg_temp, nil, nil, true)
+		
+		SGroup_Clear(sg_temp)
+		EGroup_Clear(eg_temp)
+	end
+	
+	EGroup_ForEach(egroup, _loadOutpost)	
+end
+
+function ClearProductionQueueForEGroup(egroup)
+	for i = 1 , EGroup_Count(egroup) do
+		ClearProductionQueueForEntity(EGroup_GetEntityAt(egroup, i))
+	end
+end
+
+function ClearProductionQueueForEntity(entity)
+	if Entity_HasProductionQueue(entity) then			
+		local queueSize = Entity_GetProductionQueueSize(entity)
+		for i = queueSize-1, 0, -1 do 
+			Entity_CancelProductionQueueItem(entity, i)
+		end			
+	end
+end
+
+function EnableProductionForEGroup(egroup, enable)
+	for i = 1 , EGroup_Count(egroup) do
+		Entity_EnableProductionQueue(EGroup_GetEntityAt(egroup, i), enable)
+	end
+end
+
+--position can be anything that resolves to a position (pos, marker, squad, entity, sgroup, egroup)
+--direction must be a direction
+--facing can be anything that resolves to a position (pos, marker, squad, entity, sgroup, egroup)
+function GetSpacialData(position, direction, facing, usePosAsFallbackIfMarker, useDefault)
+	assert(scartype(position) == ST_SCARPOS or scartype(position) == ST_MARKER, "invalid position")
+	assert(not(direction and facing), "you can optionally provide facing OR direction, but not both")
+	assert(direction == nil or scartype(direction) == ST_SCARPOS, "invalid direction")
+	assert(scartype(usePosAsFallbackIfMarker) == ST_BOOLEAN)
+	assert(scartype(useDefault) == ST_BOOLEAN)
+	local r = {}
+	r.position = Util_GetPosition(position)
+	if facing then
+		r.facing = Util_GetPosition(facing)
+		r.direction = World_Pos(r.facing.x - r.position.x, 0, r.facing.z - r.position.z)
+	elseif direction then
+		r.direction = direction	
+		r.facing = World_Pos(r.position.x + r.direction.x * 100, 0, r.position.z + r.direction.z * 100)
+	elseif usePosAsFallbackIfMarker and scartype(position) == ST_MARKER then
+		r.direction = Marker_GetDirection(position)
+		r.facing = World_Pos(r.position.x + r.direction.x * 100, 0, r.position.z + r.direction.z * 100)
+	elseif useDefault then
+		r.direction = World_Pos(-1, 0, -1)
+		r.facing = World_Pos(r.position.x + r.direction.x * 100, 0, r.position.z + r.direction.z * 100)
+	end
+	return r
+end
+
+--? @shortdesc Units will be spawned in formation with default facing. If position has type ST_MARKER, that will be 
+--? used to determine facing. You may optionally provide direction OR facing, but not both. This will override facing.
+--? @extdesc units - A table where each row describes a type of unit to be spawned
+--? position - Can be a position or marker
+--? sgroup (optional) - Units will be added to it. If a string is provided, an sgroup will be created with that name
+--? direction (optional) - Is type ST_SCARPOS, but is actually a direction/vector, as returned by Marker_GetDirection
+--? facing (optional) - Can be anything that resolves to a position (pos, marker, entity, squad, sgroup, egroup) 
+--? @args Player player, Table units, Position position, SGroup sgroup, Direction direction, Position facing
+--? @result sgroup
+function CreateUnits(player, units, position, sgroup, direction, facing)
+	assert(player ~= nil, "invalid player")
+	assert(scartype(position) == ST_SCARPOS or scartype(position) == ST_MARKER, "invalid position")
+	assert(direction == nil or scartype(direction) == ST_SCARPOS, "invalid direction")
+	assert(not(direction and facing), "you can optionally provide facing OR direction, but not both")
+	
+	local sd = GetSpacialData(position, direction, facing, true, true)
+	local sg_spawned_units = SGroup_CreateUnique("sg_spawned_units")
+	UnitEntry_DeploySquads(player, sg_spawned_units, units, sd.position, nil, nil, {facing = sd.facing })
+	Formation_PlaceSquadsInFormation(sg_spawned_units, sd.position, sd.direction)
+	if sgroup then
+		if scartype(sgroup) == ST_STRING then
+			sgroup = SGroup_CreateUniqueWithPrefix(sgroup)
+		end
+		SGroup_AddGroup(sgroup, sg_spawned_units)
+	end
+	SGroup_Destroy(sg_spawned_units)
+	return sgroup
+end
+
+--? @shortdesc Units will be spawned in formation with given formationName with default facing. If position has type ST_MARKER, that
+--? will be used to determine facing. You may optionally provide direction OR facing, but not both. This will override facing.
+--? @extdesc units - A table where each row describes a type of unit to be spawned
+--? position - Can be a position or marker
+--? formation - Can be FORMATION_BOX, FORMATION_LINE, FORMATION_SPREAD, or FORMATION_WEDGE
+--? sgroup (optional) - Units will be added to it. If a string is provided, an sgroup will be created with that name
+--? direction (optional) - Is type ST_SCARPOS, but is actually a direction/vector, as returned by Marker_GetDirection
+--? facing (optional) - Can be anything that resolves to a position (pos, marker, entity, squad, sgroup, egroup) 
+--? @args Player player, Table units, Position position, SGroup sgroup, Direction direction, Position facing
+--? @result sgroup
+function CreateUnitsWithFormation(player, units, position, formation, sgroup, direction, facing)
+	assert(scartype(position) == ST_SCARPOS or scartype(position) == ST_MARKER, "invalid position")
+	assert(direction == nil or scartype(direction) == ST_SCARPOS, "invalid direction")
+	assert(not(direction and facing), "you can optionally provide facing OR direction, but not both")
+	
+	local sd = GetSpacialData(position, direction, facing, true, true)
+	local sg_spawned_units = SGroup_CreateUnique("sg_spawned_units")
+	UnitEntry_DeploySquads(player, sg_spawned_units, units, sd.position, nil, nil, {facing = sd.facing })
+	Formation_PlaceSquadsInFormationByFormationName(sg_spawned_units, sd.position, sd.direction, formation.group_spot_generator)
+	if formation.ability then
+		Cmd_Ability(sg_spawned_units, formation.ability)
+	end
+	if sgroup then
+		if scartype(sgroup) == ST_STRING then
+			sgroup = SGroup_CreateUniqueWithPrefix(sgroup)
+		end
+		SGroup_AddGroup(sgroup, sg_spawned_units)
+	end
+	SGroup_Destroy(sg_spawned_units)
+	return sgroup
+end
+
+function Entity_GetHoldSlotsAvailable(entity)
+	return Entity_GetMaxHoldSquadSlots(entity) - Entity_GetFilledHoldSquadSlots(entity)
+end
+
+function Squad_GetHoldSlotsAvailable(squad)
+	local entity = Squad_GetFirstEntity(squad)
+	return Entity_GetMaxHoldSquadSlots(entity) - Entity_GetFilledHoldSquadSlots(entity)
+end
+
+function EGroup_GetHoldSlotsAvailable(egroup)
+	local count = 0
+	for i = 1, EGroup_CountSpawned(egroup) do
+		local entity = EGroup_GetEntityAt(egroup, i)
+		count = count + Entity_GetHoldSlotsAvailable(entity)
+	end
+	return count
+end
+
+function EGroup_CountActiveLandmarks(eg_landmarks)
+	local active_landmarks = 0
+	for i = 1, EGroup_CountSpawned(eg_landmarks) do
+		local landmark = EGroup_GetSpawnedEntityAt(eg_landmarks, i)
+		if Entity_IsAlive(landmark) and Entity_GetStateModelBool(landmark, "landmark_active") then
+			active_landmarks = active_landmarks + 1
+		end
+	end
+	return active_landmarks
+end
+
+function SGroup_GetHoldSlotsAvailable(sgroup)
+	local count = 0
+	for i = 1, SGroup_CountSpawned(sgroup) do
+		local squad = SGroup_GetSquadAt(sgroup, i)
+		count = count + Squad_GetHoldSlotsAvailable(squad)
+	end
+	return count
+end
+
+function SGroup_GetResourceCost(sgroup)
+	local total_cost = 0
+	for i = 1, SGroup_CountSpawned(sgroup) do
+		local squad = SGroup_GetSpawnedSquadAt(sgroup, i)
+		local squad_cost = Player_GetSquadBPCost(player1, Squad_GetBlueprint(squad))
+		total_cost = total_cost + squad_cost.food + squad_cost.gold + squad_cost.stone + squad_cost.wood
+	end
+	return math.floor(total_cost)
+end
+
+--? @shortdesc combines food, wood, gold, and stone into a single value
+function TotalCost(cost_table)
+	return cost_table.food + cost_table.wood + cost_table.gold + cost_table.stone
+end
+
+--? @shortdesc Units will be spawned inside the entities of eg_holds. Use EGroup_GetHoldSlotsAvailable to check if eg_holds has space.
+--? @extdesc If sgroup is provided, spawned units will be added to it. If sgroup is a string, a new sgroup will be created with that name.
+--? @result sgroup 
+function CreateUnitsInsideEGroup(player, units, eg_holds, sgroup)
+	local open_slots = EGroup_GetHoldSlotsAvailable(eg_holds)
+	local unit_table_count = UnitTable_CountUnits(units) 
+	assert(unit_table_count <= open_slots, "Not enough room in hold, use EGroup_GetHoldSlotsAvailable to check for space")
+	
+	if scartype(sgroup) == ST_STRING then
+		sgroup = SGroup_CreateUniqueWithPrefix(sgroup)
+	end
+	local remaining_units = Clone(units)
+	for i = 1, EGroup_CountSpawned(eg_holds) do
+		local entity_hold = EGroup_GetSpawnedEntityAt(eg_holds, i)
+		local open_slots = Entity_GetHoldSlotsAvailable(entity_hold)
+		if open_slots > 0 then
+			if #remaining_units == 0 then
+				break
+			end
+			local unitTableSubset = UnitTable_GetSubsetByCount(remaining_units, open_slots, true)
+			CreateUnitsInsideEntity(player, unitTableSubset, entity_hold, sgroup)
+		end
+	end
+	return sgroup
+end
+
+--? @shortdesc Units will be spawned inside the squads of sg_holds. Use SGroup_GetHoldSlotsAvailable to check if sg_holds has space.
+--? @extdesc If sgroup is provided, spawned units will be added to it. If sgroup is a string, a new sgroup will be created with that name.
+--? @result sgroup
+function CreateUnitsInsideSGroup(player, units, sg_holds, sgroup)
+	local open_slots = SGroup_GetHoldSlotsAvailable(sg_holds)
+	assert(UnitTable_CountUnits(units) <= open_slots, "Not enough room in hold, use SGroup_GetHoldSlotsAvailable to check for space")
+	
+	if scartype(sgroup) == ST_STRING then
+		sgroup = SGroup_CreateUniqueWithPrefix(sgroup)
+	end
+	local remaining_units = Clone(units)
+	for i = 1, SGroup_CountSpawned(sg_holds) do
+		local squad_hold = SGroup_GetSpawnedSquadAt(sg_holds, i)
+		local entity_hold = Squad_GetFirstEntity(squad_hold)
+		local open_slots = Entity_GetHoldSlotsAvailable(entity_hold)
+		if open_slots > 0 then
+			if #remaining_units == 0 or UnitTable_CountUnits(remaining_units) <= 0 then
+				break
+			end
+			local unitTableSubset = UnitTable_GetSubsetByCount(remaining_units, open_slots, true)
+			CreateUnitsInsideSquad(player, unitTableSubset, squad_hold, sgroup)
+		end
+	end
+	return sgroup
+end
+	
+--? @shortdesc Units will be spawned inside entity_hold. Use Entity_GetHoldSlotsAvailable to check if entity_hold has space.
+--? @extdesc If sgroup is provided, spawned units will be added to it. If sgroup is a string, a new sgroup will be created with that name.
+--? @result sgroup
+function CreateUnitsInsideEntity(player, units, entity_hold, sgroup)
+	local open_slots = Entity_GetHoldSlotsAvailable(entity_hold)
+	assert(UnitTable_CountUnits(units) <= open_slots, "Not enough room in hold, use Entity_GetHoldSlotsAvailable to check for space")
+	
+	if scartype(sgroup) == ST_STRING then
+		sgroup = SGroup_CreateUniqueWithPrefix(sgroup)
+	end
+	local sg_spawned_units = SGroup_CreateUnique("sg_spawned_units")
+	eg_createUnitsInsideEntity = EGroup_CreateIfNotFound("eg_createUnitsInsideEntity")
+	EGroup_Single(eg_createUnitsInsideEntity, entity_hold)
+
+	-- We have room in the hold and the unit will instantly be garrisoned after spawn, so we don't have to worry about
+	-- spawning it in a pathable spot or in formation.
+	local options = {
+		ignorePathfindingPos = true,
+		ignoreFormation = true,
+	}
+	UnitEntry_DeploySquads(player, sg_spawned_units, units, eg_createUnitsInsideEntity, nil, nil, options)
+	if sgroup then
+		SGroup_AddGroup(sgroup, sg_spawned_units)
+	end
+	SGroup_Destroy(sg_spawned_units) --destroy group for units
+	return sgroup
+end
+
+--? @shortdesc Units will be spawned inside squad_hold. Use Squad_GetHoldSlotsAvailable to check if squad_hold has space.
+--? @extdesc If sgroup is provided, spawned units will be added to it. If sgroup is a string, a new sgroup will be created with that name.
+--? @result sgroup
+function CreateUnitsInsideSquad(player, units, squad_hold, sgroup)
+	local open_slots = Squad_GetHoldSlotsAvailable(squad_hold)
+	assert(UnitTable_CountUnits(units) <= open_slots, "Not enough room in hold, use Squad_GetHoldSlotsAvailable to check for space")
+	
+	if scartype(sgroup) == ST_STRING then
+		sgroup = SGroup_CreateUniqueWithPrefix(sgroup)
+	end
+	local sg_spawned_units = SGroup_CreateUnique("sg_spawned_units")
+	sg_createUnitsInsideSquad = SGroup_CreateIfNotFound("sg_createUnitsInsideSquad")
+	SGroup_Single(sg_createUnitsInsideSquad, squad_hold)
+
+	-- We have room in the hold and the unit will instantly be garrisoned after spawn, so we don't have to worry about
+	-- spawning it in a pathable spot or in formation.
+	local options = {
+		ignorePathfindingPos = true,
+		ignoreFormation = true,
+	}
+	UnitEntry_DeploySquads(player, sg_spawned_units, units, sg_createUnitsInsideSquad, nil, nil, options)
+	if sgroup then
+		SGroup_AddGroup(sgroup, sg_spawned_units)
+	end
+	SGroup_Destroy(sg_spawned_units) --destroy group for units
+	return sgroup
+end
+
+--? @shortdesc Entity will be spawned with default facing. If position has type ST_MARKER, that will be used to determine facing.
+--? You may optionally provide direction OR facing, but not both. This will override facing.
+--? @extdesc player - Set to nil if you want the entity to be world owned 
+--? ebp - An EntityBluePrint object describing the entity type
+--? position - Can be a position or marker
+--? egroup (optional) - The entity will be added to it. If a string is provided, an egroup will be created with that name
+--? direction (optional) - Is type ST_SCARPOS, but is actually a direction/vector, as returned by Marker_GetDirection
+--? facing (optional) - Can be anything that resolves to a position (pos, marker, entity, squad, sgroup, egroup)
+--? isConstructing (optional) - Defaults to false. If the entity is a building, set this to true to spawn it in a construction state. 
+--? @args Player player, EBP ebp, Position position, SGroup sgroup, Direction direction, Position facing, Boolean isConstructing
+--? @result egroup
+function CreateEntity(player, ebp, position, egroup, direction, facing, isConstructing)
+	assert(scartype(ebp) == ST_PBG, "invalid ebp")
+	assert(scartype(position) == ST_SCARPOS or scartype(position) == ST_MARKER, "invalid position")
+	assert(not(direction and facing), "you can optionally provide facing OR direction, but not both")
+	assert(direction == nil or scartype(direction) == ST_SCARPOS, "invalid direction")
+	
+	local isConstructing = isConstructing or false
+	local sd = GetSpacialData(position, direction, facing, false, false)
+	local entity = nil
+	if sd.facing then
+		if player then
+			entity = Entity_CreateFacing(ebp, player, sd.position, sd.facing, true)
+		else
+			entity = Entity_CreateENVFacing(ebp, sd.position, sd.facing, true)
+		end
+	else
+		if player then
+			entity = Entity_Create(ebp, player, sd.position, true)	
+		else
+			entity = Entity_CreateENV(ebp, sd.position, true)
+		end
+	end
+	Entity_SnapToGridAndGround(entity, false) --interpolate == false means it will be instant
+	Entity_Spawn(entity) -- spawn the entity
+	if Entity_IsBuilding(entity) == true and isConstructing == false then
+		Entity_ForceConstruct(entity)
+	end
+	if egroup then
+		if scartype(egroup) == ST_STRING then
+			egroup = EGroup_CreateUniqueWithPrefix(egroup)
+		end
+		EGroup_Add(egroup, entity)
+	end
+	return egroup
+end
+
+--? @shortdesc Issues a move command to the sgroup. 
+--? @extdesc position - can be anything that resolves to a position (pos, marker, entity, squad, sgroup, egroup)
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands.
+--? @args SGroup sgroup, Position position, Bool queued
+function SGroup_Move(sgroup, position, queued)
+	assert(scartype(sgroup) == ST_SGROUP)
+	assert(position ~= nil)
+	assert(queued == nil or scartype(queued) == ST_BOOLEAN)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		if queued == nil then queued = false end
+		local player = Util_GetPlayerOwner(sgroup)
+		position = Util_GetPosition(position)
+		
+		LocalCommand_BeginSendingSquadCommandsAsFormation(player, queued)
+		LocalCommand_SquadMovePos(player, sgroup, position, queued, false, false, 0)
+		LocalCommand_EndSendingSquadCommandsAsFormation()
+	end
+end
+
+--? @shortdesc Issues a move command to the sgroup. The sgroup will be destroyed after reaching the destination. If position
+--? is a marker, that 
+--? @extdesc position - can be anything that resolves to a position (pos, marker, entity, squad, sgroup, egroup)
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands.
+--? @args SGroup sgroup, Position position, Bool queued
+function SGroup_MoveToAndDestroy(sgroup, position, queued, distance)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		SGroup_Move(sgroup, position, queued)
+		DestroySquadsWhenArrived(sgroup, position, distance)
+	end
+end
+
+--? @shortdesc Issues a move command to the sgroup. If position has type ST_MARKER, that will be used to determine facing.
+--? You may optionally provide direction OR facing, but not both. This will override facing.
+--? One of these 3 means of providing direction must be used, or an assert will be triggered.
+--? @extdesc position - Can be a position or marker
+--? direction (optional) - Is type ST_SCARPOS, but is actually a direction/vector, as returned by Marker_GetDirection
+--? facing (optional) - Can be anything that resolves to a position (pos, marker, entity, squad, sgroup, egroup)
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands.
+--? @args SGroup sgroup, Position position, Direction direction, facing, Bool queued
+function SGroup_MoveAndFace(sgroup, position, direction, facing, queued)
+	assert(scartype(sgroup) == ST_SGROUP, "invalid sgroup")
+	assert(scartype(position) == ST_SCARPOS or scartype(position) == ST_MARKER, "invalid position")
+	assert(scartype(position) == ST_MARKER or direction or facing, "you must provide some means of determing direction")
+	assert(not(direction and facing), "you can optionally provide facing OR direction, but not both")
+	assert(direction == nil or scartype(direction) == ST_SCARPOS, "invalid direction")
+	assert(queued == nil or scartype(queued) == ST_BOOLEAN)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		if queued == nil then queued = false end
+		local player = Util_GetPlayerOwner(sgroup)
+		local sd = GetSpacialData(position, direction, facing, true, false)
+		LocalCommand_BeginSendingSquadCommandsAsFormation(player, queued)
+		LocalCommand_SquadMovePosFacing(player, sgroup, sd.position, sd.facing, queued, false, false, 0)
+		LocalCommand_EndSendingSquadCommandsAsFormation()
+	end
+end
+
+--? @shortdesc Issues an attackMove command to the sgroup. 
+--? @extdesc position - can be anything that resolves to a position (pos, marker, entity, squad, sgroup, egroup)
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands.
+--? @args SGroup sgroup, Position position, Bool queued
+function SGroup_AttackMove(sgroup, position, queued)
+	assert(scartype(sgroup) == ST_SGROUP, "invalid sgroup")
+	assert(position ~= nil, "position is NIL")
+	assert(queued == nil or scartype(queued) == ST_BOOLEAN)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		if queued == nil then queued = false end
+		local player = Util_GetPlayerOwner(sgroup)
+		position = Util_GetPosition(position)
+		LocalCommand_BeginSendingSquadCommandsAsFormation(player, queued)
+		LocalCommand_SquadPos(player, sgroup, SCMD_AttackMove, position, queued)
+		LocalCommand_EndSendingSquadCommandsAsFormation()
+	end
+end
+
+--? @shortdesc Orders an sgroup to attack an entity.
+--? @extdesc targetEntity - must be an entity
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands
+--? @args SGroup sgroup, Entity targetEntity, Bool queued 
+function SGroup_AttackEntity(sgroup, targetEntity, queued)
+	assert(scartype(sgroup) == ST_SGROUP, "invalid sgroup")
+	assert(scartype(targetEntity) == ST_ENTITY)
+	assert(queued == nil or scartype(queued) == ST_BOOLEAN)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		if queued == nil then queued = false end
+		local player = Util_GetPlayerOwner(sgroup)
+		local eg_target = EGroup_CreateUnique("eg_target")
+		EGroup_Single(eg_target, targetEntity)
+		LocalCommand_SquadEntityAttack(player, sgroup, eg_target, false, false, "", queued)
+		EGroup_Destroy(eg_target)
+	end
+end
+
+--? @shortdesc Orders an sgroup to attack the nearest entity in an egroup. The entire sgroup will attack
+--? the nearest entity to their average position.
+--? @extdesc targetEGroup - must be an egroup with > 0 entities
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands
+--? @args SGroup sgroup, EGroup targetEGroup, Bool queued
+function SGroup_AttackNearestEntityInEGroup(sgroup, targetEGroup, queued)
+	assert(scartype(sgroup) == ST_SGROUP, "invalid sgroup")
+	assert(scartype(targetEGroup) == ST_EGROUP and EGroup_CountSpawned(targetEGroup) > 0)
+	assert(queued == nil or scartype(queued) == ST_BOOLEAN)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		if queued == nil then queued = false end
+		local player = Util_GetPlayerOwner(sgroup)
+		local averagePosition = SGroup_GetAvgPosition(sgroup)
+		local eg_target = EGroup_GetClosestEntities(targetEGroup, 1, averagePosition)
+		LocalCommand_SquadEntityAttack(player, sgroup, eg_target, false, false, "", queued)
+		EGroup_Destroy(eg_target)
+	end
+end
+
+--? @shortdesc Orders an sgroup to attack an egroup. Each squad will individually attack the nearest target to 
+--? themselves from targetEGroup. 
+--? @extdesc targetEGroup - must be an egroup with > 0 entities
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands
+--? @args SGroup sgroup, EGroup targetEGroup, Bool queued
+function SGroup_AttackNearestEntitiesInEGroup(sgroup, targetEGroup, queued)
+	assert(scartype(sgroup) == ST_SGROUP)
+	assert(scartype(targetEGroup) == ST_EGROUP and EGroup_CountSpawned(targetEGroup) > 0)
+	assert(queued == nil or scartype(queued) == ST_BOOLEAN)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		if queued == nil then queued = false end
+		local player = Util_GetPlayerOwner(sgroup)
+		LocalCommand_SquadEntityAttack(player, sgroup, targetEGroup, false, false, "", queued)
+	end
+end
+
+--? @shortdesc Orders an sgroup to attack a squad
+--? @extdesc targetSquad - must be a squad
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands
+--? @args SGroup sgroup, Squad squad, Bool queued 
+function SGroup_AttackSquad(sgroup, targetSquad, queued)
+	assert(scartype(sgroup) == ST_SGROUP)
+	assert(scartype(targetSquad) == ST_SQUAD)
+	assert(queued == nil or scartype(queued) == ST_BOOLEAN)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		if queued == nil then queued = false end
+		local player = Util_GetPlayerOwner(sgroup)
+		local sg_target = SGroup_CreateUnique("sg_target")
+		SGroup_Single(sg_target, targetSquad)
+		LocalCommand_SquadSquadAttack(player, sgroup, sg_target, false, false, "", queued)
+		SGroup_Destroy(sg_target)
+	end
+end
+
+--? @shortdesc Orders an sgroup to attack the nearest squad in an sgroup. The entire sgroup will attack
+--? the nearest squad to their average position.
+--? @extdesc targetSGroup - must be an sgroup with > 0 squads
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands
+--? @args SGroup sgroup, SGroup targetSGroup, Bool queued
+function SGroup_AttackNearestSquadInSGroup(sgroup, targetSGroup, queued)
+	assert(scartype(sgroup) == ST_SGROUP)
+	assert(scartype(targetSGroup) == ST_SGROUP and SGroup_CountSpawned(targetSGroup) > 0)
+	assert(queued == nil or scartype(queued) == ST_BOOLEAN)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		if queued == nil then queued = false end
+		local player = Util_GetPlayerOwner(sgroup)
+		local averagePosition = SGroup_GetAvgPosition(sgroup)
+		local sg_target = SGroup_GetClosestSquads(targetSGroup, 1, averagePosition)
+		LocalCommand_SquadSquadAttack(player, sgroup, sg_target, false, false, "", queued)
+		SGroup_Destroy(sg_target)
+	end
+end
+
+--? @shortdesc Orders an sgroup to attack the nearest squad in an sgroup. Each squad will individually attack the nearest 
+--? target to themselves from targetSGroup. 
+--? @extdesc targetSGroup - must be an sgroup with > 0 squads
+--? queued (optional) - defaults to false. set to true if you want the command to be exectuted after other commands
+--? @args SGroup sgroup, SGroup targetSGroup, Bool queued
+function SGroup_AttackNearestSquadsInSGroup(sgroup, targetSGroup, queued)
+	assert(scartype(sgroup) == ST_SGROUP)
+	assert(scartype(targetSGroup) == ST_SGROUP and SGroup_CountSpawned(targetSGroup) > 0)
+	assert(queued == nil or scartype(queued) == ST_BOOLEAN)
+	if SGroup_CountSpawned(sgroup) > 0 then
+		if queued == nil then queued = false end
+		local player = Util_GetPlayerOwner(sgroup)
+		LocalCommand_SquadSquadAttack(player, sgroup, targetSGroup, false, false, "", queued)
+	end
+end
+
+--? @shortdesc Monitors the sgroup, and destroys each squad when it arrives at the destination 
+--? @extdesc if distance is provided, that will be the arrival threshold. If not, but where is a 
+--? marker with a proximity shape, that will be used for arrival. If not, 10m (2.5tiles) will be used
+--? @args SGroup sgroup, AnythingThatResolvesToAPosition where, float distance
+function DestroySquadsWhenArrived(sgroup, where, distance)
+	local position
+	local distance_squared = nil
+	local marker = nil
+	if scartype(distance) == ST_NUMBER then
+		position  = Util_GetPosition(where)
+		distance_squared = distance * distance
+	elseif scartype(where) == ST_MARKER and Marker_HasProximityShape(where) then
+		marker = where
+	else
+		position = Util_GetPosition(where)
+		distance_squared = 100
+	end
+	
+	local data = { 
+		sgroup = SGroup_CreateUniqueWithPrefix("_DestroySGroupWhenArrived"),
+		position = position,
+		distance_squared = distance_squared,
+		marker = marker
+	}
+	SGroup_AddGroup(data.sgroup, sgroup)
+	
+	g_SquadsToDestroyData = g_SquadsToDestroyData or {}
+	table.insert(g_SquadsToDestroyData, data)
+	
+	if Rule_Exists(_MonitorSquadsAndDestroyWhenArrived) == false then
+		Rule_AddInterval(_MonitorSquadsAndDestroyWhenArrived, 0.5)
+	end
+end
+
+--? @shortdesc Returns a position at the edge of the building's footprint. The optional parameter 'offset' specifies
+--? which side of the building should be used. Possible parameters are OFFSET_FRONT, OFFSET_BACK, OFFSET_LEFT,
+--? OFFSET_RIGHT, OFFSET_FRONT_LEFT, OFFSET_FRONT_RIGHT, OFFSET_BACK_LEFT, OFFSET_BACK_RIGHT
+--? @args Entity/EGroup building, OFFSET offset
+--? @result Position
+function Building_GetSpawnPosition(building, offset)
+	if offset == nil then
+		offset = OFFSET_FRONT
+	end
+	if scartype(building) == ST_EGROUP then
+		building = EGroup_GetEntityAt(building, 1)
+	end
+	local building_position = Entity_GetPosition(building)
+	local building_heading = Entity_GetHeading(building)
+	local building_radius = 6
+	if Entity_IsOfType(building, "town_center") then
+		building_radius = 8
+	end
+	if offset % 2 == 1 then
+		building_radius = building_radius * 1.4142 --sqrt(2) --buildings are square, not round. so corners are farther out 
+	end
+	building_radius = building_radius + 0.5 --adding a bit of buffer room because it looks better
+	local position = World_GetOffsetPosition(building_position, building_heading, offset, building_radius)
+	local y = World_GetHeightAt(position.x, position.z)
+	return World_Pos(position.x, y, position.z)
+end
+
+function _MonitorSquadsAndDestroyWhenArrived(context, data)
+	
+	local _squadHasArrived = function(squad, destroy_data)
+		if destroy_data.marker then
+			if Marker_InProximity(destroy_data.marker, Squad_GetPosition(squad)) then
+				return true
+			end
+		else
+			if World_DistanceSquaredPointToPoint(Squad_GetPosition(squad), destroy_data.position) <= destroy_data.distance_squared then
+				return true
+			end
+		end
+		return false
+	end
+	
+	for i = #g_SquadsToDestroyData, 1, -1 do
+		local destroy_data = g_SquadsToDestroyData[i]
+		for i = SGroup_CountSpawned(destroy_data.sgroup), 1, -1 do
+			local squad = SGroup_GetSquadAt(destroy_data.sgroup, i)
+			if _squadHasArrived(squad, destroy_data) then
+				Squad_Destroy(squad)
+			end
+		end
+		if SGroup_CountSpawned(destroy_data.sgroup) == 0 then
+			SGroup_Destroy(destroy_data.sgroup)
+			table.remove(g_SquadsToDestroyData, i)
+		end
+	end
+	if #g_SquadsToDestroyData == 0 then
+		Rule_RemoveMe()
+	end
+end

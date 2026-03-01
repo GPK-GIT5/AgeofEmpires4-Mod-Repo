@@ -1,0 +1,446 @@
+--
+-- Lumen Shan 1268 - Wall Off Passage - Phase 3
+--
+--
+-- TO USE THIS TEMPLATE:
+-- 1. Decide on a prefix for this objective / section of the mission
+-- 2. save this template as a new file in the same directory as your mission script - use "obj_<prefix>.scar" for the name 
+-- 3. import this file into your main mission script with import("obj_<prefix>.scar")
+-- 4. call the <prefix>_InitObjectives function from inside you main mission script's Mission_SetupVariables function
+--
+import("obj_lumen_phase4.scar")
+
+--? @shortdesc Initializes the main objectives for Lumen Shan
+function LumenShan_InitObjectives_Phase3()
+
+	OBJ_Defense = { Title = "$11178822", Type = ObjectiveType_Primary,
+
+		Intel_Fail = EVENTS.Fail_SongNorth,
+		
+		-- This is OBJECTIVE 7
+		Cheat = function()
+			-- Destroy the enemies
+			Lumen_CheatDeleteEnemies()
+			
+			-- Teleport
+			Player_GetAll(g_playerMongol)
+			SGroup_FormationWarpToMarker(sg_allsquads, mkr_cheat_2, Marker_GetDirection(mkr_cheat_2))
+			Camera_MoveTo(mkr_cheat_2)
+			
+			-- Bump the pop cap
+			Player_SetPopCapOverride(g_playerMongol, 200)
+			
+			-- Destroy stuff the player should have destroyed
+			Player_GetAllEntitiesNearMarker(g_playerSong, eg_temp, mkr_reveal_lumen_1)
+			EGroup_Kill(eg_temp)
+			Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_reveal_lumen_1)
+			SGroup_Kill(sg_temp)
+			
+			-- Capture Lumen and its units
+			Location_SetPlayerOwner(LOCATION("Lumen"), g_playerMongol)
+			Lumen_RevealAroundLumen()
+			
+			-- Capture Bohekou and its units
+			Location_SetPlayerOwner(LOCATION("Bohekou"), g_playerMongol)
+			SGroup_SetPlayerOwner(sg_bohekou_troops, g_playerMongol)
+			Lumen_RevealAroundBohekou()
+		end,
+		
+		PreStart = function()
+			Util_AutoSave()
+			-- Send leftovers south
+			Lumen_RecallExistingUnits()
+			-- Activate the checking function
+			g_songReliefActive = true
+			-- Spawn units into the modules
+			Rule_AddOneShot(Lumen_SpawnWallbreakers, Util_DifVar({15, 15, 30, 30}))
+			Rule_AddInterval(Lumen_SpawnWallbreakers, 50)
+			Rule_AddInterval(Lumen_MaintainSallies, 2)
+			Rule_AddInterval(Lumen_UpdatePathDisplay, 5)
+			Rule_AddInterval(Lumen_WarnPlayer, 1)
+			Sound_SetMinimumMusicCombatIntensity(801, 0)
+		end,
+		
+		OnStart = function()
+			Player_GetAll(g_playerMongol, sg_temp, eg_player_walls)
+			EGroup_Filter(eg_player_walls, {
+					EBP.CHINESE.BUILDING_DEFENSE_TOWER_CHI,
+					EBP.CHINESE.BUILDING_DEFENSE_WALL_BASTION_CHI,
+					EBP.CHINESE.BUILDING_DEFENSE_WALL_CHI,
+					EBP.CHINESE.BUILDING_DEFENSE_WALL_GATE_CHI,
+					EBP.CHINESE.BUILDING_DEFENSE_PALISADE_BASTION_CHI,
+					EBP.CHINESE.BUILDING_DEFENSE_PALISADE_CHI,
+					EBP.CHINESE.BUILDING_DEFENSE_PALISADE_GATE_CHI
+				}, FILTER_KEEP)
+			if EGroup_Count(eg_player_walls) > 0 then
+				Rule_AddEGroupEvent(Lumen_OnWallDamage, eg_player_walls, GE_DamageReceived)
+				Rule_AddEGroupEvent(Lumen_OnWallDestroyed, eg_player_walls, GE_EntityKilled)
+			end
+		end,
+		
+		IsComplete = function()
+			return Objective_IsComplete(SOBJ_BlockadeSuccess)
+		end,
+		
+		PreComplete = function()
+			Rule_Remove(Lumen_UpdateCachedPath)
+			Rule_Remove(Lumen_UpdatePathDisplay)
+		end,
+		
+		OnComplete = function()
+			Mission_Complete()
+		end,
+		
+		IsFailed = function()
+			return Objective_IsFailed(SOBJ_BlockadeFailure)
+		end,
+		
+		OnFail = function()
+			Rule_Remove(Lumen_UpdateCachedPath)
+			Rule_Remove(Lumen_UpdatePathDisplay)
+			Rule_Remove(Lumen_SpawnWallbreakers)
+			Rule_Remove(Lumen_MaintainSallies)
+			Rule_Remove(Lumen_WarnPlayer)
+			Objective_Start(OBJ_Remedial)
+			--Also remove the paths so they don't persist
+			for index, path in pairs(g_pathChecks) do
+				MarkerPaths_ClearIcons(path.pathName, false)
+			end
+		end,
+	}
+	SOBJ_BlockadeSuccess = { Title = "$11178823", Type = ObjectiveType_Battle, Parent = OBJ_Defense, StartAlongsideParent = true,
+		
+		PreStart = function()
+			Objective_SetCounter(SOBJ_BlockadeSuccess, 0, g_wallbreakerWaveCount)
+		end,
+		
+		IsComplete = function()
+			return Objective_GetCounter(SOBJ_BlockadeSuccess) >= g_wallbreakerWaveCount and (g_failureThresholdCrossed ~= true)
+		end,
+		
+		OnComplete = function()
+			Objective_Complete(SOBJ_BlockadeFailure, false)
+		end,
+	}
+	SOBJ_BlockadeFailure = { Title = "$11178824", Type = ObjectiveType_Tip, Parent = OBJ_Defense, StartAlongsideParent = true,
+		
+		counterCurrent = 0,
+		counterMax = 20,
+		
+		PreStart = function()
+			Objective_SetCounter(SOBJ_BlockadeFailure, 0, SOBJ_BlockadeFailure.counterMax)
+			
+			MissionOMatic_Objective_SetupHintpoints(SOBJ_BlockadeFailure,
+			{
+				{
+					marker = mkr_song_north_1,
+					text = "$11178825",
+					blip = true,
+					worldArrow = true,
+				},
+				{
+					marker = mkr_song_north_2,
+					text = "$11178825",
+					blip = true,
+					worldArrow = true,
+				},
+			})
+		end,
+		
+		IsFailed = function()
+			Objective_SetCounter(SOBJ_BlockadeFailure, SOBJ_BlockadeFailure.counterCurrent, SOBJ_BlockadeFailure.counterMax)
+			if g_alreadyWarned ~= true and SOBJ_BlockadeFailure.counterCurrent >= (SOBJ_BlockadeFailure.counterMax / 2) then
+				Util_StartIntel(EVENTS.Song_Halfway)
+				g_alreadyWarned = true
+			end
+			return SOBJ_BlockadeFailure.counterCurrent >= SOBJ_BlockadeFailure.counterMax
+		end,
+		
+		OnFail = function()
+			
+		end,
+	}
+	
+	--
+	-- REGISTRATION
+	--
+	Objective_Register(OBJ_Defense)
+	Objective_Register(SOBJ_BlockadeSuccess)
+	Objective_Register(SOBJ_BlockadeFailure)
+	
+end
+
+--? @shortdesc Continues updating the path on the minimap as warranted
+function Lumen_UpdatePathDisplay(context, data)
+
+	-- Note that the function Lumen_UpdateCachedPath should still be running in this phase!
+	-- Otherwise this wouldn't update paths correctly
+	-- This is just to display those paths
+	for index, path in pairs(g_pathChecks) do
+		local pointList = AIPlayer_GetCachedPathPoints(g_playerSong, path.ID)
+		MarkerPaths_GenerateIcons(path.pathName, pointList, "military_route_enemy", 52)
+	end
+	
+end
+
+--? @shortdesc Collects and moves around any leftover units on the map, making them part of the sally?
+function Lumen_RecallExistingUnits()
+
+	-- We need to copy this table, or else we'll be removing stuff from t_allModules while iterating through it
+	local allModules = Clone(t_allModules, false)
+	
+	-- Extract everyone from their modules
+	for index, module in pairs(allModules) do
+		if module.player == g_playerSong and string.find(module.descriptor, "SongPush") == nil and string.find(module.descriptor, "SongReturn") == nil and string.find(module.descriptor, "raiders") == nil then
+			local disbandedUnits = SGroup_CreateUnique("disbanded")
+			if module.prefabName == "Defend" then
+				Defend_Disband(module, disbandedUnits)
+			elseif module.prefabName == "RovingArmy" then
+				RovingArmy_Disband(module, disbandedUnits)
+			end
+			
+			if SGroup_Count(disbandedUnits) > 0 then
+				print("LUMEN: Disbanded and sent off "..module.descriptor)
+				Cmd_FormationAttackMove(disbandedUnits, mkr_song_staging)
+			end
+		end
+	end
+	
+end
+
+--? @shortdesc Assigns leftover units to roving army modules
+function Lumen_MaintainSallies()
+	
+	g_idleAttackerGroups = g_idleAttackerGroups or 0
+	g_idleAttackerMinimum = g_idleAttackerMinimum or 20
+	
+	-- Look for units in the staging ground
+	local idleUnits = SGroup_CreateUnique("Song Staging Units")
+	Player_GetAllSquadsNearMarker(g_playerSong, idleUnits, mkr_song_staging)
+	
+	-- Remove anything that's already occupied
+	local _RemoveIfIdle = function(gid, idx, sid)
+		if Squad_IsIdle(sid) == false then
+			SGroup_Remove(idleUnits, sid)
+		end
+	end
+	SGroup_ForEach(idleUnits, _RemoveIfIdle)
+	
+	-- Only do anything if we've got units
+	if SGroup_Count(idleUnits) > g_idleAttackerMinimum then
+		
+		g_idleAttackerGroups = g_idleAttackerGroups + 1
+		g_idleAttackerMinimum = 20
+		
+		local newAttackers = RovingArmy_Init({
+			descriptor = "IdleArmy_"..tostring(g_idleAttackerGroups),
+			
+			type = "RovingArmy",
+			player = g_playerSong,
+			sgroup = idleUnits,
+			
+			idleTimeOverride = 0,
+			targetingType = ARMY_TARGETING_CYCLE,
+			targets = { mkr_neutral_lumen, mkr_neutral_bohekou, },
+		})
+		
+	elseif SGroup_Count(idleUnits) > 0 then
+		-- If there are units but not enough to form an army, make sure we're lowering our standard for forming an army on a regular basis, until there are inevitably enough units to form an army
+		g_idleAttackerMinimum = g_idleAttackerMinimum - 1
+		
+	end
+	
+	-- Cull any empty push modules
+	for index, army in pairs(g_songAttackersPhase3) do
+		if RovingArmy_IsDefeated(army) == true or RovingArmy_IsEmpty(army) == true then
+			table.remove(g_songAttackersPhase3, index)
+		end
+	end
+	
+end
+
+--? @shortdesc Spawns modules designed to attack player walls
+function Lumen_SpawnWallbreakers()
+	
+	g_attackersSoFar = g_attackersSoFar or 0
+	
+	if g_attackersSoFar < g_wallbreakerWaveCount then
+		-- DETAILS
+		local thisDescriptor = "SongPush"..tostring(g_attackersSoFar)
+		
+		-- We want to use whatever side we didn't use last time
+		local thisSpawnIdx = g_wallbreakerNextIdx
+		if g_wallbreakerNextIdx == 1 then
+			g_wallbreakerNextIdx = 2
+		else
+			g_wallbreakerNextIdx = 1
+		end
+		local thisSpawnTable = g_southernMarkers[thisSpawnIdx]
+		local attackerSpawn = thisSpawnTable.marker
+		
+		-- If we're on the side with an alternative marker, we want to use that alternative every other time
+		local moduloCheck = math.fmod(thisSpawnTable.uses, 2)
+		if scartype(thisSpawnTable.markerAlt) == ST_MARKER and moduloCheck == g_westSideModulo then
+			attackerSpawn = thisSpawnTable.markerAlt
+			print(string.format("idx %s, markerAlt FOUND, moduloCheck MATCHED at %s", thisSpawnIdx, moduloCheck))
+		else
+			print(string.format("idx %s, markerAlt is %s, moduloCheck is %s", thisSpawnIdx, scartype_tostring(thisSpawnTable.markerAlt), moduloCheck))
+		end
+		-- Increment the use table
+		thisSpawnTable.uses = thisSpawnTable.uses + 1
+		
+		-- The final destination can be fully random
+		local attackerTarget = Table_GetRandomItem(g_northernMarkers, 1)
+		
+		-- UNIT COMPOSITION
+		local unitCountPerSpawn = Util_DifVar({12, 14, 16, 20})
+		
+		-- Melee units
+		local enemiesMelee = { "scar_spearman", "scar_manatarms", }
+		if Game_GetSPDifficulty() <= GD_NORMAL then
+			enemiesMelee = { BP_GetSquadBlueprint("unit_militia_cmp_chi"), "scar_spearman", "scar_manatarms", }
+		end
+		
+		local chosenType = Table_GetRandomItem(enemiesMelee, 1)
+		local chosenMelee = nil
+		if scartype(chosenType) == ST_PBG then
+			chosenMelee = { sbp = chosenType, numSquads = unitCountPerSpawn, }
+		else
+			chosenMelee = { type = chosenType, numSquads = unitCountPerSpawn, }
+		end
+		
+		-- Ranged units
+		local enemiesRanged = { "scar_archer", "scar_crossbowman", }
+		if Game_GetSPDifficulty() == GD_HARD then
+			enemiesRanged = { "scar_archer", "scar_crossbowman", "scar_grenadier", }
+		elseif Game_GetSPDifficulty() == GD_EXPERT then
+			enemiesRanged = { "scar_repeater_crossbow", "scar_crossbowman", "scar_grenadier", }
+		end
+		
+		-- Now compile the final list
+		local unitList = {
+			chosenMelee,
+			{ type = Table_GetRandomItem(enemiesRanged, 1), numSquads = unitCountPerSpawn, },
+			{ type = "scar_ram", numSquads = Util_DifVar({1, 1, 1, 1}), },
+			{ type = "scar_springald", numSquads = Util_DifVar({0, 0, 1, 0}), },
+			{ type = "scar_mangonel", numSquads = Util_DifVar({0, 0, 0, 1}), },
+		}
+		-- INIT THE ARMY
+		local newAttackers = RovingArmy_Init({
+			descriptor = thisDescriptor,
+			
+			type = "RovingArmy",
+			player = g_playerSong,
+			spawnLocation = attackerSpawn,
+			
+			units = unitList,
+			
+			idleTimeOverride = 0,
+			targetingType = ARMY_TARGETING_DISCARD,
+			targets = { attackerTarget },
+				
+			onDeathFunction = Lumen_IncrementStoppedSong,
+		})
+		table.insert(g_songAttackersPhase3, newAttackers)
+		g_attackersSoFar = g_attackersSoFar + 1
+		
+		-- Also, sometimes add a raiding party
+		if Game_GetSPDifficulty() >= GD_NORMAL and (g_attackersSoFar + 1) % Util_DifVar({4, 4, 3, 2}) == 0 then
+			local raidTarget = Table_GetRandomItem({ mkr_neutral_lumen, mkr_neutral_bohekou, })
+			if World_GetRand(1, 3) > 1 then
+				Player_GetAll(g_playerMongol)
+				raidTarget = SGroup_CreateUnique("raid_target_single")
+				raidTarget = SGroup_Single(raidTarget, SGroup_GetRandomSpawnedSquad(sg_allsquads))
+				print("LUMEN: Raiding to target a squad!")
+			end
+			
+			print("LUMEN: Raid party sent via Lumen_SpawnWallbreakers")
+			local issuedRaiders = Raiding_TriggerRaid(raidTarget)
+			
+			-- If this RovingArmy doesn't have an onBlocked function, add one now - they all need one
+			if issuedRaiders ~= nil then
+				if issuedRaiders.onBlockedFunction == nil then
+					issuedRaiders.onBlockedFunction = Lumen_RetreatBlockedRaiders
+				end
+				-- If a Raider module is complete, i.e. has no targets left, kick this function off again to presumably assign it a new one
+				if issuedRaiders.onCompleteFunction == nil then
+					issuedRaiders.onCompleteFunction = Lumen_ManageRaiders
+				end
+			end
+			
+		end
+		
+	else
+		Rule_RemoveMe()
+		-- Also make sure this is true
+		g_songPushComplete = true
+	end
+	
+end
+
+--? @shortdesc Looks out for enemies too close to the exit, and warns the player about them if there are new ones
+function Lumen_WarnPlayer(context, data)
+	
+	Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, mkr_trigger_warn_escape, Marker_GetProximityRadiusOrDefault(mkr_trigger_warn_escape, 256))
+	
+	if g_escapeWarningTimer > 0 then
+		g_escapeWarningTimer = g_escapeWarningTimer - 1
+	end
+	
+	if SGroup_Count(sg_temp) > g_escapeWarningCount and g_escapeWarningTimer <= 0 then
+		
+		if g_firstWarningIssued ~= true then
+            g_firstWarningIssued = true
+            Sound_Play2D("mus_sting_mon_age3_alert")
+        end
+		
+		UI_CreateEventCueClickable(-1, 10, 0, 0,
+			"$11192572",
+			"$11192573",
+			"high_priority", "", "sfx_ui_event_queue_high_priority_play", 255, 255, 255, 255, ECV_Queue | ECV_Title,
+			nothing)
+		
+		UI_CreateMinimapBlip(SGroup_GetPosition(sg_temp), 5, "general")
+		
+		g_escapeWarningTimer = 45
+		
+	end
+		
+	g_escapeWarningCount = SGroup_Count(sg_temp)
+	
+end
+
+--? @shortdesc A function for incrementing the objective counter each time a wave of Song wallbreakers is defeated
+function Lumen_IncrementStoppedSong()
+	
+	if Objective_IsCounterSet(SOBJ_BlockadeSuccess) == true then
+		Objective_IncreaseCounter(SOBJ_BlockadeSuccess, 1)
+		Sound_Play2D("sfx_campaign_scripted_ui_objective_counter_update")
+		Sound_Play2D("sfx_campaign_scripted_medium_group_celebrate")
+	end
+	
+end
+
+--? @shortdesc Monitors the walls the player built to block the paths in phase two and triggers speech when they come under attack
+function Lumen_OnWallDamage(context, data)
+	
+	if context.victim ~= nil then
+		Player_GetAllSquadsNearMarker(g_playerSong, sg_temp, Entity_GetPosition(context.victim), 30)
+		if SGroup_CountSpawned(sg_temp) > 0 then
+			Util_StartIntel(EVENTS.FirstSongCounterAttack)
+			Rule_RemoveEGroupEvent(Lumen_OnWallDamage, eg_player_walls)
+		end
+	end	
+	
+end
+
+--? @shortdesc Monitors the walls the player built to block the paths in phase two and triggers a negative stinger when one is destroyed
+function Lumen_OnWallDestroyed(context, data)
+	
+	if context.victim ~= nil then
+		-- Play the negative stinger
+		Music_PlayStinger(MUS_STING_POSITIVE)
+		Rule_RemoveEGroupEvent(Lumen_OnWallDestroyed, eg_player_walls)
+	end	
+	
+end

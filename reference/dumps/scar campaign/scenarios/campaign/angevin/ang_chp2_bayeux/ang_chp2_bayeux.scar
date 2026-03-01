@@ -1,0 +1,1112 @@
+--
+-- Bayeux 1106
+--
+-- Norman campaign, Mission 3
+--
+
+import("MissionOMatic/MissionOMatic.scar")		-- this imports the Cardinal scripts as well
+import("obj_destroy.scar")
+import("obj_capturewood.scar")
+import("obj_controlgroups.scar")
+
+-- Training
+import("training_bayeux.scar")
+
+function Mission_SetupPlayers()
+	
+	player1 = World_GetPlayerAt(1) -- Normans
+	player2 = World_GetPlayerAt(2) -- Robert's Forces
+	player3 = World_GetPlayerAt(3) -- Downed Leader
+	AI_Enable(player3, false)
+		
+	-- player 1 - Normans
+	Setup_SetPlayerName(player1, "$11179198") --Henry's Forces
+	Player_SetCurrentAge(player1, AGE_FEUDAL)
+	Player_SetMaximumAge(player1, AGE_FEUDAL)
+
+	-- player 2 - Village Rebels	
+	Setup_SetPlayerName(player2, "$11179199") --Robert's Forces
+	Player_SetCurrentAge(player2, AGE_FEUDAL)
+	Player_SetMaximumAge(player2, AGE_FEUDAL)
+	
+	--Enable Player Colours
+	PlayerColour_Enable()
+	
+	Game_SetPlayerSlotColour(player1, 1)
+    Game_SetPlayerUISlotColour(player1, 1)
+	Game_SetPlayerSlotColour(player2, 2)
+    Game_SetPlayerUISlotColour(player2, 2)
+	Game_SetPlayerSlotColour(player3, 1)
+    Game_SetPlayerUISlotColour(player3, 1)	
+	
+	--Perform Upgrades
+	PlayerUpgrades_Auto(player1, false)
+	PlayerUpgrades_Auto(player2, true)
+	PlayerUpgrades_Auto(player3, true)
+	
+	Player_SetRelationship(player3, player1, R_ALLY)	
+	Player_SetRelationship(player3, player2, R_ALLY)
+	Player_SetRelationship(player1, player3, R_ALLY)	
+	Player_SetRelationship(player2, player3, R_ALLY)
+		
+end
+
+function Mission_SetupVariables()	-- create any extra sgroups, egroups, and mission variables in here
+
+	
+	--Enemy sgroups
+	sg_enemy_farmers = SGroup_CreateIfNotFound("sg_enemy_farmers")
+	sg_cavalry_spawn = SGroup_CreateIfNotFound("sg_cavalry_spawn")
+	sg_cine_cavalry = SGroup_CreateIfNotFound("sg_cine_cavalry")
+	sg_cavalry_attack = SGroup_CreateIfNotFound("sg_cavalry_attack")
+	sg_cavalry_attack2 = SGroup_CreateIfNotFound("sg_cavalry_attack2")
+	sg_inland_cavalry = SGroup_CreateIfNotFound("sg_inland_cavalry")
+	sg_bayeux_defenders = SGroup_CreateIfNotFound("sg_bayeux_defenders")
+	sg_wall_defenders = SGroup_CreateIfNotFound("sg_wall_defenders")
+	sg_defend_wood = SGroup_CreateIfNotFound("sg_defend_wood")
+	sg_enemy_troops = SGroup_CreateIfNotFound("sg_enemy_troops")
+	
+	--Player Sgroups
+	sg_player_army = SGroup_CreateIfNotFound("sg_player_army")
+	sg_player_scouts = SGroup_CreateIfNotFound("sg_player_scout")
+	sg_player_archers = SGroup_CreateIfNotFound("sg_player_archers")
+	sg_player_archers_setup = SGroup_CreateIfNotFound("sg_player_archers_setup")
+	sg_player_archers_reup = SGroup_CreateIfNotFound("sg_player_archers_reup")
+	sg_player_henry = SGroup_CreateIfNotFound("sg_player_henry")
+	sg_player_troops = SGroup_CreateIfNotFound("sg_player_troops")
+
+	--Bayeux Town Egroups
+	eg_bayeux_town = EGroup_CreateIfNotFound("eg_bayeux_town")
+	eg_allbayeux = EGroup_CreateIfNotFound("eg_allbayeux")
+	
+	eg_killwall = EGroup_CreateIfNotFound("eg_killwall")
+	eg_woodtown = EGroup_CreateIfNotFound("eg_woodtown")
+	
+	g_leaderHenry = Missionomatic_InitializeLeader({
+		name = "$11179251", --King Henry
+		owner = player1,
+		neutralHolder = player3,
+	})
+	
+	eg_bayeux_walls =  EGroup_CreateIfNotFound("eg_bayeux_walls")
+	Player_GetAll(player2)
+	EGroup_Filter(eg_allentities, {"wall"}, FILTER_REMOVE, eg_bayeux_walls)
+	EGroup_Filter(eg_bayeux_walls, "outpost", FILTER_REMOVE)
+	EGroup_AddEGroup(eg_allbayeux, eg_bayeux_walls)
+	EGroup_AddEGroup(eg_allbayeux, eg_bayeux_town)
+	
+	eg_bayeux_gates =  EGroup_CreateIfNotFound("eg_bayeux_gates")
+	Player_GetAll(player2)
+	EGroup_Filter(eg_allentities, "stone_gate", FILTER_REMOVE, eg_bayeux_gates)
+		
+	b_bayeuxIsDefending = false
+	b_siegeBuilt = false
+	b_wallsSpotted = false
+	b_idleIntelPlayed = false
+	
+	b_debugStart = false
+	
+	t_AllArcherDefenders = {}
+	t_AllCavalryModules = {}
+	t_bayeux_extra_infantry = {}
+	
+	--eg_bayeux_buildings =  EGroup_CreateIfNotFound("eg_bayeux_buildings")
+	--Player_GetAllEntitiesNearMarker(player2, eg_bayeux_buildings, mkr_town_bayeux)
+	--EGroup_Filter(eg_bayeux_buildings, {"tower", "wall", "farm"}, FILTER_REMOVE)
+	bayeuxHealthTotal = EGroup_GetTotalHealth(eg_bayeux_town)
+	
+	tune_CombatRange = 40
+	tune_LeashRange = 500
+	
+	rovingArmy_DefendPositions = Util_DifVar(
+	
+		{	
+			--Story Mode
+			{
+				{spawn = mkr_cavalry_patrol_1, patrol = {marker = mkr_cavalry_patrol_1, combatRange = tune_CombatRange, leashRange = tune_LeashRange},},
+				{spawn = mkr_cavalry_patrol_2, patrol = {{marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_4, patrol = {{marker = mkr_cavalry_patrol_4, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_6, patrol = {{marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_7, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_8, patrol = {{marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				--{spawn = mkr_cavalry_patrol_10, patrol = {{marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_11, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+			},
+			--Easy
+			{
+				{spawn = mkr_cavalry_patrol_1, patrol = {marker = mkr_cavalry_patrol_1, combatRange = tune_CombatRange, leashRange = tune_LeashRange},},
+				{spawn = mkr_cavalry_patrol_2, patrol = {{marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_4, patrol = {{marker = mkr_cavalry_patrol_4, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_6, patrol = {{marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_7, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_8, patrol = {{marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				--{spawn = mkr_cavalry_patrol_10, patrol = {{marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_11, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+			},
+			--Medium
+			{
+				{spawn = mkr_cavalry_patrol_1, patrol = {marker = mkr_cavalry_patrol_1, combatRange = tune_CombatRange, leashRange = tune_LeashRange},},
+				{spawn = mkr_cavalry_patrol_2, patrol = {{marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_4, patrol = {{marker = mkr_cavalry_patrol_4, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_6, patrol = {{marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_7, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_8, patrol = {{marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_10, patrol = {{marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_11, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_7, patrol = {{marker = mkr_cavalry_patrol_7, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_4, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_11, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				--{spawn = mkr_cavalry_patrol_1, patrol = {{marker = mkr_cavalry_patrol_1, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_4, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_7, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				--{spawn = mkr_cavalry_patrol_5, patrol = {{marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_11, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+			},
+			--Hard
+			{
+				{spawn = mkr_cavalry_patrol_1, patrol = {marker = mkr_cavalry_patrol_1, combatRange = tune_CombatRange, leashRange = tune_LeashRange},},
+				{spawn = mkr_cavalry_patrol_2, patrol = {{marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_4, patrol = {{marker = mkr_cavalry_patrol_4, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_6, patrol = {{marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_7, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_8, patrol = {{marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_10, patrol = {{marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_11, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_7, patrol = {{marker = mkr_cavalry_patrol_7, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_4, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_11, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_1, patrol = {{marker = mkr_cavalry_patrol_1, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_4, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_7, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+				{spawn = mkr_cavalry_patrol_5, patrol = {{marker = mkr_cavalry_patrol_5, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_6, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_9, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_8, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_11, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_10, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_3, combatRange = tune_CombatRange, leashRange = tune_LeashRange}, {marker = mkr_cavalry_patrol_2, combatRange = tune_CombatRange, leashRange = tune_LeashRange},}},
+			},
+			})
+	
+	archers_DefendPositions = AllMarkers_FromName("mkr_wall_archers", "")
+	
+	infantry_DefendPositions =
+	{
+		mkr_bayeux_infantry_1,
+		mkr_bayeux_infantry_2,
+		mkr_bayeux_infantry_3,
+	}
+	
+	b_playerIsIdle = false
+		
+end
+
+function Mission_SetDifficulty()
+
+	t_difficulty = 
+	{
+		--defenderValue = Util_DifVar(0.90, 1.00, 1.10}),
+		--playerForces = Util_DifVar({1.10, 1.00, 0.90}),
+		archerAmounts = Util_DifVar({3, 3, 5, 8}),
+		playerSpearmen = Util_DifVar({40, 30, 30, 30}),
+		playerArchers = Util_DifVar({70, 70, 70, 70}),
+		enemyCavalry = Util_DifVar({10, 12, 14, 10}),
+		enemyKnights = Util_DifVar({0, 0, 1, 5}),
+		gateDefenders = 
+		{
+			spearmanCount = Util_DifVar({5, 6, 8, 12,}),
+			archerCount = Util_DifVar({5, 6, 10, 14,}),
+		},
+		idleattacktimer = Util_DifVar({0, 6, 4, 1}), --Turned off for story mode
+		--playerUpgradesToRemove = Util_DifVar(
+			--{
+				--{}, --easy
+				--{}, --medium
+				--{UPG.COMMON.UPGRADE_MELEE_ARMOR_I, UPG.COMMON.UPGRADE_MELEE_DAMAGE_I,}, --hard
+			--}),
+		--enemyUpgradesToRemove = Util_DifVar(
+			--{
+				--{UPG.COMMON.UPGRADE_MELEE_ARMOR_I, UPG.COMMON.UPGRADE_MELEE_DAMAGE_I,}, --easy
+				--{}, --medium
+				--{}, --hard
+			--}),
+	}
+  end
+
+
+function Mission_SetRestrictions()	
+	--Player_SetEntityProductionAvailability(player1, BP_GetEntityBlueprint("building_defense_wall_eng"), ITEM_REMOVED)
+	--Player_CompleteUpgrade(player1, UPG.COMMON.UPGRADE_SIEGE_ENGINEERS)
+	Player_SetSquadProductionAvailability(player1, SBP.ENGLISH.UNIT_TRADE_CART_ENG, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_DEFENSE_TOWER_ENG, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_DEFENSE_WALL_BASTION_ENG, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_DEFENSE_WALL_ENG, ITEM_REMOVED)
+	Player_SetEntityProductionAvailability(player1, EBP.ENGLISH.BUILDING_DEFENSE_WALL_GATE_ENG, ITEM_REMOVED)
+	
+	--Turn off deep water fish interaction
+	EGroup_SetTargetingType(eg_deepfish, Targeting_None)
+	EGroup_SetSelectable(eg_deepfish, false)
+	
+	--local _RemoveUpgrades = function(player, UTable)
+		--if UTable ~= nil and #UTable > 0 then
+			--for index, upgrade in ipairs(UTable) do
+				--Player_RemoveUpgrade(player, UTable[index])
+			--end
+		--end
+	--end
+	
+	--_RemoveUpgrades(player1, t_difficulty.playerUpgradesToRemove)
+	--_RemoveUpgrades(player2, t_difficulty.enemyUpgradesToRemove)
+	
+	--Player_SetPopCapOverride(player1, 200)
+	--Player_AddResource(player1, RT_Wood, 600)
+end
+
+function Mission_Preset()	-- any other setup to do before the mission starts (i.e. set up rules, spawn units, etc)
+		
+	Destroy_InitObjectives()
+	CaptureVillage_InitObjectives()
+	ControlGroup_InitObjectives()
+
+	-- Audio considerations
+	Sound_SetMusicRaceCode("french")
+	
+	Sound_ResetMusicIntensityMapping();
+	Sound_AddMusicIntensityMappingPoint(10, 300) -- point 1 raw value to point 1 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(350, 4500) -- point 2 raw value to point 2 scaled intensity value
+	Sound_AddMusicIntensityMappingPoint(700, 9999) -- raw value max to scaled value max 
+			
+	--Player_GetAll(player1)
+	--SGroup_Filter(sg_allsquads, SBP.ENGLISH.UNIT_KING_HENRY_CMP_ENG, FILTER_REMOVE, sg_player_henry)
+	
+	--Outposts get archers
+	Player_GetAll(player2)
+    EGroup_Filter(eg_allentities, EBP.FRENCH.BUILDING_DEFENSE_OUTPOST_FRE, FILTER_KEEP)
+    Cmd_InstantUpgrade(eg_allentities, UPG.COMMON.UPGRADE_OUTPOST_ARROWSLITS)
+	
+	--Towers get Springalds
+	Player_GetAll(player2)
+    EGroup_Filter(eg_allentities, EBP.FRENCH.BUILDING_DEFENSE_TOWER_FRE, FILTER_KEEP)
+	Cmd_InstantUpgrade(eg_allentities, UPG.COMMON.UPGRADE_TOWER_ARROWSLITS)
+	mod_towerDMG = Modify_WeaponDamage(eg_allentities, "hardpoint_01", 1) --Previous value: 2
+	mod_towerRNG = Modify_WeaponRange(eg_allentities, "hardpoint_01", 0.6)
+	mod_towerARM = Modify_ReceivedDamage(eg_allentities, 1) --Previous value: 0.001
+	mod_gateARM = Modify_ReceivedDamage(eg_bayeux_gates, 1) --Previous value: 0.001
+	--Modify_EntityMaxHealth(eg_allentities, 100, MUT_Multiplication)
+	--Modify_EntityMaxHealth(eg_bayeux_gates, 100, MUT_Multiplication)
+	
+	Init_Archer_Defenders()
+	Init_Infantry_Defenders()
+	
+	--Player_CompleteUpgrade(player1, UPG.ENGLISH.UPGRADE_LONGBOW_MAKE_CAMP_ENG)
+	
+	--Kill the rear wall for art
+	--WallDie()
+	
+	--[[Scar_AddInit(missionstart_OnInit)]]
+	
+	UI_SetPlayerDataContext(player1, { PopulationCapOn = false })
+	UI_SetModalConstructionPhaseCallback(TrainingContructionCallback) -- callback used to track construction for training hint purposes
+
+	
+end
+
+function Mission_PreStart()
+	Player_SetResource(player1, RT_Wood, 0)
+	Player_SetResource(player1, RT_Gold, 0)
+	Player_SetResource(player1, RT_Food, 0)	
+end
+
+function Mission_Start()	-- this is triggered after the intro, just as control is passed to the player
+	
+	-- on console don't restore econ-related HUD elements at first
+	Cardinal_EnablePartialXboxUI(true, {VF_XboxUIResourceCard, VF_XboxUIVillagerPriorities})
+	
+	--FOW_RevealAll()
+
+	--AssignVillagersToFarms(sg_enemy_farmers)
+	--MissionTutorial_Init()
+	--Rule_AddEGroupEvent(SiegeCounter_OnDamageReceived, eg_bayeux_walls, GE_DamageReceived)
+	Rule_AddEGroupEvent(Advance_OnEntityKilled, eg_bayeux_walls, GE_EntityKilled)
+	Rule_AddEGroupEvent(Advance_OnEntityDamage, eg_bayeux_town, GE_DamageReceived)
+	Rule_AddInterval(BayeuxBurning, 1)
+	--TrainingGoal_AddHeightAdvantage()
+	
+	MissionTutorial_Palings()
+	
+	--DEBUG--
+	--debugInfo ={Game_GetSPDifficulty()}
+	--view(debugInfo)
+	
+	--Modify_EntityMaxHealth(eg_bayeux_gates, 100, MUT_Multiplication)
+	EGroup_Kill(eg_bridge_die)
+	SGroup_Kill(sg_robcorpse)	
+	
+	Rule_AddInterval(PlayerDeath_PreTown, 1)
+	Rule_AddInterval(TowerDeathAudio, 1)
+	
+	SGroup_AddGroup(sg_bayeux_defenders, sg_wall_defenders)
+end
+
+function GetRecipe()
+
+	local recipe = {
+
+		audioSettings = { 
+			campaignName = "ang",
+			missionName = "rts1106bayeux",
+		},
+
+		introNIS = EVENTS.Intro,
+		outroNIS = EVENTS.Victory,
+		
+		-- Locations
+		locations = {
+			{ descriptor = "WoodTown", marker = mkr_location_wood, egroup = eg_woodtown, player = player2, sgroup_defenders = sg_defend_wood,},
+			{ descriptor = "Bayeux", marker = mkr_town_bayeux, player = player2 },
+		},
+		
+		modules = {
+
+			--PLAYER
+			--{
+				--type = "UnitSpawner",
+				--player = player1,
+				--spawnLocation = mkr_player_startspawn,
+				--units = {
+					--{type = "scar_scout", numSquads = 1, sgroup = sg_player_scouts,},
+					--{sbp = SBP.ENGLISH.UNIT_KING_HENRY_CMP_ENG, numSquads = 1, sgroup = g_leaderHenry.sgroup, spawn = mkr_player_a2,},
+					--{type = "scar_archer", numSquads = 30, sgroup = sg_player_archers,},
+					--{type = "scar_archer", numSquads = 30, spawn = mkr_player_a2, sgroup = sg_player_archers_setup,},
+				--},
+			--},
+			--TOWNLIFE
+			--{
+				--descriptor = "EnemyFarm",
+				--type = "TownLife",
+				--location = "SouthFarm",
+				--sgroup = sg_enemy_farmers,
+				--player = player2,
+				--spawnLocation = mkr_enemy_farmers,
+				--canBuild = false,
+				--units = 
+				--{
+					--{type = "scar_villager", numSquads = 5},
+				--},
+			--},
+			--{
+				--descriptor = "Bayeux_TownLife",
+				--type = "TownLife",
+				--location = "Bayeux",
+				--player = player2,
+				--spawnLocation = mkr_bayeux_defender_spawn,
+				--canBuild = false,
+				--units = 
+				--{
+					--{type = "scar_villager", numSquads = 13},
+					--{type = "scar_monk", numSquads = 2},
+				--},
+			--},
+			--ENEMY	
+			--{
+				--type = "RovingArmy",
+				--descriptor = "defend_bayeux",
+				--player = player2,
+				--sgroup = sg_bayeux_defenders,
+				--targetingType = ARMY_TARGETING_DISCARD,
+				--targets = {
+					--mkr_bayeux_middle
+				--},			
+				--spawnLocation = mkr_bayeux_middle,
+				--fallbacks = {{ marker = mkr_bayeux_middle, }},
+				--withdrawThreshold = 0,
+				--onCompleteFunction = resetDefenders,
+				----onDeathFunction = Cavalry_Defeated,
+				--units = 
+				--{
+					--{type = "scar_spearman", numSquads = 30},
+					--{type = "scar_archer", numSquads = 20},	
+				--},
+			--},
+			
+			{
+				type = "Defend",
+				descriptor = "defend_wood",
+				player = player2,
+				sgroup = sg_defend_wood,
+				marker = mkr_location_wood,			
+				spawnLocation = mkr_location_wood,
+				units = 
+				{
+					{type = "scar_spearman", numSquads = 10},
+					{type = "scar_archer", numSquads = 10},
+					{type = "scar_horseman", numSquads = 5},	
+				},
+			},
+			
+			--ROVING--
+			{
+				type = "RovingArmy",
+				descriptor = "defend_bayeux_walls",
+				player = player2,
+				targetingType = ARMY_TARGETING_DISCARD,
+				targets = {
+					mkr_bayeux_defender_spawn,
+				},			
+				spawnLocation = mkr_bayeux_defender_spawn,
+				fallbacks = {{ marker = mkr_bayeux_defender_spawn, }},
+				withdrawThreshold = 0,
+				attackMove = attackMoveStyle_ignoreEverything,
+				units = 
+				{
+					{type = "scar_spearman", numSquads = 15, sgroup = sg_bayeux_defenders},
+					{type = "scar_archer", numSquads = 10, sgroup = sg_bayeux_defenders},	
+				},
+			},
+
+		},
+	
+		-- Playbill
+		playbill = {},
+		
+		onStart = {
+			intelEvent = "",
+			expositionCamera = {},
+			titleCard = {								
+				title = 11160632, -- Bayeux
+				date = 11160633, -- 1105
+				icon = "icons/campaign/campaign_angevin_possession",
+				},
+			actions = {
+			},
+		},
+	}
+	
+	return recipe
+
+end
+
+--------------------------------------------
+-------------HINT POINTS--------------------
+--------------------------------------------
+
+function HintPoint_Cavalry()
+	--Player_GetAllSquadsNearMarker(player1, sg_temp, mkr_hintpoint_trigger)
+	--local triggerCount = SGroup_CountSpawned(sg_temp)
+			
+		hint_danger = HintPoint_Add(mkr_nis_cavalry_spawn, true, Loc_GetString(11179200), 5, HPAT_Attack, "icons/objective_arrow", nil, true, nil) --Cavalry have the advantage on open ground.
+		blip_danger = UI_CreateMinimapBlip(mkr_nis_cavalry_spawn, 10, "question_here")
+		
+		hint_advantage = HintPoint_Add(mkr_hint_height, true, Loc_GetString(11179201) , 5, HPAT_Attack, "icons/objective_arrow", nil, true, nil) --Archers have the advantage from elevation.
+		blip_advantage = UI_CreateMinimapBlip(mkr_hint_height, 10, "question_here")
+		
+		hint_cavalry = HintPoint_Add(sg_cavalry_attack, true, Loc_GetString(11179202), 5, HPAT_Attack, "icons/threat_group_arrow", nil, true, nil) -- Cavalry
+		blip_cavalry = UI_CreateMinimapBlip(sg_cavalry_attack, -1, "threat_group")
+	
+		hint_cavalry = HintPoint_Add(sg_cavalry_attack2, true, Loc_GetString(11179202), 5, HPAT_Attack, "icons/threat_group_arrow", nil, true, nil) -- Cavalry
+		blip_cavalry = UI_CreateMinimapBlip(sg_cavalry_attack2, -1, "threat_group")
+		
+end
+
+
+--------------------------------------------
+------------UNIT CREATION-------------------
+--------------------------------------------
+
+function Reinforce_Archers(markerSpawn, markerDestination, cta_bool)
+	SGroup_Duplicate(sg_player_army, sg_temp)
+	SGroup_Filter(sg_temp, "scar_archer", FILTER_KEEP)
+	local archerCount = 0
+	archerCount = SGroup_CountSpawned(sg_temp)
+	archerCount = t_difficulty.playerArchers-archerCount
+	
+	--local options = {destination = sg_player_henry}
+	
+	local units = {
+		{type = "scar_scout", numSquads = 3,},
+		{type = "scar_spearman", numSquads = t_difficulty.playerSpearmen,},
+	}
+	
+	if archerCount > 0 then
+		table.insert(units, {type = "scar_archer", numSquads = archerCount,})
+	end
+	
+	Util_AutoSave()
+	
+	UnitEntry_DeploySquads(player1, {sg_player_archers_reup, sg_player_army}, units, markerSpawn)
+	if cta_bool == true then
+		EventCues_CallToAction(11176787, CTA_CELEBRATE, EVENTS.Cavalry_Down, nil, sg_player_archers_reup, 20) --Reinforcements have arrived!
+		Sound_Play2D(MUS_STING_TRIUMPHANT)
+		Sound_PlayWallaCelebrateOnSGroup(sg_player_army)
+	end
+	Cmd_FormationMove(sg_player_archers_reup, markerDestination)
+	
+	--Initialize some field training after the first combat is complete
+	--MissionTutorial_FogOfWar()
+	MissionTutorial_HeightAdvantage()
+	Rule_AddInterval(PlayerRush, 15)
+	
+	-- Only show control group tutorial for players on lower difficulty settings and using keyboard input
+	if Game_GetSPDifficulty() <= GD_HARD and UI_IsXboxControllerUI() == false then
+		ControlGroup_Check()
+	end
+end
+
+function Cavalry_Cleared()
+	Sound_PlayWallaCelebrateOnSGroup(sg_player_army)
+	Music_StopMedium()
+	Rule_AddOneShot(Music_CombatMusicOnly, 1)
+	Objective_Start(OBJ_Destroy)
+	Init_Cavalry_Defenders()
+	if Game_GetSPDifficulty() > GD_EASY then --disable idle attacks for story mode
+		Rule_AddInterval(IdleAttack, 15)
+	end
+end
+
+function UpdateCavalry()
+	if SGroup_CountSpawned(sg_player_army) > 0 then
+		RovingArmy_SetTarget(MissionOMatic_FindModule("cavalry_wave"), Util_GetPosition(SGroup_GetSquadAt(sg_player_army, 1)))
+	end
+end
+
+function Init_Cavalry_Attackwave()
+	local moduleData = 
+	{
+		type = "RovingArmy",
+		descriptor = "cavalry_wave",
+		player = player2,
+		sgroup = sg_cavalry_attack,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			mkr_cavalry_target,
+		},			
+		spawnLocation = mkr_field_cavalry_spawn,
+		withdrawThreshold = 0,
+		onCompleteFunction = UpdateCavalry,
+		onDeathFunction = Cavalry_Cleared,
+		units = 
+		{
+			{type = "scar_knight", numSquads = 1},
+			{type = "scar_horseman", numSquads = 15},
+		},
+	}
+	RovingArmy_Init(moduleData)
+	Rule_AddInterval(CavalryAudioTrigger_2, 0.5)
+end
+
+function Init_Cavalry_Defenders()
+	
+	for i, entry in pairs(rovingArmy_DefendPositions) do
+		local modName = ("cavalry_defense_"..i)
+		local moduleData = 
+		{
+			type = "RovingArmy",
+			descriptor = modName,
+			player = player2,
+			targetingType = ARMY_TARGETING_REVERSE,
+			targets = entry.patrol,		
+			spawnLocation = entry.spawn,
+			withdrawThreshold = 0.45,
+			fallbacks = {
+				{marker = mkr_bayeux_cavalry_withdraw},
+			},
+			idleTime = 4,
+			leashRange = 400,
+			--onWithdrawFunction = function()
+				--DissolveModuleIntoModule(modName, "defend_bayeux_walls")
+			--end,
+			--onCompleteFunction = UpdateCavalry,
+			units = 
+			{
+				{type = "scar_knight", numSquads = t_difficulty.enemyKnights},
+				{type = "scar_horseman", numSquads = t_difficulty.enemyCavalry},
+			},
+		}
+		_G["Bayeux_Cavalry_Defender_"..i] = RovingArmy_Init(moduleData)
+		table.insert(t_AllCavalryModules, _G["Bayeux_Cavalry_Defender_"..i])
+		--Cmd_FormationMove(_G["Bayeux_Cavalry_Defender_"..i].sgroup, marker)
+		--Cmd_HoldPosition(_G["Bayeux_Cavalry_Defender_"..i].sgroup, marker, true)
+	end
+end
+
+function Init_Archer_Defenders()
+	
+	for i, marker in pairs(archers_DefendPositions) do
+		local modName = ("archers_"..i)
+		local moduleData = 
+		{
+			type = "Defend",
+			descriptor = modName,
+			player = player2,
+			marker = marker,		
+			spawnLocation = mkr_bayeux_defender_spawn,
+			units = 
+			{
+				{type = "scar_archer", numSquads = t_difficulty.archerAmounts, sgroup = sg_bayeux_defenders},
+			},
+		}
+		_G["Bayeux_Archers_"..i] = Defend_Init(moduleData)
+		table.insert(t_AllArcherDefenders, _G["Bayeux_Archers_"..i])
+		--table.insert(t_bayeux_extra_infantry, _G["Bayeux_Archers_"..i])
+		Cmd_HoldPosition(_G["Bayeux_Archers_"..i].sgroup, true)
+		Cmd_Ability(_G["Bayeux_Archers_"..i].sgroup, BP_GetAbilityBlueprint("core_formation_spread"))
+	end
+end
+
+function ClearArchers()
+	for i = #t_AllArcherDefenders, 1, -1 do
+		local module = t_AllArcherDefenders[i]
+		if module ~= nil and SGroup_CountSpawned(module.sgroup) > 0 then
+			if Player_CanSeeSGroup(player1, module.sgroup, ANY) == false then
+				SGroup_DestroyAllSquads(module.sgroup)
+				if SGroup_CountSpawned(module.sgroup) <= 0 then
+					table.remove(t_AllArcherDefenders, i)
+				end
+			end
+		end
+	end
+end
+
+function Init_Infantry_Defenders()
+	
+	for i, marker in pairs(infantry_DefendPositions) do
+		local modName = ("infantry_"..i)
+		local moduleData = 
+		{
+				type = "RovingArmy",
+				descriptor = modName,
+				player = player2,
+				targetingType = ARMY_TARGETING_DISCARD,
+				targets = {
+					marker
+				},			
+				spawnLocation = mkr_bayeux_defender_spawn,
+				units = 
+				{
+					{type = "scar_spearman", numSquads = t_difficulty.gateDefenders.spearmanCount, sgroup = sg_bayeux_defenders},
+					{type = "scar_archer", numSquads = t_difficulty.gateDefenders.archerCount, sgroup = sg_bayeux_defenders},
+				},
+		}
+		_G["Bayeux_infantry_"..i] = RovingArmy_Init(moduleData)
+		table.insert(t_bayeux_extra_infantry, _G["Bayeux_infantry_"..i])
+	end
+end
+
+function Init_Infantry_Extra_Defenders()
+	t_extraInfantryLocations = AllMarkers_FromName("mkr_bayeux_extra_infantry", "")
+	t_spawnOptions = AllMarkers_FromName("mkr_bayeux_defender_hiddenspawnoption", "")
+	
+	local function spawnCheck()
+		for i = 1, #t_spawnOptions do
+			if Player_CanSeePosition(player1, Util_GetPosition(t_spawnOptions[i])) ~= true then
+				return t_spawnOptions[i]
+			else
+				return t_spawnOptions[1]
+			end
+		end
+		
+	end
+	
+	for i, marker in pairs(t_extraInfantryLocations) do
+		local modName = ("extra_infantry_"..i)
+		local moduleData = 
+		{
+				type = "RovingArmy",
+				descriptor = modName,
+				player = player2,
+				targetingType = ARMY_TARGETING_DISCARD,
+				targets = {
+					{ marker = marker, combatRange = tune_CombatRange, leashRange = tune_LeashRange},
+				},			
+				spawnLocation = spawnCheck(),
+				units = 
+				{
+					{type = "scar_spearman", numSquads = t_difficulty.gateDefenders.spearmanCount/2, sgroup = sg_bayeux_defenders},
+					{type = "scar_archer", numSquads = t_difficulty.gateDefenders.archerCount/2, sgroup = sg_bayeux_defenders},
+				},
+		}
+		_G["Bayeux_extra_infantry_"..i] = RovingArmy_Init(moduleData)
+		table.insert(t_bayeux_extra_infantry, _G["Bayeux_extra_infantry_"..i])
+	end
+end
+
+function Clear_ExtraDefenders()
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_bayeux_infantry_2)
+		if Player_CanSeeSGroup(player1, sg_temp, ANY) == false and SGroup_CountSpawned(sg_temp) then
+				SGroup_DestroyAllSquads(sg_temp)
+		end
+	Player_GetAllSquadsNearMarker(player2, sg_temp, mkr_bayeux_infantry_1)
+		if Player_CanSeeSGroup(player1, sg_temp, ANY) == false and SGroup_CountSpawned(sg_temp) then
+				SGroup_DestroyAllSquads(sg_temp)
+		end
+end
+
+
+--------------------------------------------
+------------PASSIVE RULES-------------------
+--------------------------------------------
+--function SiegeCounter_OnDamageReceived(context)
+	
+	--local bayeuxDefenders = MissionOMatic_FindModule("defend_bayeux")
+	
+	--if bayeuxDefenders == nil then
+		--Rule_RemoveMe()
+	--else
+		--if context.attacker ~= nil and Entity_IsBuilding(context.attacker) == false then
+			--local attackerSquad = Entity_GetSquad(context.attacker)
+			--if attackerSquad ~= nil and b_bayeuxIsDefending == false then
+				--b_bayeuxIsDefending = true
+				--RovingArmy_SetTarget(bayeuxDefenders, Util_GetPosition(attackerSquad), 50)
+			--end
+		--end
+	--end
+--end
+
+function Advance_OnEntityKilled(context)
+	Rule_RemoveEGroupEvent(Advance_OnEntityKilled, eg_bayeux_walls)
+	Rule_RemoveEGroupEvent(Advance_OnEntityDamage, eg_bayeux_town)
+	
+	FOW_PlayerRevealArea(player2, Util_GetPosition(mkr_town_bayeux), 120, -1)
+	
+	if context.victim ~= nil and MissionOMatic_FindModule("defend_bayeux_walls") ~= nil then
+		Dissolve_WithdrawnCavalry()
+		CleanUp_Cavalry()
+		RovingArmy_SetTarget(MissionOMatic_FindModule("defend_bayeux_walls"), Util_GetPosition(context.victim), 50)
+	end
+	
+	if Objective_IsStarted(SOBJ_BurnBuildings) ~= true then
+		ClearArchers()
+		Init_Infantry_Extra_Defenders()
+		
+		Rule_AddOneShot(VillagerFlee, 20)
+		Rule_AddOneShot(PushWhenNeeded, 30)
+		
+		Objective_Complete(SOBJ_Breach)
+		Objective_Start(SOBJ_BurnBuildings, true)
+		Obj_SetProgressVisible(SOBJ_BurnBuildings.ID, true)
+		
+		Music_LockIntensity(MUSIC_COMBAT_RARE, 30, MUSIC_TENSE_COMBAT, 30)
+		Sound_SetMinimumMusicCombatIntensity(801, 0) -- Lock minimum music intensity tense and above tense
+	end
+		
+end
+
+function Advance_OnEntityDamage(context)
+	local _IsOnWalls = function(gid, index, sid)
+		if Squad_IsOnWalkableWall(sid, ANY) then
+			return true
+		end
+	end
+	Player_GetAll(player1)
+	SGroup_Filter(sg_allsquads, "infantry", FILTER_KEEP)
+	if SGroup_ForEachAllOrAny(sg_allsquads, ANY, _IsOnWalls) then
+		Rule_RemoveEGroupEvent(Advance_OnEntityDamage, eg_bayeux_town)
+		Rule_RemoveEGroupEvent(Advance_OnEntityKilled, eg_bayeux_walls)
+
+		FOW_PlayerRevealArea(player2, Util_GetPosition(mkr_town_bayeux), 120, -1)
+		
+		if context.victim ~= nil and MissionOMatic_FindModule("defend_bayeux_walls") ~= nil then
+			Dissolve_WithdrawnCavalry()
+			CleanUp_Cavalry()
+			RovingArmy_SetTarget(MissionOMatic_FindModule("defend_bayeux_walls"), Util_GetPosition(context.victim), 50)
+		end
+		
+		if Objective_IsStarted(SOBJ_BurnBuildings) ~= true then
+			ClearArchers()
+
+			Init_Infantry_Extra_Defenders()
+			
+			Rule_AddOneShot(VillagerFlee, 20)
+			Rule_AddOneShot(PushWhenNeeded, 30)
+			
+			Objective_Complete(SOBJ_Breach)
+			Objective_Start(SOBJ_BurnBuildings, true)
+			Obj_SetProgressVisible(SOBJ_BurnBuildings.ID, true)
+			
+			Music_LockIntensity(MUSIC_COMBAT_RARE, 30, MUSIC_TENSE_COMBAT, 30)
+			Sound_SetMinimumMusicCombatIntensity(801, 0) -- Lock minimum music intensity tense and above tense
+		end
+	end
+end
+
+function Dissolve_WithdrawnCavalry()
+	if #t_AllCavalryModules > 0 then
+		for i = #t_AllCavalryModules, 1, -1 do
+			if t_AllCavalryModules[i] ~= nil and SGroup_CountSpawned(t_AllCavalryModules[i].sgroup) > 0 then
+				if t_AllCavalryModules[i].isWithdrawn then
+					DissolveModuleIntoModule(t_AllCavalryModules[i].descriptor, "defend_bayeux_walls")
+					table.remove(t_AllCavalryModules,i)
+				end
+			end
+		end
+	end
+end
+
+function resetDefenders()
+	b_bayeuxIsDefending = false
+end
+
+function BayeuxBurning()
+	local bayeuxHealthCurrent =  EGroup_GetTotalHealth(eg_bayeux_town)
+	
+	if ((1-(bayeuxHealthCurrent/bayeuxHealthTotal))/0.25) > 0 then
+		Obj_SetProgress(SOBJ_BurnBuildings.ID, (1-(bayeuxHealthCurrent/bayeuxHealthTotal))/0.25)
+	end
+	
+	if bayeuxHealthCurrent/bayeuxHealthTotal <= 0.75 then
+		Sound_PlayWallaCelebrateOnSGroup(sg_player_army)
+		Objective_Complete(SOBJ_BurnBuildings, true)
+		Rule_RemoveMe()
+	end
+end
+
+function PushWhenNeeded()
+	local bayeuxHealthPercent =  EGroup_GetTotalHealth(eg_bayeux_town)/bayeuxHealthTotal
+	previousPush = previousPush or 1.0
+	if Objective_IsComplete(SOBJ_Defenders) ~= true and #t_bayeux_extra_infantry > 0 then
+		local unitCount = SGroup_CountSpawned(sg_player_army)
+		if unitCount > 0 then 
+			Rule_AddOneShot(PushWhenNeeded, 3)
+			if (bayeuxHealthPercent <= (previousPush-0.025) or bayeuxHealthPercent < 0.75) then
+				DissolveInArchers()
+				PushAttack()
+				previousPush = bayeuxHealthPercent
+			end
+		end
+	end
+end
+
+function DissolveInArchers()
+	if #t_AllArcherDefenders > 0 then
+		for i = #t_AllArcherDefenders, 1, -1 do
+			local module = t_AllArcherDefenders[i]
+			if module ~= nil and SGroup_CountSpawned(module.sgroup) > 0 then
+				DissolveModuleIntoModule(module, MissionOMatic_FindModule("defend_bayeux_walls"), false)
+				sg_pushtarget = SGroup_CreateIfNotFound("sg_pushtarget") 
+				Player_GetAll(player1, sg_pushtarget)
+				if SGroup_CountSpawned(sg_pushtarget) > 0 then
+					RovingArmy_AddTarget(MissionOMatic_FindModule("defend_bayeux_walls"), sg_pushtarget)
+				else
+					RovingArmy_AddTarget(MissionOMatic_FindModule("defend_bayeux_walls"), mkr_location_wood)
+				end
+			else
+				table.remove(t_AllArcherDefenders, i)
+			end
+		end
+	end
+	
+end
+-----------------------------------
+
+
+--function PalingBuff()
+	--Player_GetAll(player1)
+	--EGroup_Filter(eg_allentities, EBP.ENGLISH.BUILDING_DEFENSE_LONGBOWMEN_PALINGS_ENG, FILTER_KEEP)
+	
+	--Modify_WeaponDamage(eg_allentities,0,100)
+	--Modify_WeaponDamage(eg_allentities,1,100)
+--end
+
+function WallDie()
+	Player_GetAllEntitiesNearMarker(player2, eg_killwall, mkr_wall_die)
+	EGroup_Filter(eg_killwall, "stone_wall", FILTER_KEEP)
+	EGroup_Kill(eg_killwall)
+end
+
+
+function PlayerDeath_PreTown()
+	SGroup_Duplicate(sg_player_army, sg_temp)
+	SGroup_Filter(sg_temp, SBP.ENGLISH.UNIT_KING_HENRY_CMP_ENG, FILTER_REMOVE)
+	local playerCount = SGroup_CountSpawned(sg_temp)
+	if playerCount <= 0 then 
+		Mission_Fail()
+	end
+end
+
+function PlayerDeath_PostTown()
+	if EGroup_CountSpawned(eg_playerbase) <= 0 then 
+		Mission_Fail()
+	end
+end
+
+--[[
+PlayerUpgrades_LockAllUpgrades(player2, 3)
+]]
+
+function IdleAttack()
+	sg_idletarget = SGroup_CreateIfNotFound("sg_idletarget") 
+	sg_idleattackers = SGroup_CreateIfNotFound("sg_idleattackers") 
+	Player_GetAll(player1, sg_idletarget)
+	SGroup_Filter(sg_idletarget, "scar_villager", FILTER_REMOVE)
+		
+	if SGroup_CountSpawned(sg_idletarget) > 0 then
+		local pokeModule = nil
+		if SGroup_IsUnderAttack(sg_idletarget, ANY, t_difficulty.idleattacktimer*60) ~= true then
+			if #t_AllCavalryModules > 0 then
+				for i = #t_AllCavalryModules, 1, -1 do
+					if SGroup_CountSpawned(t_AllCavalryModules[i].sgroup) <= 0 or t_AllCavalryModules[i].isWithdrawn == true then
+						table.remove(t_AllCavalryModules,i)
+					else
+						if pokeModule == nil or 
+							Util_GetDistanceSquared(pokeModule.sgroup, sg_idletarget) > Util_GetDistanceSquared(t_AllCavalryModules[i].sgroup, sg_idletarget) then
+							pokeModule = t_AllCavalryModules[i]
+						end
+					end
+				end
+			elseif SGroup_CountSpawned(sg_idleattackers) <= 0 then
+				NewAtackerGroup(sg_idletarget)
+			end
+			
+			if pokeModule ~= nil and SGroup_CountSpawned(pokeModule.sgroup) > 0 and SGroup_CountSpawned(sg_idletarget) > 0 then
+				RovingArmy_SetTarget(pokeModule, sg_idletarget)
+				pokeModule.targetingType = ARMY_TARGETING_DISCARD
+				if b_idleIntelPlayed == false then
+					b_idleIntelPlayed = true
+					Util_StartIntel(EVENTS.Robert_Attack)
+					Rule_AddInterval(IdlePoke_IsDead, 1, {module = pokeModule})
+				end
+			end
+		end
+	elseif Objective_IsComplete(OBJ_CaptureVillage) and SGroup_CountSpawned(sg_idleattackers) <= 0 then
+		NewAtackerGroup(mkr_location_wood)
+	end
+end
+
+function NewAtackerGroup(target)
+	i_spearPokeWaveNumber = i_spearPokeWaveNumber or 0
+	local stringPokeDescription = "PokeWave_"..i_spearPokeWaveNumber
+	sg_idleattackers = SGroup_CreateIfNotFound("sg_idleattackers") 
+	local moduledata = 
+	{
+		type = "RovingArmy",
+		descriptor = stringPokeDescription,
+		player = player2,
+		targetingType = ARMY_TARGETING_DISCARD,
+		targets = {
+			target,	
+			mkr_location_wood,
+		},	
+		units = {
+			{type = "scar_spearman", numSquads = 20, sgroup = sg_idleattackers},
+		},	
+		spawnLocation = mkr_bayeux_archer_spawn,
+		attackMove = attackMoveStyle_attackEverything,
+		onDeathDissolve = true,
+		onCompleteFunction = IdleAttack,
+
+	}	
+	local attackwaveModule = RovingArmy_Init(moduledata)
+	table.insert(t_AllCavalryModules, attackwaveModule)
+	i_spearPokeWaveNumber = i_spearPokeWaveNumber+1
+end
+
+function IdlePoke_IsDead(context, data)
+	if data.module.sgroup ~= nil then
+		if SGroup_CountSpawned(data.module.sgroup) <= 0 then
+			Rule_RemoveMe()
+			IdleAttack_DeadIntel()
+		elseif data.module.isWithdrawn then
+			Rule_RemoveMe()
+			Rule_AddOneShot(IdleAttack_DeadIntel, 8)
+		end
+	end
+end
+
+function IdleAttack_DeadIntel()
+	Util_StartIntel(EVENTS.Robert_Attack_Completed)
+end
+
+function PushAttack()
+	sg_pushtarget = SGroup_CreateIfNotFound("sg_pushtarget") 
+	Player_GetAllSquadsNearMarker(player1, sg_pushtarget, mkr_town_bayeux)
+	
+	if SGroup_CountSpawned(sg_pushtarget) > 0 then
+		local pushModule = nil
+		local finali = 0
+		if #t_bayeux_extra_infantry > 0 then
+			for i = #t_bayeux_extra_infantry, 1, -1 do
+				if SGroup_CountSpawned(t_bayeux_extra_infantry[i].sgroup) <= 0 then
+					table.remove(t_bayeux_extra_infantry,i)
+					if finali >= i then 
+						finali = finali-1
+					end
+				else
+					if pushModule == nil or 
+						Util_GetDistanceSquared(pushModule.sgroup, sg_pushtarget) > Util_GetDistanceSquared(t_bayeux_extra_infantry[i].sgroup, sg_pushtarget) then
+						pushModule = t_bayeux_extra_infantry[i]
+						finali = i
+					end
+				end
+			end
+		end
+		
+		if pushModule ~= nil and SGroup_CountSpawned(pushModule.sgroup) > 0 and SGroup_CountSpawned(sg_pushtarget) > 0 then
+			RovingArmy_SetTargets(pushModule, {sg_pushtarget, mkr_town_bayeux})
+			table.remove(t_bayeux_extra_infantry, finali)
+		end
+	end
+end
+
+function PlayerRush()
+	if SGroup_CountSpawned(sg_player_army) < 5 and SGroup_CountSpawned(sg_player_army) > 0 then
+		for index, module in pairs(t_allModules) do
+			if SGroup_CountSpawned(module.sgroup) > 0 then
+				if module.prefabName == "RovingArmy" then
+					RovingArmy_SetTarget(module, sg_player_army)
+				else
+					Prefab_DoAction(module, "Stop")
+					Cmd_AttackMove(module.sgroup, sg_player_army)
+				end
+			end
+		end	
+	end	
+end
+
+function VillagerFlee()
+	Player_GetAllEntitiesNearMarker(player2, eg_temp, mkr_town_bayeux)
+	EGroup_Filter(eg_temp, "defensive_structure", FILTER_REMOVE)
+	if EGroup_CountSpawned(eg_temp) > 5 then 
+		SGroup_Clear(sg_temp)
+		UnitEntry_DeploySquads(player2, sg_temp, {type = "scar_villager", numSquads = World_GetRand(1, 3)}, Util_GetPosition(EGroup_GetRandomSpawnedEntity(eg_temp)))
+		Modify_UnitSpeed(sg_temp, 1.3, -1)
+		Cmd_MoveToAndDestroy(sg_temp, Table_GetRandomItem({mkr_villager_flee1, mkr_villager_flee2, mkr_villager_flee3}))
+		if World_GetRand(1, 20) > 18 then
+			Sound_PlayOnSquad(WALLA_CAMP_FEAR_SMALL, sg_temp)
+		end
+		Rule_AddOneShot(VillagerFlee, World_GetRand(20, 45))
+	end
+end
+
+function TowerDeathAudio()
+	towerCount = towerCount or 2
+	if EGroup_CountSpawned(eg_bridge_towers) <= 0 then
+		Rule_RemoveMe()
+		--Sound_Play2D(MUS_STING_POSITIVE)
+		Sound_PlayWallaCelebrateOnSGroup(sg_player_army)
+	elseif EGroup_CountSpawned(eg_bridge_towers) ~= towerCount then
+		towerCount = EGroup_CountSpawned(eg_bridge_towers)
+		--Sound_Play2D(MUS_STING_POSITIVE)
+		Sound_PlayWallaCelebrateOnSGroup(sg_player_army)
+	end
+end
+
+function AudOnFromPoint(player, pos, audString)
+    local size = ""
+   
+    SGroup_Clear(sg_temp)
+   
+    Player_GetAllSquadsNearMarker(player, sg_temp, pos, 50)
+    SGroup_Filter(sg_temp, SBP.GAIA.GAIA_HERDABLE_SHEEP, FILTER_REMOVE)
+   
+    unitCount = SGroup_CountSpawned(sg_temp)
+   
+    if unitCount <= 5 then
+        return
+    else
+        if unitCount > 5 and unitCount <= 10 then
+            size = "SMALL"
+        elseif unitCount > 10 and unitCount <= 20 then
+            size = "MEDIUM"
+        else
+            size = "LARGE"
+        end
+        Sound_PlayOnSquad(_G[audString..size], sg_temp)
+    end
+end
+
+function CleanUp_Cavalry()
+	for i = #t_AllCavalryModules, 1, -1 do
+		if Player_CanSeeSGroup(player1, t_AllCavalryModules[i].sgroup, ANY) ~= true then
+			SGroup_DestroyAllSquads(t_AllCavalryModules[i].sgroup)
+		else
+			DissolveModuleIntoModule(t_AllCavalryModules[i].descriptor, "defend_bayeux_walls")
+			table.remove(t_AllCavalryModules,i)
+		end	
+	end
+end
+
+----DEBUG BAYEUX HEALTH
+
+function ShowBayeuxHealth()
+	local currentHealth = EGroup_GetTotalHealth(eg_bayeux_town)
+	view(currentHealth.."/"..bayeuxHealthTotal.." - "..((currentHealth/bayeuxHealthTotal)*100))
+	Rule_AddOneShot(ShowBayeuxHealth, 1)
+end
+	

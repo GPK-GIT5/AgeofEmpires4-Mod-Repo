@@ -1,0 +1,141 @@
+
+
+------------------------------------------------------------------------------------------------------------------------------------------
+--														Player Reinforcement UI
+------------------------------------------------------------------------------------------------------------------------------------------
+
+function UI_ReinforcePanel_UpdateData()
+	
+	uiData_ReinforcePanel = {
+		Visible = true,
+		Reserves = {}
+	}
+	
+	for index, reserve in pairs(t_reinforcementData) do
+
+		local uiData = {
+			
+			Name = Loc_GetString(reserve.displayName),
+			
+			TradeCountVisible = false,
+			BuyButtonVisible = false,
+			BuyButtonEnabled = false,
+			BuyButtonOpacity = 0.44,
+			BuyButtonCommand = UI_CreateCommand("UI_RequestAid_ButtonCallback"),
+			BuyButtonParameter = reserve.id,
+			AidButtonTitle = Loc_GetString(reserve.buttontext),
+			Cost = reserve.cost,
+			ResourceWarning = true,
+			PopWarning = true,
+			CostColour = "#FFBFBFBF",
+			ShowMoneyIcon = true,
+		}			
+		
+		uiData.TradeCountVisible = false
+		uiData.BuyButtonVisible = true
+		
+		--if player has gold available
+		local player_gold = Player_GetResource(player1, RT_Gold)
+			
+		if player_gold >= reserve.cost then
+			uiData.ResourceWarning = false
+			uiData.CostColour = "#FFFFDB88"
+		end
+
+		local totalAidAmount = reserve.aidAmount + reserve.aidAmount_2	
+		if (Player_GetCurrentPopulation(player1, CT_Personnel) + totalAidAmount) <= Player_GetCurrentPopulationCap(player1, CT_Personnel) then
+			uiData.PopWarning = false
+		end
+		
+		if uiData.ResourceWarning == false and uiData.PopWarning == false then
+			uiData.BuyButtonEnabled = true 
+			uiData.BuyButtonOpacity = 1.0
+		end
+		
+		if (UI_IsXboxUI()) then
+			uiData.CostAmount = tostring(uiData.Cost)
+		else
+			uiData.CostAmount = Loc_GetString(Loc_FormatText(11184216, uiData.Cost))
+		end
+		
+		if reserve.aidAmount_2 > 0 then
+			uiData.AidButtonTooltip = Loc_GetString(Loc_FormatText(reserve.tooltip, reserve.aidAmount, reserve.aidAmount_2))
+		else
+			uiData.AidButtonTooltip = Loc_GetString(Loc_FormatText(reserve.tooltip, reserve.aidAmount))
+		end
+		
+		table.insert(uiData_ReinforcePanel.Reserves, uiData)
+		
+	end
+	
+	uiData_ReinforcePanel.Visible = true
+	_diplomacy.data_context.buyReserves = uiData_ReinforcePanel
+	Diplomacy_UpdateUI()
+	
+end
+
+function UI_RequestAid_ButtonCallback(parameter)
+	
+	for index, reserve in pairs(t_reinforcementData) do 
+	
+		if reserve.id == parameter and Player_GetResource(player1, RT_Gold) >= reserve.cost then
+			
+			player_reinforcement_counter = player_reinforcement_counter + 1
+			
+			Player_AddResource(player1, RT_Gold, -reserve.cost)
+			
+			local units = reserve.units
+			local options = { spawnInFormation = true, destination = mkr_reinforce_main_dest}
+			
+			_G["sg_"..player_reinforcement_counter] = SGroup_CreateIfNotFound(("sg_reinforcement"..player_reinforcement_counter))
+			sg_requestAid = _G["sg_"..player_reinforcement_counter]
+			
+			UnitEntry_DeploySquads(player1, _G["sg_"..player_reinforcement_counter], units, mkr_reinforce_main, nil, nil, options)
+			
+			--UI_CreateMinimapBlip(_G["sg_"..player_reinforcement_counter], 5, "question_here")
+			
+			UI_RequestAid_EventCue()
+			Sound_PlayWallaCelebrateOnSGroup(_G["sg_"..player_reinforcement_counter])
+			
+			if b_reinforceCooldown == false then
+				Start_IntelCooldown(_G["sg_"..player_reinforcement_counter], reserve)
+			end
+			
+			UI_ReinforcePanel_UpdateData()
+		end
+	end
+end
+
+function UI_RequestAid_EventCue()	
+	
+	--local icon_path = "icons\\event_queue_high_priority_large"
+	local icon_path = ""
+	local sfx_path = "sfx_ui_event_queue_high_priority_play"
+	UI_CreateEventCueClickable(-1, 10, 0, 0.0, 42813, Loc_Empty(), "high_priority", icon_path, sfx_path, 255, 255, 255, 255, ECV_Title, UI_RequestAid_MoveCamera)
+end
+
+function UI_RequestAid_MoveCamera()	
+	if sg_requestAid ~= nil then
+		Camera_MoveTo(sg_requestAid)
+	end
+end
+
+function Start_IntelCooldown(target, reserve)
+
+	b_reinforceCooldown = true
+	
+	UI_CreateMinimapBlip(target, 10, CTA_CELEBRATE)
+	
+	if reserve.intel_played == false and reinforcement_intel_index <= #reinforcement_intel_events then
+		reserve.intel_played = true
+		local eventName = reinforcement_intel_events[reinforcement_intel_index]
+		Util_StartIntel(EVENTS[eventName])
+		reinforcement_intel_index = reinforcement_intel_index + 1
+	end
+
+	Rule_AddOneShot(ReinforceIntel_Cooldown, 20)
+end
+
+function ReinforceIntel_Cooldown()
+	b_reinforceCooldown = false
+end
