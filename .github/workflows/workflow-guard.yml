@@ -1,0 +1,72 @@
+name: Workflow Guard
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Guard duplicate doc-lint workflows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./scripts/check-workflow-yaml.ps1
+
+      - name: Guard copilot instructions size (4000 chars max)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $filePath = ".github/copilot-instructions.md"
+          if (-not (Test-Path $filePath)) {
+            throw "[FAIL] Missing required file: $filePath"
+          }
+
+          $content = Get-Content -Path $filePath -Raw
+          $charCount = $content.Length
+          $limit = 4000
+
+          if ($charCount -gt $limit) {
+            throw "[FAIL] copilot-instructions size guard: .github/copilot-instructions.md is $charCount chars (limit $limit). Reduce content to <= 4000 chars."
+          }
+
+          Write-Information "[PASS] copilot-instructions size guard: $charCount / $limit chars" -InformationAction Continue
+
+      - name: Run documentation lint
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          .github/copilot/scripts/doc_lint.ps1
+
+      - name: Report tag state (informational)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          ./scripts/check-tag-state.ps1
+
+      - name: Install actionlint
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "1.7.7"
+          $zipUrl = "https://github.com/rhysd/actionlint/releases/download/v$version/actionlint_${version}_windows_amd64.zip"
+          $zipPath = Join-Path $env:RUNNER_TEMP "actionlint.zip"
+          $extractPath = Join-Path $env:RUNNER_TEMP "actionlint"
+
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+          "$extractPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Run actionlint
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          actionlint -color -shellcheck= -pyflakes=

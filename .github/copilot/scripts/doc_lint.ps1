@@ -65,9 +65,9 @@ function Get-AnchorMatches {
     
     $content = Get-Content -Path $FilePath -Raw
     $pattern = '<!--\s*DOC:(\w+):(\w+)\s*-->'
-    $matches = [regex]::Matches($content, $pattern)
+    $regexMatches = [regex]::Matches($content, $pattern)
     
-    return $matches | ForEach-Object {
+    return $regexMatches | ForEach-Object {
         @{
             Anchor   = $_.Value.Trim()
             Area     = $_.Groups[1].Value
@@ -81,7 +81,7 @@ function Test-YamlWithYq {
     param([string]$FilePath)
     
     try {
-        $yq = Get-Command yq -ErrorAction Stop
+        Get-Command yq -ErrorAction Stop | Out-Null
         & yq eval '.' $FilePath > $null 2>&1
         return $?
     }
@@ -137,7 +137,7 @@ $fileSizeTests = @(
 foreach ($test in $fileSizeTests) {
     if (Test-Path $test.Path) {
         $size = (Get-Content -Path $test.Path -Raw).Length
-        if ($size -lt $test.Limit) {
+        if ($size -le $test.Limit) {
             Write-Check 'PASS' "$($test.Path): $size / $($test.Limit) chars"
         } else {
             Write-Check 'FAIL' "$($test.Path): $size / $($test.Limit) chars (over limit by $($size - $test.Limit))"

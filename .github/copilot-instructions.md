@@ -88,10 +88,10 @@ Non-conflicting tiers stack. Higher tiers override lower on same topic.
 
 ## Validation
 
-- **SCAR**: Content Editor in-game console (no external test framework)
+- **SCAR**: Content Editor in-game console
 - **PowerShell**: `$ErrorActionPreference = "Stop"` + `Test-Path` + `try/catch`
 - **Data**: CSV indexes via `scripts/run_all_extraction.ps1` — never hand-edit
-- **Changelog**: `reference/deterministic-workflow-guidelines.md` for deterministic workflows; `validate-entry.ps1` before appending to INDEX.jsonl
+- **Changelog**: Use `reference/deterministic-workflow-guidelines.md`; run `validate-entry.ps1` before appending to `INDEX.jsonl`
 
 ---
 
