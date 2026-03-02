@@ -1,4 +1,5 @@
-# Validate JSONL Entry Against Schema
+﻿# Validate JSONL Entry Against Schema
+# Encoding: UTF-8 with BOM
 # Ensures changelog entries conform to required structure before appending
 # Usage: .\validate-entry.ps1 -Entry $jsonString
 
@@ -8,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$InformationPreference = "Continue"
 
 # Define schema
 $schema = @{
@@ -27,8 +29,8 @@ $schema = @{
 try {
     $obj = $Entry | ConvertFrom-Json
 } catch {
-    Write-Host "✗ INVALID JSON" -ForegroundColor Red
-    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Gray
+    Write-Information "✗ INVALID JSON"
+    Write-Information "Error: $($_.Exception.Message)"
     return $false
 }
 
@@ -39,28 +41,28 @@ $errors = @()
 foreach ($fieldName in $schema.Keys) {
     $fieldSchema = $schema[$fieldName]
     $value = $obj.PSObject.Properties[$fieldName]
-    
+
     # Check if required field exists
     if ($fieldSchema.required -and -not $value) {
         $errors += "Missing required field: $fieldName"
         $isValid = $false
         continue
     }
-    
+
     if (-not $value) {
         # Field optional and missing - OK
         continue
     }
-    
+
     $fieldValue = $value.Value
-    
+
     # Special handling: ConvertFrom-Json converts ISO 8601 timestamps to DateTime objects
     # Convert back to ISO 8601 string for validation if needed
     if ($fieldName -eq "timestamp" -and $fieldValue -is [DateTime]) {
         $fieldValue = $fieldValue.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         $value.Value = $fieldValue
     }
-    
+
     # Validate type for string
     if ($fieldSchema.type -eq "string" -and $fieldValue -isnot [string]) {
         $errors += "${fieldName}: expected string, got $($fieldValue.GetType().Name)"
@@ -76,7 +78,7 @@ foreach ($fieldName in $schema.Keys) {
             $isValid = $false
         }
     }
-    
+
     # Validate pattern (timestamp)
     if ($fieldSchema.pattern -and $fieldValue -notmatch $fieldSchema.pattern) {
         $errors += "${fieldName}: '$fieldValue' does not match pattern $($fieldSchema.pattern)"
@@ -93,15 +95,15 @@ foreach ($prop in $obj.PSObject.Properties.Name) {
 
 # Report results
 if ($isValid) {
-    Write-Host "✓ VALID ENTRY" -ForegroundColor Green
-    Write-Host "  File: $($obj.file)" -ForegroundColor White
-    Write-Host "  Status: $($obj.status)" -ForegroundColor White
-    Write-Host "  Impact: $($obj.impact)" -ForegroundColor White
+    Write-Information "✓ VALID ENTRY"
+    Write-Information "  File: $($obj.file)"
+    Write-Information "  Status: $($obj.status)"
+    Write-Information "  Impact: $($obj.impact)"
     Write-Output $true  # Output to pipeline so caller can test result
 } else {
-    Write-Host "✗ INVALID ENTRY" -ForegroundColor Red
-    foreach ($error in $errors) {
-        Write-Host "  ✗ $error" -ForegroundColor Red
+    Write-Information "✗ INVALID ENTRY"
+    foreach ($err in $errors) {
+        Write-Information "  ✗ $err"
     }
     Write-Output $false  # Output to pipeline so caller can test result
 }

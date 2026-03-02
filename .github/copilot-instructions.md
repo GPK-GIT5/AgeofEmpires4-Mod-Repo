@@ -69,7 +69,7 @@ Non-conflicting tiers stack. Higher tiers override lower on same topic.
 
 - Never load more than 3 .scar files in a single response
 - If Quick Ref + one index lookup answers, stop — don't speculatively load source files
-- Read MOD-INDEX.md before exploratory .scar reads (35-60% token savings)
+- Read `mods/Japan/MOD-INDEX.md` before exploratory .scar reads (35-60% token savings)
 
 ---
 
@@ -77,11 +77,11 @@ Non-conflicting tiers stack. Higher tiers override lower on same topic.
 
 | Task | Primary Doc | Fallback |
 |------|-------------|----------|
-| SCAR API function lookup | reference/function-index.md | reference/scar-api-functions.md |
-| Blueprint resolution | reference/.skill/SKILL-GUIDE.md | reference/blueprints/ |
-| Unit/building/tech data | reference/data-index.md | data/ |
-| Constants and enums | reference/constants-and-enums.md | reference/commands-reference.md |
-| Changelog workflow | changelog/QUICKSTART.md | changelog/README.md |
+| SCAR API function lookup | `reference/function-index.md` | `reference/scar-api-functions.md` |
+| Blueprint resolution | `reference/.skill/SKILL-GUIDE.md` | `reference/blueprints/` |
+| Unit/building/tech data | `reference/data-index.md` | `data/` |
+| Constants and enums | `reference/constants-and-enums.md` | `reference/commands-reference.md` |
+| Changelog workflow | `changelog/QUICKSTART.md` | `changelog/README.md` |
 | AI reference generation | `.skills/readme-to-ai-reference/SKILL.md` | `.github/copilot/REFERENCE_GENERATION_STRATEGY.md` |
 
 ---
@@ -91,7 +91,7 @@ Non-conflicting tiers stack. Higher tiers override lower on same topic.
 - **SCAR**: Content Editor in-game console (no external test framework)
 - **PowerShell**: `$ErrorActionPreference = "Stop"` + `Test-Path` + `try/catch`
 - **Data**: CSV indexes via `scripts/run_all_extraction.ps1` — never hand-edit
-- **Changelog**: `validate-entry.ps1` before appending to INDEX.jsonl
+- **Changelog**: `reference/deterministic-workflow-guidelines.md` for deterministic workflows; `validate-entry.ps1` before appending to INDEX.jsonl
 
 ---
 
