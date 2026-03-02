@@ -1,5 +1,7 @@
 # AoE4 World Data Index
 
+Last Updated: 2026-02-23
+
 > Cross-reference guide for parsed AoE4 game data: units, buildings, technologies, and civilizations in JSON format.
 
 ---

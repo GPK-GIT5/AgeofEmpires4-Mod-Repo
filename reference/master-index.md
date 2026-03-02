@@ -169,4 +169,4 @@
 | [aoe4world-data-index.md](aoe4world-data-index.md) | AoE4 World parsed game data cross-reference (units, buildings, techs, civs) |
 | [extraction-workflow.md](extraction-workflow.md) | Documentation extraction pipeline description |
 | [blueprints/](blueprints/) | Per-civilization blueprint references (14 files) |
-| [mods/japan-stage1-summary.md](mods/japan-stage1-summary.md) | Japan scenario Stage 1 DLC civ support summary and plan |
+| [mods/japan_reference/japan-stage1-summary.md](mods/japan_reference/japan-stage1-summary.md) | Japan scenario Stage 1 DLC civ support summary and plan |

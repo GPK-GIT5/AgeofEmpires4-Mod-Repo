@@ -2,7 +2,7 @@
 
 > Quick navigation for all 25 reference files. Organized by workflow and data type.
 
-**Last Updated:** February 24, 2026 | **Coverage:** 8,989 functions, 14,158 globals, 3,214 groups
+**Last Updated:** February 23, 2026 | **Coverage:** 8,989 functions, 14,158 globals, 3,214 groups
 
 ---
 
@@ -60,15 +60,6 @@
 
 ---
 
-## 🧭 Mods
-
-| File | Purpose | Type | Use Case | Depth |
-|------|---------|------|----------|-------|
-| [mods/japan_reference/japan-archive-refactor-log.md](mods/japan_reference/japan-archive-refactor-log.md) | Refactor log for the Japan co-op scenario | Markdown | Track design decisions and refactor history | Quick Ref |
-| [mods/japan-stage1-summary.md](mods/japan-stage1-summary.md) | Stage 1 DLC civ support summary and next-phase plan | Markdown | Review completed changes and plan next steps | Quick Ref |
-
----
-
 ## 📁 Advanced: Subdirectories
 
 | Folder | Contents | Use Case |
@@ -105,18 +96,19 @@
 
 ## 🎯 Mod-Specific Resources
 
+**Rule:** Always use the reference copy (`reference/mods/MOD-INDEX.md`) for Copilot lookups. Never read `mods/Japan/MOD-INDEX.md` directly (Mods Folder Scope restriction).
+
 For mod development in `mods/Japan/`, use these reference documents instead of reading files directly in the mods/ folder:
 
 | Document | Primary Use | Content |
 |----------|------------|----------|
 | [mods/MOD-INDEX.md](mods/MOD-INDEX.md) | **Start here for Japan scenario work** | File structure, DLC civs, restriction profiles, data tables |
+| [mods/japan_reference/japan-archive-refactor-log.md](mods/japan_reference/japan-archive-refactor-log.md) | Refactor log | Track design decisions and refactor history |
 | [mods/japan_reference/japan-guide-api-reference.md](mods/japan_reference/japan-guide-api-reference.md) | API reference | Helper functions, resolver functions, restriction table signatures |
 | [mods/japan_reference/japan-checkpoint-index.md](mods/japan_reference/japan-checkpoint-index.md) | Navigation hub | Links to all Stage 1-4 documentation |
 | [mods/japan_reference/japan-stage4-restriction.md](mods/japan_reference/japan-stage4-restriction.md) | Restriction deep-dive | Complete audit of all 22 restriction points + how to add new ones |
-| [mods/japan-stage1-summary.md](mods/japan-stage1-summary.md) | Stage 1 reference | DLC civ resolver, composition maps, AGS wrapper architecture |
-| [mods/japan-stage2-summary.md](mods/japan-stage2-summary.md) | Stage 2 reference | Helper functions, data-driven restrictions, regression audit |
-
-**Rule:** Always use the reference copy (`reference/mods/MOD-INDEX.md`) for Copilot lookups. Never read `mods/Japan/MOD-INDEX.md` directly (Mods Folder Scope restriction).
+| [mods/japan_reference/japan-stage1-summary.md](mods/japan_reference/japan-stage1-summary.md) | Stage 1 reference | DLC civ resolver, composition maps, AGS wrapper architecture |
+| [mods/japan_reference/japan-stage2-summary.md](mods/japan_reference/japan-stage2-summary.md) | Stage 2 reference | Helper functions, data-driven restrictions, regression audit |
 
 ---
 

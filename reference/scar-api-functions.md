@@ -1,5 +1,7 @@
 # SCAR API Functions — Complete Reference
 
+Last Updated: 2026-02-23
+
 All 4,435 functions extracted from the AoE4 Lua runtime, organized by category.
 
 ---

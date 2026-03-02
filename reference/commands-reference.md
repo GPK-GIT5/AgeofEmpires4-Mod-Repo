@@ -1,5 +1,7 @@
 # AoE4 Command Types — Complete Reference
 
+Last Updated: 2026-02-23
+
 All entity, squad, and player command type constants.
 
 ---

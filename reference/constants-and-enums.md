@@ -1,5 +1,7 @@
 # AoE4 Constants & Enums — Complete Reference
 
+Last Updated: 2026-02-23
+
 All typed constants extracted from the Lua runtime dump.
 
 ---
