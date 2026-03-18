@@ -11,9 +11,9 @@
 | File Path | Responsibility | Key Functions | Delegates To | Called By | Anchor |
 |-----------|-----------------|----------------|--------------|-----------|--------|
 | .skills/readme-to-ai-reference/SKILL.md | Skill manifest and specification | N/A (metadata) | N/A | GitHub Copilot | <!-- DOC:FILE:SKILL_MANIFEST --> |
-| .github/copilot/REFERENCE_SPEC_01_STRUCTURE.md | Reference primitive types and chunking limits | N/A (spec) | N/A | Developers | <!-- DOC:FILE:SPEC_01 --> |
-| .github/copilot/REFERENCE_SPEC_02_GUARDRAILS.md | Non-invention rules and quality gates | N/A (spec) | N/A | Developers | <!-- DOC:FILE:SPEC_02 --> |
-| .github/copilot/REFERENCE_SPEC_03_EVALUATION.md | Evals framework and metrics | N/A (spec) | N/A | Developers | <!-- DOC:FILE:SPEC_03 --> |
+| .skills/readme-to-ai-reference/specs/REFERENCE_SPEC_01_STRUCTURE.md | Reference primitive types and chunking limits | N/A (spec) | N/A | Developers | <!-- DOC:FILE:SPEC_01 --> |
+| .skills/readme-to-ai-reference/specs/REFERENCE_SPEC_02_GUARDRAILS.md | Non-invention rules and quality gates | N/A (spec) | N/A | Developers | <!-- DOC:FILE:SPEC_02 --> |
+| .skills/readme-to-ai-reference/specs/REFERENCE_SPEC_03_EVALUATION.md | Evals framework and metrics | N/A (spec) | N/A | Developers | <!-- DOC:FILE:SPEC_03 --> |
 | Unknown | Extraction module (parse README) | parse_markdown(), extract_assertions() | Validation module | Main workflow | <!-- DOC:FILE:UNKNOWN_001 --> |
 | Unknown | Validation module (verify facts) | verify_file_paths(), verify_functions(), mark_unknown() | Structuring module | Extraction | <!-- DOC:FILE:UNKNOWN_002 --> |
 | Unknown | Structuring module (format refs) | assign_to_primitive(), generate_anchors() | Quality Gates | Validation | <!-- DOC:FILE:UNKNOWN_003 --> |

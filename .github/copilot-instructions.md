@@ -2,13 +2,6 @@
 
 AoE4 modding workspace: SCAR Lua scenarios, PowerShell automation, Markdown docs.
 
-## Metadata
-
-- Last Updated: 2026-03-01
-- Architecture: Master + path-specific instruction files
-
----
-
 ## Priority Guidelines
 
 1. **Version Compatibility**: Respect detected technology versions
@@ -22,7 +15,7 @@ AoE4 modding workspace: SCAR Lua scenarios, PowerShell automation, Markdown docs
 ## Pre-Response Validation
 
 - [ ] Scope tier identified (Console / Folder-Specific / General)
-- [ ] File type restrictions honored (if mods/ or gamemodes/ scope)
+- [ ] File type restrictions honored (if Scenarios/ or Gamemodes/ scope)
 - [ ] Naming conventions matched (see path-specific files)
 - [ ] No external patterns introduced (scanned existing code first)
 - [ ] Index consulted before file read (if mod-specific work)
@@ -33,12 +26,12 @@ AoE4 modding workspace: SCAR Lua scenarios, PowerShell automation, Markdown docs
 
 | Technology | Version | Notes |
 |-----------|---------|-------|
-| Lua (SCAR) | 5.x (Relic) | `.scar` files; `import()` not `require()`; no metatables |
-| PowerShell | 7+ (pwsh) | `scripts/`, `changelog/`; `$ErrorActionPreference = "Stop"` |
-| VS Code | Primary editor | Tabs (size 4), word wrap, `sumneko.lua` extension |
-| Data formats | `.json`, `.csv`, `.jsonl` | `data/`, `reference/`, `changelog/` |
-| Documentation | Markdown exclusively | No HTML; relative paths; forward slashes |
-| Build system | None | Automation via `scripts/run_all_extraction.ps1` |
+| Lua (SCAR) | 5.x (Relic) | `.scar`; `import()` not `require()`; no metatables |
+| PowerShell | 7+ (pwsh) | `$ErrorActionPreference = "Stop"` |
+| VS Code | — | Tabs (size 4), `sumneko.lua` ext |
+| Data formats | `.json`, `.csv`, `.jsonl` | `data/`, `references/` |
+| Documentation | Markdown | No HTML; relative paths; forward slashes |
+| Build system | None | `scripts/run_all_extraction.ps1` |
 
 ---
 
@@ -46,19 +39,22 @@ AoE4 modding workspace: SCAR Lua scenarios, PowerShell automation, Markdown docs
 
 Detailed standards auto-load via `.github/instructions/`:
 
-- **SCAR Lua** (`**/*.scar`): `scar-coding.instructions.md`
-- **PowerShell** (`**/*.ps1`): `ps-coding.instructions.md`
-- **Mods scope** (`mods/**`): `mods-scope.instructions.md`
-- **Gamemodes scope** (`gamemodes/**`): `gamemode-scope.instructions.md`
-- **Mod context** (`mods/**`, `reference/mods/**`): `mod-context.instructions.md`
-- **AI Reference** (`.skills/**`, `**/ai/**`): `ai-reference.instructions.md`
+- **SCAR Lua** (`**/*.scar`): `coding/scar-coding.instructions.md`
+- **SCAR Events** (`**/*.scar`): `coding/scar-events.instructions.md`
+- **SCAR Blueprints** (`**/*.scar`): `coding/scar-blueprints.instructions.md`
+- **XAML/UI** (`**/*.scar`): `coding/xaml-ui.instructions.md`
+- **PowerShell** (`**/*.ps1`): `coding/ps-coding.instructions.md`
+- **Scenarios scope** (`Scenarios/**`): `context/mods-scope.instructions.md`
+- **Gamemodes scope** (`Gamemodes/**`): `context/gamemode-scope.instructions.md`
+- **Scenario context** (`Scenarios/**`, `references/mods/**`): `context/mod-context.instructions.md`
+- **AI Reference** (`.skills/**`, `**/ai/**`): `core/ai-reference.instructions.md`
 
 ---
 
 ## Rule Precedence
 
 1. **Console Command Generation** — Stateless single-expression Lua for AoE4 console
-2. **Folder-Specific Scopes** — File restrictions for `mods/` or `gamemodes/`
+2. **Folder-Specific Scopes** — File restrictions for `Scenarios/` or `Gamemodes/`
 3. **General Rules** — Default for all other work
 
 Non-conflicting tiers stack. Higher tiers override lower on same topic.
@@ -67,9 +63,8 @@ Non-conflicting tiers stack. Higher tiers override lower on same topic.
 
 ## Context Budget
 
-- Never load more than 3 .scar files in a single response
-- If Quick Ref + one index lookup answers, stop — don't speculatively load source files
-- Read `mods/Japan/MOD-INDEX.md` before exploratory .scar reads (35-60% token savings)
+- Max 3 .scar files per response; prefer Quick Ref + index over speculative reads
+- Read mod index (`references/mods/MOD-INDEX.md`) before exploratory .scar reads
 
 ---
 
@@ -77,21 +72,26 @@ Non-conflicting tiers stack. Higher tiers override lower on same topic.
 
 | Task | Primary Doc | Fallback |
 |------|-------------|----------|
-| SCAR API function lookup | `reference/function-index.md` | `reference/scar-api-functions.md` |
-| Blueprint resolution | `reference/.skill/SKILL-GUIDE.md` | `reference/blueprints/` |
-| Unit/building/tech data | `reference/data-index.md` | `data/` |
-| Constants and enums | `reference/constants-and-enums.md` | `reference/commands-reference.md` |
-| Changelog workflow | `changelog/QUICKSTART.md` | `changelog/README.md` |
-| AI reference generation | `.skills/readme-to-ai-reference/SKILL.md` | `.github/copilot/REFERENCE_GENERATION_STRATEGY.md` |
+| SCAR API function lookup | `references/indexes/function-index.md` | `references/api/scar-api-functions.md` |
+| Blueprint resolution | `references/.skill/SKILL-GUIDE.md` | `references/blueprints/` |
+| Unit/building/tech data | `references/navigation/data-index.md` | `data/aoe4/data/` |
+| Constants and enums | `references/api/constants-and-enums.md` | `references/api/commands-reference.md` |
+| Changelog workflow | `changelog/README.md` | `changelog/docs/QUICKSTART.md` |
+| AI reference generation | `.skills/readme-to-ai-reference/SKILL.md` | `.skills/readme-to-ai-reference/specs/` |
+| SCAR debug generation | `.skills/scar-debug/SKILL.md` | `references/mods/onslaught-debug-reference.md` |
+| Gamemode option impl | `.github/prompts/gamemode-option.prompt.md` | `Gamemodes/Onslaught/assets/scar/gameplay/cba_options.scar` |
+| Data extraction pipeline | `.skills/data-extraction/SKILL.md` | `scripts/run_all_extraction.ps1` |
 
 ---
 
 ## Validation
 
+- **Structure**: `scripts/structure_lint.ps1` — directory rules, naming, frontmatter
+- **Docs**: `scripts/doc_lint.ps1` — anchors, YAML, forbidden phrases, sizes
 - **SCAR**: Content Editor in-game console
-- **PowerShell**: `$ErrorActionPreference = "Stop"` + `Test-Path` + `try/catch`
-- **Data**: CSV indexes via `scripts/run_all_extraction.ps1` — never hand-edit
-- **Changelog**: Use `reference/deterministic-workflow-guidelines.md`; run `validate-entry.ps1` before appending to `INDEX.jsonl`
+- **PowerShell**: `$ErrorActionPreference = "Stop"` + `try/catch`
+- **Data**: `scripts/run_all_extraction.ps1` — never hand-edit
+- **Changelog**: `changelog/scripts/validate-entry.ps1`
 
 ---
 

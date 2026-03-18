@@ -1,0 +1,236 @@
+---------------------------------------------------------------------------------------------------
+-- CBA Debug — Helpers
+-- Ad-hoc console commands: baseline, spawn, age, keep diagnostic, precache, smoke tests.
+---------------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------------
+-- Resource Baseline
+---------------------------------------------------------------------------------------------------
+
+function Debug_SetBaseline(amount)
+	amount = amount or 500
+	for i, player in ipairs(PLAYERS) do
+		Player_SetResource(player.id, RT_Food, amount)
+		Player_SetResource(player.id, RT_Wood, amount)
+		Player_SetResource(player.id, RT_Gold, amount)
+		Player_SetResource(player.id, RT_Stone, amount)
+	end
+	print(string.format("[CBA_DEBUG] Baseline set to %d for %d players", amount, #PLAYERS))
+end
+
+---------------------------------------------------------------------------------------------------
+-- Kill Score Inspector
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetKillScore(player_idx)
+	player_idx = player_idx or 1
+	local player = PLAYERS[player_idx]
+	if player == nil then
+		print(string.format("[CBA_DEBUG] Invalid player_idx=%d", player_idx))
+		return
+	end
+	local kills = player.killed_number or "nil"
+	local req = player.obj_kill_requirement or "nil"
+	local civ = "unknown"
+	local ok, c = pcall(Player_GetRaceName, player.id)
+	if ok then civ = c end
+	print(string.format("[CBA_DEBUG] P%d (%s): kills=%s next_req=%s",
+		player_idx, civ, tostring(kills), tostring(req)))
+end
+
+---------------------------------------------------------------------------------------------------
+-- Auto-Age Status
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetAutoAgeStatus()
+	if _autoage == nil then
+		print("[CBA_DEBUG] AutoAge module not loaded")
+		return
+	end
+	print("[CBA_DEBUG] AutoAge state:")
+	print(string.format("  AutoAge setting: %s", tostring(AGS_GLOBAL_SETTINGS.AutoAge)))
+	for i, player in ipairs(PLAYERS) do
+		local age = 0
+		local ok, a = pcall(Player_GetCurrentAge, player.id)
+		if ok then age = a end
+		print(string.format("  P%d: age=%d build_count=%s",
+			i, age, tostring(player.obj_build_count)))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Population Inspector
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetPopCap(player_idx)
+	player_idx = player_idx or 1
+	local player = PLAYERS[player_idx]
+	if player == nil then
+		print(string.format("[CBA_DEBUG] Invalid player_idx=%d", player_idx))
+		return
+	end
+	local ok_pop, pop = pcall(Player_GetCurrentPopulation, player.id, CT_Personnel)
+	local ok_cap, cap = pcall(Player_GetCurrentPopulationCap, player.id, CT_Personnel)
+	local ok_max, max = pcall(Player_GetMaxPopulationCap, player.id, CT_Personnel)
+	print(string.format("[CBA_DEBUG] P%d pop: current=%s cap=%s max=%s",
+		player_idx,
+		ok_pop and tostring(pop) or "ERR",
+		ok_cap and tostring(cap) or "ERR",
+		ok_max and tostring(max) or "ERR"))
+end
+
+---------------------------------------------------------------------------------------------------
+-- Keep Diagnostic
+---------------------------------------------------------------------------------------------------
+
+function Debug_KeepDiagnostic()
+	print("[CBA_DEBUG] Keep Diagnostic:")
+	for i, player in ipairs(PLAYERS) do
+		if player.keep then
+			local eid = player.keep.entity_id or "nil"
+			local hp = "?"
+			local max_hp = "?"
+			if player.keep.entity then
+				local ok1, h = pcall(Entity_GetHealth, player.keep.entity)
+				local ok2, m = pcall(Entity_GetHealthMax, player.keep.entity)
+				if ok1 then hp = tostring(h) end
+				if ok2 then max_hp = tostring(m) end
+			end
+			local civ = "unknown"
+			local ok, c = pcall(Player_GetRaceName, player.id)
+			if ok then civ = c end
+			print(string.format("  P%d (%s): eid=%s hp=%s/%s",
+				i, civ, tostring(eid), hp, max_hp))
+		else
+			print(string.format("  P%d: NO KEEP DATA", i))
+		end
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Precache Status
+---------------------------------------------------------------------------------------------------
+
+function Debug_PrecacheStatus()
+	print("[CBA_DEBUG] Precache Status:")
+	if AGS_ENTITY_TABLE == nil then
+		print("  AGS_ENTITY_TABLE is nil")
+		return
+	end
+	local resolved = 0
+	local failed = {}
+	for civ_name, civ_data in pairs(AGS_ENTITY_TABLE) do
+		if civ_name ~= "neutral" and civ_data.castle ~= nil and civ_data.castle ~= false then
+			local ok, ebp = pcall(BP_GetEntityBlueprint, civ_data.castle)
+			if ok and ebp ~= nil then
+				resolved = resolved + 1
+			else
+				table.insert(failed, civ_name .. "=" .. tostring(civ_data.castle))
+			end
+		end
+	end
+	print(string.format("  Resolved: %d  Failed: %d", resolved, #failed))
+	for _, f in ipairs(failed) do
+		print("  [FAIL] " .. f)
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Spawn Helper
+---------------------------------------------------------------------------------------------------
+
+function Debug_Spawn(bp_name, player_idx, count)
+	player_idx = player_idx or 1
+	count = count or 1
+	local player = PLAYERS[player_idx]
+	if player == nil then
+		print(string.format("[CBA_DEBUG] Invalid player_idx=%d", player_idx))
+		return
+	end
+	local pos = _Debug_GetPlayerSpawnAnchor(player)
+	if pos == nil then
+		print("[CBA_DEBUG] No spawn anchor for player")
+		return
+	end
+	local ok_sbp, sbp = pcall(BP_GetSquadBlueprint, bp_name)
+	if ok_sbp and sbp then
+		for n = 1, count do
+			local ok, err = pcall(function()
+				local sg = SGroup_CreateUnique()
+				UnitEntry_DeploySquads(player.id, sg, {{sbp = sbp, numSquads = 1}}, pos)
+			end)
+			if not ok then
+				print(string.format("[CBA_DEBUG] Spawn error: %s", tostring(err)))
+				return
+			end
+		end
+		print(string.format("[CBA_DEBUG] Spawned %d x %s for P%d", count, bp_name, player_idx))
+	else
+		print(string.format("[CBA_DEBUG] Cannot resolve SBP: %s", bp_name))
+	end
+end
+
+function _Debug_GetPlayerSpawnAnchor(player)
+	if player.keep and player.keep.position then
+		return player.keep.position
+	end
+	return nil
+end
+
+---------------------------------------------------------------------------------------------------
+-- Smoke Tests
+---------------------------------------------------------------------------------------------------
+
+function Debug_RunSmokeTests()
+	print("[CBA_DEBUG] Smoke Tests:")
+	local pass = 0
+	local fail = 0
+
+	-- Test 1: PLAYERS exist
+	if PLAYERS ~= nil and #PLAYERS > 0 then
+		pass = pass + 1
+	else
+		fail = fail + 1
+		print("  [FAIL] PLAYERS missing or empty")
+	end
+
+	-- Test 2: _mod exists
+	if _mod ~= nil then
+		pass = pass + 1
+	else
+		fail = fail + 1
+		print("  [FAIL] _mod missing")
+	end
+
+	-- Test 3: AGS_GLOBAL_SETTINGS exists
+	if AGS_GLOBAL_SETTINGS ~= nil then
+		pass = pass + 1
+	else
+		fail = fail + 1
+		print("  [FAIL] AGS_GLOBAL_SETTINGS missing")
+	end
+
+	-- Test 4: All players have keeps
+	local all_keeps = true
+	if PLAYERS then
+		for i, p in ipairs(PLAYERS) do
+			if p.keep == nil then all_keeps = false end
+		end
+	end
+	if all_keeps then
+		pass = pass + 1
+	else
+		fail = fail + 1
+		print("  [FAIL] Not all players have keeps")
+	end
+
+	-- Test 5: Sacred site center
+	if _CBA ~= nil and _CBA.center ~= nil then
+		pass = pass + 1
+	else
+		fail = fail + 1
+		print("  [FAIL] _CBA.center missing")
+	end
+
+	print(string.format("  Result: %d/%d passed", pass, pass + fail))
+end

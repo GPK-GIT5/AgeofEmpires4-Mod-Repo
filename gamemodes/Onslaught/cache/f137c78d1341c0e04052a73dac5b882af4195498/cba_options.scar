@@ -1,0 +1,666 @@
+---------------------------------------------------------------------------------------------------
+-- Description:
+-- Additional options that can be used in the lobby for CBA / Onslaught tuning pack
+---------------------------------------------------------------------------------------------------
+CBA_OPTIONS_MODULE = "CBA_Options"
+
+---------------------------------------------------------------------------------------------------
+-- Delegates:
+---------------------------------------------------------------------------------------------------
+
+Core_RegisterModule(CBA_OPTIONS_MODULE)	
+
+function CBA_Options_UpdateModuleSettings()
+	AGS_Print("CBA_Options_UpdateModuleSettings")
+	--[[if AGS_GLOBAL_SETTINGS.CBA_Options == 0 then
+		Core_UnregisterModule(CBA_OPTIONS_MODULE)
+	end
+	]]
+end
+
+function CBA_Options_PresetFinalize()
+	AGS_Print("CBA_Options_PresetFinalize")
+
+	-- Scuttle ability replacement
+	Rule_AddGlobalEvent(CBA_Options_AddScuttle_ConstructionComplete, GE_ConstructionComplete)
+	
+	-- Building Limit
+	if AGS_GLOBAL_SETTINGS.MaximumProductionBuildings ~= 0 then
+		
+		-- Setup objective UI
+		CBA_Options_BuildingLimit_SetupObjective()
+		-- Rules
+		Rule_AddGlobalEvent(CBA_Options_BuildingLimit_ConstructionStart, GE_ConstructionStart)
+		Rule_AddGlobalEvent(CBA_Options_BuildingLimit_ConstructionCancelled, GE_ConstructionCancelled)
+		Rule_AddGlobalEvent(CBA_Options_BuildingLimit_OnEntityKilled, GE_EntityKilled)
+	end
+	
+	-- Siege Limit
+	if AGS_GLOBAL_SETTINGS.MaximumMedicPopulation ~= 0 then
+		Rule_AddGlobalEvent(CBA_Options_SiegeLimit_BuildItemComplete, GE_BuildItemComplete)
+		Rule_AddGlobalEvent(CBA_Options_SiegeLimit_SquadKilled, GE_SquadKilled)
+		
+		for i, player in pairs(PLAYERS) do				
+			player.siegeLimit_count = 0
+			player.eg_siegeproduction = EGroup_CreateUnique("eg_siegeproduction")
+		end
+	end
+	
+	-- Village spawner
+	Rule_AddInterval(CBA_Options_VillagerSpawner, 20)
+	
+	-- Keep Modifier
+	CBA_Option_KeepModifier()
+	
+	-- Restrict: Outpost Cannon emplacement
+	CBA_Options_OutpostRestrictions()
+	
+	-- Enable Archery/Stable @ Dark Age / Moved into cba_auto_age.scar
+	-- CBA_Options_DarkAge_Unlocks()
+	
+end
+
+---------------------------------------------------------------------------------------------------
+-- Functions:
+---------------------------------------------------------------------------------------------------
+
+-- Building / Set maximum allowed Unit Production buildings
+function CBA_Options_BuildingLimit_SetupObjective()
+	
+	-- Objective data
+	_buildingLimit = {
+	module = "buildingLimit",
+	objective_main_title = "$f5a005650ae44d2b8e05306aa891f90c:277", -- "Time remaining until next Age unlocked"
+	objective_buildingLimit_title = Loc_FormatText("$11168874","$2957","$11255701"), -- "%1% : %2%, 1. Maximum, 2. Military Production Buildings"
+	icons = {
+		objective = "icons\\races\\common\\victory_conditions\\victory_condition_conquest",
+	},
+}
+	
+	-- Checks for a build production building and increases objective counter, this counter will be used to set restrictions with set lobby values
+	if _buildingLimit.objective_buildingLimit == nil then 
+		
+		-- Create and store objective in the global table created at the start of this script
+		_buildingLimit.objective_buildingLimit = Obj_Create(localPlayer.id, _buildingLimit.objective_buildingLimit_title, Loc_Empty(), _buildingLimit.icons.objective, "WonderObjectiveTemplate", localPlayer.raceName, OT_Primary, 0, "wonderObj")
+		
+		-- Create local player counts for objectives/limits
+		for i, player in pairs(PLAYERS) do				
+			player.obj_buildingLimit_count = 0
+			player.obj_buildingLimit_workshop_count = 0
+			player.obj_buildingLimit_outpost_count = 0
+		end
+		
+		local obj_buildingLimit_count = 0
+		for _, player in pairs(PLAYERS) do
+			if player.id == localPlayer.id then
+				obj_buildingLimit_count = player.obj_buildingLimit_count
+			end
+		end
+		 
+		-- Sets the objective's state to incomplete
+		Obj_SetState(_buildingLimit.objective_buildingLimit, OS_Incomplete)
+		-- Sets the objective to visible so players can see it
+		Obj_SetVisible(_buildingLimit.objective_buildingLimit, true)
+		-- Sets the progress element of the objective to visible so players can see it
+		Obj_SetProgressVisible(_buildingLimit.objective_buildingLimit, true)
+		-- Sets the objective progress type to a counter
+		Obj_SetCounterType(_buildingLimit.objective_buildingLimit, COUNTER_CountUpTo)
+		-- Set the starting objective progress to Starting Age value
+		Obj_SetCounterCount(_buildingLimit.objective_buildingLimit, obj_buildingLimit_count)
+		-- Set the maximum objective progress
+		Obj_SetCounterMax(_buildingLimit.objective_buildingLimit, AGS_GLOBAL_SETTINGS.MaximumProductionBuildings)
+		-- Set the objective progress bar percentage value
+		Obj_SetProgress(_buildingLimit.objective_buildingLimit, obj_buildingLimit_count)
+	end
+end
+
+-- Building + Siege Limit / Increase value / Construction started
+function CBA_Options_BuildingLimit_ConstructionStart(context)
+	
+	-- Store the player who constructed the building
+	local player = Core_GetPlayersTableEntry(context.player)
+	local player_civ = Player_GetRaceName(player.id)
+	
+	-- Check to see if there was a player (just in case the building was constructed via script or some other means) and that the player has not been eliminated yet
+	if player ~= nil and not player.isEliminated then
+		
+		-- Building Limits
+		if AGS_GLOBAL_SETTINGS.MaximumProductionBuildings ~= 0 then
+			
+			-- Filter constructed entity type / Get race for restrictions
+			if (Entity_IsEBPOfType(context.pbg, "military_only_production") or Entity_IsEBPOfType(context.pbg, "military_production_building")) and not 
+				-- Skip: Faction specific type/bp
+				(Entity_IsEBPOfType(context.pbg, "military_school_ott") or 
+					Entity_HasBlueprint(context.entity, EBP.SULTANATE.BUILDING_LANDMARK_AGE3_BIJAY_MANDAL_PALACE_CONTROL_SUL) or 
+					Entity_HasBlueprint(context.entity, EBP.MONGOL.BUILDING_WONDER_AGE3_KHANBALIQ_MON) or
+					Entity_HasBlueprint(context.entity, EBP.HRE.BUILDING_LANDMARK_AGE1_IMPERIAL_PALACE_OF_PADERBORN_HRE)) then
+				
+				
+				-- Since the player constructed a production building, calculate their new progress
+				player.obj_buildingLimit_count = player.obj_buildingLimit_count + 1
+				
+				-- Check if the player is the local player, we only want to run the below code for the local player as only their objective UI needs to be updated
+				if player.isLocal then
+					
+					-- Update their objective progress UI
+					Obj_SetCounterCount(_buildingLimit.objective_buildingLimit, player.obj_buildingLimit_count)
+					Obj_SetProgress(_buildingLimit.objective_buildingLimit, player.obj_buildingLimit_count / AGS_GLOBAL_SETTINGS.MaximumProductionBuildings)
+				end
+				
+				-- Enable restrictions
+				if player.obj_buildingLimit_count == AGS_GLOBAL_SETTINGS.MaximumProductionBuildings then
+					-- Restrictions: Military Production Buildings
+					Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_ARCHERY_RANGE), ITEM_LOCKED)
+					Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_STABLE), ITEM_LOCKED)
+					Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_DOCK), ITEM_LOCKED)
+					Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_BARRACKS), ITEM_LOCKED)
+					-- Landmarks
+					if player_civ == "english" then
+						Player_SetEntityProductionAvailability(player.id, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_HALL_ENG, ITEM_LOCKED)
+					elseif player_civ == "french" then
+						Player_SetEntityProductionAvailability(player.id, EBP.FRENCH.BUILDING_LANDMARK_AGE1_CASERNES_CENTRALES_FRE, ITEM_LOCKED)
+					elseif player_civ == "hre" then
+						Player_SetEntityProductionAvailability(player.id, EBP.HRE.BUILDING_LANDMARK_AGE2_NUREMBERG_CASTLE_HRE, ITEM_LOCKED)
+					elseif player_civ == "malian" then
+						Player_SetEntityProductionAvailability(player.id, EBP.MALIAN.BUILDING_LANDMARK_AGE2_LANDMARKD_CONTROL_MAL, ITEM_LOCKED)
+					end
+					
+					-- Display notification limit has been reached
+					if player.isLocal then
+						local event_cue_text = Loc_FormatText("$f5a005650ae44d2b8e05306aa891f90c:411", "$11194216", AGS_GLOBAL_SETTINGS.MaximumProductionBuildings)
+						UI_CreateEventCueClickable(-1, 15, -1, 0, event_cue_text, "", "low_priority", "", "sfx_ui_event_queue_low_priority_play", 255, 255, 255, 255, ECV_Queue, nothing)
+					end
+				end
+				
+				-- Workshop limit
+				if AGS_GLOBAL_SETTINGS.MaximumSiegeWorkshop ~= 0 and not AGS_GLOBAL_SETTINGS.NoSiege and
+					-- Faction check
+					(player_civ == "english" and Entity_IsEBPOfType(context.pbg, "scar_keep")) or
+					(player_civ == "chinese" and Entity_HasBlueprint(context.entity, EBP.CHINESE.BUILDING_LANDMARK_AGE2_CLOCKTOWER_CONTROL_CHI)) or
+					(player_civ == "french" and Entity_HasBlueprint(context.entity, EBP.FRENCH.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE)) or
+					-- Workshop only
+					Entity_IsEBPOfType(context.pbg, "scar_siegeworkshop") then
+					
+					-- Add to player's count / +1
+					player.obj_buildingLimit_workshop_count = player.obj_buildingLimit_workshop_count + 1
+					-- If limit reached, disable workshop
+					if player.obj_buildingLimit_workshop_count >= AGS_GLOBAL_SETTINGS.MaximumSiegeWorkshop then
+						Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_WORKSHOP), ITEM_LOCKED)
+						
+						-- Restrictions: Siege Workshop / Faction unique 
+						if player_civ == "chinese" then
+							Player_SetEntityProductionAvailability(player.id, EBP.CHINESE.BUILDING_LANDMARK_AGE2_CLOCKTOWER_CONTROL_CHI, ITEM_LOCKED)
+						elseif player_civ == "french" then
+							Player_SetEntityProductionAvailability(player.id, EBP.FRENCH.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE, ITEM_LOCKED)
+						end
+						
+						-- Display notification limit has been reached
+						if player.isLocal then
+							local event_cue_text = Loc_FormatText("$f5a005650ae44d2b8e05306aa891f90c:411", "$11119481", AGS_GLOBAL_SETTINGS.MaximumSiegeWorkshop)
+							UI_CreateEventCueClickable(-1, 15, -1, 0, event_cue_text, "", "low_priority", "", "sfx_ui_event_queue_low_priority_play", 255, 255, 255, 255, ECV_Queue, nothing)
+						end
+					end	
+				end
+			end
+			
+			-- Outpost limit
+			if Entity_IsEBPOfType(context.pbg, "scar_outpost") then
+				
+				-- Add to player's count / +1
+				player.obj_buildingLimit_outpost_count = player.obj_buildingLimit_outpost_count + 1
+				-- If limit reached, disable outpost
+				if player.obj_buildingLimit_outpost_count >= 20 then
+					Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprintsWithType("scar_outpost"), ITEM_LOCKED)
+					-- Display notification limit has been reached
+					if player.isLocal then
+						local event_cue_text_outpost = Loc_FormatText("$f5a005650ae44d2b8e05306aa891f90c:411", "$11121046", 20)
+						UI_CreateEventCueClickable(-1, 15, -1, 0, event_cue_text_outpost, "", "low_priority", "", "sfx_ui_event_queue_low_priority_play", 255, 255, 255, 255, ECV_Queue, nothing)
+					end
+				end	
+			end
+		end
+		
+		-- Siege limit
+		if AGS_GLOBAL_SETTINGS.MaximumMedicPopulation ~= 0 then
+			
+			-- Filter siege units
+			if Entity_IsEBPOfType(context.pbg, "siege") then
+				if Entity_IsEBPOfType(context.pbg, "springald") then
+					player.siegeLimit_count = player.siegeLimit_count + 1
+				elseif Entity_IsEBPOfType(context.pbg, "ram") and not Entity_IsEBPOfType(context.pbg, "ram_tower") then
+					player.siegeLimit_count = player.siegeLimit_count + 2
+				elseif Entity_IsEBPOfType(context.pbg, "mangonel") or Entity_IsEBPOfType(context.pbg, "nest_of_bees") or Entity_IsEBPOfType(context.pbg, "ram_tower") then
+					player.siegeLimit_count = player.siegeLimit_count + 3
+				end
+				
+				-- Update UI
+				AGS_SpecialPopulationUI_Update()
+			end
+			
+			-- Siege limit reached
+			if player.siegeLimit_count >= AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+				
+				CBA_Options_SiegeLimit_Disable(player.id, 1, ITEM_LOCKED)
+				
+			elseif player.siegeLimit_count + 1 >= AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+				
+				CBA_Options_SiegeLimit_Disable(player.id, 2, ITEM_LOCKED)
+				
+			elseif player.siegeLimit_count + 2 >= AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+				
+				CBA_Options_SiegeLimit_Disable(player.id, 3, ITEM_LOCKED)
+				
+			elseif player.siegeLimit_count + 3 >= AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+				
+				CBA_Options_SiegeLimit_Disable(player.id, 4, ITEM_LOCKED)
+				
+			end
+		end
+	end			
+end
+
+-- Building + Siege Limit Limit / Decrease value / Construction cancelled
+function CBA_Options_BuildingLimit_ConstructionCancelled(context)
+	
+	-- Store the player who constructed the building
+	local player = Core_GetPlayersTableEntry(context.player)
+	local player_civ = Player_GetRaceName(player.id)
+	local age = Player_GetCurrentAge(player.id)
+	
+	-- Check to see if there was a player (just in case the building was constructed via script or some other means) and that the player has not been eliminated yet
+	if player ~= nil and not player.isEliminated then
+		
+		-- Siege Limit
+		if AGS_GLOBAL_SETTINGS.MaximumMedicPopulation ~= 0 then
+			
+			-- Filter siege units
+			if Entity_IsEBPOfType(context.pbg, "siege") then
+				if Entity_IsEBPOfType(context.pbg, "springald") then
+					player.siegeLimit_count = player.siegeLimit_count - 1
+				elseif Entity_IsEBPOfType(context.pbg, "ram") and not Entity_IsEBPOfType(context.pbg, "ram_tower") then
+					player.siegeLimit_count = player.siegeLimit_count - 2
+				elseif Entity_IsEBPOfType(context.pbg, "mangonel") or Entity_IsEBPOfType(context.pbg, "nest_of_bees") or Entity_IsEBPOfType(context.pbg, "ram_tower") then
+					player.siegeLimit_count = player.siegeLimit_count - 3
+				end
+				
+				-- Update UI
+				AGS_SpecialPopulationUI_Update()
+			end
+			
+			-- Siege limit reached
+			if player.siegeLimit_count < AGS_GLOBAL_SETTINGS.MaximumMedicPopulation then
+				
+				-- Enable siege units / ALL FACTIONS
+				for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_all) do
+					Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), ITEM_DEFAULT)	
+				end
+				-- Disable ram
+				Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, BP_SIEGE_WORKSHOP_RAM), ITEM_DEFAULT)
+				Player_SetEntityProductionAvailability(player.id, AGS_GetSiegeEntity(player.raceName, BP_SIEGE_RAM), ITEM_DEFAULT)
+				
+				-- Enable siege units / FACTION UNIQUE
+				if player_civ == "mongol" then
+					for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_mon) do
+						Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), ITEM_DEFAULT)
+					end
+					
+					for id, entity_blueprint in pairs(CBA_SIEGE_UNITS.siege_buildable_mon) do
+						Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprint(entity_blueprint), ITEM_DEFAULT) -- Field Constructed = Entity
+					end
+					
+				elseif player_civ == "abbasid" then
+					for id, entity_blueprint in pairs(CBA_SIEGE_UNITS.siege_buildable_abb) do
+						Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprint(entity_blueprint), ITEM_DEFAULT) -- Field Constructed = Entity
+					end
+					
+					-- Expansion
+				elseif player_civ == "abbasid_ha_01" then
+					for id, entity_blueprint in pairs(CBA_SIEGE_UNITS.siege_buildable_abb_ha_01) do
+						Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprint(entity_blueprint), ITEM_DEFAULT) -- Field Constructed = Entity
+					end
+					Player_SetEntityProductionAvailability(player.id, EBP.ABBASID_HA_01.UNIT_RAM_TOWER_3_ABB_HA_01, ITEM_DEFAULT) -- Field Constructed = Entity
+					
+				elseif player_civ == "french" then
+					for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_fre) do
+						Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), ITEM_DEFAULT)
+					end
+					
+				elseif player_civ == "chinese" then
+					for id, unit_blueprint in pairs(CBA_SIEGE_UNITS.siege_faction_chi) do
+						Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, unit_blueprint), ITEM_DEFAULT)
+					end
+					Player_SetSquadProductionAvailability(player.id, SBP.CHINESE.UNIT_RAM_3_CLOCKTOWER_CHI, ITEM_DEFAULT)
+					
+					-- Expansion
+				elseif player_civ == "chinese_ha_01" then
+					Player_SetSquadProductionAvailability(player.id, SBP.CHINESE_HA_01.UNIT_NEST_OF_BEES_4_CHI_HA_01, ITEM_DEFAULT)
+					
+				else
+					Player_SetSquadProductionAvailability(player.id, AGS_GetSiegeUnit(player.raceName, BP_SIEGE_RIBAULDEQUIN), ITEM_DEFAULT)
+				end
+				
+			end
+		end
+		
+		-- Building Limit
+		if AGS_GLOBAL_SETTINGS.MaximumProductionBuildings ~= 0 then
+			
+			-- Building count
+			if (Entity_IsEBPOfType(context.pbg, "military_only_production") or Entity_IsEBPOfType(context.pbg, "military_production_building")) and not 
+				-- Skip: Faction specific type/bp
+				(Entity_IsEBPOfType(context.pbg, "military_school_ott") or 
+					Entity_HasBlueprint(context.entity, EBP.SULTANATE.BUILDING_LANDMARK_AGE3_BIJAY_MANDAL_PALACE_CONTROL_SUL) or 
+					Entity_HasBlueprint(context.entity, EBP.MONGOL.BUILDING_WONDER_AGE3_KHANBALIQ_MON) or
+					Entity_HasBlueprint(context.entity, EBP.HRE.BUILDING_LANDMARK_AGE1_IMPERIAL_PALACE_OF_PADERBORN_HRE)) then
+				
+				-- Military Building Count/Objective
+				if player.obj_buildingLimit_count ~= 0 then
+					-- Since the player constructed a production building, calculate their new progress
+					player.obj_buildingLimit_count = player.obj_buildingLimit_count - 1
+					-- Check if the player is the local player, we only want to run the below code for the local player as only their objective UI needs to be updated
+					if player.isLocal then
+						-- Update their objective progress UI
+						Obj_SetCounterCount(_buildingLimit.objective_buildingLimit, player.obj_buildingLimit_count)
+						Obj_SetProgress(_buildingLimit.objective_buildingLimit, player.obj_buildingLimit_count / AGS_GLOBAL_SETTINGS.MaximumProductionBuildings)
+					end	
+				end
+				
+				-- Workshop Count 
+				if AGS_GLOBAL_SETTINGS.MaximumSiegeWorkshop ~= 0 and not AGS_GLOBAL_SETTINGS.NoSiege and
+					-- Faction check
+					(player_civ == "english" and Entity_IsEBPOfType(context.pbg, "scar_keep")) or
+					(player_civ == "chinese" and Entity_HasBlueprint(context.entity, EBP.CHINESE.BUILDING_LANDMARK_AGE2_CLOCKTOWER_CONTROL_CHI)) or
+					(player_civ == "french" and Entity_HasBlueprint(context.entity, EBP.FRENCH.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE)) or
+					-- Workshop only
+					Entity_IsEBPOfType(context.pbg, "scar_siegeworkshop") then
+					
+					-- Add to player's count / -1
+					player.obj_buildingLimit_workshop_count = player.obj_buildingLimit_workshop_count - 1
+				end
+			end
+			
+			-- Disable restriction
+			if player.obj_buildingLimit_count < AGS_GLOBAL_SETTINGS.MaximumProductionBuildings then
+				-- Restrictions: Siege Workshop
+				if player.obj_buildingLimit_workshop_count < AGS_GLOBAL_SETTINGS.MaximumSiegeWorkshop and age >= 3 then
+					Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_WORKSHOP), ITEM_DEFAULT)
+					-- Restrictions: Siege Workshop / Faction unique 
+					if player_civ == "chinese" then
+						Player_SetEntityProductionAvailability(player.id, EBP.CHINESE.BUILDING_LANDMARK_AGE2_CLOCKTOWER_CONTROL_CHI, ITEM_DEFAULT)
+					elseif player_civ == "french" then
+						Player_SetEntityProductionAvailability(player.id, EBP.FRENCH.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE, ITEM_DEFAULT)
+					end
+				end
+				
+				-- Restrictions: Military Production Buildings
+				Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_ARCHERY_RANGE), ITEM_DEFAULT)
+				Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_STABLE), ITEM_DEFAULT)
+				Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_BARRACKS), ITEM_DEFAULT)
+				if not AGS_GLOBAL_SETTINGS.NoDock then
+					Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_DOCK), ITEM_DEFAULT)
+				end
+				-- Restrictions: Landmarks
+				if player_civ == "english" then
+					Player_SetEntityProductionAvailability(player.id, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_HALL_ENG, ITEM_DEFAULT)
+				elseif player_civ == "french" then
+					Player_SetEntityProductionAvailability(player.id, EBP.FRENCH.BUILDING_LANDMARK_AGE1_CASERNES_CENTRALES_FRE, ITEM_DEFAULT)
+				elseif player_civ == "hre" then
+					Player_SetEntityProductionAvailability(player.id, EBP.HRE.BUILDING_LANDMARK_AGE2_NUREMBERG_CASTLE_HRE, ITEM_DEFAULT)
+				elseif player_civ == "malian" then
+					Player_SetEntityProductionAvailability(player.id, EBP.MALIAN.BUILDING_LANDMARK_AGE2_LANDMARKD_CONTROL_MAL, ITEM_DEFAULT)
+				end
+			end
+			
+			-- Outpost limit
+			if Entity_IsEBPOfType(context.pbg, "scar_outpost") then
+				
+				-- Add to player's count / +1
+				player.obj_buildingLimit_outpost_count = player.obj_buildingLimit_outpost_count - 1
+				-- If no limit reached, disable outpost
+				if player.obj_buildingLimit_outpost_count < 20 then
+					Player_SetEntityProductionAvailability(player.id, BP_GetEntityBlueprintsWithType("scar_outpost"), ITEM_DEFAULT)
+				end	
+			end
+		end
+	end
+end
+
+-- Building Limit / Decrease value / Building destroyed 
+function CBA_Options_BuildingLimit_OnEntityKilled(context)
+	
+	if context.killer==nil then
+		return 
+	end
+	
+	if context.victimOwner == nil then
+		return
+	end
+	
+	local entity = Entity_FromID(context.victim.EntityID)
+	local player = Util_GetPlayerOwner(context.victimOwner)
+	if player==nil then
+		return
+	end
+	player = PLAYERS[World_GetPlayerIndex(player)]
+	local player_civ = Player_GetRaceName(player.id)
+	local age = Player_GetCurrentAge(player.id)
+	
+	-- Check the victim entity type
+	if (Entity_IsOfType(entity, "military_only_production") or Entity_IsOfType(entity, "military_production_building")) and not
+		-- Skip: Faction specific type/bp
+			(Entity_IsOfType(entity, "military_school_ott") or 
+			Entity_HasBlueprint(entity, EBP.SULTANATE.BUILDING_LANDMARK_AGE3_BIJAY_MANDAL_PALACE_CONTROL_SUL) or 
+			Entity_HasBlueprint(entity, EBP.MONGOL.BUILDING_WONDER_AGE3_KHANBALIQ_MON) or
+			Entity_HasBlueprint(entity, EBP.HRE.BUILDING_LANDMARK_AGE1_IMPERIAL_PALACE_OF_PADERBORN_HRE)) then
+		
+		-- Objective setup
+		if player.obj_buildingLimit_count ~= 0 then
+			-- Since the player constructed a production building, calculate their new progress
+			player.obj_buildingLimit_count = player.obj_buildingLimit_count - 1
+			-- Check if the player is the local player, we only want to run the below code for the local player as only their objective UI needs to be updated
+			if player.isLocal then
+				-- Update their objective progress UI
+				Obj_SetCounterCount(_buildingLimit.objective_buildingLimit, player.obj_buildingLimit_count)
+				Obj_SetProgress(_buildingLimit.objective_buildingLimit, player.obj_buildingLimit_count / AGS_GLOBAL_SETTINGS.MaximumProductionBuildings)
+			end
+		end
+		
+		-- Workshop limit
+		if AGS_GLOBAL_SETTINGS.MaximumSiegeWorkshop ~= 0 and not AGS_GLOBAL_SETTINGS.NoSiege and
+			-- Faction check
+			(player_civ == "english" and Entity_IsOfType(entity, "scar_keep")) or
+			(player_civ == "chinese" and Entity_HasBlueprint(entity, EBP.CHINESE.BUILDING_LANDMARK_AGE2_CLOCKTOWER_CONTROL_CHI)) or
+			(player_civ == "french" and Entity_HasBlueprint(entity, EBP.FRENCH.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE)) or
+			-- Workshop only
+			Entity_IsOfType(entity, "scar_siegeworkshop") then
+			-- Add to player's count / -1
+			player.obj_buildingLimit_workshop_count = player.obj_buildingLimit_workshop_count - 1
+		end
+	end
+	
+	-- Disable restrictions
+	if player.obj_buildingLimit_count < AGS_GLOBAL_SETTINGS.MaximumProductionBuildings then
+		-- Restrictions: Siege Workshop
+		if player.obj_buildingLimit_workshop_count < AGS_GLOBAL_SETTINGS.MaximumSiegeWorkshop and age >= 3 then
+			Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_WORKSHOP), ITEM_DEFAULT)
+			-- Restrictions: Siege Workshop / Faction unique 
+			if player_civ == "chinese" then
+				Player_SetEntityProductionAvailability(player.id, EBP.CHINESE.BUILDING_LANDMARK_AGE2_CLOCKTOWER_CONTROL_CHI, ITEM_DEFAULT)
+			elseif player_civ == "french" then
+				Player_SetEntityProductionAvailability(player.id, EBP.FRENCH.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE, ITEM_DEFAULT)
+			end
+		end
+		-- Restrictions: Military Production Buildings
+		Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_ARCHERY_RANGE), ITEM_DEFAULT)
+		Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_STABLE), ITEM_DEFAULT)
+		Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_BARRACKS), ITEM_DEFAULT)
+		if not AGS_GLOBAL_SETTINGS.NoDock then
+			Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_DOCK), ITEM_DEFAULT)
+		end
+		-- Restrictions: Landmarks
+		if player_civ == "english" then
+			Player_SetEntityProductionAvailability(player.id, EBP.ENGLISH.BUILDING_LANDMARK_AGE1_WESTMINSTER_HALL_ENG, ITEM_DEFAULT)
+		elseif player_civ == "french" then
+			Player_SetEntityProductionAvailability(player.id, EBP.FRENCH.BUILDING_LANDMARK_AGE1_CASERNES_CENTRALES_FRE, ITEM_DEFAULT)
+		elseif player_civ == "hre" then
+			Player_SetEntityProductionAvailability(player.id, EBP.HRE.BUILDING_LANDMARK_AGE2_NUREMBERG_CASTLE_HRE, ITEM_DEFAULT)
+		elseif player_civ == "malian" then
+			Player_SetEntityProductionAvailability(player.id, EBP.MALIAN.BUILDING_LANDMARK_AGE2_LANDMARKD_CONTROL_MAL, ITEM_DEFAULT)
+		end
+	end
+	
+	-- Outpost limit
+	if Entity_IsOfType(entity, "scar_outpost") then
+		
+		-- Add to player's count / +1
+		player.obj_buildingLimit_outpost_count = player.obj_buildingLimit_outpost_count - 1
+		-- If no limit reached, disable outpost
+		if player.obj_buildingLimit_outpost_count < 20 then
+			Player_SetEntityProductionAvailability(player .id, BP_GetEntityBlueprintsWithType("scar_outpost"), ITEM_DEFAULT)
+		end	
+	end
+end
+
+-- Siege Limit / Cancel production
+function CBA_Options_SiegeLimit_Cancel_1(gid, index, iid) -- Cancel type: Ram/Trebuchet TR/Culverin
+	
+	if Entity_HasProductionQueue (iid) then
+		local count = Entity_GetProductionQueueSize(iid)
+		
+		for index = 1, count do
+			-- Check: limited siege
+			local bp_type = Entity_GetProductionQueueItemType(iid, count - index)
+			if bp_type == PITEM_Spawn then
+				
+				local bp_queue = Entity_GetProductionQueueItem(iid, count - index)
+
+					if Squad_IsSBPOfType(bp_queue, "springald") or Squad_IsSBPOfType(bp_queue, "culverin") or Squad_IsSBPOfType(bp_queue, "trebuchet_traction") then
+						Entity_CancelProductionQueueItem(iid, count - index)
+				end
+			end
+		end
+	end	
+end
+
+function CBA_Options_SiegeLimit_Cancel_2(gid, index, iid) -- Cancel type: Siege
+	
+	if Entity_HasProductionQueue (iid) then
+		local count = Entity_GetProductionQueueSize(iid)
+		
+		for index = 1, count do
+			-- Check: limited siege
+			local bp_type = Entity_GetProductionQueueItemType(iid, count - index)
+			if bp_type == PITEM_Spawn then
+				
+				local bp_queue = Entity_GetProductionQueueItem(iid, count - index)
+
+					if Squad_IsSBPOfType(bp_queue, "trebuchet_traction") or Squad_IsSBPOfType(bp_queue, "ram") or Squad_IsSBPOfType(bp_queue, "culverin") then
+						Entity_CancelProductionQueueItem(iid, count - index)
+				end
+			end
+		end
+	end	
+end
+
+function CBA_Options_SiegeLimit_Cancel_3(gid, index, iid) -- Cancel type: Siege
+	
+	if Entity_HasProductionQueue (iid) then
+		local count = Entity_GetProductionQueueSize(iid)
+		
+		for index = 1, count do
+			-- Check: limited siege
+			local bp_type = Entity_GetProductionQueueItemType(iid, count - index)
+			if bp_type == PITEM_Spawn then
+				
+				local bp_queue = Entity_GetProductionQueueItem(iid, count - index)
+
+					if Squad_IsSBPOfType(bp_queue, "siege") then
+						Entity_CancelProductionQueueItem(iid, count - index)
+				end
+			end
+		end
+	end	
+end
+
+-- Building Ability / Adds 'Scuttle no enemies' to all buildings
+function CBA_Options_AddScuttle_ConstructionComplete(context)
+	
+	-- Check 'tent' to avoid error on 'dropped_banner_jpn'
+	if Entity_IsOfType(context.entity, "tent") == false then
+		
+		-- Replace 'Scuttle' ability
+		if Entity_HasAbility(context.entity, BP_GetAbilityBlueprint("core_building_scuttle")) then
+			Entity_RemoveAbility(context.entity, BP_GetAbilityBlueprint("core_building_scuttle"))
+			Entity_AddAbility(context.entity, BP_GetAbilityBlueprint("core_building_scuttle_no_enemies"))
+		end
+		
+		-- Mongol only
+		if Entity_HasAbility(context.entity, BP_GetAbilityBlueprint("pack_building_mon")) then
+			Entity_RemoveAbility(context.entity, BP_GetAbilityBlueprint("pack_building_mon"))
+		end
+	end
+end
+
+-- Restriction: Archery/Stable unlocked in Dark Age / CBA_Auto_Age
+function CBA_Options_DarkAge_Unlocks()
+	
+	for _, player in pairs(PLAYERS) do
+		local player_civ = Player_GetRaceName(player.id)
+		-- Buildings
+		if player.obj_buildingLimit_count < AGS_GLOBAL_SETTINGS.MaximumProductionBuildings then
+			Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_ARCHERY_RANGE), ITEM_UNLOCKED)
+			Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_STABLE), ITEM_UNLOCKED)
+		end
+		-- Units
+		Player_SetSquadProductionAvailability(player.id, BP_GetSquadBlueprintsWithType("scar_archer"), ITEM_UNLOCKED)
+		Player_SetSquadProductionAvailability(player.id, BP_GetSquadBlueprintsWithType("scar_horseman"), ITEM_UNLOCKED)
+	end
+end
+
+-- Villager Spawner
+function CBA_Options_VillagerSpawner()
+	for i, player in pairs(PLAYERS) do
+		-- Check #1 - Player is alive & not max population
+		if Core_IsPlayerEliminated(player.id) == false then
+			if Player_GetCurrentPopulation(player.id,CT_Personnel) >= AGS_GLOBAL_SETTINGS.MaximumPopulation + 15 then
+				return 
+			end
+			
+			
+			local player_civ = Player_GetRaceName(player.id)
+			local unit_type = AGS_GetCivilizationUnit(player_civ, AGS_BP_VILLAGER)
+			local unit_num = 1
+			local player_units = Player_GetAll(player.id)
+			
+			SGroup_Filter(sg_allsquads, "scar_villager", FILTER_KEEP)
+			villager_count = SGroup_Count(sg_allsquads)
+			if villager_count < 10 then
+				CBA_Rewards_SpawnAndMove(player,unit_type,unit_num)
+			end
+		end
+	end	
+end
+
+-- Placeholder: Keep HP Boost & Restriction
+function CBA_Option_KeepModifier()
+	for _, player in pairs(PLAYERS) do
+		local player_civ = Player_GetRaceName(player.id)
+		local modifier = Modifier_Create(MAT_EntityType, "health_maximum_modifier", MUT_Multiplication, false, 5, AGS_GetCivilizationEntity(player.raceName, AGS_BP_KEEP))
+		
+		Modifier_ApplyToPlayer(modifier, player.id, 0)	
+		Player_SetEntityProductionAvailability(player.id, AGS_GetCivilizationEntity(player.raceName, AGS_BP_KEEP), ITEM_LOCKED)
+	end
+end
+
+-- Placeholder: Restriction for Outpost's upgrade: Cannon
+function CBA_Options_OutpostRestrictions()
+	for i, player in pairs(PLAYERS) do
+		local player_civ = Player_GetRaceName(player.id)
+		
+		if player_civ == "mongol" then
+			Player_SetUpgradeAvailability(player.id, BP_GetUpgradeBlueprint("upgrade_outpost_cannon_mon"), ITEM_REMOVED)
+		else
+			Player_SetUpgradeAvailability(player.id, BP_GetUpgradeBlueprint("upgrade_outpost_cannon"), ITEM_REMOVED)
+		end		
+	end		
+end			

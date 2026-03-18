@@ -1,0 +1,126 @@
+---------------------------------------------------------------------------------------------------
+-- CBA Debug — Event Probes
+-- Tests event handlers with mock contexts (no game state modification).
+-- Console: Debug_EventProbes()
+---------------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------------
+-- Mock Context Constructors
+---------------------------------------------------------------------------------------------------
+
+function _EP_MockContext_EntityKilled(victim_eid, victim_owner, killer_owner)
+	return {
+		victim = {EntityID = victim_eid or 0},
+		victimOwner = victim_owner,
+		killer = killer_owner,
+	}
+end
+
+function _EP_MockContext_ConstructionStart(entity, player)
+	return {
+		entity = entity or 0,
+		player = player,
+	}
+end
+
+function _EP_MockContext_BuildItemComplete(player, entity)
+	return {
+		player = player,
+		entity = entity or 0,
+	}
+end
+
+---------------------------------------------------------------------------------------------------
+-- Probe Groups
+---------------------------------------------------------------------------------------------------
+
+function _EP_Group_EntityKilled()
+	print("  > Probing GE_EntityKilled handlers:")
+	local handlers = {
+		{"Mod_OnEntityKilled", Mod_OnEntityKilled},
+		{"CBA_Rewards_OnEntityKilled", CBA_Rewards_OnEntityKilled},
+		{"CBA_Options_BuildingLimit_OnEntityKilled", CBA_Options_BuildingLimit_OnEntityKilled},
+	}
+	for _, h in ipairs(handlers) do
+		local name = h[1]
+		local fn = h[2]
+		if type(fn) ~= "function" then
+			print(string.format("    [SKIP] %s — not a function", name))
+		else
+			-- Probe with empty/safe context to test crash resilience
+			local ctx = _EP_MockContext_EntityKilled(0, nil, nil)
+			local ok, err = pcall(fn, ctx)
+			if ok then
+				print(string.format("    [OK] %s — survived mock context", name))
+			else
+				print(string.format("    [CRASH] %s — %s", name, tostring(err)))
+			end
+		end
+	end
+end
+
+function _EP_Group_Construction()
+	print("  > Probing construction handlers:")
+	local handlers = {
+		{"CBA_Options_BuildingLimit_ConstructionStart", CBA_Options_BuildingLimit_ConstructionStart},
+		{"CBA_Options_BuildingLimit_ConstructionCancelled", CBA_Options_BuildingLimit_ConstructionCancelled},
+	}
+	for _, h in ipairs(handlers) do
+		local name = h[1]
+		local fn = h[2]
+		if type(fn) ~= "function" then
+			print(string.format("    [SKIP] %s — not a function", name))
+		else
+			local ctx = _EP_MockContext_ConstructionStart(nil, nil)
+			local ok, err = pcall(fn, ctx)
+			if ok then
+				print(string.format("    [OK] %s — survived mock context", name))
+			else
+				print(string.format("    [WARN] %s — %s (expected with nil context)", name, tostring(err)))
+			end
+		end
+	end
+end
+
+function _EP_Group_WinConditions()
+	print("  > Probing win condition handlers:")
+	local handlers = {
+		{"Annihilation_CheckVictory", Annihilation_CheckVictory},
+		{"Surrender_CheckVictory", Surrender_CheckVictory},
+	}
+	for _, h in ipairs(handlers) do
+		local name = h[1]
+		local fn = h[2]
+		if type(fn) ~= "function" then
+			print(string.format("    [SKIP] %s — not a function", name))
+		else
+			-- These should be safe to call without context during non-endgame
+			local ok, err = pcall(fn, nil)
+			if ok then
+				print(string.format("    [OK] %s — survived nil arg", name))
+			else
+				print(string.format("    [WARN] %s — %s", name, tostring(err)))
+			end
+		end
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Public Entry Point
+---------------------------------------------------------------------------------------------------
+
+function Debug_EventProbes()
+	_cba_debug.enabled = true
+
+	print("")
+	print("============================================")
+	print("  CBA DEBUG — EVENT PROBES")
+	print("============================================")
+
+	_EP_Group_EntityKilled()
+	_EP_Group_Construction()
+	_EP_Group_WinConditions()
+
+	print("")
+	print("  ======== EVENT PROBES COMPLETE ========")
+end

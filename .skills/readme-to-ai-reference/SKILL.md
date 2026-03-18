@@ -45,7 +45,7 @@ Transform narrative README documentation into structured, machine-queryable refe
 | `chunking_limit` | integer | `1200` | 500–2000 | Maximum words per output file |
 | `strictness` | string | `standard` | `strict`, `standard`, `relaxed` | Hallucination guard strictness level |
 
-**Mode Details:** See [REFERENCE_GENERATION_STRATEGY.md](../../.github/copilot/REFERENCE_GENERATION_STRATEGY.md)
+**Mode Details:** See [REFERENCE_GENERATION_STRATEGY.md](specs/REFERENCE_GENERATION_STRATEGY.md)
 
 ---
 
@@ -131,12 +131,12 @@ For detailed quality gates, non-invention rules, hallucination mitigation strate
 
 ## Implementation References
 
-- **Structure & Primitives:** [REFERENCE_SPEC_01_STRUCTURE.md](../../.github/copilot/REFERENCE_SPEC_01_STRUCTURE.md)
-- **Guardrails & Rules:** [REFERENCE_SPEC_02_GUARDRAILS.md](../../.github/copilot/REFERENCE_SPEC_02_GUARDRAILS.md)
-- **Evaluation & QA:** [REFERENCE_SPEC_03_EVALUATION.md](../../.github/copilot/REFERENCE_SPEC_03_EVALUATION.md)
-- **Research Foundation:** [REFERENCE_DESIGN_2026-03.md](../../.github/copilot/archive/2026-03/REFERENCE_DESIGN_2026-03.md) *(archived)*
-- **Agent Skill Dev:** [RESEARCH_FINDINGS_2026-03.md](../../.github/copilot/archive/2026-03/RESEARCH_FINDINGS_2026-03.md) *(archived)*
-- **Generation Strategy:** [REFERENCE_GENERATION_STRATEGY.md](../../.github/copilot/REFERENCE_GENERATION_STRATEGY.md)
+- **Structure & Primitives:** [REFERENCE_SPEC_01_STRUCTURE.md](specs/REFERENCE_SPEC_01_STRUCTURE.md)
+- **Guardrails & Rules:** [REFERENCE_SPEC_02_GUARDRAILS.md](specs/REFERENCE_SPEC_02_GUARDRAILS.md)
+- **Evaluation & QA:** [REFERENCE_SPEC_03_EVALUATION.md](specs/REFERENCE_SPEC_03_EVALUATION.md)
+- **Research Foundation:** [REFERENCE_DESIGN_2026-03.md](../../.github/architecture/REFERENCE_DESIGN_2026-03.md) *(archived)*
+- **Agent Skill Dev:** [RESEARCH_FINDINGS_2026-03.md](../../.github/architecture/RESEARCH_FINDINGS_2026-03.md) *(archived)*
+- **Generation Strategy:** [REFERENCE_GENERATION_STRATEGY.md](specs/REFERENCE_GENERATION_STRATEGY.md)
 
 ---
 

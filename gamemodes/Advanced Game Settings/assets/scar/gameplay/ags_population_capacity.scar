@@ -17,16 +17,15 @@ Core_RegisterModule(AGS_POPULATION_CAPACITY_MODULE)
 
 function AGS_PopulationCapacity_UpdateModuleSettings()
 	AGS_Print("AGS_PopulationCapacity_UpdateModuleSettings")
-	if AGS_GLOBAL_SETTINGS.MaximumPopulation == 200 and AGS_GLOBAL_SETTINGS.MinimumPopulation == 0 then
+	local minimum_population, maximum_population = AGS_PopulationCapacity_NormalizeSettings()
+	if maximum_population == 200 and minimum_population == 0 then
 		Core_UnregisterModule(AGS_POPULATION_CAPACITY_MODULE)
 	end
 end
 
 function AGS_PopulationCapacity_AdjustSettings()
 	AGS_Print("AGS_PopulationCapacity_AdjustSettings")
-	if AGS_GLOBAL_SETTINGS.MinimumPopulation > AGS_GLOBAL_SETTINGS.MaximumPopulation then
-		AGS_GLOBAL_SETTINGS.MinimumPopulation = AGS_GLOBAL_SETTINGS.MaximumPopulation
-	end
+	AGS_PopulationCapacity_NormalizeSettings()
 end
 
 function AGS_PopulationCapacity_PresetFinalize()
@@ -38,10 +37,40 @@ end
 -- Functions:
 ---------------------------------------------------------------------------------------------------
 
+function AGS_PopulationCapacity_GetNumericSetting(setting_name, default_value)
+	if AGS_GLOBAL_SETTINGS == nil then
+		return default_value
+	end
+
+	local value = AGS_GLOBAL_SETTINGS[setting_name]
+	if type(value) ~= "number" then
+		AGS_GLOBAL_SETTINGS[setting_name] = default_value
+		return default_value
+	end
+
+	return value
+end
+
+function AGS_PopulationCapacity_NormalizeSettings()
+	local maximum_population = AGS_PopulationCapacity_GetNumericSetting("MaximumPopulation", 200)
+	local minimum_population = AGS_PopulationCapacity_GetNumericSetting("MinimumPopulation", 0)
+
+	if minimum_population > maximum_population then
+		minimum_population = maximum_population
+		if AGS_GLOBAL_SETTINGS ~= nil then
+			AGS_GLOBAL_SETTINGS.MinimumPopulation = minimum_population
+		end
+	end
+
+	return minimum_population, maximum_population
+end
+
 function AGS_PopulationCapacity_Change()
+	local minimum_population, maximum_population = AGS_PopulationCapacity_NormalizeSettings()
+
 	for _, player in pairs(PLAYERS) do		
-		AGS_PopulationCapacity_ApplyMaxCapPopulation(player, AGS_GLOBAL_SETTINGS.MaximumPopulation)
-		AGS_PopulationCapacity_SetMinPopulation(player, AGS_GLOBAL_SETTINGS.MinimumPopulation) 
+		AGS_PopulationCapacity_ApplyMaxCapPopulation(player, maximum_population)
+		AGS_PopulationCapacity_SetMinPopulation(player, minimum_population) 
 	end
 end
 
@@ -63,6 +92,7 @@ function AGS_PopulationCapacity_ApplyMinPopulation(player, pop_size)
 end
 
 function AGS_PopulationCapacity_ApplyMaxCapPopulation(player, pop_size)
+	pop_size = pop_size or AGS_PopulationCapacity_GetNumericSetting("MaximumPopulation", 200)
 	local value = - (200 - pop_size)
 	Modifier_ApplyToPlayer(Modifier_Create(MAT_Player, "max_personnel_cap_player_modifier", MUT_Addition, false, value, ""), player.id, 0)
 end
