@@ -5,7 +5,7 @@ A comprehensive reference workspace for AoE4 SCAR scripting, modding, and debugg
 ## Quick Navigation
 
 ### 📚 Complete Reference Documentation
-**For comprehensive index of all 25 reference files, see [reference/INDEX.md](reference/INDEX.md)** – Organized by workflow, includes quick-start tasks and statistics.
+**For comprehensive index of all 25 reference files, see [references/navigation/INDEX.md](references/navigation/INDEX.md)** – Organized by workflow, includes quick-start tasks and statistics.
 
 ### Copilot Guidance
 Use [.github/copilot-instructions.md](.github/copilot-instructions.md) for repo-specific Copilot usage and links to the Copilot Skill.
@@ -13,26 +13,26 @@ Use [.github/copilot-instructions.md](.github/copilot-instructions.md) for repo-
 ### API & Data Reference
 | Reference | Description |
 |-----------|-------------|
-| [reference/scar-api-functions.md](reference/scar-api-functions.md) | All 4,435 SCAR API functions organized by category |
-| [reference/UI_SetPlayerDataContext_FieldDiscovery.md](reference/UI_SetPlayerDataContext_FieldDiscovery.md) | Complete discovery of 18 modifiable UI_SetPlayerDataContext fields (scarModel + overrides) |
-| [reference/constants-and-enums.md](reference/constants-and-enums.md) | 700+ constants, enums, typed values |
-| [reference/game-events.md](reference/game-events.md) | 175 game events (GE_*) with numeric IDs |
-| [reference/commands-reference.md](reference/commands-reference.md) | Entity, Squad, and Player command types |
+| [references/api/scar-api-functions.md](references/api/scar-api-functions.md) | All 4,435 SCAR API functions organized by category |
+| [references/ui/UI_SetPlayerDataContext_FieldDiscovery.md](references/ui/UI_SetPlayerDataContext_FieldDiscovery.md) | Complete discovery of 18 modifiable UI_SetPlayerDataContext fields (scarModel + overrides) |
+| [references/api/constants-and-enums.md](references/api/constants-and-enums.md) | 700+ constants, enums, typed values |
+| [references/api/game-events.md](references/api/game-events.md) | 175 game events (GE_*) with numeric IDs |
+| [references/api/commands-reference.md](references/api/commands-reference.md) | Entity, Squad, and Player command types |
 | [scripts/gameplay-index.md](scripts/gameplay-index.md) | Index of 131 gameplay scripts |
 | [scripts/campaign-index.md](scripts/campaign-index.md) | Index of 570 campaign scripts |
-| [guides/scar-scripting-basics.md](guides/scar-scripting-basics.md) | SCAR scripting patterns & common code |
-| [guides/common-patterns.md](guides/common-patterns.md) | Reusable code patterns from official scripts |
-| [data-sources.md](data-sources.md) | Paths to all raw data files |
+| [user_references/guides/scar-scripting-basics.md](user_references/guides/scar-scripting-basics.md) | SCAR scripting patterns & common code |
+| [user_references/guides/common-patterns.md](user_references/guides/common-patterns.md) | Reusable code patterns from official scripts |
+| [references/workspace/data-sources.md](references/workspace/data-sources.md) | Paths to all raw data files |
 
 ### Official Modding Guides (78 Articles)
 | Guide | Articles | Description |
 |-------|----------|-------------|
-| [official-guides/01-getting-started.md](official-guides/01-getting-started.md) | 11 | Launching the editor, mod types, camera controls, testing, publishing |
-| [official-guides/02-editor-interface.md](official-guides/02-editor-interface.md) | 23 | Render View, Scenario Tree, Object Browser, Properties, all menus |
-| [official-guides/03-crafted-maps.md](official-guides/03-crafted-maps.md) | 30 | Terrain, textures, water, atmosphere, objects, players, audio, effects |
-| [official-guides/04-generated-maps.md](official-guides/04-generated-maps.md) | 3 | Terrain tables, player starts, distributions, terrain types |
-| [official-guides/05-tuning-packs.md](official-guides/05-tuning-packs.md) | 8 | Attribute Editor, cloning, costs, stats, hardpoints, weapons |
-| [official-guides/06-game-modes.md](official-guides/06-game-modes.md) | 5 | SCAR scripting, win conditions, rules, objectives, debugging |
+| [user_references/official-guides/01-getting-started.md](user_references/official-guides/01-getting-started.md) | 11 | Launching the editor, mod types, camera controls, testing, publishing |
+| [user_references/official-guides/02-editor-interface.md](user_references/official-guides/02-editor-interface.md) | 23 | Render View, Scenario Tree, Object Browser, Properties, all menus |
+| [user_references/official-guides/03-crafted-maps.md](user_references/official-guides/03-crafted-maps.md) | 30 | Terrain, textures, water, atmosphere, objects, players, audio, effects |
+| [user_references/official-guides/04-generated-maps.md](user_references/official-guides/04-generated-maps.md) | 3 | Terrain tables, player starts, distributions, terrain types |
+| [user_references/official-guides/05-tuning-packs.md](user_references/official-guides/05-tuning-packs.md) | 8 | Attribute Editor, cloning, costs, stats, hardpoints, weapons |
+| [user_references/official-guides/06-game-modes.md](user_references/official-guides/06-game-modes.md) | 5 | SCAR scripting, win conditions, rules, objectives, debugging |
 
 ## Data Overview
 

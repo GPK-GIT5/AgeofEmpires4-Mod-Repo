@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SCAR AI Skill Schema",
+  "description": "Schema for defining reusable AI skill abstractions in AoE4 SCAR scripting. Each skill represents a discrete behavior unit with typed inputs, outputs, event triggers, state dependencies, SCAR API bindings, lifecycle hooks, and composability rules.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["id", "name", "domain", "lifecycle", "scar_bindings"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Unique skill identifier (snake_case). Used as namespace prefix for globals."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable skill name (PascalCase, matches SCAR convention)."
+    },
+    "domain": {
+      "type": "string",
+      "enum": ["combat", "economy", "production", "movement", "ui", "ai", "diplomacy", "objective", "meta"],
+      "description": "Functional domain this skill operates in."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "One-line description of what this skill does."
+    },
+    "inputs": {
+      "type": "array",
+      "description": "Required data the skill needs to operate. Provided at init or per-tick.",
+      "items": {
+        "type": "object",
+        "required": ["name", "scar_type", "source"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Input parameter name (snake_case)."
+          },
+          "scar_type": {
+            "type": "string",
+            "enum": ["Player", "Entity", "Squad", "SGroup", "EGroup", "ScarPosition", "ScarMarker", "EntityBlueprint", "SquadBlueprint", "AbilityBlueprint", "UpgradeBlueprint", "PropertyBagGroup", "LocString", "Modifier", "number", "string", "boolean", "table", "function"],
+            "description": "SCAR type from the Types module."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["parameter", "statemodel", "game_query", "event_context", "computed"],
+            "description": "How the input is obtained at runtime."
+          },
+          "statemodel_key": {
+            "type": "string",
+            "description": "If source=statemodel, the key name to read."
+          },
+          "game_query_fn": {
+            "type": "string",
+            "description": "If source=game_query, the SCAR function to call (e.g. 'Player_GetEntities')."
+          },
+          "optional": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "description": "Data produced by the skill, available to other skills or game logic.",
+      "items": {
+        "type": "object",
+        "required": ["name", "scar_type", "destination"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scar_type": {
+            "type": "string",
+            "enum": ["Player", "Entity", "Squad", "SGroup", "EGroup", "ScarPosition", "number", "string", "boolean", "table"]
+          },
+          "destination": {
+            "type": "string",
+            "enum": ["statemodel", "global", "return", "event_data"],
+            "description": "Where the output is written."
+          },
+          "statemodel_key": {
+            "type": "string",
+            "description": "If destination=statemodel, the key name to write."
+          }
+        }
+      }
+    },
+    "triggers": {
+      "type": "array",
+      "description": "Events that activate this skill. Maps directly to EventRule_Add* calls.",
+      "items": {
+        "type": "object",
+        "required": ["event", "scope"],
+        "properties": {
+          "event": {
+            "type": "string",
+            "description": "Game event constant (e.g. 'GE_ConstructionComplete', 'GE_EntityKilled', 'GE_UpgradeComplete')."
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["global", "player", "entity", "squad"],
+            "description": "EventRule scope level. Narrower = better performance."
+          },
+          "eventrule_fn": {
+            "type": "string",
+            "enum": ["EventRule_AddEvent", "EventRule_AddPlayerEvent", "EventRule_AddEntityEvent", "EventRule_AddSquadEvent", "EventRule_AddEventData", "EventRule_AddPlayerEventData", "EventRule_AddEntityEventData", "EventRule_AddSquadEventData"],
+            "description": "The specific EventRule registration function."
+          },
+          "one_shot": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, the callback calls EventRule_RemoveMe() after first fire."
+          },
+          "filter": {
+            "type": "string",
+            "description": "Optional Lua expression that guards callback execution (e.g. 'Entity_IsOfType(entity, \"infantry\")')."
+          }
+        }
+      }
+    },
+    "state_dependencies": {
+      "type": "array",
+      "description": "StateModel keys or game state this skill reads/writes. Used for dependency resolution.",
+      "items": {
+        "type": "object",
+        "required": ["key", "object", "data_type", "access"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "StateModel property name (must exist in statemodel_*_property.json)."
+          },
+          "object": {
+            "type": "string",
+            "enum": ["Entity", "Player", "Squad"],
+            "description": "Which game object the state is attached to."
+          },
+          "data_type": {
+            "type": "string",
+            "enum": ["Bool", "Float", "Int", "EntityTarget", "SquadTarget", "PlayerTarget", "Vector3f", "EnumTableInt", "EnumTableFloat"],
+            "description": "StateModel data type."
+          },
+          "access": {
+            "type": "string",
+            "enum": ["read", "write", "readwrite"],
+            "description": "How this skill uses the state key."
+          },
+          "get_fn": {
+            "type": "string",
+            "description": "Auto-derived: {Object}_GetStateModel{DataType}"
+          },
+          "set_fn": {
+            "type": "string",
+            "description": "Auto-derived: {Object}_SetStateModel{DataType}"
+          }
+        }
+      }
+    },
+    "scar_bindings": {
+      "type": "object",
+      "description": "SCAR API functions this skill uses, organized by role.",
+      "required": ["primary"],
+      "properties": {
+        "primary": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Core SCAR functions the skill depends on (e.g. 'Entity_Create', 'Player_SetResource')."
+        },
+        "queries": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Read-only SCAR functions for state inspection."
+        },
+        "mutations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "SCAR functions that modify game state."
+        },
+        "ui": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "UI_ functions for player feedback (event cues, kickers, minimap blips)."
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "description": "Skill lifecycle hooks mapping to SCAR execution patterns.",
+      "required": ["init"],
+      "properties": {
+        "init": {
+          "type": "object",
+          "required": ["fn_name"],
+          "properties": {
+            "fn_name": {
+              "type": "string",
+              "description": "Global function name called once at startup (e.g. 'BuildingLimit_Init')."
+            },
+            "called_from": {
+              "type": "string",
+              "enum": ["OnGameSetup", "OnGameRestore", "Scar_DoFile", "manual"],
+              "description": "Where the init function is invoked."
+            },
+            "registers_events": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether init sets up EventRule listeners."
+            }
+          }
+        },
+        "update": {
+          "type": "object",
+          "description": "Optional periodic update (if skill uses a timer rule).",
+          "properties": {
+            "fn_name": { "type": "string" },
+            "interval_seconds": { "type": "number" },
+            "rule_type": {
+              "type": "string",
+              "enum": ["Rule_AddInterval", "Rule_AddOneShot", "none"],
+              "description": "Timer rule type (from gameplay scripts, not EventRule)."
+            }
+          }
+        },
+        "events": {
+          "type": "array",
+          "description": "Event callback functions this skill registers.",
+          "items": {
+            "type": "object",
+            "required": ["fn_name", "event"],
+            "properties": {
+              "fn_name": {
+                "type": "string",
+                "description": "Lua callback function name (must be global)."
+              },
+              "event": {
+                "type": "string",
+                "description": "GE_* event constant."
+              }
+            }
+          }
+        },
+        "cleanup": {
+          "type": "object",
+          "description": "Optional teardown function.",
+          "properties": {
+            "fn_name": { "type": "string" },
+            "removes_events": { "type": "boolean", "default": true }
+          }
+        },
+        "save_restore": {
+          "type": "object",
+          "description": "Save/load compatibility.",
+          "properties": {
+            "supports_save": { "type": "boolean", "default": false },
+            "restore_fn": { "type": "string", "description": "Function called on game restore." },
+            "uses_data_store": { "type": "boolean", "default": false, "description": "Uses Game_StoreTableData/RetrieveTableData." }
+          }
+        }
+      }
+    },
+    "composability": {
+      "type": "object",
+      "description": "Rules for combining this skill with others.",
+      "properties": {
+        "conflicts_with": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Skill IDs that cannot run simultaneously (same state keys, overlapping events)."
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Skill IDs that must be initialized before this skill."
+        },
+        "provides": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Capabilities this skill provides (for dependency resolution)."
+        },
+        "requires": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Capabilities this skill requires from other skills."
+        },
+        "civ_variants": {
+          "type": "object",
+          "description": "Civilization-specific behavior branches.",
+          "properties": {
+            "uses_branch_civ": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether skill uses AGS_CIV_PARENT_MAP for DLC variant coverage."
+            },
+            "explicit_civ_checks": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Civ strings with explicit handling (e.g. 'chinese_ha_01', 'french_ha_01')."
+            }
+          }
+        },
+        "concurrency": {
+          "type": "string",
+          "enum": ["exclusive", "cooperative", "independent"],
+          "description": "How this skill interacts with concurrent skills: exclusive=mutex, cooperative=shared state, independent=no interaction."
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "description": "Engine and runtime constraints that affect this skill.",
+      "properties": {
+        "requires_global_functions": {
+          "type": "boolean",
+          "default": true,
+          "description": "SCAR callbacks must be global (no local functions as event handlers)."
+        },
+        "no_require": {
+          "type": "boolean",
+          "default": true,
+          "description": "Module loading via Scar_DoFile only, not Lua require."
+        },
+        "lua_version": {
+          "type": "string",
+          "const": "5.1-compatible",
+          "description": "AoE4 SCAR runtime constraint."
+        },
+        "xaml_ui_restrictions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Known XamlPresenter crash triggers (e.g. 'no Width DataContext binding', 'no MergedDictionaries + local resources')."
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "id": "building_limit",
+      "name": "BuildingLimit",
+      "domain": "production",
+      "description": "Limits the number of production buildings a player can construct.",
+      "inputs": [
+        { "name": "player", "scar_type": "Player", "source": "event_context" },
+        { "name": "max_buildings", "scar_type": "number", "source": "parameter" }
+      ],
+      "outputs": [
+        { "name": "current_count", "scar_type": "number", "destination": "global" }
+      ],
+      "triggers": [
+        { "event": "GE_ConstructionStart", "scope": "global", "eventrule_fn": "EventRule_AddEvent" },
+        { "event": "GE_ConstructionCancelled", "scope": "global", "eventrule_fn": "EventRule_AddEvent" },
+        { "event": "GE_EntityKilled", "scope": "global", "eventrule_fn": "EventRule_AddEvent" }
+      ],
+      "state_dependencies": [],
+      "scar_bindings": {
+        "primary": ["Entity_IsOfType", "Entity_IsEBPOfType", "Player_GetEntities"],
+        "queries": ["Entity_GetPlayerOwner", "EGroup_Count", "EGroup_ForEach"],
+        "mutations": ["Player_SetConstructionMenuAvailability"],
+        "ui": []
+      },
+      "lifecycle": {
+        "init": { "fn_name": "CBA_Options_BuildingLimit_Init", "called_from": "OnGameSetup", "registers_events": true },
+        "events": [
+          { "fn_name": "CBA_Options_BuildingLimit_OnConstructionStart", "event": "GE_ConstructionStart" },
+          { "fn_name": "CBA_Options_BuildingLimit_OnConstructionCancelled", "event": "GE_ConstructionCancelled" },
+          { "fn_name": "CBA_Options_BuildingLimit_OnEntityKilled", "event": "GE_EntityKilled" }
+        ]
+      },
+      "composability": {
+        "conflicts_with": [],
+        "depends_on": ["ags_blueprints"],
+        "civ_variants": {
+          "uses_branch_civ": true,
+          "explicit_civ_checks": ["chinese", "chinese_ha_01", "french_ha_01"]
+        },
+        "concurrency": "cooperative"
+      }
+    }
+  ]
+}

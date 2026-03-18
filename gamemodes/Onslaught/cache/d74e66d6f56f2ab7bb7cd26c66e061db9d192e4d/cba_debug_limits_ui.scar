@@ -1,0 +1,141 @@
+---------------------------------------------------------------------------------------------------
+-- CBA Debug — Limits UI
+-- Diagnostics for building-limit and siege-limit UI state.
+-- Console: Debug_GetLimitsUIState(), Debug_LimitsUIStress()
+---------------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------------
+-- Building Limit UI State
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetLimitsUIState()
+	print("")
+	print("[DEBUG_LIMITS_UI] Building & Siege Limit UI State:")
+	print("----------------------------------------------------")
+
+	for i, player in ipairs(PLAYERS) do
+		local bl_count = player.obj_buildingLimit_count or "nil"
+		local bl_max = "?"
+		if _buildingLimit ~= nil and _buildingLimit.max ~= nil then
+			bl_max = tostring(_buildingLimit.max)
+		end
+
+		local sl_count = player.siegeLimit_count or "nil"
+		local sl_max = "?"
+		if _buildingLimit ~= nil and _buildingLimit.siegeMax ~= nil then
+			sl_max = tostring(_buildingLimit.siegeMax)
+		end
+
+		print(string.format("  Player %d: buildings=%s/%s  siege=%s/%s",
+			i, tostring(bl_count), bl_max, tostring(sl_count), sl_max))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Construction Trace
+---------------------------------------------------------------------------------------------------
+
+function Debug_ConstructionTrace(player_idx)
+	if player_idx == nil then
+		print("[DEBUG_LIMITS_UI] Usage: Debug_ConstructionTrace(player_index)")
+		return
+	end
+
+	local player = PLAYERS[player_idx]
+	if player == nil then
+		print(string.format("[DEBUG_LIMITS_UI] PLAYERS[%d] is nil", player_idx))
+		return
+	end
+
+	print(string.format("[DEBUG_LIMITS_UI] Construction trace for Player %d:", player_idx))
+
+	local eg = Player_GetEntities(player.id)
+	local total = EGroup_CountAlive(eg)
+
+	-- Count by type
+	local buildings = 0
+	local landmarks = 0
+	local production = 0
+	local workshops = 0
+
+	for j = 1, total do
+		local eid = EGroup_GetEntityAt(eg, j)
+		if Entity_IsValid(eid) then
+			if Entity_IsOfType(eid, "building") then
+				buildings = buildings + 1
+			end
+			if Entity_IsOfType(eid, "landmark") then
+				landmarks = landmarks + 1
+			end
+			if Entity_IsOfType(eid, "military_production_building") then
+				production = production + 1
+			end
+			if Entity_IsOfType(eid, "military_only_production") then
+				workshops = workshops + 1
+			end
+		end
+	end
+
+	print(string.format("  Total entities: %d", total))
+	print(string.format("  Buildings: %d", buildings))
+	print(string.format("  Landmarks: %d", landmarks))
+	print(string.format("  military_production_building: %d", production))
+	print(string.format("  military_only_production: %d", workshops))
+	print(string.format("  Tracked count (obj_buildingLimit_count): %s", tostring(player.obj_buildingLimit_count or "nil")))
+end
+
+---------------------------------------------------------------------------------------------------
+-- Limit Stress Test
+---------------------------------------------------------------------------------------------------
+
+function Debug_LimitsUIStress()
+	print("")
+	print("[DEBUG_LIMITS_UI] Limits UI Stress Test:")
+	print("----------------------------------------------------")
+
+	-- Validate _buildingLimit table
+	if _buildingLimit == nil then
+		print("  [FAIL] _buildingLimit is nil")
+		return
+	end
+
+	local fields = {"enabled", "max", "siegeEnabled", "siegeMax"}
+	for _, f in ipairs(fields) do
+		local val = _buildingLimit[f]
+		if val ~= nil then
+			print(string.format("  [OK] _buildingLimit.%s = %s", f, tostring(val)))
+		else
+			print(string.format("  [WARN] _buildingLimit.%s is nil", f))
+		end
+	end
+
+	-- Check counter consistency
+	print("")
+	print("  Counter consistency check:")
+	for i, player in ipairs(PLAYERS) do
+		if Core_IsPlayerEliminated(player.id) then
+			print(string.format("    Player %d: ELIMINATED (skip)", i))
+		else
+			local tracked = player.obj_buildingLimit_count or 0
+			local eg = Player_GetEntities(player.id)
+			local actual = 0
+
+			local count = EGroup_CountAlive(eg)
+			for j = 1, count do
+				local eid = EGroup_GetEntityAt(eg, j)
+				if Entity_IsValid(eid) then
+					if Entity_IsOfType(eid, "military_production_building") or
+					   Entity_IsOfType(eid, "military_only_production") then
+						if not Entity_IsOfType(eid, "landmark") then
+							actual = actual + 1
+						end
+					end
+				end
+			end
+
+			local match = tracked == actual
+			local tag = match and "[OK]" or "[DESYNC]"
+			print(string.format("    Player %d: tracked=%d actual=%d %s", i, tracked, actual, tag))
+		end
+	end
+end

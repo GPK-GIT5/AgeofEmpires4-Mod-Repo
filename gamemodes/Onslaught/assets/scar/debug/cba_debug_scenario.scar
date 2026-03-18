@@ -1,0 +1,263 @@
+---------------------------------------------------------------------------------------------------
+-- CBA Debug — Scenario Orchestrator
+-- 7-stage phased test run (~90s total).
+-- Console: Debug_Scenario(), Debug_ScenarioStatus(), Debug_ScenarioStop()
+---------------------------------------------------------------------------------------------------
+
+local _cba_scenario = {
+	running = false,
+	current_stage = 0,
+	total_stages = 7,
+	results = {},
+	start_time = 0,
+}
+
+local SCENARIO_STAGE_DELAY = 3
+
+---------------------------------------------------------------------------------------------------
+-- Stage Definitions
+---------------------------------------------------------------------------------------------------
+
+function _Scenario_Stage1()
+	print("")
+	print("  ---- SCENARIO STAGE 1: Full Validation ----")
+	if type(Debug_FullValidation) == "function" then
+		Debug_FullValidation()
+	else
+		print("  [SKIP] Debug_FullValidation not available")
+	end
+	_cba_scenario.results[1] = "DONE"
+end
+
+function _Scenario_Stage2()
+	print("")
+	print("  ---- SCENARIO STAGE 2: Stress Test ----")
+	if type(Debug_StressTest) == "function" then
+		Debug_StressTest()
+	else
+		print("  [SKIP] Debug_StressTest not available")
+	end
+	_cba_scenario.results[2] = "DONE"
+end
+
+function _Scenario_Stage3()
+	print("")
+	print("  ---- SCENARIO STAGE 3: Coverage Test ----")
+	if type(Debug_CoverageTest) == "function" then
+		Debug_CoverageTest()
+	else
+		print("  [SKIP] Debug_CoverageTest not available")
+	end
+	_cba_scenario.results[3] = "DONE"
+end
+
+function _Scenario_Stage4()
+	print("")
+	print("  ---- SCENARIO STAGE 4: Event Probes ----")
+	if type(Debug_EventProbes) == "function" then
+		Debug_EventProbes()
+	else
+		print("  [SKIP] Debug_EventProbes not available")
+	end
+	_cba_scenario.results[4] = "DONE"
+end
+
+function _Scenario_Stage5()
+	print("")
+	print("  ---- SCENARIO STAGE 5: Audit Findings ----")
+	print("  Known issues on restore-v1.0 branch:")
+	print("")
+
+	-- Building limit desync after Entity_SetPlayerOwner transfer
+	print("  [AUDIT] Building limit counters may desync after Entity_SetPlayerOwner")
+	print("    Fix: CBA_Options_BuildingLimit_RecountPlayer after transfer")
+
+	-- English keeps dual classification
+	print("  [AUDIT] English keeps tagged with both military_only_production and military_production_building")
+	print("    Impact: Startup reconciliation may overcount production slots")
+
+	-- Siege limit cascade
+	if type(CBA_Options_SiegeLimit_Disable) == "function" then
+		print("  [AUDIT] CBA_Options_SiegeLimit_Disable present — 4-tier cascade")
+	else
+		print("  [AUDIT] CBA_Options_SiegeLimit_Disable not found")
+	end
+
+	-- Player_SetMaximumAge return-early behavior
+	print("  [AUDIT] Player_SetMaximumAge returns early at AGE_IMPERIAL (>=4)")
+	print("    Impact: Cannot reliably uncap previously capped ages")
+
+	_cba_scenario.results[5] = "DONE"
+end
+
+function _Scenario_Stage6()
+	print("")
+	print("  ---- SCENARIO STAGE 6: AI Data Export ----")
+
+	-- Output structured data for AI reference generation
+	print("[CBA_AI_DATA] === BEGIN EXPORT ===")
+
+	-- Module list
+	print("[CBA_AI_DATA] MODULES:")
+	local modules = {"Mod", "CBA_Rewards", "CBA_Options", "CBA_AutoAge",
+		"Annihilation", "Religious", "Wonder",
+		"AGS_PopulationAutomatic", "AGS_AutoResources", "AGS_GlobalSettings"}
+	for _, m in ipairs(modules) do
+		print(string.format("[CBA_AI_DATA]   %s", m))
+	end
+
+	-- State tables
+	print("[CBA_AI_DATA] STATE_TABLES:")
+	local tables = {
+		{"_mod", _mod},
+		{"_CBA", _CBA},
+		{"_buildingLimit", _buildingLimit},
+		{"_autoage", _autoage},
+		{"_annihilation", _annihilation},
+		{"_religious", _religious},
+		{"_wonder", _wonder},
+		{"AGS_GLOBAL_SETTINGS", AGS_GLOBAL_SETTINGS},
+	}
+	for _, t in ipairs(tables) do
+		local name = t[1]
+		local ref = t[2]
+		if ref ~= nil then
+			local count = 0
+			for _ in pairs(ref) do count = count + 1 end
+			print(string.format("[CBA_AI_DATA]   %s: %d keys", name, count))
+		else
+			print(string.format("[CBA_AI_DATA]   %s: nil", name))
+		end
+	end
+
+	-- Player count
+	print(string.format("[CBA_AI_DATA] PLAYER_COUNT: %d", #PLAYERS))
+
+	-- Civs in game
+	print("[CBA_AI_DATA] CIVS_IN_GAME:")
+	for i, player in ipairs(PLAYERS) do
+		local civ = Player_GetRaceName(player.id)
+		print(string.format("[CBA_AI_DATA]   P%d: %s", i, tostring(civ)))
+	end
+
+	print("[CBA_AI_DATA] === END EXPORT ===")
+
+	_cba_scenario.results[6] = "DONE"
+end
+
+function _Scenario_Stage7()
+	print("")
+	print("  ---- SCENARIO STAGE 7: Final Summary ----")
+
+	local elapsed = World_GetGameTime() - _cba_scenario.start_time
+	print(string.format("  Total elapsed: %.1fs", elapsed))
+
+	local all_done = true
+	for s = 1, _cba_scenario.total_stages do
+		local status = _cba_scenario.results[s] or "NOT RUN"
+		print(string.format("  Stage %d: %s", s, status))
+		if status ~= "DONE" then
+			all_done = false
+		end
+	end
+
+	print("")
+	if all_done then
+		print("  ======== SCENARIO COMPLETE: ALL STAGES PASSED ========")
+	else
+		print("  ======== SCENARIO COMPLETE: SOME STAGES SKIPPED ========")
+	end
+
+	_cba_scenario.running = false
+	_cba_scenario.current_stage = 0
+end
+
+---------------------------------------------------------------------------------------------------
+-- Stage Dispatch
+---------------------------------------------------------------------------------------------------
+
+local _SCENARIO_STAGES = {
+	_Scenario_Stage1,
+	_Scenario_Stage2,
+	_Scenario_Stage3,
+	_Scenario_Stage4,
+	_Scenario_Stage5,
+	_Scenario_Stage6,
+	_Scenario_Stage7,
+}
+
+function _Scenario_RunNextStage()
+	if not _cba_scenario.running then
+		return
+	end
+
+	_cba_scenario.current_stage = _cba_scenario.current_stage + 1
+	local stage = _cba_scenario.current_stage
+
+	if stage > _cba_scenario.total_stages then
+		_cba_scenario.running = false
+		return
+	end
+
+	local fn = _SCENARIO_STAGES[stage]
+	if fn ~= nil then
+		fn()
+	end
+
+	-- Schedule next stage
+	if stage < _cba_scenario.total_stages then
+		Rule_AddOneShot(_Scenario_RunNextStage, SCENARIO_STAGE_DELAY)
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Public Entry Points
+---------------------------------------------------------------------------------------------------
+
+function Debug_Scenario()
+	if _cba_scenario.running then
+		print("[DEBUG_SCENARIO] Already running. Use Debug_ScenarioStop() first.")
+		return
+	end
+
+	_cba_debug.enabled = true
+	_cba_scenario.running = true
+	_cba_scenario.current_stage = 0
+	_cba_scenario.results = {}
+	_cba_scenario.start_time = World_GetGameTime()
+
+	print("")
+	print("============================================================")
+	print("  CBA DEBUG — SCENARIO ORCHESTRATOR")
+	print(string.format("  7 stages, ~%ds estimated", _cba_scenario.total_stages * SCENARIO_STAGE_DELAY + 60))
+	print("============================================================")
+
+	_Scenario_RunNextStage()
+end
+
+function Debug_ScenarioStatus()
+	if not _cba_scenario.running then
+		print("[DEBUG_SCENARIO] Not running.")
+		return
+	end
+
+	local elapsed = World_GetGameTime() - _cba_scenario.start_time
+	print(string.format("[DEBUG_SCENARIO] Stage %d/%d  elapsed=%.1fs",
+		_cba_scenario.current_stage, _cba_scenario.total_stages, elapsed))
+
+	for s = 1, _cba_scenario.current_stage do
+		local status = _cba_scenario.results[s] or "IN PROGRESS"
+		print(string.format("  Stage %d: %s", s, status))
+	end
+end
+
+function Debug_ScenarioStop()
+	if not _cba_scenario.running then
+		print("[DEBUG_SCENARIO] Not running.")
+		return
+	end
+
+	print("[DEBUG_SCENARIO] Stopping...")
+	_cba_scenario.running = false
+	_cba_scenario.current_stage = 0
+end

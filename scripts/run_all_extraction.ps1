@@ -48,7 +48,7 @@ Write-Host "Generated artifacts:" -ForegroundColor White
 Write-Host "  reference/function-index.csv    — All function signatures (CSV)" -ForegroundColor Gray
 Write-Host "  reference/function-index.md     — All function signatures (Markdown)" -ForegroundColor Gray
 Write-Host "  reference/imports-index.csv     — Import dependency graph" -ForegroundColor Gray
-Write-Host "  reference/objectives-index.csv  — All OBJ_/SOBJ_ constants" -ForegroundColor Gray
+Write-Host "  references/indexes/objectives-index.csv  — All OBJ_/SOBJ_ constants" -ForegroundColor Gray
 Write-Host "  reference/groups-index.csv      — All SGroup/EGroup declarations" -ForegroundColor Gray
 Write-Host "  reference/globals-index.csv     — Global variable assignments" -ForegroundColor Gray
 Write-Host "  reference/data-index.md         — Combined dependency summary" -ForegroundColor Gray

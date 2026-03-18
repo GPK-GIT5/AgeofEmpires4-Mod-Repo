@@ -557,10 +557,10 @@ end
 ## External References
 
 **Workspace Documentation:**
-- SCAR API: `../../reference/scar-api-functions.md`
-- Function Index: `../../reference/function-index.md`
-- Constants: `../../reference/constants-and-enums.md`
-- Game Events: `../../reference/game-events.md`
+- SCAR API: `../../references/api/scar-api-functions.md`
+- Function Index: `../../references/indexes/function-index.md`
+- Constants: `../../references/api/constants-and-enums.md`
+- Game Events: `../../references/api/game-events.md`
 
 **Comprehensive Documentation:**
 - Full README: `../README.md` (427 lines, complete system documentation)

@@ -1,0 +1,183 @@
+---------------------------------------------------------------------------------------------------
+-- CBA Debug — Read-Only State Inspectors
+-- Console commands that dump current game state without modification.
+---------------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------------
+-- Building Limit State
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetBuildingLimitState()
+	print("[CBA_DEBUG] Building Limit State:")
+	if _buildingLimit == nil then
+		print("  _buildingLimit module not loaded")
+		return
+	end
+	local max_bld = AGS_GLOBAL_SETTINGS.MaximumProductionBuildings or "nil"
+	local max_ws = AGS_GLOBAL_SETTINGS.MaximumSiegeWorkshop or "nil"
+	print(string.format("  Max buildings: %s  Max workshops: %s", tostring(max_bld), tostring(max_ws)))
+	for i, player in ipairs(PLAYERS) do
+		local bld = player.obj_buildingLimit_count or "nil"
+		local ws = player.obj_buildingLimit_workshop_count or "nil"
+		local op = player.obj_buildingLimit_outpost_count or "nil"
+		local civ = "unknown"
+		local ok, c = pcall(Player_GetRaceName, player.id)
+		if ok then civ = c end
+		print(string.format("  P%d (%s): bld=%s ws=%s outpost=%s",
+			i, civ, tostring(bld), tostring(ws), tostring(op)))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Siege Limit State
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetSiegeLimitState()
+	print("[CBA_DEBUG] Siege Limit State:")
+	local max_siege = AGS_GLOBAL_SETTINGS.MaximumMedicPopulation or "nil"
+	print(string.format("  Siege limit setting: %s", tostring(max_siege)))
+	for i, player in ipairs(PLAYERS) do
+		local siege = player.siegeLimit_count or "nil"
+		local civ = "unknown"
+		local ok, c = pcall(Player_GetRaceName, player.id)
+		if ok then civ = c end
+		print(string.format("  P%d (%s): siege_count=%s", i, civ, tostring(siege)))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Keep Ownership Map
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetKeepOwnershipMap()
+	print("[CBA_DEBUG] Keep Ownership Map:")
+	for i, player in ipairs(PLAYERS) do
+		if player.keep and player.keep.entity then
+			local eid = player.keep.entity_id or "nil"
+			local alive = "?"
+			local ok_alive, a = pcall(Entity_IsAlive, player.keep.entity)
+			if ok_alive then alive = tostring(a) end
+			local owner = "?"
+			local ok_own, o = pcall(Entity_GetPlayerOwner, player.keep.entity)
+			if ok_own then
+				for j, p in ipairs(PLAYERS) do
+					if p.id == o then owner = "P" .. j break end
+				end
+			end
+			print(string.format("  P%d: eid=%s alive=%s owner=%s",
+				i, tostring(eid), alive, owner))
+		else
+			print(string.format("  P%d: NO KEEP", i))
+		end
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Villager State
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetVillagerState()
+	print("[CBA_DEBUG] Villager State:")
+	for i, player in ipairs(PLAYERS) do
+		local count = 0
+		local ok, eg = pcall(function()
+			local eg = Player_GetEntities(player.id)
+			EGroup_Filter(eg, "villager", FILTER_KEEP)
+			return eg
+		end)
+		if ok and eg then
+			local ok2, c = pcall(EGroup_CountAlive, eg)
+			if ok2 then count = c end
+		end
+		local civ = "unknown"
+		local ok3, c = pcall(Player_GetRaceName, player.id)
+		if ok3 then civ = c end
+		print(string.format("  P%d (%s): villagers=%d", i, civ, count))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Option Parse Results
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetOptionParseResults()
+	print("[CBA_DEBUG] Option Parse Results:")
+	if _mod.options == nil then
+		print("  _mod.options is nil")
+		return
+	end
+	print(string.format("  resource_amount = %s", tostring(_mod.resource_amount)))
+	print(string.format("  startingResources = %s", tostring(_mod.startingResources)))
+	print("  AGS Settings:")
+	local keys = {
+		"MaximumPopulation", "MinimumPopulation", "AutoAge", "CBA_Rewards",
+		"NoSiege", "NoWall", "NoDock", "EliminatedLoseKeep",
+		"MaximumProductionBuildings", "MaximumSiegeWorkshop",
+		"StartingAge", "EndingAge",
+	}
+	for _, k in ipairs(keys) do
+		print(string.format("    %s = %s", k, tostring(AGS_GLOBAL_SETTINGS[k])))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Post-Defeat State
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetPostDefeatState()
+	print("[CBA_DEBUG] Post-Defeat State:")
+	for i, player in ipairs(PLAYERS) do
+		local ok, elim = pcall(Core_IsPlayerEliminated, player.id)
+		local status = (ok and elim) and "ELIMINATED" or "ACTIVE"
+		local entities = 0
+		local ok2, eg = pcall(Player_GetEntities, player.id)
+		if ok2 and eg then
+			local ok3, c = pcall(EGroup_CountAlive, eg)
+			if ok3 then entities = c end
+		end
+		local civ = "unknown"
+		local ok4, c = pcall(Player_GetRaceName, player.id)
+		if ok4 then civ = c end
+		print(string.format("  P%d (%s): %s entities=%d", i, civ, status, entities))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Religious State
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetReligiousState()
+	print("[CBA_DEBUG] Religious State:")
+	if _religious == nil then
+		print("  _religious module not loaded")
+		return
+	end
+	print(string.format("  time_victory = %s", tostring(_religious.time_victory)))
+	print(string.format("  conversion_radius = %s", tostring(_religious.conversion_radius)))
+	if _religious.sites then
+		local count = 0
+		for _, site in pairs(_religious.sites) do
+			count = count + 1
+			print(string.format("  Site %d: progress=%s", count, tostring(site.progress)))
+		end
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Wonder State
+---------------------------------------------------------------------------------------------------
+
+function Debug_GetWonderState()
+	print("[CBA_DEBUG] Wonder State:")
+	if _wonder == nil then
+		print("  _wonder module not loaded")
+		return
+	end
+	print(string.format("  time_victory = %s", tostring(_wonder.time_victory)))
+	for i, player in ipairs(PLAYERS) do
+		if player._wonder then
+			print(string.format("  P%d: wonder_eid=%s timer=%s",
+				i, tostring(player._wonder.entity_id), tostring(player._wonder.timer_victory_deterministic)))
+		end
+	end
+end

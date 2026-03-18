@@ -1,0 +1,123 @@
+---------------------------------------------------------------------------------------------------
+-- CBA Debug — Core Infrastructure
+-- Shared state, logging, test runner, and phase header/footer for all debug sub-modules.
+-- Source of truth for _cba_debug state table.
+---------------------------------------------------------------------------------------------------
+
+CBA_DEBUG_MODULE = "CBA_Debug"
+
+_cba_debug = {
+	enabled = false,
+	entry_point = "unknown",
+	phase_delay = 2,
+	test_results = {},
+	phase_results = {},
+	_phase_start_idx = 1,
+	log_area_filters = {},
+}
+
+Core_RegisterModule(CBA_DEBUG_MODULE)
+
+---------------------------------------------------------------------------------------------------
+-- Module Delegates
+---------------------------------------------------------------------------------------------------
+
+function CBA_Debug_UpdateModuleSettings(options)
+	-- Detect entry point from lobby
+	if options and options.section then
+		_cba_debug.entry_point = "lobby"
+	else
+		_cba_debug.entry_point = "direct"
+	end
+end
+
+function CBA_Debug_EarlyInitializations()
+	_cba_debug.entry_point = "onslaught"
+end
+
+---------------------------------------------------------------------------------------------------
+-- Structured Logging
+---------------------------------------------------------------------------------------------------
+
+function DebugLog(area, msg)
+	if not _cba_debug.enabled then return end
+	if _cba_debug.log_area_filters and next(_cba_debug.log_area_filters) then
+		local found = false
+		for _, f in ipairs(_cba_debug.log_area_filters) do
+			if string.lower(area) == string.lower(f) then
+				found = true
+				break
+			end
+		end
+		if not found then return end
+	end
+	print(string.format("[CBA_DEBUG][%s] %s", string.upper(area), msg))
+end
+
+function DebugLog_SetFilter(...)
+	local args = {...}
+	if #args == 0 or (args[1] == nil) then
+		_cba_debug.log_area_filters = {}
+		print("[CBA_DEBUG] Log filter cleared — showing all areas")
+		return
+	end
+	_cba_debug.log_area_filters = args
+	print("[CBA_DEBUG] Log filter set: " .. table.concat(args, ", "))
+end
+
+---------------------------------------------------------------------------------------------------
+-- Test Runner
+---------------------------------------------------------------------------------------------------
+
+function _Debug_RunTest(name, test_fn)
+	print(string.format("    [TEST] %s", name))
+	local ok, result_or_err = pcall(function()
+		local p, d = test_fn()
+		return {pass = p, detail = d or ""}
+	end)
+
+	if not ok then
+		table.insert(_cba_debug.test_results, {
+			name = name, pass = false, detail = "CRASH: " .. tostring(result_or_err)
+		})
+		print(string.format("      CRASH: %s", tostring(result_or_err)))
+	else
+		local r = result_or_err
+		table.insert(_cba_debug.test_results, {
+			name = name, pass = r.pass, detail = r.detail
+		})
+		print(string.format("      %s: %s", r.pass and "PASS" or "FAIL", r.detail))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Phase Headers / Footers
+---------------------------------------------------------------------------------------------------
+
+function _Debug_PhaseHeader(phase_num, phase_name)
+	print("")
+	print(string.format("  ======== PHASE %d: %s ========", phase_num, string.upper(phase_name)))
+	_cba_debug._phase_start_idx = #_cba_debug.test_results + 1
+end
+
+function _Debug_PhaseFooter(phase_num, phase_name)
+	local phase_pass = 0
+	local phase_total = 0
+	local start_idx = _cba_debug._phase_start_idx or 1
+
+	for i = start_idx, #_cba_debug.test_results do
+		phase_total = phase_total + 1
+		if _cba_debug.test_results[i].pass then
+			phase_pass = phase_pass + 1
+		end
+	end
+
+	table.insert(_cba_debug.phase_results, {
+		phase = phase_num,
+		name = phase_name,
+		passed = phase_pass,
+		total = phase_total,
+	})
+
+	print(string.format("  -------- Phase %d: %d / %d passed --------", phase_num, phase_pass, phase_total))
+end
