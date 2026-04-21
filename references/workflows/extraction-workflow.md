@@ -19,13 +19,13 @@ cd C:\Users\Jordan\Documents\AoE4-Workspace
 
 | File | Contents | Records |
 |------|----------|---------|
-| `reference/function-index.csv` | All function signatures with file, line, params, visibility | ~9,000 |
-| `reference/function-index.md` | Same data as readable markdown tables | ~9,000 |
-| `reference/imports-index.csv` | All `import()` statements (dependency graph) | ~1,300 |
+| `references/function-index.csv` | All function signatures with file, line, params, visibility | ~9,000 |
+| `references/function-index.md` | Same data as readable markdown tables | ~9,000 |
+| `references/imports-index.csv` | All `import()` statements (dependency graph) | ~1,300 |
 | `references/indexes/objectives-index.csv` | All `OBJ_`/`SOBJ_` constants with definition/usage tracking | ~1,500 |
-| `reference/groups-index.csv` | All `SGroup_CreateIfNotFound`/`EGroup_CreateIfNotFound` calls | ~3,200 |
-| `reference/globals-index.csv` | File-scope global variable assignments | ~14,000 |
-| `reference/data-index.md` | Combined summary with objective cross-references and top imports | — |
+| `references/groups-index.csv` | All `SGroup_CreateIfNotFound`/`EGroup_CreateIfNotFound` calls | ~3,200 |
+| `references/globals-index.csv` | File-scope global variable assignments | ~14,000 |
+| `references/data-index.md` | Combined summary with objective cross-references and top imports | — |
 
 **Re-runnable.** Safe to re-run anytime if source files change.
 
@@ -33,7 +33,7 @@ cd C:\Users\Jordan\Documents\AoE4-Workspace
 
 ## Phase 2: Batch Generation (Automated — Included in Phase 1)
 
-The pipeline auto-generates mission-grouped batches in `reference/dumps/Claude_Batches_v2/`.
+The pipeline auto-generates mission-grouped batches in `references/dumps/Claude_Batches_v2/`.
 
 - **185 batches** covering all 532 files
 - **80KB max** per batch (~20K tokens input)
@@ -50,12 +50,12 @@ The pipeline auto-generates mission-grouped batches in `reference/dumps/Claude_B
 1. Open `Claude_Batches_v2/batch_manifest.md` to see the full list
 2. Open the batch file (e.g., `Batch_1.txt`)
 3. Paste its contents into a new Claude/Copilot Chat conversation
-4. Save the output to `reference/campaigns/` or `reference/gameplay/` (see structure below)
+4. Save the output to `references/campaigns/` or `references/gameplay/` (see structure below)
 
 ### Output Folder Structure
 
 ```
-reference/
+references/
 ├── campaigns/
 │   ├── abbasid/
 │   │   ├── abb_bonus.md
@@ -89,9 +89,9 @@ When a mission has Part 1, Part 2, etc., merge the outputs into one file per mis
 Use the manifest CSV to track completion:
 ```powershell
 # Add a "Done" column to track which batches are summarized
-Import-Csv "reference\dumps\Claude_Batches_v2\batch_manifest.csv" |
+Import-Csv "references\dumps\Claude_Batches_v2\batch_manifest.csv" |
     Select-Object *, @{N='Done'; E={$false}} |
-    Export-Csv "reference\dumps\Claude_Batches_v2\batch_progress.csv" -NoTypeInformation
+    Export-Csv "references\dumps\Claude_Batches_v2\batch_progress.csv" -NoTypeInformation
 ```
 
 ---
@@ -106,16 +106,16 @@ Run one Claude conversation per system, feeding it all relevant summaries:
 
 | System File | Input | Prompt Focus |
 |-------------|-------|-------------|
-| `reference/systems/objectives-index.md` | All mission summaries | Extract every OBJ_/SOBJ_, group by mission, note shared patterns |
-| `reference/systems/difficulty-index.md` | All `_data.scar` summaries | Consolidate all Util_DifVar parameters, compare scaling across missions |
-| `reference/systems/spawns-index.md` | All mission summaries | Wave patterns, army compositions, spawn timing, reusable spawn functions |
-| `reference/systems/ai-patterns.md` | AI + encounter summaries | AI encounter plans, patrol behaviors, pursuit logic, difficulty AI tuning |
-| `reference/systems/training-index.md` | Training summaries | Goal sequences, predicates, hint patterns |
-| `reference/systems/missionomatic-modules.md` | MissionOMatic gameplay summaries | Module types, recipe patterns, location/objective wiring |
+| `references/systems/objectives-index.md` | All mission summaries | Extract every OBJ_/SOBJ_, group by mission, note shared patterns |
+| `references/systems/difficulty-index.md` | All `_data.scar` summaries | Consolidate all Util_DifVar parameters, compare scaling across missions |
+| `references/systems/spawns-index.md` | All mission summaries | Wave patterns, army compositions, spawn timing, reusable spawn functions |
+| `references/systems/ai-patterns.md` | AI + encounter summaries | AI encounter plans, patrol behaviors, pursuit logic, difficulty AI tuning |
+| `references/systems/training-index.md` | Training summaries | Goal sequences, predicates, hint patterns |
+| `references/systems/missionomatic-modules.md` | MissionOMatic gameplay summaries | Module types, recipe patterns, location/objective wiring |
 
 ### 4b. Master Index
 
-Create `reference/master-index.md` linking everything:
+Create `references/master-index.md` linking everything:
 - Campaign navigation (by campaign → mission)
 - System navigation (by system type)
 - Link to function-index.csv for search
@@ -137,7 +137,7 @@ Create `reference/master-index.md` linking everything:
 
 ```powershell
 # Find which file defines a function
-Import-Csv reference\function-index.csv | Where-Object Function -like "*SpawnWave*"
+Import-Csv references\function-index.csv | Where-Object Function -like "*SpawnWave*"
 
 # Find all objectives in a mission
 Import-Csv reference\objectives-index.csv | Where-Object File -like "*hattin*"

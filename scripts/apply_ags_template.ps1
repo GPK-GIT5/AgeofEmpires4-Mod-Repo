@@ -75,12 +75,13 @@ ${t}${t}castle = "building_defense_keep_control_nov", town_center_capital_moving
 ${t}${t}scout = "unit_khan_1_mon", house_moving = "building_house_moving_mon",
 ${t}${t}wonder_imperial_age = "building_wonder_age4_final_wonder_mon",
 ${t}${t}mining_camp = "building_house_mon", lumber_camp = "building_house_mon", mill = "building_house_mon",
+${t}${t}university = false,
 ${t}},
 ${t}sultanate = {castle = "building_defense_keep_control_sul", monk = "unit_monk_2_sul", wonder_imperial_age = "building_wonder_age4_agra_fort_control_sul"},
-${t}malian = {wonder_imperial_age = "building_wonder_age4_great_mosque_control_mal", arsenal = "building_tech_unit_ranged_control_nrm"},
-${t}ottoman = {wonder_imperial_age = "building_wonder_age4_blue_mosque_ott", arsenal = "building_tech_unit_ranged_control_lith"},
-${t}japanese = {wonder_imperial_age = "building_wonder_age4_great_mosque_control_jpn", mill = "building_house_jpn", arsenal = "building_tech_unit_ranged_control_nrm"},
-${t}byzantine = {wonder_imperial_age = "building_wonder_age4_forbidden_control_byz", arsenal = "building_tech_unit_ranged_control_abb"},
+${t}malian = {wonder_imperial_age = "building_wonder_age4_great_mosque_control_mal", arsenal = false},
+${t}ottoman = {wonder_imperial_age = "building_wonder_age4_blue_mosque_ott", arsenal = false},
+${t}japanese = {wonder_imperial_age = "building_wonder_age4_great_mosque_control_jpn", mill = false, blacksmith = false, arsenal = false},
+${t}byzantine = {wonder_imperial_age = "building_wonder_age4_forbidden_control_byz", arsenal = false},
 }
 local AGS_REMOVE = {
 ${t}mongol = {palisade_wall=true, palisade_gate=true, stone_wall=true},

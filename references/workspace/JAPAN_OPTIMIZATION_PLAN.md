@@ -554,6 +554,6 @@ end
 
 ## Attachments
 
-- **MOD-INDEX reference**: `reference/mods/MOD-INDEX.md` (section: Japan scenario)
-- **Arabia precedent**: `reference/mods/arabia-mod-index.md` (section: optimization patterns)
+- **MOD-INDEX reference**: `references/mods/MOD-INDEX.md` (section: Japan scenario)
+- **Arabia precedent**: `references/mods/arabia-mod-index.md` (section: optimization patterns)
 - **Codebase patterns**: `.github/copilot-instructions.md` (section: SCAR/Lua standards, file-split architecture)

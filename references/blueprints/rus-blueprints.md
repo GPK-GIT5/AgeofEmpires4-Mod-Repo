@@ -292,3 +292,20 @@ local ebp = BP_GetEntityBlueprintByPbgID(107180)
 ```
 
 
+
+### Additional Unit/Weapon EBPs (from XML dump)
+
+| Blueprint Name | PBG ID |
+|---|---|
+| `UNIT_MILITIA_2_RUS` | 1073744520 |
+| `UNIT_NAVAL_WAR_GALLEY_3_RUS` | 1073744528 |
+| `UNIT_WORKSHOP_RAM_3_RUS` | 1073744542 |
+
+### Additional Weapon EBPs (from XML dump)
+
+| Blueprint Name | PBG ID |
+|---|---|
+| `WPN_SIEGE_BOMBARD_4_RUS_2` | 1073744550 |
+| `WPN_SIEGE_KREMLIN_ARROWS` | 1073744551 |
+| `WPN_SIEGE_KREMLIN_ARROWS_GARRISON` | 1073744552 |
+

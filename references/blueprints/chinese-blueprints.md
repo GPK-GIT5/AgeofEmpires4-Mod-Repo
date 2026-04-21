@@ -308,3 +308,26 @@ local ebp = BP_GetEntityBlueprintByPbgID(107180)
 ```
 
 
+
+### Additional Unit/Weapon EBPs (from XML dump)
+
+| Blueprint Name | PBG ID |
+|---|---|
+| `UNIT_RAM_3_CLOCKTOWER_CHI` | 1073742616 |
+| `UNIT_WORKSHOP_RAM_3_CHI` | 1073742670 |
+| `VIZ_NEST_OF_BEES_CHI` | 1073742671 |
+
+### Additional Building EBPs (from XML dump)
+
+| Blueprint Name | PBG ID |
+|---|---|
+| `BUILDING_LANDMARK_AGE3_GREAT_WALL_CONTROL_ROGUE_CHI` | 1073742595 |
+| `BUILDING_UNIT_NAVAL_CHI` | 1073742605 |
+
+### Additional Weapon EBPs (from XML dump)
+
+| Blueprint Name | PBG ID |
+|---|---|
+| `WPN_RANGE_GREAT_WALL_BEES_CHI` | 1073742673 |
+| `WPN_RANGE_NAVAL_NEST_OF_BEES_CHI` | 1073742676 |
+

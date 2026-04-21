@@ -6,6 +6,8 @@ Available Copilot Agent Skills in this workspace.
 |-------|--------|-------------|---------|
 | `readme-to-ai-reference` | production | [SKILL.md](readme-to-ai-reference/SKILL.md) | Transform READMEs into AI-optimized reference primitives |
 | `scar-debug` | draft | [SKILL.md](scar-debug/SKILL.md) | Generate SCAR debug output helpers |
+| `console-commands` | draft | [SKILL.md](console-commands/SKILL.md) | Console command generation with test commands |
+| `data-extraction` | draft | [SKILL.md](data-extraction/SKILL.md) | SCAR reference extraction pipeline |
 
 ## Structure Convention
 

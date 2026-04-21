@@ -526,7 +526,7 @@ When modifying Advanced Game Settings:
 ## Reference Documentation
 
 - **SCAR API:** See [references/api/scar-api-functions.md](../../references/api/scar-api-functions.md)
-- **Function Index:** See [reference/function-index.md](../../reference/function-index.md)
+- **Function Index:** See [reference/function-index.md](../../references/indexes/function-index.md)
 - **Constants:** See [references/api/constants-and-enums.md](../../references/api/constants-and-enums.md)
 - **Game Events:** See [references/api/game-events.md](../../references/api/game-events.md)
 - **Cardinal Framework:** `import("cardinal.scar")` (Relic's base mission system)

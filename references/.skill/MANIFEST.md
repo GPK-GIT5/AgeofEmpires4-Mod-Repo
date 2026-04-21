@@ -11,20 +11,20 @@
 
 ### Core Implementation
 
-- [x] **reference/.skill/schema.ts** (250 lines)
+- [x] **references/.skill/schema.ts** (250 lines)
   - SQLite database schema and table definitions
   - CRUD operations (insert, query, delete, export)
   - Database integrity verification
   - **Exports**: `CacheSchema`, `CacheEntry`, `CacheMetadata`
 
-- [x] **reference/.skill/cache-manager.ts** (380 lines)
+- [x] **references/.skill/cache-manager.ts** (380 lines)
   - Cache lifecycle management
   - L1 cache lookups (SQLite)
   - Dirty entry tracking and periodic sync
   - Cache invalidation and health checks
   - **Exports**: `CacheManager`, `CacheLookupResult`, `BatchLookupResult`
 
-- [x] **reference/.skill/skill.ts** (450 lines)
+- [x] **references/.skill/skill.ts** (450 lines)
   - Main Skill implementation
   - Blueprint resolution (attribName, pbgid, paths)
   - Batch processing (up to 100 blueprints)
@@ -34,26 +34,26 @@
 
 ### Configuration & Metadata
 
-- [x] **reference/.skill/package.json** (70 lines)
+- [x] **references/.skill/package.json** (70 lines)
   - Node.js dependencies: `better-sqlite3`
   - TypeScript dev dependencies
   - Build scripts: `npm run build`, `npm run watch`
   - Cache management shortcuts
 
-- [x] **reference/.skill/tsconfig.json** (40 lines)
+- [x] **references/.skill/tsconfig.json** (40 lines)
   - TypeScript compiler configuration
   - Target: ES2020
   - Module: CommonJS
   - Strict mode enabled
 
-- [x] **reference/.skill/cache-metadata-template.json** (25 lines)
+- [x] **references/.skill/cache-metadata-template.json** (25 lines)
   - Cache metadata schema template
   - Default empty values
   - Initialization template
 
 ### Documentation
 
-- [x] **reference/.skill/README.md** (300 lines)
+- [x] **references/.skill/README.md** (300 lines)
   - Quick-start guide
   - Feature overview
   - Installation steps
@@ -61,7 +61,7 @@
   - Performance characteristics
   - Troubleshooting guide
 
-- [x] **reference/.skill/SKILL-GUIDE.md** (600 lines)
+- [x] **references/.skill/SKILL-GUIDE.md** (600 lines)
   - Comprehensive usage guide
   - Architecture overview
   - Complete API documentation
@@ -70,7 +70,7 @@
   - Performance benchmarks
   - Integration checklist
 
-- [x] **reference/.skill/IMPLEMENTATION-COMPLETE.md** (400 lines)
+- [x] **references/.skill/IMPLEMENTATION-COMPLETE.md** (400 lines)
   - Executive summary
   - Architecture at a glance
   - Design decisions (6 key decisions explained)
@@ -95,7 +95,7 @@
 ## Directory Structure
 
 ```
-reference/
+references/
 └── .skill/
     ├── schema.ts                      [SQLite Schema]
     ├── cache-manager.ts               [Cache Lifecycle]
@@ -129,7 +129,7 @@ scripts/
 
 1. **Install NPM Dependencies**
    ```bash
-   cd reference/.skill
+   cd references/.skill
    npm install
    ```
    - Installs: `better-sqlite3`, TypeScript, types
@@ -143,7 +143,7 @@ scripts/
 
 3. **Verify Installation**
    ```bash
-   ls -la reference/.skill/*.js  # Should see compiled files
+   ls -la references/.skill/*.js  # Should see compiled files
    ```
 
 ---
@@ -422,13 +422,13 @@ for (const batch of chunks(blueprintList, 100)) {
 
 ### Installation (2 minutes)
 ```bash
-cd reference/.skill && npm install && npm run build
+cd references/.skill && npm install && npm run build
 ```
 
 ### First Use (30 seconds)
 ```javascript
 const { SCARBlueprintSkill } = require('./skill.js');
-const skill = new SCARBlueprintSkill('./reference/.skill', './data');
+const skill = new SCARBlueprintSkill('./references/.skill', './data');
 console.log(await skill.resolveBlueprint({reference: 'unit_archer_2_abb'}));
 ```
 

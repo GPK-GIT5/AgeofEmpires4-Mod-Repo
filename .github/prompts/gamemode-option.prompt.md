@@ -28,7 +28,8 @@ Generate a new gamemode option module for the Onslaught/CBA tuning pack.
 4. For civ-specific branching:
    - Use direct `player_civ ==` comparison
    - Each DLC variant gets explicit check if behavior differs
-   - **No parent map exists** — `AGS_CIV_PARENT_MAP` / `branch_civ` are not real
+   - Use `AGS_CIV_PARENT_MAP[player_civ] or player_civ` (`branch_civ`) for Dynasties DLC variant fallback (6 civs)
+   - Knights DLC variants (chinese_ha_01, etc.) have their own full table entries — do NOT use parent map for these
 5. Exclude landmarks from production counts: `Entity_IsEBPOfType(eid, "landmark")`
 6. Use `AGS_GetCivilizationEntity(player_civ, bp_type)` for blueprint lookups
 
@@ -114,4 +115,4 @@ end
 - [ ] Landmark exclusion via `Entity_IsEBPOfType`
 - [ ] DLC variants tested (16 civs have AGS_ENTITY_TABLE entries)
 - [ ] Counter recount handled after ownership transfers
-- [ ] No `AGS_CIV_PARENT_MAP` or `branch_civ` references
+- [ ] `AGS_CIV_PARENT_MAP` / `branch_civ` used only for Dynasties variants (not Knights DLC)

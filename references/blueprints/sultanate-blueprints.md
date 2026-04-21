@@ -346,3 +346,12 @@ local ebp = BP_GetEntityBlueprintByPbgID(107180)
 ```
 
 
+
+### Additional Unit/Weapon EBPs (from XML dump)
+
+| Blueprint Name | PBG ID |
+|---|---|
+| `UNIT_WAR_ELEPHANT_TOWER_HANDCANNONEER_4_SUL` | 1073744636 |
+| `UNIT_WAR_ELEPHANT_TOWER2_4_SUL` | 1073744637 |
+| `UNIT_WORKSHOP_RAM_3_SUL` | 1073744638 |
+

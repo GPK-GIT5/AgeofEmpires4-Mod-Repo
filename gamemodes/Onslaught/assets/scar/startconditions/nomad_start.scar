@@ -59,12 +59,8 @@ function Nomad_PresetFinalize()
 end
 
 function Nomad_Start()
-	FOW_UnExploreAll()
-	Nomad_UnlockVillagers()
-	for _, player in pairs(PLAYERS) do	
-		-- Insist that player do not have capital.
-		Player_SetStateModelFloat(player.id, "has_capital", 0)	
-	end
+	print("[NOMAD_DISABLED] Nomad_Start() is not used by Onslaught main mode and has been intentionally disabled.")
+	return
 end
 
 
@@ -75,14 +71,17 @@ end
 -- Disable limit from Onslaught_Tuning for villagers
 function Nomad_UnlockVillagers()
 	-- Disable entities/squads
-	for i, player in pairs(PLAYERS) do
-		Player_SetSquadProductionAvailability(player.id, AGS_GetCivilizationUnit(player.raceName, AGS_BP_VILLAGER), ITEM_UNLOCKED)
+	for i, player in ipairs(PLAYERS) do
+		AGS_SetSquadProductionAvailabilitySafe(player.id, AGS_GetCivilizationUnit(player.raceName, AGS_BP_VILLAGER), ITEM_UNLOCKED, "Nomad_UnlockVillagers/villager/" .. tostring(player.raceName))
 	end
 end
 -- Used to spawn sarting units upon players capital tc completion
 function Nomad_OnConstructionComplete(context)
 	
 	local builder = Core_GetPlayersTableEntry(context.player) -- player who constructed the building	
+	
+	-- Keep-as-Capital: players won't build a capital TC; skip scout-spawn trigger.
+	if _mod.keep_as_capital then return end
 	
 	-- check if building is capital TC
 	if Entity_IsEBPOfType(context.pbg, "town_center_capital") and not _tcSpawned[builder.id] then
@@ -113,14 +112,23 @@ end
 -- Removing prefab start.
 function Nomad_DestroySpawns()
 	-- Remove player's initial buildings
-	for _, player in pairs(PLAYERS) do	
-		EGroup_DestroyAllEntities(Player_GetEntities(player.id))
-		SGroup_DestroyAllSquads(Player_GetSquads(player.id))
+	for _, player in ipairs(PLAYERS) do
+		if _mod.keep_as_capital and player.keep ~= nil and player.keep.entity ~= nil then
+			-- Keep-as-Capital: preserve the Starter Keep; destroy everything else.
+			local eg_all = Player_GetEntities(player.id)
+			local keep_eid = player.keep.entity
+			EGroup_Filter(eg_all, "castle", FILTER_REMOVE)  -- remove keeps from kill list
+			EGroup_DestroyAllEntities(eg_all)
+			SGroup_DestroyAllSquads(Player_GetSquads(player.id))
+		else
+			EGroup_DestroyAllEntities(Player_GetEntities(player.id))
+			SGroup_DestroyAllSquads(Player_GetSquads(player.id))
+		end
 	end
 end
 -- Nomad spawner
 function Nomad_SetupSpawns()
-	for i, player in pairs(PLAYERS) do
+	for i, player in ipairs(PLAYERS) do
 		
 		local player_civ = Player_GetRaceName(player.id)
 		
@@ -177,3 +185,4 @@ function Nomad_intMax(x, y)
 	end
 	return y
 end
+

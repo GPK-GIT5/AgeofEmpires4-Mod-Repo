@@ -4,6 +4,8 @@
 
 **Copilot auto-loads the right instruction file based on what you're editing** — no action needed. Each instruction file uses YAML frontmatter (`applyTo: "pattern"`) to tell Copilot when to activate.
 
+For consistent behavior in new sessions, open the project via [AoE4-Workspace.code-workspace](../../AoE4-Workspace.code-workspace). This guarantees `.github/` is part of the active workspace so [../copilot-instructions.md](../copilot-instructions.md) is discovered every time.
+
 ---
 
 ## How It Works

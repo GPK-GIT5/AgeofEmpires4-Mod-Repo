@@ -1,0 +1,147 @@
+---------------------------------------------------------------------------------------------------
+-- CBA AI Player — Outposts, Sacred Sites & Scouts
+-- Vision outpost placement, sacred site discovery, scout deployment.
+-- Origin: cba_ai_player.scar lines 2154–2257, 1692–1734
+---------------------------------------------------------------------------------------------------
+
+-----------------------------------------------------------------------
+-- RULE: Build Outposts
+-----------------------------------------------------------------------
+
+function _AI_Rule_BuildOutposts()
+	if _AI_IsExternallyLocked() then return end
+	for _, player in ipairs(_ai_players) do
+		if not _AI_IsEliminated(player) then
+			_AI_BuildOutposts(player)
+		end
+	end
+end
+
+function _AI_BuildOutposts(player)
+	local ai = player.ai
+	if ai.villager_stage < _AI_VILLAGER_STAGE_OUTPOSTS then return end
+	if ai.vision_outpost_count >= _AI_VISION_OUTPOST_TARGET then return end
+
+	local obj_limit = player.obj_buildingLimit_outpost_count or 0
+	if obj_limit >= 20 then return end
+
+	local player_civ = Player_GetRaceName(player.id)
+	local outpost_ebp = AGS_GetCivilizationEntity(player_civ, "outpost")
+	if outpost_ebp == nil then
+		local parent_civ = AGS_CIV_PARENT_MAP and AGS_CIV_PARENT_MAP[player_civ]
+		if parent_civ ~= nil then
+			outpost_ebp = AGS_GetCivilizationEntity(parent_civ, "outpost")
+		end
+	end
+	if outpost_ebp == nil then
+		local ok_bp, bp = pcall(BP_GetEntityBlueprint, "building_outpost")
+		if ok_bp and bp ~= nil then
+			outpost_ebp = bp
+		else
+			if not ai._outpost_bp_warned then
+				ai._outpost_bp_warned = true
+				print(string.format("[AI_PLAYER] WARN: %s no outpost blueprint for civ=%s — outpost expansion disabled.",
+					ai.label or "P?", player_civ or "?"))
+			end
+			return
+		end
+	end
+
+	local base_pos = _AI_GetBasePosition(player)
+	if base_pos == nil then return end
+
+	local idx = ai.vision_outpost_count
+	local ring = math.floor(idx / 4) + 1
+	local segment = idx % 4
+	local angle = (segment * 90 + ring * 15) % 360
+	local dist = _AI_SPAWN_RADIUS + 20 + (ring * 40)
+	local rad = math.rad(angle)
+	local target_pos = Util_GetOffsetPosition(base_pos, math.cos(rad) * dist, math.sin(rad) * dist)
+
+	local facing_pos = base_pos
+	local ok_create, entity = pcall(Entity_CreateFacing, outpost_ebp, player.id, target_pos, facing_pos, true)
+	if not ok_create or entity == nil then return end
+
+	pcall(Entity_ForceConstruct, entity)
+
+	ai.outpost_count = ai.outpost_count + 1
+	ai.vision_outpost_count = ai.vision_outpost_count + 1
+	table.insert(ai.outpost_positions, target_pos)
+
+	print(string.format("[AI_PLAYER] %s placed vision outpost #%d/%d at (%.0f, %.0f).",
+		ai.label or "P?", ai.vision_outpost_count, _AI_VISION_OUTPOST_TARGET,
+		target_pos.x or 0, target_pos.z or 0))
+	_AI_UpdateVillagerStage(player)
+end
+
+-----------------------------------------------------------------------
+-- Sacred Site Discovery
+-----------------------------------------------------------------------
+
+function _AI_DiscoverSacredSites()
+	_ai_sacred_sites = {}
+	local ok, eg = pcall(function()
+		local eg_temp = EGroup_Create("eg_ai_sacred_sites")
+		World_GetAllNeutralEntities(eg_temp)
+		EGroup_Filter(eg_temp, "special_beacon", FILTER_KEEP)
+		return eg_temp
+	end)
+	if ok and eg ~= nil then
+		local count = EGroup_CountSpawned(eg)
+		for i = 1, count do
+			local site = EGroup_GetEntityAt(eg, i)
+			if site ~= nil then
+				local pos = Entity_GetPosition(site)
+				if pos ~= nil then
+					table.insert(_ai_sacred_sites, pos)
+				end
+			end
+		end
+		print(string.format("[AI_PLAYER] Discovered %d sacred site(s) for patrol routes.", #_ai_sacred_sites))
+	end
+end
+
+function _AI_GetSacredSites()
+	return _ai_sacred_sites
+end
+
+-----------------------------------------------------------------------
+-- RULE: Scout Patrol
+-----------------------------------------------------------------------
+
+function _AI_Rule_ScoutPatrol()
+	if _AI_IsExternallyLocked() then return end
+	for _, player in ipairs(_ai_players) do
+		if not _AI_IsEliminated(player) and not player.ai.scouts_deployed then
+			_AI_DeployScouts(player)
+		end
+	end
+end
+
+function _AI_DeployScouts(player)
+	player.ai.scouts_deployed = true
+end
+
+function _AI_PatrolScouts(player, sg, origin)
+	local ok_min, map_min = pcall(World_GetDesignedMinimumPlayableArea)
+	local ok_max, map_max = pcall(World_GetDesignedMaximumPlayableArea)
+
+	if ok_min and ok_max then
+		local mid_x = (map_min.x + map_max.x) / 2
+		local mid_z = (map_min.z + map_max.z) / 2
+		local q1 = World_Pos(map_min.x + 30, 0, map_min.z + 30)
+		local q2 = World_Pos(map_max.x - 30, 0, map_min.z + 30)
+		local q3 = World_Pos(map_max.x - 30, 0, map_max.z - 30)
+		local q4 = World_Pos(map_min.x + 30, 0, map_max.z - 30)
+
+		pcall(Cmd_Move, sg, q1, false)
+		pcall(Cmd_Move, sg, q2, true)
+		pcall(Cmd_Move, sg, q3, true)
+		pcall(Cmd_Move, sg, q4, true)
+		pcall(Cmd_Move, sg, origin, true)
+	else
+		if _CBA.center then
+			pcall(Cmd_Move, sg, _CBA.center, false)
+		end
+	end
+end

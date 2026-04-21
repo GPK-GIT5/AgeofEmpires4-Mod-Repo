@@ -1,0 +1,153 @@
+---------------------------------------------------------------------------------------------------
+-- CBA AI Player — Global State & Getter Functions
+-- Shared mutable state, sacred site cache, debug lock, and accessor functions for local constants.
+-- Origin: cba_ai_player.scar lines 250–355
+---------------------------------------------------------------------------------------------------
+
+-----------------------------------------------------------------------
+-- State
+-----------------------------------------------------------------------
+
+-- Table of AI player entries (subset of PLAYERS). Populated in EarlyInitializations.
+_ai_players = {}
+
+-- Counter for unique SGroup/EGroup naming (must precede getter)
+_ai_group_counter = 0
+
+-- Unified tracker snapshot (for delta computation across Track() calls)
+_ai_track_snapshot = nil   -- { time=<gametime>, players={ [label]={telemetry_copy} } }
+_ai_track_call_count = 0
+
+-----------------------------------------------------------------------
+-- Getter functions (exported for debug suite access to local constants)
+-----------------------------------------------------------------------
+
+function _AI_GetBuildingPriority() return _AI_BUILDING_PRIORITY end
+function _AI_GetPlayerBuildingPriority(player)
+	if player and player.ai and player.ai.building_priority then return player.ai.building_priority end
+	return _AI_BUILDING_PRIORITY
+end
+-- _AI_SPAWN_BATCH was retired in the cba_ai/ refactor (replaced by
+-- _AI_PRODUCTION_QUEUE_TARGET / _AI_PRODUCTION_QUEUE_CYCLE_CAP in config.scar).
+-- Getter removed; reference _AI_PRODUCTION_QUEUE_TARGET directly.
+function _AI_GetMaxOutposts() return _AI_MAX_OUTPOSTS end
+function _AI_GetVillagerStage(player)
+	if player and player.ai then return player.ai.villager_stage or _AI_VILLAGER_STAGE_PRODUCTION end
+	return _AI_VILLAGER_STAGE_PRODUCTION
+end
+function _AI_GetVisionOutpostTarget() return _AI_VISION_OUTPOST_TARGET end
+function _AI_GetSpawnRadius() return _AI_SPAWN_RADIUS end
+function _AI_GetUnitRatios()
+	return { infantry = _AI_RATIO_INFANTRY, ranged = _AI_RATIO_RANGED, cavalry = _AI_RATIO_CAVALRY, siege = _AI_RATIO_SIEGE }
+end
+function _AI_GetGroupCounter() return _ai_group_counter end
+function _AI_GetPrimaryZoneMax() return _AI_PRIMARY_ZONE_MAX end
+function _AI_GetSecondaryZoneMax() return _AI_SECONDARY_ZONE_MAX end
+function _AI_GetUnitProducer() return _AI_UNIT_PRODUCER end
+
+function _AI_GetVillagerTeamMax() return _AI_VILLAGER_TEAM_MAX end
+function _AI_GetPendingFoundationLimit() return _AI_MAX_PENDING_FOUNDATIONS end
+function _AI_GetStaleTimeout() return _AI_CONSTRUCT_STALE_TIMEOUT end
+function _AI_GetMaxReissues() return _AI_CONSTRUCT_MAX_REISSUES end
+
+-- Return deterministic internal building-type keys for a source map.
+-- Priority order follows resolved producer order; unknown keys are appended sorted.
+function _AI_GetOrderedBuildingTypeKeys(player, source_map)
+	local keys = {}
+	local seen = {}
+	if source_map == nil then
+		return keys
+	end
+
+	local ai = player and player.ai or nil
+	local ordered = ai and ai.ordered_building_type_keys or nil
+	if ordered ~= nil then
+		for _, key in ipairs(ordered) do
+			if source_map[key] ~= nil and not seen[key] then
+				table.insert(keys, key)
+				seen[key] = true
+			end
+		end
+	end
+
+	local extras = {}
+	for key, _ in pairs(source_map) do
+		if not seen[key] then
+			table.insert(extras, key)
+			seen[key] = true
+		end
+	end
+	table.sort(extras, function(a, b)
+		return tostring(a) < tostring(b)
+	end)
+	for _, key in ipairs(extras) do
+		table.insert(keys, key)
+	end
+
+	return keys
+end
+
+-- Per-player AI state is stored on player.ai = { ... }
+-- See _AI_InitPlayerState() for structure.
+
+-- Map AGS bp_key to production role
+function _AI_BPKeyToRole(bp_key)
+	if bp_key == AGS_BP_BARRACKS or bp_key == "barracks" then return "infantry" end
+	if bp_key == AGS_BP_ARCHERY_RANGE or bp_key == "archery_range" then return "ranged" end
+	if bp_key == AGS_BP_STABLE or bp_key == "stable" then return "cavalry" end
+	if bp_key == AGS_BP_WORKSHOP or bp_key == "siege_workshop" then return "siege" end
+	return "infantry"
+end
+
+-- Resolve the full list of military producers a civ can build, validated against AGS entity table.
+-- Returns ordered list of { key, max, min_age, role } entries.
+function _AI_ResolveCivProducers(player_civ)
+	local resolved = {}
+	-- Standard 4 types: include only if civ has a valid blueprint
+	for _, entry in ipairs(_AI_BUILDING_PRIORITY) do
+		if AGS_GetCivilizationEntity(player_civ, entry.key) ~= nil then
+			table.insert(resolved, {
+				key = entry.key,
+				max = entry.max,
+				min_age = entry.min_age,
+				role = _AI_BPKeyToRole(entry.key),
+			})
+		end
+	end
+	-- Civ-specific variant producers
+	local variants = _AI_CIV_VARIANT_PRODUCERS[player_civ]
+	if variants ~= nil then
+		for _, v in ipairs(variants) do
+			if AGS_GetCivilizationEntity(player_civ, v.key) ~= nil then
+				table.insert(resolved, {
+					key = v.key,
+					max = v.max,
+					min_age = v.min_age,
+					role = v.role,
+				})
+			else
+				print(string.format("[AI_PLAYER] WARN: civ=%s variant producer '%s' not resolvable (AGS returned nil)",
+					player_civ, v.key))
+			end
+		end
+	end
+	return resolved
+end
+
+-- Sacred site positions (populated once in PresetFinalize)
+_ai_sacred_sites = {}
+
+-- External debug lock used by harnesses that need deterministic scripted control.
+-- When true, AI-player rules that issue construction/movement/production commands are suppressed.
+_AI_DEBUG_EXTERNAL_LOCK = false
+_AI_DEBUG_EXTERNAL_LOCK_REASON = ""
+
+function _AI_IsExternallyLocked()
+	return _AI_DEBUG_EXTERNAL_LOCK == true
+end
+
+function _AI_DebugLog(level, msg)
+	if (_AI_DEBUG_VERBOSITY or 1) >= (level or 1) then
+		print(msg)
+	end
+end

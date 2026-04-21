@@ -39,6 +39,21 @@ Write-Host "[Phase 2] Generating mission-grouped batches (${MaxBatchKB}KB limit)
 & "$scriptDir\generate_batches_v2.ps1" -WorkspaceRoot $WorkspaceRoot -MaxBatchBytes ($MaxBatchKB * 1024)
 Write-Host ""
 
+# Phase 3: Civ Data Extraction
+Write-Host "[Phase 3] Extracting derived civ data..." -ForegroundColor Yellow
+& "$scriptDir\extract_civ_data.ps1" -WorkspaceRoot $WorkspaceRoot
+Write-Host ""
+
+# Phase 4: Canonical Data Pipeline
+Write-Host "[Phase 4] Building canonical data (alias map, units, upgrades, weapons, production, truth)..." -ForegroundColor Yellow
+& "$scriptDir\build_canonical_data.ps1" -WorkspaceRoot $WorkspaceRoot
+Write-Host ""
+
+# Phase 5: Validation
+Write-Host "[Phase 5] Running validation audit..." -ForegroundColor Yellow
+& "$scriptDir\validate_data.ps1" -WorkspaceRoot $WorkspaceRoot
+Write-Host ""
+
 # Summary
 Write-Host "============================================" -ForegroundColor Green
 Write-Host "  Extraction Complete!" -ForegroundColor Green
@@ -53,6 +68,9 @@ Write-Host "  reference/groups-index.csv      — All SGroup/EGroup declarations
 Write-Host "  reference/globals-index.csv     — Global variable assignments" -ForegroundColor Gray
 Write-Host "  reference/data-index.md         — Combined dependency summary" -ForegroundColor Gray
 Write-Host "  reference/dumps/Claude_Batches_v2/  — Batches for Claude processing" -ForegroundColor Gray
+Write-Host "  data/aoe4/data/derived/         — Civ stats (health, DPS, etc.)" -ForegroundColor Gray
+Write-Host "  data/aoe4/data/canonical/       — Canonical units, alias map, upgrades" -ForegroundColor Gray
+Write-Host "  references/audits/              — Validation audit report" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Next: Process batches through Claude using the workflow in:" -ForegroundColor Yellow
 Write-Host "  reference/extraction-workflow.md" -ForegroundColor Yellow

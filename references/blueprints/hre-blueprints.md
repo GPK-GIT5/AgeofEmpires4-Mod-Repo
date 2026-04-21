@@ -279,3 +279,11 @@ local ebp = BP_GetEntityBlueprintByPbgID(107180)
 ```
 
 
+
+### Additional Unit/Weapon EBPs (from XML dump)
+
+| Blueprint Name | PBG ID |
+|---|---|
+| `UNIT_BLACK_RIDER_HRE` | 1073743496 |
+| `UNIT_WORKSHOP_RAM_3_HRE` | 1073743538 |
+

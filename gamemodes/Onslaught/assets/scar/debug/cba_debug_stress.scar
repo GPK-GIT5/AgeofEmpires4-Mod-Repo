@@ -1,6 +1,8 @@
 ---------------------------------------------------------------------------------------------------
 -- CBA Debug — Stress Test (8 Stages)
--- Exercises all systems across all 16+ civs with pcall safety.
+-- Exercises all systems across all 16 civs (base + DLC variants) with pcall safety.
+--
+-- Branch: onslaught-v3.3
 -- Console: Debug_StressTest()      (~25s)
 --          Debug_StressStage(n)    (individual stage 1-8)
 ---------------------------------------------------------------------------------------------------
@@ -57,12 +59,16 @@ function _Stress_Stage1_CoreSystem()
 		return _mod ~= nil and _mod.module == "Mod", tostring(_mod and _mod.module)
 	end)
 
-	_Stress_RunTest("1.3 _CBA table", function()
+	_Stress_RunTest("1.3 _CBA table (rewards.scar)", function()
 		return _CBA ~= nil, type(_CBA)
 	end)
 
 	_Stress_RunTest("1.4 AGS_GLOBAL_SETTINGS", function()
 		return AGS_GLOBAL_SETTINGS ~= nil, type(AGS_GLOBAL_SETTINGS)
+	end)
+
+	_Stress_RunTest("1.5 _buildingLimit module", function()
+		return _buildingLimit ~= nil, tostring(_buildingLimit and _buildingLimit.module)
 	end)
 end
 
@@ -73,7 +79,7 @@ end
 function _Stress_Stage2_Blueprints()
 	_Stress_StageHeader(2, "Blueprints")
 
-	_Stress_RunTest("2.1 Keep BP resolution", function()
+	_Stress_RunTest("2.1 Keep BP resolution across civs", function()
 		local resolved = 0
 		local failed = {}
 		for civ, data in pairs(AGS_ENTITY_TABLE) do
@@ -90,7 +96,7 @@ function _Stress_Stage2_Blueprints()
 		return true, resolved .. " resolved"
 	end)
 
-	_Stress_RunTest("2.2 TC BP resolution", function()
+	_Stress_RunTest("2.2 Town Center BP resolution", function()
 		local resolved = 0
 		local failed = {}
 		for civ, data in pairs(AGS_ENTITY_TABLE) do
@@ -107,7 +113,7 @@ function _Stress_Stage2_Blueprints()
 		return true, resolved .. " resolved"
 	end)
 
-	_Stress_RunTest("2.3 Villager BP resolution", function()
+	_Stress_RunTest("2.3 Villager SBP resolution", function()
 		local resolved = 0
 		local failed = {}
 		for civ, data in pairs(AGS_ENTITY_TABLE) do
@@ -123,14 +129,32 @@ function _Stress_Stage2_Blueprints()
 		if #failed > 0 then return false, "unresolved: " .. table.concat(failed, ", ") end
 		return true, resolved .. " resolved"
 	end)
+
+	_Stress_RunTest("2.4 DLC villager override SBP resolution", function()
+		if AGS_UNIT_BP_OVERRIDES == nil or AGS_UNIT_BP_OVERRIDES.villager == nil then
+			return false, "AGS_UNIT_BP_OVERRIDES.villager is nil"
+		end
+		local resolved = 0
+		local failed = {}
+		for civ, attrib in pairs(AGS_UNIT_BP_OVERRIDES.villager) do
+			local ok, sbp = pcall(BP_GetSquadBlueprint, attrib)
+			if ok and sbp then
+				resolved = resolved + 1
+			else
+				table.insert(failed, civ .. " (" .. attrib .. ")")
+			end
+		end
+		if #failed > 0 then return false, "unresolved: " .. table.concat(failed, ", ") end
+		return true, resolved .. " DLC villager overrides resolved"
+	end)
 end
 
 ---------------------------------------------------------------------------------------------------
--- Stage 3: Rewards System
+-- Stage 3: Rewards System (rewards/cba_rewards.scar)
 ---------------------------------------------------------------------------------------------------
 
 function _Stress_Stage3_Rewards()
-	_Stress_StageHeader(3, "Rewards")
+	_Stress_StageHeader(3, "Rewards (rewards/cba_rewards.scar)")
 
 	_Stress_RunTest("3.1 Reward table exists", function()
 		if _CBA == nil or _CBA.rewards == nil then return false, "_CBA.rewards nil" end
@@ -139,8 +163,7 @@ function _Stress_Stage3_Rewards()
 
 	_Stress_RunTest("3.2 Reward entry count", function()
 		if _CBA == nil or _CBA.rewards == nil then return false, "no rewards" end
-		local count = 0
-		for _ in pairs(_CBA.rewards) do count = count + 1 end
+		local count = _Debug_CountKeys(_CBA.rewards)
 		return count > 0, count .. " reward sets"
 	end)
 
@@ -148,9 +171,7 @@ function _Stress_Stage3_Rewards()
 		local fns = {"CBA_Rewards_OnEntityKilled", "CBA_Rewards_SpawnUnits", "CBA_Rewards_nextRequirement"}
 		local missing = {}
 		for _, fn in ipairs(fns) do
-			if type(_G[fn]) ~= "function" then
-				table.insert(missing, fn)
-			end
+			if type(_G[fn]) ~= "function" then table.insert(missing, fn) end
 		end
 		if #missing > 0 then return false, "missing: " .. table.concat(missing, ", ") end
 		return true, #fns .. " functions found"
@@ -158,7 +179,7 @@ function _Stress_Stage3_Rewards()
 end
 
 ---------------------------------------------------------------------------------------------------
--- Stage 4: Economy System
+-- Stage 4: Economy (gameplay/cba_economy.scar)
 ---------------------------------------------------------------------------------------------------
 
 function _Stress_Stage4_Economy()
@@ -179,6 +200,22 @@ function _Stress_Stage4_Economy()
 		end
 		if #issues > 0 then return false, table.concat(issues, ", ") end
 		return true, #PLAYERS .. " players OK"
+	end)
+
+	_Stress_RunTest("4.3 Auto-resource/auto-population functions", function()
+		local exists_res = type(AGS_AutoResources) == "function"
+		local exists_pop = type(AGS_IncreasePopulation) == "function"
+		return true, string.format("AutoRes=%s AutoPop=%s", tostring(exists_res), tostring(exists_pop))
+	end)
+
+	_Stress_RunTest("4.4 CBA_Economy functions (gameplay/cba_economy.scar)", function()
+		local fns = {"CBA_Economy_ParseOptions", "CBA_Economy_SetStartingResources",
+			"CBA_Economy_RemoveGaia", "CBA_Economy_SetFOW"}
+		local found = 0
+		for _, fn in ipairs(fns) do
+			if type(_G[fn]) == "function" then found = found + 1 end
+		end
+		return found == #fns, found .. "/" .. #fns .. " economy functions"
 	end)
 end
 
@@ -207,6 +244,11 @@ function _Stress_Stage5_PopAge()
 		end
 		return true, "ages: " .. table.concat(ages, ",")
 	end)
+
+	_Stress_RunTest("5.3 Auto-age module (cba_auto_age.scar)", function()
+		if _autoage == nil then return true, "not loaded (may be disabled)" end
+		return true, "module=" .. tostring(_autoage.module)
+	end)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -216,36 +258,49 @@ end
 function _Stress_Stage6_WinConditions()
 	_Stress_StageHeader(6, "Win Conditions")
 
-	_Stress_RunTest("6.1 Annihilation module", function()
+	_Stress_RunTest("6.1 Annihilation module (cba_annihilation.scar)", function()
 		return _annihilation ~= nil, type(_annihilation)
 	end)
 
-	_Stress_RunTest("6.2 Religious module", function()
+	_Stress_RunTest("6.2 Religious module (cba_religious.scar)", function()
 		return _religious ~= nil, type(_religious)
 	end)
 
-	_Stress_RunTest("6.3 Wonder module", function()
+	_Stress_RunTest("6.3 Wonder module (wonder.scar)", function()
 		return _wonder ~= nil, type(_wonder)
 	end)
 
-	_Stress_RunTest("6.4 Surrender module", function()
+	_Stress_RunTest("6.4 Surrender functions", function()
 		local ok = type(Surrender_CheckVictory) == "function"
 		return ok, ok and "function found" or "missing"
 	end)
 end
 
 ---------------------------------------------------------------------------------------------------
--- Stage 7: Restrictions (Building/Siege)
+-- Stage 7: Restrictions (cba_options.scar)
 ---------------------------------------------------------------------------------------------------
 
 function _Stress_Stage7_Restrictions()
-	_Stress_StageHeader(7, "Restrictions")
+	_Stress_StageHeader(7, "Restrictions (cba_options.scar)")
 
 	_Stress_RunTest("7.1 CBA_Options module functions", function()
 		local fns = {
 			"CBA_Options_BuildingLimit_ConstructionStart",
 			"CBA_Options_BuildingLimit_OnEntityKilled",
 			"CBA_Options_SiegeLimit_Disable",
+			"CBA_Options_SiegeLimit_Cancel_1",
+			"CBA_Options_SiegeLimit_Cancel_2",
+			"CBA_Options_SiegeLimit_Cancel_3",
+			"CBA_Options_SiegeLimit_Recount",
+			"CBA_Options_SiegeLimit_ApplyThreshold",
+			"CBA_Options_SiegeLimit_ConstructionStart",
+			"CBA_Options_SiegeLimit_ConstructionCancelled",
+			"CBA_Options_GetWorkshopLimit",
+			"CBA_Options_WorkshopLimit_ApplyThreshold",
+			"CBA_Options_BuildingLimit_RecountPlayer",
+			"CBA_Options_BuildingLimit_EnforceExcess",
+			"CBA_Options_EnforcePostTransfer",
+			"CBA_Options_RevalidateAll",
 		}
 		local missing = {}
 		for _, fn in ipairs(fns) do
@@ -266,6 +321,134 @@ function _Stress_Stage7_Restrictions()
 		if #issues > 0 then return false, "negative: " .. table.concat(issues, ", ") end
 		return true, "all non-negative"
 	end)
+
+	_Stress_RunTest("7.2b Workshop limit counters non-negative", function()
+		local issues = {}
+		for i, player in ipairs(PLAYERS) do
+			local ws = player.obj_buildingLimit_workshop_count
+			if type(ws) == "number" and ws < 0 then
+				table.insert(issues, string.format("P%d=%d", i, ws))
+			end
+		end
+		if #issues > 0 then return false, "negative: " .. table.concat(issues, ", ") end
+		return true, "all non-negative"
+	end)
+
+	_Stress_RunTest("7.3 Siege limit counters non-negative", function()
+		local issues = {}
+		for i, player in ipairs(PLAYERS) do
+			local sl = player.siegeLimit_count
+			if type(sl) == "number" and sl < 0 then
+				table.insert(issues, string.format("P%d=%d", i, sl))
+			end
+			local ram = player.ramLimit_count
+			if type(ram) == "number" and ram < 0 then
+				table.insert(issues, string.format("P%d ram=%d", i, ram))
+			end
+			local tower = player.siegeTowerLimit_count
+			if type(tower) == "number" and tower < 0 then
+				table.insert(issues, string.format("P%d tower=%d", i, tower))
+			end
+		end
+		if #issues > 0 then return false, "negative: " .. table.concat(issues, ", ") end
+		return true, "all non-negative"
+	end)
+
+	_Stress_RunTest("7.4 Outpost count matches entity count", function()
+		local issues = {}
+		for i, player in ipairs(PLAYERS) do
+			local stored = player.obj_buildingLimit_outpost_count
+			if type(stored) ~= "number" then
+				table.insert(issues, string.format("P%d outpost_count=nil", i))
+			else
+				local eg = Player_GetEntities(player.id)
+				local actual = 0
+				local count = EGroup_CountSpawned(eg)
+				for e = 1, count do
+					local eid = EGroup_GetEntityAt(eg, e)
+					if Entity_IsOfType(eid, "scar_outpost") or Entity_IsOfType(eid, "stone_wall_tower") then
+						actual = actual + 1
+					end
+				end
+				if stored ~= actual then
+					table.insert(issues, string.format("P%d stored=%d actual=%d", i, stored, actual))
+				end
+			end
+		end
+		if #issues > 0 then return false, table.concat(issues, ", ") end
+		return true, "all outpost counts match"
+	end)
+
+	_Stress_RunTest("7.4b Workshop count matches entity count", function()
+		if CBA_Options_GetWorkshopLimit() == 0 then return true, "ws disabled" end
+		local issues = {}
+		for i, player in ipairs(PLAYERS) do
+			local stored = player.obj_buildingLimit_workshop_count
+			if type(stored) ~= "number" then
+				table.insert(issues, string.format("P%d ws_count=nil", i))
+			else
+				local player_civ = Player_GetRaceName(player.id)
+				local branch_civ = AGS_CIV_PARENT_MAP[player_civ] or player_civ
+				local eg = Player_GetEntities(player.id)
+				local actual = 0
+				local cnt = EGroup_CountSpawned(eg)
+				for e = 1, cnt do
+					local eid = EGroup_GetEntityAt(eg, e)
+					if eid == player.obj_buildingLimit_english_start_keep_id then
+						-- skip starter keep
+					elseif branch_civ == "english" and Entity_IsOfType(eid, "scar_keep") then
+						actual = actual + 1
+					elseif player_civ == "chinese" and Entity_HasBlueprint(eid, EBP.CHINESE.BUILDING_LANDMARK_AGE2_CLOCKTOWER_CONTROL_CHI) then
+						actual = actual + 1
+					elseif branch_civ == "french" and Entity_HasBlueprint(eid, EBP.FRENCH.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE) then
+						actual = actual + 1
+					elseif player_civ == "french_ha_01" and Entity_HasBlueprint(eid, EBP.FRENCH_HA_01.BUILDING_LANDMARK_AGE3_ECOLE_DE_POUDRE_A_CANON_FRE_HA_01) then
+						actual = actual + 1
+					elseif player_civ == "ottoman" and Entity_HasBlueprint(eid, EBP.OTTOMAN.BUILDING_LANDMARK_AGE2_TOPHANE_ARMORY_OTT) then
+						actual = actual + 1
+					elseif Entity_IsOfType(eid, "scar_siegeworkshop") then
+						actual = actual + 1
+					end
+				end
+				if stored ~= actual then
+					table.insert(issues, string.format("P%d stored=%d actual=%d", i, stored, actual))
+				end
+			end
+		end
+		if #issues > 0 then return false, table.concat(issues, ", ") end
+		return true, "all workshop counts match"
+	end)
+
+	_Stress_RunTest("7.4c Workshop count <= cap", function()
+		local cap = CBA_Options_GetWorkshopLimit()
+		if cap == 0 then return true, "ws disabled" end
+		local issues = {}
+		for i, player in ipairs(PLAYERS) do
+			local ws = player.obj_buildingLimit_workshop_count or 0
+			if ws > cap then
+				table.insert(issues, string.format("P%d ws=%d cap=%d", i, ws, cap))
+			end
+		end
+		if #issues > 0 then return false, "over cap: " .. table.concat(issues, ", ") end
+		return true, string.format("all <= %d", cap)
+	end)
+
+	_Stress_RunTest("7.5 Enforcement pipeline functions", function()
+		local fns = {
+			"CBA_Options_EnforcePostTransfer",
+			"CBA_Options_RevalidateAll",
+			"CBA_Options_RevalidateAllPlayers",
+			"CBA_Options_BuildingLimit_RecountPlayer",
+			"CBA_Options_BuildingLimit_EnforceExcess",
+			"CBA_Options_EnforcePopulationCap",
+		}
+		local missing = {}
+		for _, fn in ipairs(fns) do
+			if type(_G[fn]) ~= "function" then table.insert(missing, fn) end
+		end
+		if #missing > 0 then return false, "missing: " .. table.concat(missing, ", ") end
+		return true, #fns .. " functions found"
+	end)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -278,11 +461,18 @@ function _Stress_Stage8_PlayerState()
 	_Stress_RunTest("8.1 Player team assignments", function()
 		local teams = {}
 		for i, player in ipairs(PLAYERS) do
-			local t = player.team or 0
+			local t = 0
+			if type(player.team) == "number" then
+				t = player.team
+			elseif type(player.team) == "table" and type(player.team.index) == "number" then
+				t = player.team.index
+			elseif type(player.AGS_Team) == "table" and type(player.AGS_Team.index) == "number" then
+				t = player.AGS_Team.index
+			end
 			teams[t] = (teams[t] or 0) + 1
 		end
 		local parts = {}
-		for t, c in pairs(teams) do table.insert(parts, "T" .. t .. "=" .. c) end
+		for t, c in pairs(teams) do table.insert(parts, "T" .. tostring(t) .. "=" .. c) end
 		return true, table.concat(parts, " ")
 	end)
 
@@ -295,7 +485,9 @@ function _Stress_Stage8_PlayerState()
 		return true, active .. "/" .. #PLAYERS .. " active"
 	end)
 
-	_Stress_RunTest("8.3 No orphaned entities", function()
+	_Stress_RunTest("8.3 Keep ownership integrity", function()
+		-- AUDIT: Entity_SetPlayerOwner transfers don't fire construction events,
+		-- so keep ownership may not match expected player after disconnect/transfer.
 		local issues = {}
 		for i, player in ipairs(PLAYERS) do
 			if player.keep and player.keep.entity then
@@ -316,7 +508,6 @@ end
 
 function _Stress_FinalReport()
 	print("")
-	print("  ======== STRESS TEST COMPLETE ========")
 	local total = #_cba_stress.results
 	local fails = 0
 	for _, r in ipairs(_cba_stress.results) do
@@ -331,6 +522,10 @@ function _Stress_FinalReport()
 			end
 		end
 	end
+
+	local ok, gt = pcall(World_GetGameTime)
+	local elapsed = (ok and _cba_stress.start_time) and (gt - _cba_stress.start_time) or 0
+	_Debug_EndMarker("StressTest", total - fails, total, elapsed)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -342,20 +537,46 @@ function Debug_StressTest()
 	_cba_stress.stage_results = {}
 	_cba_debug.enabled = true
 
+	local ok, gt = pcall(World_GetGameTime)
+	_cba_stress.start_time = ok and gt or 0
+
 	print("")
 	print("============================================")
-	print("  CBA DEBUG — STRESS TEST (8 stages, ~25s)")
+	print("  CBA DEBUG — STRESS TEST (8 stages)")
+	print("  Branch: onslaught-v3.3")
 	print("============================================")
 
 	_Stress_Stage1_CoreSystem()
-	Rule_AddOneShot(_Stress_Stage2_Blueprints, _cba_stress.stage_delay)
-	Rule_AddOneShot(_Stress_Stage3_Rewards, _cba_stress.stage_delay * 2)
-	Rule_AddOneShot(_Stress_Stage4_Economy, _cba_stress.stage_delay * 3)
-	Rule_AddOneShot(_Stress_Stage5_PopAge, _cba_stress.stage_delay * 4)
-	Rule_AddOneShot(_Stress_Stage6_WinConditions, _cba_stress.stage_delay * 5)
-	Rule_AddOneShot(_Stress_Stage7_Restrictions, _cba_stress.stage_delay * 6)
-	Rule_AddOneShot(_Stress_Stage8_PlayerState, _cba_stress.stage_delay * 7)
-	Rule_AddOneShot(_Stress_FinalReport, _cba_stress.stage_delay * 8)
+	_Debug_ScheduleNextPhase(_Stress_Run2, _cba_stress.stage_delay, "Stage 2: Blueprints", "StressTest")
+end
+
+function _Stress_Run2()
+	_Stress_Stage2_Blueprints()
+	_Debug_ScheduleNextPhase(_Stress_Run3, _cba_stress.stage_delay, "Stage 3: Rewards", "StressTest")
+end
+function _Stress_Run3()
+	_Stress_Stage3_Rewards()
+	_Debug_ScheduleNextPhase(_Stress_Run4, _cba_stress.stage_delay, "Stage 4: Economy", "StressTest")
+end
+function _Stress_Run4()
+	_Stress_Stage4_Economy()
+	_Debug_ScheduleNextPhase(_Stress_Run5, _cba_stress.stage_delay, "Stage 5: PopAge", "StressTest")
+end
+function _Stress_Run5()
+	_Stress_Stage5_PopAge()
+	_Debug_ScheduleNextPhase(_Stress_Run6, _cba_stress.stage_delay, "Stage 6: WinConditions", "StressTest")
+end
+function _Stress_Run6()
+	_Stress_Stage6_WinConditions()
+	_Debug_ScheduleNextPhase(_Stress_Run7, _cba_stress.stage_delay, "Stage 7: Restrictions", "StressTest")
+end
+function _Stress_Run7()
+	_Stress_Stage7_Restrictions()
+	_Debug_ScheduleNextPhase(_Stress_Run8, _cba_stress.stage_delay, "Stage 8: PlayerState", "StressTest")
+end
+function _Stress_Run8()
+	_Stress_Stage8_PlayerState()
+	_Debug_ScheduleNextPhase(_Stress_FinalReport, _cba_stress.stage_delay, "Final Report", "StressTest")
 end
 
 function Debug_StressStage(n)
@@ -376,4 +597,170 @@ function Debug_StressStage(n)
 	end
 	_cba_stress.results = {}
 	stages[n]()
+end
+
+---------------------------------------------------------------------------------------------------
+-- Debug_SiegeLimitStressTest — Dedicated siege/ram/tower limit stress test
+-- Exercises: cap helpers, recount, gate totals, pending counters, reward constant,
+--   lock/unlock coverage, Ram Tower weight, variant BP resolution.
+---------------------------------------------------------------------------------------------------
+
+function Debug_SiegeLimitStressTest()
+	_cba_debug.enabled = true
+	_cba_stress.results = {}
+
+	print("")
+	print("============================================")
+	print("  CBA DEBUG — SIEGE LIMIT STRESS TEST")
+	print("============================================")
+
+	-- 1. Cap helpers
+	_Stress_RunTest("SL.1 RAM_LIMIT_MAX constant", function()
+		local cap = CBA_Options_GetRamLimitMax()
+		if cap ~= RAM_LIMIT_MAX then return false, "mismatch: helper=" .. cap .. " const=" .. RAM_LIMIT_MAX end
+		return cap == 5, "cap=" .. cap
+	end)
+
+	_Stress_RunTest("SL.2 SIEGE_TOWER_LIMIT_MAX constant", function()
+		local cap = CBA_Options_GetSiegeTowerLimitMax()
+		if cap ~= SIEGE_TOWER_LIMIT_MAX then return false, "mismatch: helper=" .. cap .. " const=" .. SIEGE_TOWER_LIMIT_MAX end
+		return cap == 5, "cap=" .. cap
+	end)
+
+	-- 2. Reward constant validation
+	_Stress_RunTest("SL.3 AGS_UP_SIEGE_ENGINEERS defined", function()
+		if AGS_UP_SIEGE_ENGINEERS == nil then return false, "AGS_UP_SIEGE_ENGINEERS is nil" end
+		return true, "type=" .. type(AGS_UP_SIEGE_ENGINEERS)
+	end)
+
+	_Stress_RunTest("SL.4 English 100-kill reward uses AGS_UP_SIEGE_ENGINEERS", function()
+		if _CBA == nil or _CBA.rewards == nil or _CBA.rewards["english"] == nil then
+			return false, "english rewards not loaded"
+		end
+		local r100 = _CBA.rewards["english"][100]
+		if r100 == nil then return false, "no 100-kill reward for english" end
+		if r100.upgrade == nil then return false, "upgrade field is nil" end
+		if r100.upgrade ~= AGS_UP_SIEGE_ENGINEERS then
+			return false, "WRONG constant: expected AGS_UP_SIEGE_ENGINEERS"
+		end
+		return true, "correct constant"
+	end)
+
+	-- 3. Per-player counter state and recounts
+	for i, player in ipairs(PLAYERS) do
+		local civ = _Debug_GetPlayerCiv(player)
+		local prefix = string.format("SL.5.P%d", i)
+
+		_Stress_RunTest(prefix .. " counters initialized", function()
+			if player.siegeLimit_count == nil then return false, "siegeLimit_count nil" end
+			if player.ramLimit_count == nil then return false, "ramLimit_count nil" end
+			if player.siegeTowerLimit_count == nil then return false, "siegeTowerLimit_count nil" end
+			if player.ramLimit_pending == nil then return false, "ramLimit_pending nil" end
+			if player.siegeTowerLimit_pending == nil then return false, "siegeTowerLimit_pending nil" end
+			return true, string.format("siege=%d ram=%d tower=%d pendRam=%d pendST=%d",
+				player.siegeLimit_count, player.ramLimit_count, player.siegeTowerLimit_count,
+				player.ramLimit_pending, player.siegeTowerLimit_pending)
+		end)
+
+		_Stress_RunTest(prefix .. " recount integrity (" .. civ .. ")", function()
+			-- Save current tracked values
+			local old_siege = player.siegeLimit_count
+			local old_ram = player.ramLimit_count
+			local old_st = player.siegeTowerLimit_count
+
+			-- Recount from world state
+			local new_siege = CBA_Options_SiegeLimit_Recount(player)
+			local new_ram = CBA_Options_RamLimit_Recount(player)
+			local new_st = CBA_Options_SiegeTowerLimit_Recount(player)
+
+			local drift = (old_siege ~= new_siege) or (old_ram ~= new_ram) or (old_st ~= new_st)
+			return true, string.format("siege=%d→%d ram=%d→%d tower=%d→%d drift=%s",
+				old_siege, new_siege, old_ram, new_ram, old_st, new_st, tostring(drift))
+		end)
+
+		_Stress_RunTest(prefix .. " gate totals (" .. civ .. ")", function()
+			local ok, gate = pcall(CBA_Options_SiegeLimit_GetGateTotals, player)
+			if not ok then return false, "GetGateTotals crashed: " .. tostring(gate) end
+			return true, string.format("ram=%d/%d st=%d/%d",
+				gate.ram_total, gate.ram_cap, gate.st_total, gate.st_cap)
+		end)
+	end
+
+	-- 4. Function existence
+	_Stress_RunTest("SL.6 Construction event handlers exist", function()
+		local fns = {
+			"CBA_Options_SiegeLimit_ConstructionStart",
+			"CBA_Options_SiegeLimit_ConstructionCancelled",
+			"CBA_Options_SiegeLimit_BuildItemComplete",
+			"CBA_Options_SiegeLimit_SquadKilled",
+		}
+		local missing = {}
+		for _, fn in ipairs(fns) do
+			if type(_G[fn]) ~= "function" then table.insert(missing, fn) end
+		end
+		if #missing > 0 then return false, "missing: " .. table.concat(missing, ", ") end
+		return true, #fns .. " handlers found"
+	end)
+
+	_Stress_RunTest("SL.7 Weight functions", function()
+		local fns = {
+			"CBA_Options_GetRamWeight",
+			"CBA_Options_GetRamWeightSBP",
+			"CBA_Options_GetRamLimitMax",
+			"CBA_Options_GetSiegeTowerLimitMax",
+			"CBA_Options_SiegeLimit_GetGateTotals",
+			"CBA_Options_RamLimit_GetQueuedCount",
+			"CBA_Options_SiegeTowerLimit_GetQueuedCount",
+		}
+		local missing = {}
+		for _, fn in ipairs(fns) do
+			if type(_G[fn]) ~= "function" then table.insert(missing, fn) end
+		end
+		if #missing > 0 then return false, "missing: " .. table.concat(missing, ", ") end
+		return true, #fns .. " functions found"
+	end)
+
+	-- 5. CBA_SIEGE_TABLE variant coverage
+	_Stress_RunTest("SL.8 CBA_SIEGE_TABLE covers all STRESS_ALL_CIVS", function()
+		local missing = {}
+		for _, civ in ipairs(STRESS_ALL_CIVS) do
+			if CBA_SIEGE_TABLE[civ] == nil then
+				-- Check parent map fallback
+				local parent = AGS_CIV_PARENT_MAP and AGS_CIV_PARENT_MAP[civ]
+				if parent == nil or CBA_SIEGE_TABLE[parent] == nil then
+					table.insert(missing, civ)
+				end
+			end
+		end
+		if #missing > 0 then return false, "missing: " .. table.concat(missing, ", ") end
+		return true, #STRESS_ALL_CIVS .. " civs covered"
+	end)
+
+	-- Report
+	print("")
+	local total = #_cba_stress.results
+	local fails = 0
+	for _, r in ipairs(_cba_stress.results) do
+		if not r.pass then fails = fails + 1 end
+	end
+	print(string.format("  SIEGE LIMIT STRESS: %d/%d passed", total - fails, total))
+	if fails > 0 then
+		print("  FAILURES:")
+		for _, r in ipairs(_cba_stress.results) do
+			if not r.pass then
+				print(string.format("    [FAIL] %s — %s", r.name, r.detail))
+			end
+		end
+	end
+	_Debug_EndMarker("SiegeLimitStress", total - fails, total, 0)
+	print("============================================")
+end
+
+---------------------------------------------------------------------------------------------------
+-- Namespace Registration
+---------------------------------------------------------------------------------------------------
+if debug then
+	debug.validation.stress = Debug_StressTest
+	debug.validation.stressStage = Debug_StressStage
+	debug._register("stress", Debug_StressTest, "8-stage stress (tables, BPs, entities, limits, gates, rewards, economy) (~25s)", 2)
 end

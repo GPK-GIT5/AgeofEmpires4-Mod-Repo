@@ -37,19 +37,19 @@ Input (attribName | pbgid | path)
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `reference/.skill/schema.ts` | SQLite schema, table/index creation, CRUD operations | 250 |
-| `reference/.skill/cache-manager.ts` | Cache lifecycle: init, lookup, sync, invalidation | 380 |
-| `reference/.skill/skill.ts` | Main Skill: resolution functions, batch processing, validation | 450 |
-| `reference/.skill/package.json` | Node.js dependencies and build scripts | 70 |
-| `reference/.skill/cache-metadata-template.json` | Cache metadata template | 25 |
+| `references/.skill/schema.ts` | SQLite schema, table/index creation, CRUD operations | 250 |
+| `references/.skill/cache-manager.ts` | Cache lifecycle: init, lookup, sync, invalidation | 380 |
+| `references/.skill/skill.ts` | Main Skill: resolution functions, batch processing, validation | 450 |
+| `references/.skill/package.json` | Node.js dependencies and build scripts | 70 |
+| `references/.skill/cache-metadata-template.json` | Cache metadata template | 25 |
 
 ### Documentation
 
 | File | Purpose |
 |------|---------|
-| `reference/.skill/README.md` | Quick-start guide and API reference |
-| `reference/.skill/SKILL-GUIDE.md` | Comprehensive usage guide (2000+ words) |
-| `reference/.skill/IMPLEMENTATION-COMPLETE.md` | This summary document |
+| `references/.skill/README.md` | Quick-start guide and API reference |
+| `references/.skill/SKILL-GUIDE.md` | Comprehensive usage guide (2000+ words) |
+| `references/.skill/IMPLEMENTATION-COMPLETE.md` | This summary document |
 
 ### Integration Tools
 
@@ -123,7 +123,7 @@ Input (attribName | pbgid | path)
 
 ### Phase 1: Local Testing ✓ COMPLETE
 ```bash
-cd reference/.skill
+cd references/.skill
 npm install
 npm run build
 # Test with: node -e "const { SCARBlueprintSkill } = require('./skill.js'); ..."
@@ -156,7 +156,7 @@ npm run build
 
 ### Single Resolution
 ```javascript
-const skill = new SCARBlueprintSkill('./reference/.skill', './data');
+const skill = new SCARBlueprintSkill('./references/.skill', './data');
 
 const result = await skill.resolveBlueprint({
   reference: 'unit_archer_2_abb',
@@ -236,7 +236,7 @@ The PowerShell helper provides comprehensive cache administration:
 ## File Structure
 
 ```
-reference/.skill/
+references/.skill/
 ├── schema.ts                      # SQLite schema & CRUD
 ├── cache-manager.ts               # Cache lifecycle management
 ├── skill.ts                       # Main Skill logic
@@ -259,7 +259,7 @@ scripts/
 
 1. **Install & Compile**
    ```bash
-   cd reference/.skill
+   cd references/.skill
    npm install
    npm run build
    ```
@@ -322,7 +322,7 @@ scripts/
 |-------|---------|
 | Cache appears stale | `.\scripts\manage-blueprint-cache.ps1 -Check` |
 | Low hit rate | `.\scripts\manage-blueprint-cache.ps1 -Status` |
-| Database corruption | `rm reference/.skill/blueprints.db` (rebuilds on next call) |
+| Database corruption | `rm references/.skill/blueprints.db` (rebuilds on next call) |
 | Need to rebuild entire cache | `.\scripts\manage-blueprint-cache.ps1 -Reset` |
 | Export for backup | `.\scripts\manage-blueprint-cache.ps1 -Export` |
 
@@ -330,9 +330,9 @@ scripts/
 
 ## Documentation Map
 
-- **Quick Start**: [reference/.skill/README.md](README.md)
-- **Full Guide**: [reference/.skill/SKILL-GUIDE.md](SKILL-GUIDE.md)
-- **Implementation**: [reference/.skill/IMPLEMENTATION-COMPLETE.md](IMPLEMENTATION-COMPLETE.md) ← You are here
+- **Quick Start**: [references/.skill/README.md](README.md)
+- **Full Guide**: [references/.skill/SKILL-GUIDE.md](SKILL-GUIDE.md)
+- **Implementation**: [references/.skill/IMPLEMENTATION-COMPLETE.md](IMPLEMENTATION-COMPLETE.md) ← You are here
 - **Cache Management**: [scripts/manage-blueprint-cache.ps1](../scripts/manage-blueprint-cache.ps1)
 
 ---

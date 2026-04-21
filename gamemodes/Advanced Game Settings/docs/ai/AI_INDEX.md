@@ -558,7 +558,7 @@ end
 
 **Workspace Documentation:**
 - SCAR API: `../../references/api/scar-api-functions.md`
-- Function Index: `../../reference/function-index.md`
+- Function Index: `../../references/indexes/function-index.md`
 - Constants: `../../references/api/constants-and-enums.md`
 - Game Events: `../../references/api/game-events.md`
 

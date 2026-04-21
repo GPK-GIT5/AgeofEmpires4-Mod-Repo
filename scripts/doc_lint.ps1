@@ -252,6 +252,23 @@ if (Test-Path $skillPath) {
     Write-Check 'WARN' "$skillPath not found"
 }
 
+# 5. MASTER-INDEX LINK VALIDATION
+Write-Host ""
+Write-Host "Check 5: Master-Index Link Validation" -ForegroundColor Cyan
+Write-Host ""
+
+$masterIndexScript = Join-Path $PSScriptRoot 'fix_master_index_links.ps1'
+if (Test-Path $masterIndexScript) {
+    & $masterIndexScript *>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Check 'PASS' "master-index.md: all links resolve"
+    } else {
+        Write-Check 'FAIL' "master-index.md: broken links found (run scripts/fix_master_index_links.ps1 -Fix)"
+    }
+} else {
+    Write-Check 'WARN' "fix_master_index_links.ps1 not found — skipping master-index check"
+}
+
 #endregion
 
 #region Summary and Exit

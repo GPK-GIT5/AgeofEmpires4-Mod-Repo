@@ -1,6 +1,6 @@
 # Reference Directory Index
 
-> Quick navigation for all 25 reference files. Organized by workflow and data type.
+> Quick navigation for all 28+ reference files. Organized by workflow and data type.
 
 **Last Updated:** February 23, 2026 | **Coverage:** 8,989 functions, 14,158 globals, 3,214 groups
 
@@ -69,6 +69,9 @@
 | [gameplay/](../gameplay/) | Gameplay system indexes (AI, armies, objectives, win conditions) | Deep dive into game mode logic |
 | [systems/](../systems/) | System-level consolidation (Cardinal, MissionOMatic, etc.) | Architecture and cross-system patterns |
 | [scar_dump/](../../data/aoe4/scar_dump/) | Raw extraction outputs (Lua, CSV, JSON interim) | Data source verification and debugging |
+| [ui/](../ui/) | PlayerUI architecture, field discovery, and quick reference docs | XamlPresenter HUD panels, SetPlayerDataContext bindings |
+| [audits/](../audits/) | Reference folder audit reports | Track structural issues and validation history |
+| [ai_sessions/](../ai_sessions/) | AI session summaries (changes, patterns, gaps per session) | Review past session outcomes and decisions |
 | [workspace/](../workspace/) | Workspace maintenance docs (audit logs, reorg prompts, optimization plans) | Repo hygiene and reorganization history |
 
 ---

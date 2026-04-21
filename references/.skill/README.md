@@ -18,7 +18,7 @@ npm run build
 ```javascript
 import { SCARBlueprintSkill } from './skill.js';
 
-const skill = new SCARBlueprintSkill('./reference/.skill', './data');
+const skill = new SCARBlueprintSkill('./references/.skill', './data');
 
 // Resolve a blueprint
 const result = await skill.resolveBlueprint({
@@ -235,8 +235,8 @@ interface SkillError {
 ### Database corruption
 ```bash
 # Delete and reinitialize
-rm reference/.skill/blueprints.db
-rm reference/.skill/cache-metadata.json
+rm references/.skill/blueprints.db
+rm references/.skill/cache-metadata.json
 # Next Skill call rebuilds
 ```
 

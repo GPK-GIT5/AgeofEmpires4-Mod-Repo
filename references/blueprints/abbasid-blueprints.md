@@ -283,3 +283,15 @@ local ebp = BP_GetEntityBlueprintByPbgID(107180)
 ```
 
 
+
+### Additional Unit/Weapon EBPs (from XML dump)
+
+| Blueprint Name | PBG ID |
+|---|---|
+| `UNIT_MANATARMS_3_GENERIC_ABB` | 1073741876 |
+| `UNIT_MILITARY_2_FREE_ABB` | 1073741880 |
+| `UNIT_MILITARY_3_FREE_ABB` | 1073741881 |
+| `UNIT_MILITARY_4_FREE_ABB` | 1073741882 |
+| `UNIT_TRADE_CART_FREE_ABB` | 1073741903 |
+| `UNIT_WORKSHOP_RAM_3_ABB` | 1073741907 |
+

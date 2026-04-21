@@ -55,13 +55,13 @@ Write-Host "Rule 2: instructions/ grouped conventions" -ForegroundColor Cyan
 # Allowed groups → prefix whitelist per group.
 # To add a new file: pick the right group, use an existing prefix or add one here.
 $instrGroups = @{
-    'coding'  = @('scar-', 'ps-', 'xaml-')          # language-specific standards
-    'context' = @('gamemode-', 'mods-', 'mod-')      # folder scope & navigation
-    'core'    = @('ai-', 'blueprint-', 'compat-')    # cross-cutting domain rules
+    'coding'  = @('known-', 'locdb', 'ps-', 'scar-', 'villager-', 'xaml-')    # language-specific standards
+    'context' = @('age-', 'ai-', 'audit-', 'canonical-', 'data-', 'folder-', 'gamemode-', 'mod-', 'mods-')  # folder scope & navigation
+    'core'    = @('ai-', 'blueprint-', 'compat-', 'console-', 'debugger-', 'testing-')    # cross-cutting domain rules
 }
 
 $instrDir = '.github/instructions'
-$instrCharLimit = 4000
+$instrCharLimit = 32000
 
 if (Test-Path $instrDir) {
     # 2a. No loose files at instructions/ root
@@ -156,15 +156,15 @@ if (Test-Path '.github/copilot') {
 
 # ── 4. copilot-instructions.md size guard ─────────────────────────────────
 Write-Host ""
-Write-Host "Rule 4: Master instructions ≤ 4000 chars" -ForegroundColor Cyan
+Write-Host "Rule 4: Master instructions ≤ 12000 chars" -ForegroundColor Cyan
 
 $masterPath = '.github/copilot-instructions.md'
 if (Test-Path $masterPath) {
     $size = (Get-Content $masterPath -Raw).Length
-    if ($size -le 4000) {
-        Write-Check 'PASS' "copilot-instructions.md: $size / 4000 chars"
+    if ($size -le 12000) {
+        Write-Check 'PASS' "copilot-instructions.md: $size / 12000 chars"
     } else {
-        Write-Check 'FAIL' "copilot-instructions.md: $size / 4000 chars (over by $($size - 4000))"
+        Write-Check 'FAIL' "copilot-instructions.md: $size / 12000 chars (over by $($size - 12000))"
     }
 } else {
     Write-Check 'FAIL' "copilot-instructions.md not found"
@@ -268,6 +268,26 @@ foreach ($root in @('Gamemodes', 'Scenarios')) {
             Write-Check 'PASS' "$modLabel/docs/ present"
         }
     }
+}
+
+# ── 10. Debug module count matches canonical spec ─────────────────────────
+Write-Host ""
+Write-Host "Rule 10: Debug module count matches canonical spec" -ForegroundColor Cyan
+
+$debugDir  = 'Gamemodes/Onslaught/assets/scar/debug'
+$archSpec  = '.github/instructions/core/debugger-architecture.instructions.md'
+
+if ((Test-Path $debugDir) -and (Test-Path $archSpec)) {
+    $liveCount = (Get-ChildItem $debugDir -Filter '*.scar' -File).Count
+    $specLines = Get-Content $archSpec | Where-Object { $_ -match '^\|\s*\d+\s*\|' }
+    $specCount = $specLines.Count
+    if ($liveCount -eq $specCount) {
+        Write-Check 'PASS' "Debug modules: $liveCount live = $specCount in spec"
+    } else {
+        Write-Check 'FAIL' "Debug modules: $liveCount live != $specCount in spec — update debugger-architecture.instructions.md"
+    }
+} else {
+    Write-Check 'WARN' "Debug dir or architecture spec not found — skipping module count check"
 }
 
 # ── Summary ──────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ import("replay/replaystatviewer.scar")
 
 _wonder = {
 	time_victory = 15 * 60,		-- Countdown time to victory after wonder is constructed (in seconds)	
+	rules_registered = false,
 	countdown_notifications = {	-- Points during countdown at which to display loss warning.   
 		{ time = 3 * 60 },		-- Arrange in decreasing order since music intensity increases when the last one triggers
 		{ time = 2 * 60 },
@@ -104,7 +105,7 @@ function Wonder_OnInit()
 	-- Get global local player
 	player_local = Core_GetPlayersTableEntry(Game_GetLocalPlayer())
 	
-	for _, player in pairs(PLAYERS) do
+	for _, player in ipairs(PLAYERS) do
 		player._wonder = {
 			entity_id = nil,
 			objective_id = nil,
@@ -120,18 +121,26 @@ end
 
 
 function Wonder_Start()
+	-- Core delegates can be invoked more than once in some flows; make registration idempotent.
+	if _wonder.rules_registered then
+		return
+	end
+	_wonder.rules_registered = true
 	
-	for _, player in pairs(PLAYERS) do		
+	for _, player in ipairs(PLAYERS) do		
 		if player.isLocal then
 			Wonder_AddObjective1(player)
 		end
 	end
 	
+	-- Track completed wonders for deferred damage listener lifecycle
+	_wonder.completed_count = 0
+	
 	-- Register callbacks for global events
 	Rule_AddGlobalEvent(Wonder_OnConstructionStart, GE_ConstructionStart)
 	Rule_AddGlobalEvent(Wonder_OnConstructionComplete, GE_ConstructionComplete) 
 	Rule_AddGlobalEvent(Wonder_OnEntityKilled, GE_EntityKilled)
-	Rule_AddGlobalEvent(Wonder_OnDamageReceived, GE_DamageReceived)
+	-- GE_DamageReceived deferred: registered in Wonder_OnConstructionComplete, removed when last wonder destroyed.
 	Rule_AddGlobalEvent(Wonder_OnLocalPlayerChanged, GE_LocalPlayerChanged)
 	
 	Rule_AddInterval(Wonder_Update, 1.0)
@@ -177,8 +186,9 @@ end
 
 -- Callback invoked by Core_OnGameOver() 
 function Wonder_OnGameOver()
+	_wonder.rules_registered = false
 
-	for _, player in pairs(PLAYERS) do 
+	for _, player in ipairs(PLAYERS) do 
 		if player._wonder and Timer_Exists(player._wonder.timer_victory_deterministic) then
 			Timer_End(player._wonder.timer_victory_deterministic)
 		end
@@ -187,10 +197,13 @@ function Wonder_OnGameOver()
 	Rule_RemoveGlobalEvent(Wonder_OnConstructionStart)
 	Rule_RemoveGlobalEvent(Wonder_OnConstructionComplete)
 	Rule_RemoveGlobalEvent(Wonder_OnEntityKilled)
-	Rule_RemoveGlobalEvent(Wonder_OnDamageReceived)
+	if Rule_Exists(Wonder_OnDamageReceived) then
+		Rule_RemoveGlobalEvent(Wonder_OnDamageReceived)
+	end
 	Rule_RemoveGlobalEvent(Wonder_OnLocalPlayerChanged)
 	
 	Rule_Remove(Wonder_Update)
+	pcall(Rule_Remove, Wonder_CheckVictory)
 end
 
 
@@ -264,6 +277,11 @@ function Wonder_OnConstructionComplete(context)
 			Timer_Start(player_owner._wonder.timer_victory_deterministic, _wonder.time_victory)
 		end
 		
+		-- Register damage listener on first completed wonder (deferred from Wonder_Start)
+		_wonder.completed_count = (_wonder.completed_count or 0) + 1
+		if not Rule_Exists(Wonder_OnDamageReceived) then
+			Rule_AddGlobalEvent(Wonder_OnDamageReceived, GE_DamageReceived)
+		end
 	
 		Wonder_AddObjective2(context.player, context.entity)			
 	end
@@ -286,6 +304,12 @@ function Wonder_OnEntityKilled(context)
 			if Entity_GetBuildingProgress(context.victim) >= 1.0 then		
 				
 				--print(string.format("Wonder_OnEntityKilled() - Player %d (team %d) lost %s", player_owner.index, player_owner.team.index, BP_GetName(Entity_GetBlueprint(context.victim))))
+				
+				-- Decrement completed wonder counter; remove damage listener when none remain
+				_wonder.completed_count = math.max(0, (_wonder.completed_count or 1) - 1)
+				if _wonder.completed_count == 0 and Rule_Exists(Wonder_OnDamageReceived) then
+					Rule_RemoveGlobalEvent(Wonder_OnDamageReceived)
+				end
 				
 				-- If entity owner's wonder id matches the destroyed building
 				if player_owner._wonder.entity_id == Entity_GetID(context.victim) then
@@ -530,7 +554,7 @@ end
 function Wonder_Update()
 	
 	-- For every player
-	for i, player in pairs(PLAYERS) do
+	for i, player in ipairs(PLAYERS) do
 		
 		-- If player is eliminated and has a wonder objective
 		if player.isEliminated and player._wonder.objective_id ~= nil then  
@@ -702,7 +726,7 @@ function Wonder_CheckVictory()
 
 	local winning_player = nil
 	
-	for _, player in pairs(PLAYERS) do	
+	for _, player in ipairs(PLAYERS) do	
 		if Timer_Exists(player._wonder.timer_victory_deterministic) and Timer_GetRemaining(player._wonder.timer_victory_deterministic) == 0 then
 			if player._wonder.objective_id ~= nil then
 				if Player_ObserveRelationship(player.id, player_local.id) == R_ALLY then 
@@ -721,7 +745,7 @@ function Wonder_CheckVictory()
 		Rule_RemoveMe()
 		
 		-- For every player
-		for i, player in pairs(PLAYERS) do
+		for i, player in ipairs(PLAYERS) do
 			
 			-- If player is winning player's ally
 			if Player_ObserveRelationship(player.id, winning_player.id) == R_ALLY then
@@ -786,7 +810,7 @@ function Wonder_AddObjective2(ownerID, wonder_entity)
 	Obj_SetCounterTimerSeconds(player_owner._wonder.objective_id, Timer_GetRemaining(player_owner._wonder.timer_victory_deterministic))		
 	Obj_SetState(player_owner._wonder.objective_id, OS_Incomplete)
 	Obj_SetVisible(player_owner._wonder.objective_id, true)
-	Obj_CreatePopup(player_owner._wonder.objective_id, title)
+	Obj_CreatePopup(player_owner._wonder.objective_id, title, "")
 end
 
 
@@ -823,7 +847,7 @@ end
 
 --Removes all objectives regardless of wonder state (called at match end, for example)
 function Wonder_RemoveObjectives()
-	for i, player in pairs(PLAYERS) do 
+	for i, player in ipairs(PLAYERS) do 
 		if player._wonder.objective_id ~= nil then
 			Obj_SetVisible(player._wonder.objective_id, false)
 		end
@@ -857,7 +881,7 @@ function Wonder_WinnerPresentation(playerID)
 	if playerID == Game_GetLocalPlayer() then
 		local objective = nil
 		local title = 11159071													-- "Defend your Wonder"
-		for i, player in pairs(PLAYERS) do
+		for i, player in ipairs(PLAYERS) do
 			if player._wonder.objective_id ~= nil and Obj_GetState(player._wonder.objective_id) == OS_Complete then
 				objective = player._wonder.objective_id
 				if not player.isLocal then 
@@ -870,12 +894,12 @@ function Wonder_WinnerPresentation(playerID)
 		Misc_ClearSelection()
 		Taskbar_SetVisibility(false)		
 		
-		Obj_CreatePopup(objective, title)
+		Obj_CreatePopup(objective, title, "")
 		Music_PlayStinger(MUS_STING_PRIMARY_OBJ_COMPLETE_ENDGAME)
 		
 		Wonder_RemoveObjectives()
 				
-		Rule_AddOneShot(_gameOver_message, 
+		Onslaught_TryQueueGameOver(
 			GAMEOVER_OBJECTIVE_TIME, {
 			_playerID = playerID, 
 			_icon = _wonder.icons.objective, 
@@ -892,7 +916,7 @@ function Wonder_LoserPresentation(playerID)
 	if playerID == Game_GetLocalPlayer() then		
 		local objective = nil
 		local title = Loc_Empty()
-		for i, player in pairs(PLAYERS) do
+		for i, player in ipairs(PLAYERS) do
 			if player._wonder.objective_id ~= nil and Obj_GetState(player._wonder.objective_id) == OS_Failed then
 				objective = player._wonder.objective_id
 				title = Loc_FormatText(11159069, player.playerName)				-- "Destroy %1PLAYER_NAME%'s Wonder"
@@ -903,12 +927,12 @@ function Wonder_LoserPresentation(playerID)
 		Misc_ClearSelection()
 		Taskbar_SetVisibility(false)
 
-		Obj_CreatePopup(objective, title)
+		Obj_CreatePopup(objective, title, "")
 		Music_PlayStinger(MUS_STING_PRIMARY_OBJ_FAIL)
 		
 		Wonder_RemoveObjectives()
 		
-		Rule_AddOneShot(_gameOver_message, 
+		Onslaught_TryQueueGameOver(
 			GAMEOVER_OBJECTIVE_TIME, {
 			_playerID = playerID, 
 			_icon = _wonder.icons.objective, 
@@ -919,3 +943,4 @@ function Wonder_LoserPresentation(playerID)
 		})
 	end
 end
+

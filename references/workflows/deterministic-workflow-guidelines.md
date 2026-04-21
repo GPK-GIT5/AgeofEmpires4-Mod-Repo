@@ -21,15 +21,15 @@ Create 7 cross-cutting reference files by synthesizing data **exclusively** from
 ## HARD CONSTRAINTS
 
 1. **ONLY read files from these two directories** (and their subdirectories):
-   - `reference/campaigns/` (65 mission summary .md files)
-   - `reference/gameplay/` (11 gameplay system .md files)
+   - `references/campaigns/` (65 mission summary .md files)
+   - `references/gameplay/` (11 gameplay system .md files)
 2. **NEVER open, read, or reference:**
    - Raw `.scar` source files (anywhere under `scenarios/`)
-   - Batch files (`reference/dumps/Claude_Batches_v2/`)
-   - Phase 1 CSV indexes (`reference/*.csv`) — unless explicitly told to cross-reference
+   - Batch files (`references/dumps/Claude_Batches_v2/`)
+   - Phase 1 CSV indexes (`references/*.csv`) — unless explicitly told to cross-reference
    - Any file outside the two directories above
 3. **Do not re-summarize** the input files. Extract and reorganize specific data points only.
-4. **Output location:** All files go in `reference/systems/` (create the file directly, don't just show the content).
+4. **Output location:** All files go in `references/systems/` (create the file directly, don't just show the content).
 5. **If a summary file lacks data for a given system** (e.g., no difficulty table), skip it silently. Do not hallucinate data.
 6. **Preserve exact constant names** — copy `OBJ_TakeVillage`, `SOBJ_BuildWalls`, etc. verbatim. Do not rename or normalize them.
 
@@ -45,10 +45,10 @@ Process these **sequentially**, one at a time. For each system file:
 
 ---
 
-## SYSTEM FILE 1: `reference/systems/objectives-index.md`
+## SYSTEM FILE 1: `references/systems/objectives-index.md`
 
 ### Input
-All 65 files in `reference/campaigns/` (all subdirectories).
+All 65 files in `references/campaigns/` (all subdirectories).
 
 ### What to Extract
 From each mission summary's **KEY SYSTEMS → Objectives** section:
@@ -92,10 +92,10 @@ Cross-reference of all objectives across campaign missions, extracted from Phase
 
 ---
 
-## SYSTEM FILE 2: `reference/systems/difficulty-index.md`
+## SYSTEM FILE 2: `references/systems/difficulty-index.md`
 
 ### Input
-All 65 files in `reference/campaigns/`. Also read `reference/gameplay/missionomatic.md` for the Util_DifVar API description.
+All 65 files in `references/campaigns/`. Also read `references/gameplay/missionomatic.md` for the Util_DifVar API description.
 
 ### What to Extract
 From each mission summary's **KEY SYSTEMS → Difficulty** section:
@@ -136,10 +136,10 @@ Brief description of `Util_DifVar(value, {easy, standard, hard, expert})` from g
 
 ---
 
-## SYSTEM FILE 3: `reference/systems/spawns-index.md`
+## SYSTEM FILE 3: `references/systems/spawns-index.md`
 
 ### Input
-All 65 files in `reference/campaigns/`. Also read `reference/gameplay/ai.md` (WaveGenerator section) and `reference/gameplay/missionomatic.md` (Wave System section).
+All 65 files in `references/campaigns/`. Also read `references/gameplay/ai.md` (WaveGenerator section) and `references/gameplay/missionomatic.md` (Wave System section).
 
 ### What to Extract
 From each mission summary's **KEY SYSTEMS → Spawns** section:
@@ -176,12 +176,12 @@ Brief summary of WaveGenerator and MissionOMatic Wave System from gameplay summa
 
 ---
 
-## SYSTEM FILE 4: `reference/systems/ai-patterns.md`
+## SYSTEM FILE 4: `references/systems/ai-patterns.md`
 
 ### Input
-- `reference/gameplay/ai.md` (primary — read this first for the system architecture)
-- `reference/gameplay/missionomatic.md` (Module System sections: Attack, Defend, RovingArmy, TownLife)
-- All 65 files in `reference/campaigns/` (the AI subsections within each)
+- `references/gameplay/ai.md` (primary — read this first for the system architecture)
+- `references/gameplay/missionomatic.md` (Module System sections: Attack, Defend, RovingArmy, TownLife)
+- All 65 files in `references/campaigns/` (the AI subsections within each)
 
 ### What to Extract
 From `gameplay/ai.md`: Army system architecture, encounter plan types, combat fitness, StateTree tuning.
@@ -227,12 +227,12 @@ Summary of AI army system, encounter plans, and module types from gameplay/ai.md
 
 ---
 
-## SYSTEM FILE 5: `reference/systems/training-index.md`
+## SYSTEM FILE 5: `references/systems/training-index.md`
 
 ### Input
-- `reference/gameplay/training.md` (primary — read this first)
-- `reference/campaigns/challenges/` (13 files — challenge missions use training goals extensively)
-- `reference/campaigns/salisbury/` (6 files — tutorial campaign)
+- `references/gameplay/training.md` (primary — read this first)
+- `references/campaigns/challenges/` (13 files — challenge missions use training goals extensively)
+- `references/campaigns/salisbury/` (6 files — tutorial campaign)
 - Skim other campaign summaries for training/tutorial mentions only
 
 ### What to Extract
@@ -271,11 +271,11 @@ Summary of the goal system architecture from gameplay/training.md.
 
 ---
 
-## SYSTEM FILE 6: `reference/systems/missionomatic-modules.md`
+## SYSTEM FILE 6: `references/systems/missionomatic-modules.md`
 
 ### Input
-- `reference/gameplay/missionomatic.md` (primary — read this first for the full system spec)
-- All 65 files in `reference/campaigns/` (for concrete recipe/module usage examples)
+- `references/gameplay/missionomatic.md` (primary — read this first for the full system spec)
+- All 65 files in `references/campaigns/` (for concrete recipe/module usage examples)
 
 ### What to Extract
 From `gameplay/missionomatic.md`: Recipe architecture, module system, action/condition registries, objective lifecycle, playbill system, unit request pipeline.
@@ -325,7 +325,7 @@ Summary of how different campaigns configure their recipes:
 
 ---
 
-## SYSTEM FILE 7: `reference/master-index.md`
+## SYSTEM FILE 7: `references/master-index.md`
 
 ### Input
 After creating all 6 system files above, create this using the directory listing of all files.

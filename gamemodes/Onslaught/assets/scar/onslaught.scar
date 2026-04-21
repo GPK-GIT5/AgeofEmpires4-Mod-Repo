@@ -29,34 +29,35 @@ import("gameplay/score.scar")					-- Tracks player score
 -- Import Win Conditions 
 -----------------------------------------------------------------------
 -- AGS Scripts require multiple helpers to operate:
-import("helpers/ags_blueprints.scar")
-import("helpers/ags_teams.scar")
-import("helpers/ags_starts.scar")
+import("AGS/CBA/helpers/ags_blueprints.scar")
+import("AGS/CBA/helpers/ags_teams.scar")
+import("AGS/CBA/helpers/ags_starts.scar")
 
 -- AGS Scripts read settings from single configuration.
-import("ags_global_settings.scar")
+import("AGS/CBA/ags_global_settings.scar")
 
 -- Gameplay options are loaded as last. 
-import("gameplay/ags_game_rates.scar")
-import("gameplay/ags_gather_rates.scar")
-import("gameplay/ags_unit_rates.scar")
-import("gameplay/ags_no_dock.scar")
-import("gameplay/ags_population_capacity.scar")
-import("gameplay/ags_population_auto.scar")
-import("gameplay/ags_starting_age.scar")
-import("gameplay/ags_reveal_fow_on_elimination.scar")
-import("gameplay/ags_tree_bombardment.scar")
+import("gameplay/options/ags_game_rates.scar")
+import("gameplay/options/ags_gather_rates.scar")
+import("gameplay/options/ags_unit_rates.scar")
+import("gameplay/options/ags_no_dock.scar")
+import("gameplay/options/ags_population_capacity.scar")
+	import("gameplay/options/ags_auto_population.scar")
+import("gameplay/options/ags_starting_age.scar")
+import("gameplay/options/ags_reveal_fow_on_elimination.scar")
+import("gameplay/options/ags_tree_bombardment.scar")
 import("gameplay/ags_auto_age.scar")
-import("gameplay/ags_auto_resources.scar")
-import("gameplay/ags_handicaps.scar")
---import("gameplay/ags_siege_house.scar")         
+import("gameplay/options/ags_auto_resources.scar")
+import("gameplay/options/ags_handicaps.scar")
+--import("AGS/gameplay/ags_siege_house.scar")         
 
 
-import("myreligious.scar")                      -- Religious Win Condition / Advanced Game Settings version edit 
+import("cba_religious.scar")                    -- Religious Win Condition / Advanced Game Settings version edit 
 
 -- Kzoacn CBA                                                    
 import("cba.scar")                          -- Kill Rewards
-import("myannihilation.scar")
+import("cba_annihilation.scar")
+import("gameplay/cba_hre_balance.scar")     -- HRE production penalty for Unlimited Resources
 
 -- RELIC Scripts
 import("winconditions/surrender.scar")	        -- Support for player surrender (through pause menu)
@@ -65,7 +66,7 @@ import("wonder.scar")                          -- Custom Wonder disabled Wonder 
 
 -- UI Support
 import("gameplay/chi/current_dynasty_ui.scar")	  -- Displays Chinese Dynasty UI
-import("gameplay/ags_special_population_ui.scar") -- Displays Siege population UI
+-- import("AGS/gameplay/ags_special_population_ui.scar") -- REMOVED: replaced by ags_limits_ui.scar (imported in cba.scar)
 
 
 -----------------------------------------------------------------------
@@ -112,30 +113,8 @@ Core_RegisterModule(_mod.module)
 -- Called during load as part of the game setup sequence
 function Mod_OnGameSetup()
 	Setup_GetWinConditionOptions(_mod.options)
-	-- Lobby Options    
-	if _mod.options.economy_section then -- Economy Section
-		-- Resources per minute
-		if _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_1000 then
-			_mod.resource_amount = 1000
-		elseif _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_2500 then
-			_mod.resource_amount = 2500			
-		elseif _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_5000 then			
-			_mod.resource_amount = 5000
-		elseif _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_unlimited then			
-			_mod.resource_amount = "unlimited"
-		elseif _mod.options.economy_section.resource_amount.enum_value == _mod.options.economy_section.resource_amount.enum_items.resource_disabled then			
-			_mod.resource_amount = "disabled"
-		end
-		
-		-- Starting Resources
-		if _mod.options.economy_section.startingResources.enum_value == _mod.options.economy_section.startingResources.enum_items.startingResources_standard then
-			_mod.startingResources = "standard"
-		elseif _mod.options.economy_section.startingResources.enum_value == _mod.options.economy_section.startingResources.enum_items.startingResources_high then
-			_mod.startingResources = "high"
-		elseif _mod.options.economy_section.startingResources.enum_value == _mod.options.economy_section.startingResources.enum_items.startingResources_max then
-			_mod.startingResources = "max"
-		end
-	end
+	-- Lobby Options (economy section parsed by shared helper)
+	CBA_Economy_ParseOptions()
 	-- AGS
 	AGS_Print("AGS_Cardinal_OnGameSetup")
 	local options = { }
@@ -168,17 +147,23 @@ function Mod_OnInit()
 	-- From Advanced Game Script
 	Core_CallDelegateFunctions("EarlyInitializations")
 	-- CALLING FUNCTIONS
-	Mod_SetFOW()
-	Mod_setStartingResources()
-	Mod_RemoveGaia()
+	CBA_Economy_SetFOW()
+	CBA_Economy_SetStartingResources("onslaught")
+	CBA_Economy_RemoveGaia()
 	Religious_UpdateConditions(_mod)
 	
-	-- NOTE: Causes Error when no sacred site in map
+	-- NOTE: Safe sacred site lookup (handles maps without beacons)
 	egroup = EGroup_Create("sites")
 	World_GetAllNeutralEntities(egroup)
 	EGroup_Filter(egroup,"special_beacon",FILTER_KEEP)
-	local site =  EGroup_GetEntityAt(egroup, 1)
-	_CBA.center = Entity_GetPosition(site)
+	if EGroup_Count(egroup) > 0 then
+		local site =  EGroup_GetEntityAt(egroup, 1)
+		_CBA.center = Entity_GetPosition(site)
+		print("[CBA] Sacred site found, center set")
+	else
+		_CBA.center = World_Pos(0, 0, 0)
+		print("[CBA] No sacred sites found, using map center (0,0,0)")
+	end
 	
 	
 	
@@ -210,59 +195,18 @@ function Mod_Start()
 	-- Setup the player's objective UI by calling the below function directly
 	Core_CallDelegateFunctions("OnStarting")
 	Core_CallDelegateFunctions("OnPlay")
-	statechange()
-	Rule_AddInterval(statechange, 600)
+	if type(statechange) == "function" then
+		statechange()
+		Rule_AddInterval(statechange, 600)
+	else
+		print("[TRACE] Day/night cycle disabled: statechange() not loaded")
+	end
 end
 
 -----------------------------------------------------------------------
 -- Mod Functions
 -----------------------------------------------------------------------
 
--- Lobby Option - Remove Gaia
-function Mod_RemoveGaia()
-	if _mod.options.economy_section and
-		_mod.options.economy_section.nogaia then
-		local egroup = EGroup_CreateUnique()
-		World_GetAllNeutralEntities(egroup)
-		EGroup_Filter(egroup, "animal", FILTER_KEEP)
-		EGroup_DestroyAllEntities(egroup)    		
-		EGroup_Destroy(egroup)
-	end
-end
+-- Economy helpers (Mod_RemoveGaia, Mod_setStartingResources, Mod_SetFOW)
+-- moved to gameplay/cba_economy.scar
 
--- Lobby Option: Setup Starting Resources
-function Mod_setStartingResources()
-	
-	for i, player in pairs(PLAYERS) do
-		-- Set player starting resources
-		-- RT stands for Resource Type
-		if _mod.startingResources == "standard" then
-			Player_SetResource(player.id, RT_Food, 0)		
-			Player_SetResource(player.id, RT_Wood, 150)
-			Player_SetResource(player.id, RT_Gold, 100)
-			Player_SetResource(player.id, RT_Stone, 0)
-		elseif _mod.startingResources == "high" then
-			Player_SetResource(player.id, RT_Food, 2200)		
-			Player_SetResource(player.id, RT_Wood, 1500)
-			Player_SetResource(player.id, RT_Gold, 1000)
-			Player_SetResource(player.id, RT_Stone, 1000)
-		elseif _mod.startingResources == "max" then
-			Player_SetResource(player.id, RT_Food, 100000)		
-			Player_SetResource(player.id, RT_Wood, 100000)
-			Player_SetResource(player.id, RT_Gold, 100000)
-			Player_SetResource(player.id, RT_Stone, 100000)
-
-		end
-	end
-end
-
--- Lobby Option - Setup the Fog of War
-function Mod_SetFOW()
-	if (_mod.options.economy_section and _mod.options.economy_section.option_fow) then
-		if (_mod.options.economy_section.option_fow.enum_value == _mod.options.economy_section.option_fow.enum_items.option_fow_explore) then 
-			FOW_ExploreAll()
-		elseif (_mod.options.economy_section.option_fow.enum_value == _mod.options.economy_section.option_fow.enum_items.option_fow_reveal) then
-			FOW_ForceRevealAllUnblockedAreas()
-		end
-	end
-end

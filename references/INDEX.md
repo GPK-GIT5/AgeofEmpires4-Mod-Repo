@@ -2,7 +2,7 @@
 
 > Quick navigation for all 27+ reference files. Organized by workflow and data type.
 
-**Last Updated:** March 18, 2026 | **Coverage:** 8,989 script functions, 1,976 engine API functions, 14,158 globals, 3,214 groups
+**Last Updated:** April 20, 2026 | **Coverage:** 8,989 script functions, 1,976 engine API functions, 14,158 globals, 3,214 groups
 
 ---
 
@@ -10,11 +10,11 @@
 
 | File | Purpose | Type | Use Case | Depth |
 |------|---------|------|----------|-------|
-| [scar-api-functions.md](scar-api-functions.md) | All 4,435 SCAR functions organized by category (Squad_, Entity_, Player_, UI_, AI_, etc.) | Markdown | Find function signatures, understand API namespaces | Deep Dive |
+| [scar-api-functions.md](api/scar-api-functions.md) | All 4,435 SCAR functions organized by category (Squad_, Entity_, Player_, UI_, AI_, etc.) | Markdown | Find function signatures, understand API namespaces | Deep Dive |
 | [scar-engine-api-signatures.md](api/scar-engine-api-signatures.md) | 1,976 engine API functions with typed signatures (from scardocs) | Markdown | Look up exact parameter types and return info | Deep Dive |
-| [commands-reference.md](commands-reference.md) | Entity, Squad, and Player command type constants with descriptions | Markdown | Look up CMD_* constant values and meanings | Quick Ref |
-| [constants-and-enums.md](constants-and-enums.md) | 900+ typed constants and enums (Resource Types, Player States, BS_, TACTIC_, TASK_, etc.) | Markdown | Find constant/enum definitions and numeric IDs | Quick Ref |
-| [game-events.md](game-events.md) | 188 game events (GE_*) with usage patterns and context data | Markdown | Hook game events with `Rule_AddGlobalEvent()` | Deep Dive |
+| [commands-reference.md](api/commands-reference.md) | Entity, Squad, and Player command type constants with descriptions | Markdown | Look up CMD_* constant values and meanings | Quick Ref |
+| [constants-and-enums.md](api/constants-and-enums.md) | 900+ typed constants and enums (Resource Types, Player States, BS_, TACTIC_, TASK_, etc.) | Markdown | Find constant/enum definitions and numeric IDs | Quick Ref |
+| [game-events.md](api/game-events.md) | 188 game events (GE_*) with usage patterns and context data | Markdown | Hook game events with `Rule_AddGlobalEvent()` | Deep Dive |
 
 ---
 
@@ -22,22 +22,22 @@
 
 | File | Purpose | Type | Use Case | Depth |
 |------|---------|------|----------|-------|
-| [function-index.md](function-index.md) | All 8,989 functions indexed by source file (campaign + gameplay) | Markdown | Browse functions by script file and campaign | Deep Dive |
-| [function-index.csv](function-index.csv) | Machine-readable function index (function name, params, visibility) | CSV | Parse/filter functions programmatically | Deep Dive |
-| [globals-index.csv](globals-index.csv) | 14,158 global variable assignments with line numbers and values | CSV | Find where globals are declared, track variable flow | Deep Dive |
-| [groups-index.csv](groups-index.csv) | 3,214 SGroup/EGroup declarations (squad vs. entity groups) | CSV | Locate group creation patterns across scripts | Deep Dive |
-| [imports-index.csv](imports-index.csv) | 1,283 import statements (modules and dependencies) | CSV | Understand module dependencies, trace imports | Quick Ref |
-| [objectives-index.csv](objectives-index.csv) | 835 unique OBJ_/SOBJ_ constants with definition/usage locations | CSV | Find objective definitions and usages | Quick Ref |
+| [function-index.md](indexes/function-index.md) | All 8,989 functions indexed by source file (campaign + gameplay) | Markdown | Browse functions by script file and campaign | Deep Dive |
+| [function-index.csv](indexes/function-index.csv) | Machine-readable function index (function name, params, visibility) | CSV | Parse/filter functions programmatically | Deep Dive |
+| [globals-index.csv](indexes/globals-index.csv) | 14,158 global variable assignments with line numbers and values | CSV | Find where globals are declared, track variable flow | Deep Dive |
+| [groups-index.csv](indexes/groups-index.csv) | 3,214 SGroup/EGroup declarations (squad vs. entity groups) | CSV | Locate group creation patterns across scripts | Deep Dive |
+| [imports-index.csv](indexes/imports-index.csv) | 1,283 import statements (modules and dependencies) | CSV | Understand module dependencies, trace imports | Quick Ref |
+| [objectives-index.csv](indexes/objectives-index.csv) | 835 unique OBJ_/SOBJ_ constants with definition/usage locations | CSV | Find objective definitions and usages | Quick Ref |
 
 ### CSV Schema Legend
 
 | File | Columns | Notes |
 |------|---------|-------|
-| [function-index.csv](function-index.csv) | Category, File, FileName, Function, Params, Line, Visibility, FileRole | Find functions by name, signature, and script role |
-| [globals-index.csv](globals-index.csv) | Category, File, Variable, Line, Value | Track global declarations with assignment values |
-| [groups-index.csv](groups-index.csv) | Category, File, GroupType, GroupName, Line | Locate SGroup/EGroup creation patterns |
-| [imports-index.csv](imports-index.csv) | Category, File, Import, Line | Map module dependencies and includes |
-| [objectives-index.csv](objectives-index.csv) | Category, File, Objective, Context, Line | Find objective definitions vs. usages |
+| [function-index.csv](indexes/function-index.csv) | Category, File, FileName, Function, Params, Line, Visibility, FileRole | Find functions by name, signature, and script role |
+| [globals-index.csv](indexes/globals-index.csv) | Category, File, Variable, Line, Value | Track global declarations with assignment values |
+| [groups-index.csv](indexes/groups-index.csv) | Category, File, GroupType, GroupName, Line | Locate SGroup/EGroup creation patterns |
+| [imports-index.csv](indexes/imports-index.csv) | Category, File, Import, Line | Map module dependencies and includes |
+| [objectives-index.csv](indexes/objectives-index.csv) | Category, File, Objective, Context, Line | Find objective definitions vs. usages |
 
 ---
 
@@ -45,9 +45,9 @@
 
 | File | Purpose | Type | Use Case | Depth |
 |------|---------|------|----------|-------|
-| [master-index.md](master-index.md) | Central hub with 65 campaign summaries, 11 gameplay systems, 6 indexes | Markdown | Start here for guided navigation | Quick Ref |
-| [data-index.md](data-index.md) | SCAR dependency summary: imports, objectives, groups, globals (auto-generated Feb 23, 2026) | Markdown | High-level overview of codebase metrics | Quick Ref |
-| [aoe4world-data-index.md](aoe4world-data-index.md) | Cross-reference guide for game data (units, buildings, technologies, civilizations in `references/data/` folder) | Markdown | Navigate structured game balance data | Quick Ref |
+| [master-index.md](navigation/master-index.md) | Central hub with 65 campaign summaries, 11 gameplay systems, 6 indexes | Markdown | Start here for guided navigation | Quick Ref |
+| [data-index.md](navigation/data-index.md) | SCAR dependency summary: imports, objectives, groups, globals (auto-generated Feb 23, 2026) | Markdown | High-level overview of codebase metrics | Quick Ref |
+| [aoe4world-data-index.md](navigation/aoe4world-data-index.md) | Cross-reference guide for game data (units, buildings, technologies, civilizations in `references/data/` folder) | Markdown | Navigate structured game balance data | Quick Ref |
 
 ---
 
@@ -55,8 +55,8 @@
 
 | File | Purpose | Type | Use Case | Depth |
 |------|---------|------|----------|-------|
-| [extraction-workflow.md](extraction-workflow.md) | Complete pipeline: 532 .scar files → organized reference material (4 phases) | Markdown | Understand how reference data is generated | Deep Dive |
-| [deterministic-workflow-guidelines.md](deterministic-workflow-guidelines.md) | System consolidation prompt for Copilot (reads Phase 3 summaries, generates final indexes) | Markdown | Re-run extraction pipeline with AI assistance | Deep Dive |
+| [extraction-workflow.md](workflows/extraction-workflow.md) | Complete pipeline: 532 .scar files → organized reference material (4 phases) | Markdown | Understand how reference data is generated | Deep Dive |
+| [deterministic-workflow-guidelines.md](workflows/deterministic-workflow-guidelines.md) | System consolidation prompt for Copilot (reads Phase 3 summaries, generates final indexes) | Markdown | Re-run extraction pipeline with AI assistance | Deep Dive |
 | [../.github/copilot-instructions.md](../.github/copilot-instructions.md) | Repo-specific Copilot usage, skill link, and Phase 4 constraints | Markdown | Align Copilot usage with workspace rules | Quick Ref |
 
 ---
@@ -69,7 +69,9 @@
 | [campaigns/](campaigns/) | Campaign-level documentation summaries | Reference campaign-specific systems |
 | [gameplay/](gameplay/) | Gameplay system indexes (AI, armies, objectives, win conditions) | Deep dive into game mode logic |
 | [systems/](systems/) | System-level consolidation (Cardinal, MissionOMatic, game config, etc.) | Architecture and cross-system patterns |
-| [dumps/](dumps/) | Raw extraction outputs (Lua, CSV, JSON interim) | Data source verification and debugging |
+| [ui/](ui/) | PlayerUI architecture and SetPlayerDataContext references | UI behavior tracing and data context troubleshooting |
+| [audits/](audits/) | Audit snapshots and reference health reports | Track historical indexing and link integrity audits |
+| [ai_sessions/](ai_sessions/) | Session summaries (`session_YYYY-MM-DD_NN.md`) | Recover prior decisions, fixes, and open gaps |
 | [workspace/](workspace/) | Workspace maintenance docs (audit logs, reorg prompts, optimization plans) | Repo hygiene and reorganization history |
 
 ---
@@ -77,22 +79,22 @@
 ## ✨ Quick Start by Task
 
 ### "I need to call SCAR functions"
-→ Start: [scar-api-functions.md](scar-api-functions.md) | Typed signatures: [scar-engine-api-signatures.md](api/scar-engine-api-signatures.md) | Then: [commands-reference.md](commands-reference.md)
+→ Start: [scar-api-functions.md](api/scar-api-functions.md) | Typed signatures: [scar-engine-api-signatures.md](api/scar-engine-api-signatures.md) | Then: [commands-reference.md](api/commands-reference.md)
 
 ### "I need to hook game events"
-→ Start: [game-events.md](game-events.md) | Reference: [constants-and-enums.md](constants-and-enums.md)
+→ Start: [game-events.md](api/game-events.md) | Reference: [constants-and-enums.md](api/constants-and-enums.md)
 
 ### "I need to find where a variable is used"
-→ Start: [globals-index.csv](globals-index.csv) | Context: [function-index.md](function-index.md)
+→ Start: [globals-index.csv](indexes/globals-index.csv) | Context: [function-index.md](indexes/function-index.md)
 
 ### "I need to understand campaign structure"
-→ Start: [master-index.md](master-index.md) | Then: [blueprints/](blueprints/) or [campaigns/](campaigns/)
+→ Start: [master-index.md](navigation/master-index.md) | Then: [blueprints/](blueprints/) or [campaigns/](campaigns/)
 
 ### "I need to understand dependencies"
-→ Start: [imports-index.csv](imports-index.csv) | Context: [data-index.md](data-index.md) | Deep: [extraction-workflow.md](extraction-workflow.md)
+→ Start: [imports-index.csv](indexes/imports-index.csv) | Context: [data-index.md](navigation/data-index.md) | Deep: [extraction-workflow.md](workflows/extraction-workflow.md)
 
 ### "I need game balance data"
-→ Start: [aoe4world-data-index.md](aoe4world-data-index.md) | Then: navigate `data/` subfolder
+→ Start: [aoe4world-data-index.md](navigation/aoe4world-data-index.md) | Then: navigate `data/aoe4/data/` subfolder
 
 ### "I need to understand game settings or mod loading"
 → Start: [systems/game-config-reference.md](systems/game-config-reference.md) | Raw data: `data/aoe4/sysconfig.lua`

@@ -58,3 +58,27 @@ local ebp = BP_GetEntityBlueprintByPbgID(107180)
 ```
 
 
+---
+
+> Additional entries appended from XML dump (2026-04-02 04:11:52)
+
+### Additional Building Entities (from XML dump)
+
+| Blueprint Name | PBG ID | Source | Sub-Category |
+|---|---|---|---|
+| `BUILDING_TRADE_POST_FALL` | 1073744273 | neutral | seasonal |
+| `BUILDING_TRADE_POST_HALLOWEEN` | 1073744274 | neutral | seasonal |
+| `BUILDING_TRADE_POST_MID_EAST_CAMPAIGN` | 1073744270 | neutral | campaign |
+| `BUILDING_TRADE_POST_WINTER` | 1073744275 | neutral | seasonal |
+| `NAVAL_TRADE_POST_CYPRUS` | 1073744272 | neutral | campaign |
+| `NAVAL_TRADE_POST_HALLOWEEN` | 1073744276 | neutral | seasonal |
+| `NAVAL_TRADE_POST_WINTER` | 1073744277 | neutral | seasonal |
+
+### Additional Unit Entities (from XML dump)
+
+| Blueprint Name | PBG ID | Source | Sub-Category |
+|---|---|---|---|
+| `UNIT_PHOTON_MAN` | 1073742567 | cheat | standard |
+| `UNIT_RONIN_NEU` | 1073744286 | neutral | standard |
+
+

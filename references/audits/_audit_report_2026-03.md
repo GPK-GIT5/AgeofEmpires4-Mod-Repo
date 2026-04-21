@@ -1,17 +1,33 @@
 # Reference Folder Audit Report
-**Date:** March 2, 2026 | **Scope:** reference/ directory | **Status:** Read-Only Audit
+**Date:** March 2, 2026 | **Updated:** March 2026 (Phase 1–6 remediation) | **Scope:** reference/ directory | **Status:** Partially Resolved
 
 ---
 
 ## Executive Summary
 
-✋ **CRITICAL:** 4 broken links to mod reference documents need immediate correction  
-⚠️ **STRUCTURAL:** Duplicate/confusing Mods sections create navigation ambiguity  
-📊 **METADATA:** Date mismatch in INDEX.md (Feb 24 vs Feb 23) suggests stale data  
-💾 **AI-READINESS:** Two oversized CSV files (1.4–1.9 MB) will consume excessive tokens  
+✅ ~~CRITICAL: 4 broken links to mod reference documents~~ — **RESOLVED** (Phase 1, root INDEX.md links fixed)  
+⚠️ **STRUCTURAL:** Duplicate/confusing Mods sections create navigation ambiguity (open)  
+📊 **METADATA:** Date mismatch in INDEX.md (open — cosmetic)  
+💾 **AI-READINESS:** Two oversized CSV files (1.4–1.9 MB) will consume excessive tokens (open)  
 ✅ **METRICS:** Function/global/group counts verified consistent across documents  
 
-Entry point INDEX.md is correctly designated, but link integrity issues and redundant sections undermine navigability and policy compliance.
+### Remediation Log (March 2026)
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 | Root INDEX.md: fixed ~20 broken relative links, removed ghost `dumps/`, added `ui/`, `audits/`, `ai_sessions/` to subdirectories | ✅ Done |
+| 2 | navigation/INDEX.md: added `ui/`, `audits/`, `ai_sessions/` to subdirectories, updated file count | ✅ Done |
+| 3 | copilot-instructions.md + scar-specialist.agent.md: added `references/ui/` to Sources of Truth and Key References | ✅ Done |
+| 4 | ai_sessions/: normalized SESSION_ID format, created README.md | ✅ Done |
+| 5 | This audit report: marked resolved items, added remediation log | ✅ Done |
+| 6 | master-index.md: fixed Japan link path, added ui/ entries | ✅ Done |
+
+### New Findings (March 2026)
+
+- **ui/ folder** (`references/ui/`) existed on disk with 3 files but was invisible to all indexes and retrieval paths — now indexed
+- **audits/ folder** (`references/audits/`) was not referenced in any navigation index — now indexed
+- **ai_sessions/ folder** (`references/ai_sessions/`) had no README, inconsistent SESSION_ID format — now normalized
+- **master-index.md** has ~100+ relative links that assume `references/` root context but the file lives in `references/navigation/` — systemic path issue noted for future fix
 
 ---
 
@@ -225,8 +241,8 @@ Never read `mods/Japan/MOD-INDEX.md` directly (Mods Folder Scope restriction).
 
 | Category | Count | Severity |
 |----------|-------|----------|
-| Broken links | 4 | CRITICAL |
-| Timestamp conflicts | 1 | HIGH |
+| Broken links | 4 | ~~CRITICAL~~ RESOLVED |
+| Timestamp conflicts | 1 | HIGH (cosmetic) |
 | Metadata gaps | 4 | MEDIUM |
 | Redundant sections | 1 | MEDIUM |
 | Token efficiency issues | 2 | LOW |
