@@ -9,7 +9,7 @@ Contains live mod source, extracted game data, reference documentation, and Copi
 
 | What it is | What it's for |
 |---|---|
-| Active mod source | Two published mods under active development (`Gamemodes/`) |
+| Active mod source | One published mod under active development (`Gamemodes/Onslaught/`), plus a third-party dependency (`Gamemodes/Advanced Game Settings/`) |
 | Custom scenarios | Coop map scripts for Arabia, Japanese, Taiga, and Woodland maps (`Scenarios/`) |
 | SCAR reference | Extracted API, constants, events, and script indexes for lookup while coding |
 | Raw game data | Lua runtime dump, blueprint data, and SCAR script dumps from the live game |
@@ -22,7 +22,7 @@ Contains live mod source, extracted game data, reference documentation, and Copi
 
 | Folder | Purpose |
 |---|---|
-| `Gamemodes/` | Mod source files — Advanced Game Settings (AGS) and Onslaught (CBA) |
+| `Gamemodes/` | Mod source — Onslaught (CBA, our mod) and Advanced Game Settings (third-party dependency) |
 | `Scenarios/` | Scenario SCAR scripts for custom coop maps |
 | `references/` | AI-generated reference docs: API, systems, UI, navigation index |
 | `data/` | Extracted raw game data: SCAR dump, blueprints, UCS strings, sysconfig |
@@ -36,10 +36,10 @@ Contains live mod source, extracted game data, reference documentation, and Copi
 
 ## Mods in This Workspace
 
-| Mod | Folder | Description |
-|---|---|---|
-| **Advanced Game Settings** | `Gamemodes/Advanced Game Settings/` | Lobby option framework: population, team balance, siege limits, auto-population |
-| **Onslaught (CBA Custom)** | `Gamemodes/Onslaught/` | Full CBA game mode with auto-age, boon selection, player UI, leaver handling |
+| Mod | Folder | Ownership | Description |
+|---|---|---|---|
+| **Onslaught (CBA Custom)** | `Gamemodes/Onslaught/` | **Ours** | Full CBA game mode with auto-age, boon selection, player UI, leaver handling |
+| **Advanced Game Settings** | `Gamemodes/Advanced Game Settings/` | Third-party dependency | Lobby option framework (population, team balance, siege limits). Included because Onslaught's scripts depend on its files — we do not own or maintain this mod. |
 
 ---
 
@@ -60,7 +60,7 @@ Contains live mod source, extracted game data, reference documentation, and Copi
 ## How to Use This Workspace
 
 1. **Open** `AoE4-Workspace.code-workspace` in VS Code — all folders load as roots.
-2. **Write mod code** in `Gamemodes/Onslaught/assets/scar/` or `Gamemodes/Advanced Game Settings/assets/scar/`.
+2. **Write mod code** in `Gamemodes/Onslaught/assets/scar/`. Do not edit `Gamemodes/Advanced Game Settings/` — it is a read-only third-party dependency.
 3. **Look up APIs** in `references/api/` while coding. `.scar` files use Lua syntax highlighting.
 4. **Run automation** from `scripts/` using PowerShell — see `scripts/run_regression_suite.ps1` for CI.
 5. **Check AI guidance** in `.github/copilot-instructions.md` before asking Copilot for help.
